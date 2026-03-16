@@ -1,0 +1,28 @@
+services:
+  discogenius:
+    image: rhjanssen/discogenius:latest
+    container_name: discogenius
+    user: "1000:1000"
+    env_file:
+      - .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - NODE_ENV=production
+      - DOCKER=true
+      - PORT=${PORT:-3737}
+      - TZ=Europe/Amsterdam
+      - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-1}
+      - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
+    ports:
+      - "${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}"
+    volumes:
+      # Persistent config directory (database, settings, tidal tokens)
+      - ./config:/config
+      # Library directory
+      # You can map these individually to different NAS shares if needed
+      - ./library:/library
+      # - /path/to/nas/music:/library/music
+      # - /path/to/nas/atmos:/library/atmos
+      # - /path/to/nas/videos:/library/videos
+    restart: unless-stopped

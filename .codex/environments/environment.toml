@@ -1,0 +1,281 @@
+# Codex environment setup for Discogenius
+# https://developers.openai.com/codex
+version = 1
+name = "Discogenius"
+
+# Generic Unix setup script (Linux and macOS).
+# On Windows, [setup.win32] below takes over instead.
+[setup]
+script = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+VENV_PATH="$REPO_ROOT/.venv"
+VENV_PYTHON="$VENV_PATH/bin/python"
+VENV_TIDAL="$VENV_PATH/bin/tidal-dl-ng"
+
+# Create .venv if needed
+if [ ! -f "$VENV_PYTHON" ]; then
+  echo "Creating .venv ..."
+  if command -v python3.12 &>/dev/null; then
+    python3.12 -m venv "$VENV_PATH"
+  elif command -v python3 &>/dev/null; then
+    python3 -m venv "$VENV_PATH"
+  else
+    echo "Python 3 not found. Install Python 3.12+." >&2
+    exit 1
+  fi
+fi
+
+echo "Upgrading pip inside .venv ..."
+"$VENV_PYTHON" -m pip install --upgrade pip
+
+echo "Installing tidal-dl-ng-for-dj into .venv ..."
+"$VENV_PYTHON" -m pip install --upgrade tidal-dl-ng-for-dj
+
+if [ ! -f "$VENV_TIDAL" ]; then
+  echo "Expected tidal-dl-ng executable was not created at $VENV_TIDAL" >&2
+  exit 1
+fi
+
+echo "Verifying tidal-dl-ng ..."
+"$VENV_TIDAL" --version
+
+# Check/install ffmpeg
+if ! command -v ffmpeg &>/dev/null; then
+  if command -v brew &>/dev/null; then
+    echo "Installing ffmpeg via Homebrew ..."
+    brew install ffmpeg
+  elif command -v apt-get &>/dev/null; then
+    echo "Installing ffmpeg via apt ..."
+    sudo apt-get install -y ffmpeg
+  elif command -v dnf &>/dev/null; then
+    echo "Installing ffmpeg via dnf ..."
+    sudo dnf install -y ffmpeg
+  else
+    echo "WARNING: ffmpeg not found. Install it with your package manager." >&2
+  fi
+fi
+
+# Check/install fpcalc (Chromaprint) for audio fingerprinting
+if ! command -v fpcalc &>/dev/null; then
+  echo "fpcalc not found, attempting to install Chromaprint ..."
+  if command -v brew &>/dev/null; then
+    brew install chromaprint
+  elif command -v apt-get &>/dev/null; then
+    sudo apt-get install -y chromaprint-tools 2>/dev/null || \
+    sudo apt-get install -y libchromaprint-tools 2>/dev/null || {
+      echo "WARNING: Could not install fpcalc via apt. Fingerprinting will be unavailable." >&2
+    }
+  elif command -v dnf &>/dev/null; then
+    sudo dnf install -y chromaprint-tools 2>/dev/null || \
+    sudo dnf install -y chromaprint 2>/dev/null || {
+      echo "WARNING: Could not install fpcalc via dnf. Fingerprinting will be unavailable." >&2
+    }
+  else
+    echo "WARNING: fpcalc not found. Install Chromaprint manually for fingerprinting support." >&2
+  fi
+fi
+
+echo ""
+echo "Next steps:"
+echo "  yarn install"
+echo "  yarn build"
+echo "  yarn dev"
+echo ""
+echo "Discogenius will auto-detect $VENV_TIDAL when the backend starts."
+'''
+
+# Windows-specific setup script (PowerShell).
+[setup.win32]
+script = '''
+param(
+    [switch]$Recreate,
+    [string]$PythonCommand
+)
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = git rev-parse --show-toplevel 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $repoRoot) {
+    $repoRoot = (Get-Location).Path
+}
+$repoRoot = $repoRoot.Trim() -replace '/', '\'
+
+$venvPath = Join-Path $repoRoot ".venv"
+$venvPython = Join-Path $venvPath "Scripts\python.exe"
+$venvTidal = Join-Path $venvPath "Scripts\tidal-dl-ng.exe"
+
+function Invoke-SetupCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [string[]]$Arguments = @()
+    )
+
+    try {
+        & $Command @Arguments
+        return $LASTEXITCODE
+    } catch {
+        return 1
+    }
+}
+
+if ($Recreate -and (Test-Path $venvPath)) {
+    Write-Host "Removing existing .venv ..."
+    Remove-Item -Recurse -Force $venvPath
+}
+
+if (-not (Test-Path $venvPython)) {
+    $createStrategies = @()
+
+    if ($PythonCommand) {
+        $createStrategies += @{
+            Command = $PythonCommand
+            Arguments = @("-m", "venv", $venvPath)
+        }
+    } else {
+        $createStrategies += @{
+            Command = "py"
+            Arguments = @("-3.12", "-m", "venv", $venvPath)
+        }
+        $createStrategies += @{
+            Command = "py"
+            Arguments = @("-3", "-m", "venv", $venvPath)
+        }
+        $createStrategies += @{
+            Command = "python"
+            Arguments = @("-m", "venv", $venvPath)
+        }
+    }
+
+    $created = $false
+    foreach ($strategy in $createStrategies) {
+        if (-not (Get-Command $strategy.Command -ErrorAction SilentlyContinue)) {
+            continue
+        }
+
+        Write-Host "Creating .venv with: $($strategy.Command) $($strategy.Arguments -join ' ')"
+        $exitCode = Invoke-SetupCommand -Command $strategy.Command -Arguments $strategy.Arguments
+        if ($exitCode -eq 0 -and (Test-Path $venvPython)) {
+            $created = $true
+            break
+        }
+    }
+
+    if (-not $created) {
+        throw "Unable to create .venv. Install Python 3.12+ or pass -PythonCommand with a valid interpreter."
+    }
+}
+
+Write-Host "Upgrading pip inside .venv ..."
+& $venvPython -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    throw "pip upgrade failed."
+}
+
+Write-Host "Installing tidal-dl-ng-for-dj into .venv ..."
+& $venvPython -m pip install --upgrade tidal-dl-ng-for-dj
+if ($LASTEXITCODE -ne 0) {
+    throw "tidal-dl-ng-for-dj installation failed."
+}
+
+if (-not (Test-Path $venvTidal)) {
+    throw "Expected tidal-dl-ng executable was not created at $venvTidal"
+}
+
+Write-Host "Verifying tidal-dl-ng ..."
+& $venvTidal --version
+if ($LASTEXITCODE -ne 0) {
+    throw "tidal-dl-ng verification failed."
+}
+
+$ffmpegCandidates = @(
+    (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+    "C:\\ffmpeg\\bin\\ffmpeg.exe",
+    "C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe",
+    "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+    "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+    (Join-Path $env:LOCALAPPDATA "Microsoft\\WinGet\\Links\\ffmpeg.exe")
+) | Where-Object { $_ }
+
+$wingetPackagesDir = Join-Path $env:LOCALAPPDATA "Microsoft\\WinGet\\Packages"
+if (Test-Path $wingetPackagesDir) {
+    $wingetFfmpeg = Get-ChildItem $wingetPackagesDir -Filter ffmpeg.exe -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($wingetFfmpeg) {
+        $ffmpegCandidates += $wingetFfmpeg
+    }
+}
+
+$ffmpegPath = $null
+foreach ($candidate in $ffmpegCandidates) {
+    if (Test-Path $candidate) {
+        $ffmpegPath = $candidate
+        $ffmpegDir = Split-Path -Parent $candidate
+        if (-not (($env:PATH -split ';') -contains $ffmpegDir)) {
+            $env:PATH = $ffmpegDir + ';' + $env:PATH
+        }
+        break
+    }
+}
+
+if ($ffmpegPath) {
+    Write-Host "ffmpeg detected at $ffmpegPath"
+} else {
+    Write-Warning "ffmpeg.exe was not found in PATH or common install locations. Downloads and metadata processing will fail until ffmpeg is installed."
+}
+
+$fpcalcCandidates = @(
+    (Get-Command fpcalc.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+    (Join-Path $env:LOCALAPPDATA "Microsoft\\WinGet\\Links\\fpcalc.exe")
+) | Where-Object { $_ }
+
+$wingetFpcalc = Get-ChildItem $wingetPackagesDir -Filter fpcalc.exe -Recurse -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
+if ($wingetFpcalc) {
+    $fpcalcCandidates += $wingetFpcalc
+}
+
+$fpcalcPath = $null
+foreach ($candidate in $fpcalcCandidates) {
+    if (Test-Path $candidate) {
+        $fpcalcPath = $candidate
+        break
+    }
+}
+
+if (-not $fpcalcPath -and (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing fpcalc (Chromaprint) via winget ..."
+    winget install --id AcoustID.Chromaprint --exact --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw "fpcalc installation failed."
+    }
+
+    $wingetFpcalc = Get-ChildItem $wingetPackagesDir -Filter fpcalc.exe -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($wingetFpcalc) {
+        $fpcalcPath = $wingetFpcalc
+    }
+}
+
+if (-not $fpcalcPath) {
+    throw "fpcalc.exe was not found and could not be installed automatically. Fingerprinting imports require Chromaprint."
+}
+
+$fpcalcDir = Split-Path -Parent $fpcalcPath
+if (-not (($env:PATH -split ';') -contains $fpcalcDir)) {
+    $env:PATH = $fpcalcDir + ';' + $env:PATH
+}
+$env:FPCALC_PATH = $fpcalcPath
+Write-Host "fpcalc detected at $fpcalcPath"
+
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "  yarn install"
+Write-Host "  yarn build"
+Write-Host "  yarn dev"
+Write-Host ""
+Write-Host "Discogenius will auto-detect $venvTidal when the backend starts."
+'''

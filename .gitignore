@@ -1,0 +1,55 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Stale JS files in TypeScript source (compiled output goes to dist/)
+api/src/**/*.js
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.venv
+
+# Temporary reference folders
+.ref_lidarr/
+.ref_tidarr/
+.ref_tidalrr/
+.ref_old_scripts/
+.ref_tiddl/
+.ref_tidal_dl_ng/
+.ref_tidal_dl_ng_dj/
+.ref_python_tidal/
+.ref_tidal_pages
+.ref_music/
+config/
+downloads/
+library/
+api/downloads/
+api/config/
+
+# Local QA/test output
+/tmp/
+/test-results/
+/tidal-dl-ng-fix/
+
+# Lock files from other package managers
+package-lock.json
+bun.lockb
+pnpm-lock.yaml

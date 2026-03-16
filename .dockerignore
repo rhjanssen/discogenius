@@ -1,0 +1,14 @@
+**/node_modules
+.git
+.env
+dist
+build
+*.log
+.DS_Store
+config/
+api/config/
+tiddl.json
+token.json
+*.db
+*.sqlite
+*.sqlite-journal

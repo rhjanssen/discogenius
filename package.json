@@ -1,0 +1,26 @@
+{
+  "name": "discogenius-root",
+  "private": true,
+  "workspaces": [
+    "api",
+    "app"
+  ],
+  "scripts": {
+    "dev": "concurrently \"yarn --cwd api dev\" \"yarn --cwd app dev\" --names \"backend,frontend\" --prefix-colors \"magenta,cyan\"",
+    "dev:all": "yarn dev",
+    "build": "concurrently \"yarn --cwd api build\" \"yarn --cwd app build\"",
+    "lint": "eslint .",
+    "app:dev": "yarn --cwd app dev",
+    "api:dev": "yarn --cwd api dev",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "test:e2e:headed": "playwright test -c e2e/playwright.config.ts --headed",
+    "release:prepare": "node scripts/release/prepare-release.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.32.0",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "yarn@1.22.22"
+}

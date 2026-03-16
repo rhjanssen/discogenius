@@ -1,0 +1,162 @@
+name: Release Docker Image
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_DOCKERHUB_IMAGE: rhjanssen/discogenius
+      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+    steps:
+      - name: Validate repository configuration
+        id: config
+        run: |
+          set -euo pipefail
+          resolved_image="${DOCKERHUB_IMAGE:-$DEFAULT_DOCKERHUB_IMAGE}"
+          if [[ -z "${{ secrets.DOCKERHUB_USERNAME }}" || -z "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are required." >&2
+            exit 1
+          fi
+          echo "dockerhub_image=${resolved_image}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn@1.22.22
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build frontend
+        run: yarn --cwd app build
+
+      - name: Build backend
+        run: yarn --cwd api build
+
+      - name: Derive release metadata
+        id: release
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ "${tag}" == "${version}" ]]; then
+            echo "Release tags must start with v, got ${tag}" >&2
+            exit 1
+          fi
+          if [[ "${version}" == *-* ]]; then
+            latest=false
+            prerelease=true
+          else
+            latest=true
+            prerelease=false
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate package versions match release tag
+        run: |
+          set -euo pipefail
+          expected="${{ steps.release.outputs.version }}"
+          app_version="$(node -e "console.log(require('./app/package.json').version)")"
+          api_version="$(node -e "console.log(require('./api/package.json').version)")"
+          if [[ "${app_version}" != "${expected}" || "${api_version}" != "${expected}" ]]; then
+            echo "Tag version ${expected} must match app/api package versions (app=${app_version}, api=${api_version})" >&2
+            exit 1
+          fi
+
+      - name: Build release notes body
+        run: |
+          set -euo pipefail
+          version="${{ steps.release.outputs.version }}"
+          changelog_section=""
+          mkdir -p dist
+          if [[ -f CHANGELOG.md ]]; then
+            changelog_section="$(awk -v v="${version}" '
+              BEGIN { in_section = 0 }
+              $0 ~ "^## \\[" v "\\]" { in_section = 1 }
+              in_section && /^## \[/ && $0 !~ "^## \\[" v "\\]" { exit }
+              in_section { print }
+            ' CHANGELOG.md)"
+          fi
+
+          {
+            echo "## Release ${version}"
+            echo
+            if [[ -n "${changelog_section}" ]]; then
+              echo "${changelog_section}"
+              echo
+            fi
+            echo "### Docker image"
+            echo "- \`${{ steps.config.outputs.dockerhub_image }}:${version}\`"
+            if [[ "${{ steps.release.outputs.latest }}" == "true" ]]; then
+              echo "- \`${{ steps.config.outputs.dockerhub_image }}:latest\`"
+            fi
+            echo
+            echo "GitHub automatically includes source archives (zip and tar.gz) for this tag."
+          } > dist/release-body.md
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Prepare Docker tags
+        id: docker-tags
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "${{ steps.config.outputs.dockerhub_image }}:${{ steps.release.outputs.version }}"
+            if [[ "${{ steps.release.outputs.latest }}" == "true" ]]; then
+              echo "${{ steps.config.outputs.dockerhub_image }}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=Discogenius
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          prerelease: ${{ steps.release.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.release.outputs.latest == 'true' && 'true' || 'false' }}
+          body_path: dist/release-body.md

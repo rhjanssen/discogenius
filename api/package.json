@@ -1,0 +1,42 @@
+{
+  "name": "discogenius-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx watch --ignore ../library --ignore ../config --ignore ../downloads --ignore ../tmp index.ts",
+    "build": "tsc --project ./tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "tsx --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "apicache": "^1.6.3",
+    "axios": "^1.13.2",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-http-proxy": "^2.1.2",
+    "fast-levenshtein": "^3.0.0",
+    "jpeg-js": "^0.4.4",
+    "jsonwebtoken": "^9.0.2",
+    "munkres-js": "^1.2.2",
+    "music-metadata": "^11.10.3",
+    "p-limit": "^7.2.0",
+    "pngjs": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/apicache": "^1.6.8",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/express-http-proxy": "^1.6.7",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.10.5",
+    "@types/pngjs": "^6.0.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
