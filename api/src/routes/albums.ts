@@ -5,6 +5,7 @@ import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { getMediaDownloadStateMap, updateAlbumDownloadStatus } from "../services/download-state.js";
 import { AlbumQueryService } from "../services/album-query-service.js";
 import { queueAlbumBrowseHydration } from "../services/browse-hydration.js";
+import type { AlbumTrackContract, LibraryFileContract } from "../contracts/media.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -23,7 +24,61 @@ const parseOptionalMonitored = (value: unknown): boolean => {
   return value === undefined ? true : Boolean(value);
 };
 
-function getAlbumTrackRows(albumId: string): any[] {
+type AlbumTrackRow = {
+  id: number | string;
+  album_id: number | string | null;
+  title: string;
+  version?: string | null;
+  duration: number;
+  track_number: number;
+  volume_number: number;
+  quality: string;
+  artist_name?: string;
+  album_title?: string;
+  explicit?: boolean;
+  monitor?: boolean | number;
+  monitor_lock?: boolean | number;
+};
+
+type LibraryFileRow = {
+  id: number;
+  media_id: number | string | null;
+  file_type: string;
+  file_path: string;
+  relative_path?: string;
+  filename?: string;
+  extension?: string;
+  quality?: string | null;
+  library_root?: string;
+  file_size?: number;
+  bitrate?: number;
+  sample_rate?: number;
+  bit_depth?: number;
+  codec?: string;
+  duration?: number;
+};
+
+function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
+  return {
+    id: file.id,
+    media_id: file.media_id == null ? null : String(file.media_id),
+    file_type: file.file_type,
+    file_path: file.file_path,
+    relative_path: file.relative_path,
+    filename: file.filename,
+    extension: file.extension,
+    quality: file.quality ?? null,
+    library_root: file.library_root,
+    file_size: file.file_size,
+    bitrate: file.bitrate,
+    sample_rate: file.sample_rate,
+    bit_depth: file.bit_depth,
+    codec: file.codec,
+    duration: file.duration,
+  };
+}
+
+function getAlbumTrackRows(albumId: string): AlbumTrackRow[] {
   return db.prepare(`
     SELECT
       m.*,
@@ -35,7 +90,7 @@ function getAlbumTrackRows(albumId: string): any[] {
     LEFT JOIN artists ar ON ar.id = m.artist_id
     WHERE m.album_id = ? AND m.type != 'Music Video'
     ORDER BY m.volume_number ASC, m.track_number ASC, m.id ASC
-  `).all(albumId) as any[];
+  `).all(albumId) as AlbumTrackRow[];
 }
 
 function getAlbumTrackStats(albumId: string): { storedTracks: number; missingTrackScans: number } {
@@ -65,11 +120,11 @@ function isAlbumLikelyIncomplete(albumId: string, expectedTracks: unknown, lastS
   );
 }
 
-function hydrateAlbumTracks(tracks: any[]): any[] {
+function hydrateAlbumTracks(tracks: AlbumTrackRow[]): AlbumTrackContract[] {
   const trackIds = tracks.map((track) => String(track.id));
   const downloadStates = getMediaDownloadStateMap(trackIds, "track");
 
-  const filesByTrack = new Map<string, any[]>();
+  const filesByTrack = new Map<string, LibraryFileContract[]>();
   if (trackIds.length > 0) {
     const placeholders = trackIds.map(() => "?").join(",");
     const files = db.prepare(`
@@ -79,12 +134,12 @@ function hydrateAlbumTracks(tracks: any[]): any[] {
       WHERE media_id IN (${placeholders})
         AND file_type IN ('track', 'lyrics')
       ORDER BY file_type ASC, id ASC
-    `).all(...trackIds) as any[];
+    `).all(...trackIds) as LibraryFileRow[];
 
     for (const file of files) {
       const mediaId = String(file.media_id);
       const bucket = filesByTrack.get(mediaId) || [];
-      bucket.push(file);
+      bucket.push(normalizeLibraryFileRow(file));
       filesByTrack.set(mediaId, bucket);
     }
   }
@@ -99,7 +154,8 @@ function hydrateAlbumTracks(tracks: any[]): any[] {
       album_id: track.album_id != null ? String(track.album_id) : null,
       is_monitored: Boolean(track.monitor),
       monitor_locked: Boolean(track.monitor_lock),
-      downloaded: isDownloaded ? 1 : 0,
+      explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),
+      downloaded: isDownloaded,
       is_downloaded: isDownloaded,
       files: filesByTrack.get(trackId) || [],
     };

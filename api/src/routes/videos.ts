@@ -3,6 +3,7 @@ import { db } from "../database.js";
 import { getMediaDownloadStateMap, updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
 import { queueArtistBrowseHydration } from "../services/browse-hydration.js";
 import { seedVideo } from "../services/scanner.js";
+import type { VideoDetailContract } from "../contracts/media.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -125,15 +126,20 @@ router.get("/", (req, res) => {
     const totalResult = db.prepare(countQuery).get(...countParams) as any;
     const downloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
 
-    const transformed = videos.map(video => {
+    const transformed = videos.map((video): VideoDetailContract => {
       const { current_quality, ...rest } = video;
+      const isDownloaded = downloadStates.get(String(video.id)) ?? false;
       return {
         ...rest,
+        id: String(rest.id),
+        artist_id: String(rest.artist_id),
+        explicit: rest.explicit === undefined ? undefined : Boolean(rest.explicit),
         quality: current_quality || video.quality,
         cover_id: video.cover || null,
         is_monitored: Boolean(video.monitor),
-        downloaded: downloadStates.get(String(video.id)) ? 1 : 0,
-        is_downloaded: downloadStates.get(String(video.id)) ?? false,
+        monitor_locked: Boolean(video.monitor_lock),
+        downloaded: isDownloaded,
+        is_downloaded: isDownloaded,
       };
     });
 
@@ -198,12 +204,16 @@ router.get("/:videoId", async (req, res) => {
 
     const { current_quality, ...rest } = video;
     const downloadState = getMediaDownloadStateMap([video.id], "video").get(String(video.id)) ?? false;
-    const transformed = {
+    const transformed: VideoDetailContract = {
       ...rest,
+      id: String(rest.id),
+      artist_id: String(rest.artist_id),
+      explicit: rest.explicit === undefined ? undefined : Boolean(rest.explicit),
       quality: current_quality || video.quality,
       cover_id: video.cover || null,
       is_monitored: Boolean(video.monitor),
-      downloaded: downloadState ? 1 : 0,
+      monitor_locked: Boolean(video.monitor_lock),
+      downloaded: downloadState,
       is_downloaded: downloadState,
     };
 

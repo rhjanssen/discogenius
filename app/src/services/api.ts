@@ -1,4 +1,42 @@
 import { getApiBaseUrl } from '@/utils/apiBaseUrl';
+import type {
+  AccountConfigContract,
+  FilteringConfigContract,
+  MetadataConfigContract,
+  MonitoringConfigContract,
+  MonitoringConfigUpdateResponseContract,
+  MonitoringStatusResponseContract,
+  NamingConfigContract,
+  PathConfigContract,
+  PublicAppConfigContract,
+  QualityConfigContract,
+} from '@contracts/config';
+import {
+  parseAccountConfigContract,
+  parseFilteringConfigContract,
+  parseMetadataConfigContract,
+  parseMonitoringConfigUpdateResponseContract,
+  parseMonitoringStatusResponseContract,
+  parseNamingConfigContract,
+  parsePathConfigContract,
+  parsePublicAppConfigContract,
+  parseQualityConfigContract,
+} from '@contracts/config';
+import type {
+  AlbumTrackContract,
+  AlbumVersionContract,
+  LibraryFilesListResponseContract,
+  SimilarAlbumContract,
+  VideoDetailContract,
+  VideoUpdateContract,
+} from '@contracts/media';
+import {
+  parseAlbumTracksContract,
+  parseAlbumVersionsContract,
+  parseLibraryFilesListResponseContract,
+  parseSimilarAlbumsContract,
+  parseVideoDetailContract,
+} from '@contracts/media';
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
@@ -22,7 +60,8 @@ class ApiClient {
 
   public async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    parser?: (value: unknown) => T,
   ): Promise<T> {
     // All backend routes are namespaced under /api to avoid collisions with SPA routes.
     // Keep /api/* and /proxy/* as-is, prefix everything else.
@@ -106,7 +145,8 @@ class ApiClient {
     }
 
     try {
-      return JSON.parse(text) as T;
+      const parsed = JSON.parse(text) as unknown;
+      return parser ? parser(parsed) : parsed as T;
     } catch {
       return text as unknown as T;
     }
@@ -143,33 +183,33 @@ class ApiClient {
   }
 
   // Config endpoints
-  async getQualityConfig() {
-    return this.request('/config/quality');
+  async getQualityConfig(): Promise<QualityConfigContract> {
+    return this.request('/config/quality', {}, parseQualityConfigContract);
   }
 
-  async updateQualityConfig(config: any) {
+  async updateQualityConfig(config: Partial<QualityConfigContract>) {
     return this.request('/config/quality', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getAccountConfig() {
-    return this.request('/config/account');
+  async getAccountConfig(): Promise<AccountConfigContract> {
+    return this.request('/config/account', {}, parseAccountConfigContract);
   }
 
-  async updateAccountConfig(config: any) {
+  async updateAccountConfig(config: Partial<AccountConfigContract>) {
     return this.request('/config/account', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getAppConfig() {
-    return this.request('/config/app');
+  async getAppConfig(): Promise<PublicAppConfigContract> {
+    return this.request('/config/app', {}, parsePublicAppConfigContract);
   }
 
-  async updateAppConfig(config: any) {
+  async updateAppConfig(config: Partial<PublicAppConfigContract>) {
     return this.request('/config/app', {
       method: 'POST',
       body: JSON.stringify(config),
@@ -180,56 +220,56 @@ class ApiClient {
     return this.request('/config/about');
   }
 
-  async getMonitoringConfig() {
-    const status = await this.request('/monitoring/status');
-    return (status as any)?.config ?? status;
+  async getMonitoringConfig(): Promise<MonitoringConfigContract> {
+    const status = await this.request('/monitoring/status', {}, parseMonitoringStatusResponseContract);
+    return status.config;
   }
 
-  async updateMonitoringConfig(config: any) {
+  async updateMonitoringConfig(config: Partial<MonitoringConfigContract>): Promise<MonitoringConfigUpdateResponseContract> {
     return this.request('/monitoring/config', {
       method: 'POST',
       body: JSON.stringify(config),
-    });
+    }, parseMonitoringConfigUpdateResponseContract);
   }
 
-  async getCurationConfig() {
-    return this.request('/config/curation');
+  async getCurationConfig(): Promise<FilteringConfigContract> {
+    return this.request('/config/curation', {}, parseFilteringConfigContract);
   }
 
-  async updateCurationConfig(config: any) {
+  async updateCurationConfig(config: Partial<FilteringConfigContract>) {
     return this.request('/config/curation', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getMetadataConfig() {
-    return this.request('/config/metadata');
+  async getMetadataConfig(): Promise<MetadataConfigContract> {
+    return this.request('/config/metadata', {}, parseMetadataConfigContract);
   }
 
-  async updateMetadataConfig(config: any) {
+  async updateMetadataConfig(config: Partial<MetadataConfigContract>) {
     return this.request('/config/metadata', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getPathConfig() {
-    return this.request('/config/path');
+  async getPathConfig(): Promise<PathConfigContract> {
+    return this.request('/config/path', {}, parsePathConfigContract);
   }
 
-  async updatePathConfig(config: any) {
+  async updatePathConfig(config: Partial<PathConfigContract>) {
     return this.request('/config/path', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
-  async getNamingConfig() {
-    return this.request('/config/naming');
+  async getNamingConfig(): Promise<NamingConfigContract> {
+    return this.request('/config/naming', {}, parseNamingConfigContract);
   }
 
-  async updateNamingConfig(config: any) {
+  async updateNamingConfig(config: Partial<NamingConfigContract>) {
     return this.request('/config/naming', {
       method: 'POST',
       body: JSON.stringify(config),
@@ -396,16 +436,16 @@ class ApiClient {
     return this.request(`/albums/${albumId}`, { method: 'DELETE' });
   }
 
-  async getAlbumTracks<T = unknown>(albumId: string) {
-    return this.request<T>(`/albums/${albumId}/tracks`);
+  async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
+    return this.request(`/albums/${albumId}/tracks`, {}, parseAlbumTracksContract);
   }
 
-  async getAlbumSimilar<T = unknown>(albumId: string) {
-    return this.request<T>(`/albums/${albumId}/similar`);
+  async getAlbumSimilar(albumId: string): Promise<SimilarAlbumContract[]> {
+    return this.request(`/albums/${albumId}/similar`, {}, parseSimilarAlbumsContract);
   }
 
-  async getAlbumVersions<T = unknown>(albumId: string) {
-    return this.request<T>(`/albums/${albumId}/versions`);
+  async getAlbumVersions(albumId: string): Promise<AlbumVersionContract[]> {
+    return this.request(`/albums/${albumId}/versions`, {}, parseAlbumVersionsContract);
   }
 
   async getTracks(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
@@ -461,8 +501,8 @@ class ApiClient {
     return this.request(`/videos${query ? `?${query}` : ''}`);
   }
 
-  async getVideo<T = unknown>(videoId: string) {
-    return this.request<T>(`/videos/${videoId}`);
+  async getVideo(videoId: string): Promise<VideoDetailContract> {
+    return this.request(`/videos/${videoId}`, {}, parseVideoDetailContract);
   }
 
   async addVideo(tidalId: string) {
@@ -472,7 +512,7 @@ class ApiClient {
     });
   }
 
-  async updateVideo(videoId: string, updates: any) {
+  async updateVideo(videoId: string, updates: VideoUpdateContract) {
     return this.request(`/videos/${videoId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
@@ -484,14 +524,14 @@ class ApiClient {
   }
 
   // Library files endpoints
-  async getLibraryFiles(params?: { mediaId?: string; albumId?: string; artistId?: string; fileType?: string }) {
+  async getLibraryFiles(params?: { mediaId?: string; albumId?: string; artistId?: string; fileType?: string }): Promise<LibraryFilesListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.mediaId) queryParams.set('mediaId', params.mediaId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.fileType) queryParams.set('fileType', params.fileType);
     const query = queryParams.toString();
-    return this.request(`/library-files${query ? `?${query}` : ''}`);
+    return this.request(`/library-files${query ? `?${query}` : ''}`, {}, parseLibraryFilesListResponseContract);
   }
 
   async getLibraryRenameStatus(params?: {
@@ -789,8 +829,8 @@ class ApiClient {
   }
 
   // Monitoring endpoints
-  async getMonitoringStatus() {
-    return this.request('/monitoring/status');
+  async getMonitoringStatus(): Promise<MonitoringStatusResponseContract> {
+    return this.request('/monitoring/status', {}, parseMonitoringStatusResponseContract);
   }
 
 

@@ -1,6 +1,7 @@
 import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { scanAlbumBasic } from "./scanner.js";
+import type { AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 
 const albumDownloadedPredicate = `
   EXISTS (
@@ -164,7 +165,7 @@ export class AlbumQueryService {
         return normalizeAlbumRow(album, downloadStats.downloadedPercent, downloadStats.isDownloaded);
     }
 
-    static getSimilarAlbums(albumId: string): any[] {
+    static getSimilarAlbums(albumId: string): SimilarAlbumContract[] {
         const similarAlbums = db.prepare(`
       SELECT
         a.id,
@@ -185,12 +186,19 @@ export class AlbumQueryService {
     `).all(albumId) as any[];
 
         return similarAlbums.map((album) => ({
-            ...album,
+            id: String(album.id),
+            title: album.title,
+            cover_id: album.cover_id != null ? String(album.cover_id) : null,
+            artist_name: album.artist_name,
+            release_date: album.release_date ?? null,
+            popularity: Number(album.popularity ?? 0),
+            quality: album.quality ?? null,
+            explicit: Boolean(album.explicit),
             is_monitored: Boolean(album.is_monitored),
         }));
     }
 
-    static getAlbumVersions(albumId: string): any[] {
+    static getAlbumVersions(albumId: string): AlbumVersionContract[] {
         const albumVersion = db.prepare(`
       SELECT version_group_id
       FROM album_artists
@@ -222,7 +230,14 @@ export class AlbumQueryService {
     `).all(albumVersion.version_group_id, albumId) as any[];
 
         return otherVersions.map((album) => ({
-            ...album,
+            id: String(album.id),
+            title: album.title,
+            cover_id: album.cover_id != null ? String(album.cover_id) : null,
+            artist_name: album.artist_name,
+            release_date: album.release_date ?? null,
+            quality: album.quality ?? null,
+            version: album.version ?? null,
+            explicit: Boolean(album.explicit),
             is_monitored: Boolean(album.is_monitored),
         }));
     }

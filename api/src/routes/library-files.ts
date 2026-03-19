@@ -9,6 +9,7 @@ import { queueArtistWorkflow } from "../services/artist-workflow.js";
 import { queueRescanFoldersPass } from "../services/monitoring-scheduler.js";
 import { UpgradableSpecification } from "../services/upgradable-specification.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
+import type { LibraryFileContract, LibraryFilesListResponseContract } from "../contracts/media.js";
 
 const router = Router();
 let immediateRootScanInProgress = false;
@@ -78,7 +79,7 @@ router.get("/", (req, res) => {
 
     const profile = UpgradableSpecification.buildEffectiveProfile();
     const rawItems = db.prepare(sql).all(...params) as any[];
-    const items = rawItems.map((item) => {
+    const items: LibraryFileContract[] = rawItems.map((item) => {
       const evaluation = item.file_type === "video" || item.media_type === "Music Video"
         ? UpgradableSpecification.evaluateVideoChange({
           profile,
@@ -97,6 +98,9 @@ router.get("/", (req, res) => {
 
       return {
         ...item,
+        artist_id: item.artist_id == null ? null : String(item.artist_id),
+        album_id: item.album_id == null ? null : String(item.album_id),
+        media_id: item.media_id == null ? null : String(item.media_id),
         qualityTarget: evaluation?.targetQuality ?? null,
         qualityChangeWanted: evaluation?.needsChange ?? false,
         qualityChangeDirection: evaluation?.direction ?? "none",
@@ -104,7 +108,8 @@ router.get("/", (req, res) => {
         qualityChangeReason: evaluation?.needsChange ? evaluation.reason : null,
       };
     });
-    res.json({ items, limit, offset });
+    const response: LibraryFilesListResponseContract = { items, limit, offset };
+    res.json(response);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

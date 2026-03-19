@@ -39,7 +39,7 @@ import { useTheme } from "@/providers/themeContext";
 import { useToast } from "@/hooks/useToast";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import type { Artist } from "@/hooks/useLibrary";
-import type { Video as VideoListItem } from "@/hooks/useVideos";
+import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -267,26 +267,6 @@ const useStyles = makeStyles({
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-type VideoDetail = VideoListItem & {
-    cover_id?: string | null;
-    cover?: string | null;
-    monitor?: boolean;
-    monitor_lock?: boolean | number;
-    monitor_locked?: boolean | number;
-    downloaded?: boolean;
-};
-
-type VideoFilesResponse = {
-    items?: Array<{
-        id: number;
-        file_type: string;
-        codec?: string;
-        file_size?: number;
-        extension?: string;
-        bitrate?: number;
-    }>;
-};
-
 function formatFileSize(bytes?: number): string {
     if (!bytes) return "—";
     if (bytes < 1024) return `${bytes} B`;
@@ -318,9 +298,9 @@ const VideoPage = () => {
         data: video,
         isLoading: isVideoLoading,
         error,
-    } = useQuery<VideoDetail>({
+    } = useQuery<VideoDetailContract>({
         queryKey: ["video", videoId],
-        queryFn: () => api.getVideo<VideoDetail>(videoId!),
+        queryFn: () => api.getVideo(videoId!),
         enabled: !!videoId,
         refetchInterval: 5_000,
     });
@@ -333,7 +313,7 @@ const VideoPage = () => {
     });
 
     // Fetch library files for this video
-    const { data: filesData } = useQuery<VideoFilesResponse>({
+    const { data: filesData } = useQuery<LibraryFilesListResponseContract>({
         queryKey: ["video-files", videoId],
         queryFn: () => api.getLibraryFiles({ mediaId: videoId! }),
         enabled: !!videoId && !!video?.is_downloaded,
@@ -362,7 +342,7 @@ const VideoPage = () => {
         mutationFn: (nextMonitored: boolean) =>
             api.updateVideo(videoId!, { monitored: nextMonitored }),
         onSuccess: (_data, nextMonitored) => {
-            queryClient.setQueryData(["video", videoId], (old: any) =>
+            queryClient.setQueryData(["video", videoId], (old: VideoDetailContract | undefined) =>
                 old ? { ...old, is_monitored: nextMonitored } : old
             );
             dispatchMonitorStateChanged({ type: "video", tidalId: videoId!, monitored: nextMonitored });

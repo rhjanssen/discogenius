@@ -1,66 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import type {
+  AccountConfigContract as AccountSettings,
+  MetadataConfigContract as MetadataSettings,
+  NamingConfigContract as NamingSettings,
+  PathConfigContract as PathSettings,
+  PublicAppConfigContract as AppSettings,
+  QualityConfigContract as QualitySettings,
+} from "@contracts/config";
 
-export interface QualitySettings {
-  audio_quality: "low" | "normal" | "high" | "max";
-  video_quality: "sd" | "hd" | "fhd";
-  embed_cover: boolean;
-  embed_lyrics: boolean;
-  embed_synced_lyrics?: boolean;
-  upgrade_existing_files: boolean;
-}
-
-export interface MetadataSettings {
-  save_album_cover: boolean;
-  album_cover_name: string;
-  album_cover_resolution: "origin" | number;
-  save_artist_picture: boolean;
-  artist_picture_name: string;
-  artist_picture_resolution: number | string;
-  save_video_thumbnail: boolean;
-  embed_video_thumbnail?: boolean;
-  video_thumbnail_resolution: "origin" | "640x360" | "1280x720" | "160x107" | "480x320" | "750x500" | "1080x720";
-  save_lyrics: boolean;
-  save_album_review: boolean;
-  embed_album_review?: boolean;
-  save_artist_bio: boolean;
-  enable_fingerprinting: boolean;
-  write_tidal_url: boolean;
-  mark_explicit: boolean;
-  upc_target: "UPC" | "EAN" | "BARCODE";
-  write_audio_metadata?: boolean;
-  embed_replaygain?: boolean;
-}
-
-export interface PathSettings {
-  music_path: string;
-  atmos_path: string;
-  video_path: string;
-}
-
-export interface NamingSettings {
-  artist_folder: string;
-  album_track_path_single: string;
-  album_track_path_multi: string;
-  video_file: string;
-}
-
-export interface AppSettings {
-  theme: "light" | "dark" | "system";
-  acoustid_api_key?: string;
-}
-
-export interface AccountSettings {
-  userId?: number;
-  username?: string;
-  firstName?: string | null;
-  lastName?: string | null;
-  fullName?: string | null;
-  email?: string;
-  countryCode?: string;
-  picture?: string | null;
-}
+export type {
+  AccountConfigContract as AccountSettings,
+  MetadataConfigContract as MetadataSettings,
+  NamingConfigContract as NamingSettings,
+  PathConfigContract as PathSettings,
+  PublicAppConfigContract as AppSettings,
+  QualityConfigContract as QualitySettings,
+} from "@contracts/config";
 
 export const useUserSettings = () => {
   const [qualitySettings, setQualitySettings] = useState<QualitySettings | null>(null);
@@ -85,12 +42,12 @@ export const useUserSettings = () => {
         api.getAccountConfig()
       ]);
 
-      setQualitySettings(qualityData as QualitySettings);
-      setAppSettings(appData as AppSettings);
-      setMetadataSettings(metadataData as MetadataSettings);
-      setPathSettings(pathData as PathSettings);
-      setNamingSettings(namingData as NamingSettings);
-      setAccountSettings(accountData as AccountSettings);
+      setQualitySettings(qualityData);
+      setAppSettings(appData);
+      setMetadataSettings(metadataData);
+      setPathSettings(pathData);
+      setNamingSettings(namingData);
+      setAccountSettings(accountData);
     } catch (error: any) {
       toast({
         variant: "destructive",

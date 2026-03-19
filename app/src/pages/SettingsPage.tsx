@@ -44,6 +44,12 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
+import type {
+    FilteringConfigContract,
+    MonitoringConfigContract,
+    MonitoringStatusResponseContract,
+    NamingConfigContract,
+} from "@contracts/config";
 
 type NamingFieldKey =
     | "artist_folder"
@@ -720,9 +726,12 @@ const SettingsPage = () => {
     } = useUserSettings();
     const { tidalConnected, loading: tidalLoading } = useTidalAuth();
     const { theme, setTheme } = useTheme();
-    const [monitoringConfig, setMonitoringConfig] = useState<any>(null);
-    const [monitoringStatus, setMonitoringStatus] = useState({ running: false, checking: false });
-    const [curationConfig, setCurationConfig] = useState<any>(null);
+    const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
+    const [monitoringStatus, setMonitoringStatus] = useState<Pick<MonitoringStatusResponseContract, "running" | "checking">>({
+        running: false,
+        checking: false,
+    });
+    const [curationConfig, setCurationConfig] = useState<FilteringConfigContract | null>(null);
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importing, setImporting] = useState(false);
@@ -738,7 +747,7 @@ const SettingsPage = () => {
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
 
-    const [localNaming, setLocalNaming] = useState<any>({});
+    const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
     const audioRetaggingEnabled = metadataSettings?.write_audio_metadata === true || metadataSettings?.embed_replaygain !== false;
 
     useEffect(() => {
@@ -747,11 +756,15 @@ const SettingsPage = () => {
         }
     }, [namingSettings]);
 
-    const handleNamingChange = (key: keyof typeof namingSettings, value: string) => {
-        setLocalNaming((prev: any) => ({ ...prev, [key]: value }));
+    const handleNamingChange = (key: keyof NamingConfigContract, value: string) => {
+        setLocalNaming((prev) => ({ ...prev, [key]: value }));
     };
 
-    const handleNamingCommit = (key: keyof typeof namingSettings) => {
+    const handleNamingCommit = (key: keyof NamingConfigContract) => {
+        if (!namingSettings) {
+            return;
+        }
+
         if (localNaming[key] !== namingSettings[key]) {
             updateNamingSettings({ [key]: localNaming[key] });
         }
@@ -872,10 +885,10 @@ const SettingsPage = () => {
                 api.getMonitoringStatus(),
                 api.getCurationConfig()
             ]);
-            setMonitoringConfig((monStatus as any).config);
+            setMonitoringConfig(monStatus.config);
             setMonitoringStatus({
-                running: Boolean((monStatus as any).running),
-                checking: Boolean((monStatus as any).checking),
+                running: monStatus.running,
+                checking: monStatus.checking,
             });
             setCurationConfig(curation);
         } catch (error) {
@@ -910,10 +923,10 @@ const SettingsPage = () => {
         }
     };
 
-    const updateMonitoring = async (updates: any) => {
+    const updateMonitoring = async (updates: Partial<MonitoringConfigContract>) => {
         try {
-            const result: any = await api.updateMonitoringConfig(updates);
-            setMonitoringConfig(result.config ?? result);
+            const result = await api.updateMonitoringConfig(updates);
+            setMonitoringConfig(result.config);
 
             if (updates.enabled !== undefined) {
                 toast({
@@ -933,10 +946,10 @@ const SettingsPage = () => {
         }
     };
 
-    const updateCuration = async (updates: any) => {
+    const updateCuration = async (updates: Partial<FilteringConfigContract>) => {
         try {
             await api.updateCurationConfig(updates);
-            setCurationConfig({ ...curationConfig, ...updates });
+            setCurationConfig((current) => (current ? { ...current, ...updates } : current));
         } catch (error) {
             console.error('Error updating curation config:', error);
             toast({
@@ -1018,10 +1031,10 @@ const SettingsPage = () => {
 
             // Refresh status after check
             const status = await api.getMonitoringStatus();
-            setMonitoringConfig((status as any).config);
+            setMonitoringConfig(status.config);
             setMonitoringStatus({
-                running: Boolean((status as any).running),
-                checking: Boolean((status as any).checking),
+                running: status.running,
+                checking: status.checking,
             });
         } catch (error) {
             console.error('Error checking for new releases:', error);

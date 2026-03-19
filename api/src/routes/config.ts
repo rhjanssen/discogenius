@@ -4,9 +4,15 @@ import { syncDiscogeniusSettings } from "../services/tidal-dl-ng.js";
 import { syncOrpheusSettings } from "../services/orpheus.js";
 import { UpgraderService } from "../services/upgrader.js";
 import { getAppReleaseInfo } from "../services/app-release.js";
-import { getObjectBody, getRequiredString, isRequestValidationError } from "../utils/request-validation.js";
+import {
+  RequestValidationError,
+  getObjectBody,
+  getRequiredString,
+  isRequestValidationError,
+} from "../utils/request-validation.js";
 import * as TOML from "@iarna/toml";
 import fs from "fs";
+import type { PublicAppConfigContract } from "../contracts/config.js";
 
 const router = Router();
 
@@ -39,7 +45,10 @@ router.post("/account", (req, res) => {
 router.get("/app", (_, res) => {
   try {
     const config = getConfigSection("app");
-    res.json(config);
+    const response: PublicAppConfigContract = {
+      acoustid_api_key: config.acoustid_api_key,
+    };
+    res.json(response);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -47,7 +56,19 @@ router.get("/app", (_, res) => {
 
 router.post("/app", (req, res) => {
   try {
-    updateConfig("app", getObjectBody(req.body));
+    const body = getObjectBody(req.body);
+    const updates: Partial<PublicAppConfigContract> = {};
+
+    if ("acoustid_api_key" in body) {
+      const rawValue = body.acoustid_api_key;
+      if (rawValue !== undefined && rawValue !== null && typeof rawValue !== "string") {
+        throw new RequestValidationError("acoustid_api_key must be a string");
+      }
+
+      updates.acoustid_api_key = typeof rawValue === "string" ? rawValue.trim() || undefined : undefined;
+    }
+
+    updateConfig("app", updates);
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
