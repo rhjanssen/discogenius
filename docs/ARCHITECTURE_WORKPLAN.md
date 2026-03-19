@@ -83,6 +83,10 @@ A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different T
 
 Items 1–2 are low-risk and can start pre-1.0. Items 3–5 are post-1.0.
 
+See also:
+
+- `docs/RFC_PROVIDER_BACKEND_ABSTRACTION.md` for the approved provider/backend interface and capability-routing direction
+
 **MusicBrainz enrichment background job:**
 
 When a TIDAL track has an ISRC, a background MB lookup (`/ws/2/recording?isrc=<isrc>`) can return the MB Recording ID (→ `media.mbid`) and the containing MB Release Group IDs. When a TIDAL album has a UPC, a lookup (`/ws/2/release?barcode=<upc>`) returns the MB Release ID (→ `albums.mbid`) and its Release Group (→ `albums.mb_release_group_id`). This is rate-limited to 1 req/sec per MB policy and should be queued as a low-priority background job, not run inline.
