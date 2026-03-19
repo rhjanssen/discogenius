@@ -37,45 +37,12 @@ const registerServiceWorker = () => {
     return;
   }
 
-  const swReloadKey = "discogenius:sw-reload";
-  const reloadForSwUpdate = () => {
-    try {
-      if (sessionStorage.getItem(swReloadKey)) return;
-      sessionStorage.setItem(swReloadKey, "1");
-    } catch {
-      // ignore
-    }
-
-    const url = new URL(window.location.href);
-    url.searchParams.set("sw", String(Date.now()));
-    window.location.replace(url.toString());
-  };
-
-  navigator.serviceWorker.addEventListener("controllerchange", reloadForSwUpdate);
-
   window.addEventListener("load", async () => {
     try {
       const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
 
-      const activateWaitingWorker = () => {
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: "SKIP_WAITING" });
-        }
-      };
-
-      activateWaitingWorker();
-
-      registration.addEventListener("updatefound", () => {
-        const installingWorker = registration.installing;
-        if (!installingWorker) return;
-
-        installingWorker.addEventListener("statechange", () => {
-          if (installingWorker.state === "installed" && navigator.serviceWorker.controller) {
-            activateWaitingWorker();
-          }
-        });
-      });
-
+      // Keep updates quiet and predictable. A new worker can wait until the next
+      // navigation instead of forcing a controller change and reload loop.
       void registration.update();
     } catch {
       // ignore

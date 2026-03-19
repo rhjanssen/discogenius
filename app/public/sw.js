@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const SHELL_CACHE = `discogenius-shell-${CACHE_VERSION}`;
 const ASSET_CACHE = `discogenius-assets-${CACHE_VERSION}`;
 const IMAGE_CACHE = `discogenius-images-${CACHE_VERSION}`;
@@ -11,8 +11,8 @@ const CORE_ASSETS = [
   "/assets/images/apple-icon-180.png",
   "/assets/images/icon-192.png",
   "/assets/images/icon-512.png",
-  "/assets/images/pwa-icon-192.png",
-  "/assets/images/pwa-icon-512.png",
+  "/assets/images/manifest-icon-192.maskable.png",
+  "/assets/images/manifest-icon-512.maskable.png",
   "/assets/images/dolby_atmos_logo.svg",
 ];
 
@@ -38,12 +38,6 @@ self.addEventListener("activate", (event) => {
       )
       .then(() => self.clients.claim()),
   );
-});
-
-self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
 });
 
 self.addEventListener("fetch", (event) => {
