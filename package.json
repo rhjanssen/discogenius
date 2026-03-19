@@ -16,7 +16,7 @@
     "app:dev": "yarn --cwd app dev",
     "api:dev": "yarn --cwd api dev",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
-    "test:e2e:smoke": "playwright test -c e2e/playwright.config.ts e2e/api-health.spec.ts e2e/navigation.spec.ts",
+    "test:e2e:smoke": "playwright test -c e2e/playwright.config.ts e2e/api-health.spec.ts e2e/navigation.spec.ts e2e/auth.spec.ts",
     "test:e2e:headed": "playwright test -c e2e/playwright.config.ts --headed",
     "ci": "yarn lint && yarn typecheck && yarn test:api && yarn build",
     "release:prepare": "node scripts/release/prepare-release.mjs"

@@ -89,21 +89,25 @@ test.describe('Search → monitor → navigate flow', () => {
     await page.route('**/api/search?*', async (route) => {
       await route.fulfill({
         json: {
+          success: true,
           results: {
             artists: [
               {
                 id: '777',
-                tidal_id: '777',
+                type: 'artist',
                 name: 'Deterministic Artist',
-                picture: null,
+                subtitle: null,
+                imageId: null,
                 monitored: false,
-                inLibrary: false,
+                in_library: false,
               },
             ],
             albums: [],
             tracks: [],
             videos: [],
           },
+          mode: 'mock',
+          remoteCatalogAvailable: false,
         },
       });
     });

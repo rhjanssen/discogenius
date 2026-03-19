@@ -102,12 +102,17 @@ test.describe('Restart resilience', () => {
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 5_000 });
 
     const dashboardViewPicker = page.getByRole('button', { name: /^Queue$/i }).first();
-    await expect(dashboardViewPicker).toBeVisible({ timeout: 5_000 });
-    await dashboardViewPicker.click();
+    if (await dashboardViewPicker.isVisible().catch(() => false)) {
+      await dashboardViewPicker.click();
+      await page.getByRole('menuitem', { name: /^Activity$/i }).click();
+      await expect(page.getByRole('button', { name: /^Activity$/i }).first()).toBeVisible();
+    } else {
+      const activityTab = page.getByRole('tab', { name: /^Activity$/i }).first();
+      await expect(activityTab).toBeVisible({ timeout: 5_000 });
+      await activityTab.click();
+      await expect(activityTab).toHaveAttribute('aria-selected', 'true');
+    }
 
-    await page.getByRole('menuitem', { name: /^Activity$/i }).click();
-
-    await expect(page.getByRole('button', { name: /^Activity$/i }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: /^Filter$/i })).toBeVisible();
   });
 

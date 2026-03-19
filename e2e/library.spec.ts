@@ -168,6 +168,8 @@ test.describe('Library page tabs & filtering', () => {
                 last_scanned: null,
               },
             ],
+            limit: 50,
+            offset: 0,
             hasMore: false,
             total: 1,
           }),
@@ -179,8 +181,12 @@ test.describe('Library page tabs & filtering', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ items: [], hasMore: false, total: 0 }),
+        body: JSON.stringify({ items: [], limit: 50, offset: 0, hasMore: false, total: 0 }),
       });
+    });
+
+    await page.addInitScript(() => {
+      localStorage.removeItem('discogenius_library_settings');
     });
 
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });

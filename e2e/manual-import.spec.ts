@@ -38,7 +38,14 @@ test.describe('Manual import flow', () => {
     ];
 
     await page.route('**/api/stats', async (route) => {
-      await route.fulfill({ json: { artists: 1, albums: 1, tracks: 2, videos: 0 } });
+      await route.fulfill({
+        json: {
+          artists: { total: 1, monitored: 1, downloaded: 0 },
+          albums: { total: 1, monitored: 1, downloaded: 0 },
+          tracks: { total: 2, monitored: 2, downloaded: 0 },
+          videos: { total: 0, monitored: 0, downloaded: 0 },
+        },
+      });
     });
 
     await page.route('**/api/status/history?*', async (route) => {
@@ -46,14 +53,22 @@ test.describe('Manual import flow', () => {
     });
 
     await page.route('**/api/status', async (route) => {
-      await route.fulfill({ json: { activeJobs: [], jobHistory: [], queueStats: [] } });
+      await route.fulfill({
+        json: {
+          activeJobs: [],
+          queuedJobs: [],
+          jobHistory: [],
+          taskQueueStats: [],
+          commandStats: {},
+        },
+      });
     });
 
     await page.route('**/api/monitoring/status', async (route) => {
       await route.fulfill({ json: { running: false, checking: false } });
     });
 
-    await page.route('**/api/unmapped', async (route, request) => {
+    await page.route('**/api/unmapped**', async (route, request) => {
       if (request.method() === 'GET') {
         await route.fulfill({ json: unmappedFiles });
         return;
@@ -64,21 +79,28 @@ test.describe('Manual import flow', () => {
     await page.route('**/api/search?*', async (route) => {
       await route.fulfill({
         json: {
+          success: true,
           results: {
             albums: [
               {
                 id: '555',
-                tidal_id: '555',
-                title: 'Test Album',
-                cover: null,
+                type: 'album',
+                name: 'Test Album',
+                subtitle: 'Test Artist',
+                imageId: null,
                 explicit: true,
                 quality: 'HI_RES_LOSSLESS',
-                numberOfTracks: 2,
-                artist: { id: '777', name: 'Test Artist', picture: null },
-                artists: [{ id: '777', name: 'Test Artist', picture: null }],
+                monitored: false,
+                in_library: false,
+                release_date: '2022-01-01',
               },
             ],
+            artists: [],
+            tracks: [],
+            videos: [],
           },
+          mode: 'mock',
+          remoteCatalogAvailable: false,
         },
       });
     });

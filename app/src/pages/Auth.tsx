@@ -300,6 +300,58 @@ const Auth = () => {
     }, 3000);
   };
 
+  const openAuthPopupWindow = () => {
+    let popup: Window | null = null;
+
+    try {
+      popup = window.open("", "_blank", "popup=yes,width=520,height=720");
+    } catch {
+      popup = null;
+    }
+
+    if (!popup) {
+      return null;
+    }
+
+    try {
+      popup.document.title = "Discogenius TIDAL Login";
+      popup.document.body.innerHTML = `
+        <div style="font-family: sans-serif; display: flex; min-height: 100vh; margin: 0; align-items: center; justify-content: center; background: #0b0d10; color: #f5f7fa;">
+          <div style="max-width: 320px; text-align: center; line-height: 1.5;">
+            <h1 style="font-size: 20px; margin: 0 0 12px;">Opening TIDAL</h1>
+            <p style="margin: 0; color: #c7ccd3;">Discogenius is requesting a device code and will redirect you automatically.</p>
+          </div>
+        </div>
+      `;
+      popup.opener = null;
+    } catch {
+      // Best effort only. The popup still exists and can be navigated.
+    }
+
+    return popup;
+  };
+
+  const openVerificationWindow = (url: string, existingWindow?: Window | null) => {
+    if (existingWindow && !existingWindow.closed) {
+      try {
+        existingWindow.location.replace(url);
+        existingWindow.focus();
+        return existingWindow;
+      } catch {
+        // Fall through to a new popup if the existing handle can no longer be used.
+      }
+    }
+
+    let popup: Window | null = null;
+    try {
+      popup = window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      popup = null;
+    }
+
+    return popup;
+  };
+
   const connectTidal = async () => {
     if (authStatus && !authStatus.canAuthenticate) {
       toast({
@@ -324,12 +376,7 @@ const Auth = () => {
     setRefreshing(false);
     setUserCode(null);
     setVerificationUrl(null);
-    let authWindow: Window | null = null;
-    try {
-      authWindow = window.open("about:blank", "_blank", "noopener,noreferrer");
-    } catch {
-      authWindow = null;
-    }
+    let authWindow = openAuthPopupWindow();
     try {
       const loginData: any = await api.startDeviceLogin();
 
@@ -377,11 +424,7 @@ const Auth = () => {
       setVerificationUrl(url);
 
       // Open verification URL in a window spawned from the user gesture.
-      if (authWindow && !authWindow.closed) {
-        authWindow.location.href = url;
-      } else {
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
+      authWindow = openVerificationWindow(url, authWindow);
 
       // Poll for completion
       const pollInterval = Math.max(1, intervalSeconds) * 1000;
@@ -599,7 +642,7 @@ const Auth = () => {
                 icon={<Open24Regular />}
                 onClick={() => {
                   if (verificationUrl) {
-                    window.open(verificationUrl, '_blank', 'noopener,noreferrer');
+                    openVerificationWindow(verificationUrl);
                   }
                 }}
                 style={{ width: '100%', marginBottom: tokens.spacingVerticalM }}

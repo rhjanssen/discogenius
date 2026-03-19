@@ -4,7 +4,14 @@ const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
 
 async function stubDashboardApis(page: Page) {
   await page.route('**/api/stats', async (route) => {
-    await route.fulfill({ json: { artists: 0, albums: 0, tracks: 0, videos: 0 } });
+    await route.fulfill({
+      json: {
+        artists: { total: 0, monitored: 0, downloaded: 0 },
+        albums: { total: 0, monitored: 0, downloaded: 0 },
+        tracks: { total: 0, monitored: 0, downloaded: 0 },
+        videos: { total: 0, monitored: 0, downloaded: 0 },
+      },
+    });
   });
 
   await page.route('**/api/status/history?*', async (route) => {
@@ -12,7 +19,15 @@ async function stubDashboardApis(page: Page) {
   });
 
   await page.route('**/api/status', async (route) => {
-    await route.fulfill({ json: { activeJobs: [], jobHistory: [], queueStats: [] } });
+    await route.fulfill({
+      json: {
+        activeJobs: [],
+        queuedJobs: [],
+        jobHistory: [],
+        taskQueueStats: [],
+        commandStats: {},
+      },
+    });
   });
 
   await page.route('**/api/monitoring/status', async (route) => {
@@ -20,7 +35,7 @@ async function stubDashboardApis(page: Page) {
   });
 
   await page.route('**/api/queue**', async (route) => {
-    await route.fulfill({ json: { items: [] } });
+    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
   await page.route('**/api/unmapped**', async (route) => {
@@ -30,7 +45,14 @@ async function stubDashboardApis(page: Page) {
 
 async function stubDashboardApisWithActivity(page: Page) {
   await page.route('**/api/stats', async (route) => {
-    await route.fulfill({ json: { artists: 1, albums: 1, tracks: 2, videos: 0 } });
+    await route.fulfill({
+      json: {
+        artists: { total: 1, monitored: 1, downloaded: 0 },
+        albums: { total: 1, monitored: 1, downloaded: 0 },
+        tracks: { total: 2, monitored: 2, downloaded: 0 },
+        videos: { total: 0, monitored: 0, downloaded: 0 },
+      },
+    });
   });
 
   await page.route('**/api/status/history?*', async (route) => {
@@ -64,6 +86,7 @@ async function stubDashboardApisWithActivity(page: Page) {
             startTime: Date.now(),
           },
         ],
+        queuedJobs: [],
         jobHistory: [
           {
             id: 4,
@@ -84,7 +107,8 @@ async function stubDashboardApisWithActivity(page: Page) {
             payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
           },
         ],
-        queueStats: [],
+        taskQueueStats: [],
+        commandStats: {},
       },
     });
   });
@@ -94,7 +118,7 @@ async function stubDashboardApisWithActivity(page: Page) {
   });
 
   await page.route('**/api/queue**', async (route) => {
-    await route.fulfill({ json: { items: [] } });
+    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
   await page.route('**/api/unmapped**', async (route) => {
@@ -104,7 +128,14 @@ async function stubDashboardApisWithActivity(page: Page) {
 
 async function stubDashboardApisWithFailedImportActivity(page: Page) {
   await page.route('**/api/stats', async (route) => {
-    await route.fulfill({ json: { artists: 1, albums: 1, tracks: 10, videos: 0 } });
+    await route.fulfill({
+      json: {
+        artists: { total: 1, monitored: 1, downloaded: 0 },
+        albums: { total: 1, monitored: 1, downloaded: 0 },
+        tracks: { total: 10, monitored: 10, downloaded: 0 },
+        videos: { total: 0, monitored: 0, downloaded: 0 },
+      },
+    });
   });
 
   await page.route('**/api/status/history?*', async (route) => {
@@ -115,6 +146,7 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
     await route.fulfill({
       json: {
         activeJobs: [],
+        queuedJobs: [],
         jobHistory: [
           {
             id: 77,
@@ -131,7 +163,8 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
             },
           },
         ],
-        queueStats: [],
+        taskQueueStats: [],
+        commandStats: {},
       },
     });
   });
@@ -145,7 +178,7 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
   });
 
   await page.route('**/api/queue**', async (route) => {
-    await route.fulfill({ json: { items: [] } });
+    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
   await page.route('**/api/unmapped**', async (route) => {
@@ -155,7 +188,14 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
 
 async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
   await page.route('**/api/stats', async (route) => {
-    await route.fulfill({ json: { artists: 1, albums: 1, tracks: 10, videos: 0 } });
+    await route.fulfill({
+      json: {
+        artists: { total: 1, monitored: 1, downloaded: 0 },
+        albums: { total: 1, monitored: 1, downloaded: 0 },
+        tracks: { total: 10, monitored: 10, downloaded: 0 },
+        videos: { total: 0, monitored: 0, downloaded: 0 },
+      },
+    });
   });
 
   await page.route('**/api/status/history?*', async (route) => {
@@ -163,31 +203,47 @@ async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
   });
 
   await page.route('**/api/status', async (route) => {
-    await route.fulfill({ json: { activeJobs: [], jobHistory: [], queueStats: [] } });
+    await route.fulfill({
+      json: {
+        activeJobs: [],
+        queuedJobs: [],
+        jobHistory: [],
+        taskQueueStats: [],
+        commandStats: {},
+      },
+    });
   });
 
   await page.route('**/api/monitoring/status', async (route) => {
     await route.fulfill({ json: { running: false, checking: false } });
   });
 
-  await page.route('**/api/queue', async (route) => {
+  await page.route('**/api/queue**', async (route) => {
     await route.fulfill({
-      json: [
-        {
-          id: 501,
-          tidal_id: 'album-501',
-          type: 'album',
-          status: 'failed',
-          progress: 62,
-          error: 'Network timeout while downloading album',
-          created_at: new Date().toISOString(),
-          title: 'From A Bakermat Point Of View',
-          artist: 'Bakermat',
-          cover: null,
-          album_id: 'album-501',
-          album_title: 'From A Bakermat Point Of View',
-        },
-      ],
+      json: {
+        items: [
+          {
+            id: 501,
+            url: 'https://tidal.com/album/album-501',
+            tidalId: 'album-501',
+            type: 'album',
+            status: 'failed',
+            progress: 62,
+            error: 'Network timeout while downloading album',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            title: 'From A Bakermat Point Of View',
+            artist: 'Bakermat',
+            cover: null,
+            album_id: 'album-501',
+            album_title: 'From A Bakermat Point Of View',
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+      },
     });
   });
 
@@ -261,10 +317,10 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
-    await expect(page.getByText('Download Import').first()).toBeVisible();
-    await expect(page.getByText('Artist Refresh')).toBeVisible();
+    await expect(page.getByText('Import Album').first()).toBeVisible();
+    await expect(page.getByText('Refresh Artist')).toBeVisible();
     await expect(page.getByText('Missing Album Search')).toBeVisible();
-    await expect(page.getByText('Album: Around the World by Daft Punk').first()).toBeVisible();
+    await expect(page.getByText('Around the World by Daft Punk').first()).toBeVisible();
     await expect(page.getByText('Daft Punk').first()).toBeVisible();
   });
 
@@ -275,8 +331,8 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
-    await expect(page.getByText('Download Import')).toBeVisible();
-    await expect(page.getByText('Album: Around the World by Daft Punk')).toBeVisible();
+    await expect(page.getByText('Import Album')).toBeVisible();
+    await expect(page.getByText('Around the World by Daft Punk')).toBeVisible();
     await expect(page.getByText('Error: Failed to move files into the library')).toBeVisible();
     await expect(page.getByRole('button', { name: /Retry Job/i })).toBeVisible();
   });
