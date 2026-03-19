@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-03-16
+Last updated: 2026-03-19
 
 ## Purpose
 
@@ -29,7 +29,7 @@ Measured 2026-03-13:
 
 ## Pre-1.0 Work Items
 
-1. ~~Add a numbered database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — `MIGRATIONS` array in database.ts, gated by `PRAGMA user_version`, aligned with Lidarr's FluentMigrator numbered-migration pattern.
+1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 1.0.0 schema baseline now uses semver-encoded `PRAGMA user_version` (`1.0.0` -> `10000`) with app/api/schema provenance tracked in `database_version_history`.
 2. ~~Add a persistent history table and write path for key file lifecycle events.~~ **Done** — `history_events` table, backend write path, and `/api/history` endpoint are implemented.
 3. Continue route thinning in high-traffic routes so route files remain adapters.
 4. Finish import decision extraction into import-decision specifications.

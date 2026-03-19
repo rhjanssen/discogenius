@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Roadmap
+    url: https://github.com/rhjanssen/discogenius/issues/1
+    about: Review the prioritized roadmap before opening large new workstreams.

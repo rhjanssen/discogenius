@@ -40,15 +40,49 @@ export function closeDatabase() {
   }
 }
 
+const BASE_SCHEMA_SEMVER = "1.0.0";
+const SEMVER_MULTIPLIER_MAJOR = 10000;
+const SEMVER_MULTIPLIER_MINOR = 100;
+
+function encodeSchemaSemver(semver: string): number {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(semver.trim());
+  if (!match) {
+    throw new Error(`Invalid schema semver: ${semver}`);
+  }
+
+  const [, majorRaw, minorRaw, patchRaw] = match;
+  const major = Number.parseInt(majorRaw, 10);
+  const minor = Number.parseInt(minorRaw, 10);
+  const patch = Number.parseInt(patchRaw, 10);
+
+  if (minor >= SEMVER_MULTIPLIER_MINOR || patch >= SEMVER_MULTIPLIER_MINOR) {
+    throw new Error(`Schema semver components must be < ${SEMVER_MULTIPLIER_MINOR}: ${semver}`);
+  }
+
+  return major * SEMVER_MULTIPLIER_MAJOR + minor * SEMVER_MULTIPLIER_MINOR + patch;
+}
+
+function decodeSchemaUserVersion(userVersion: number): string {
+  if (userVersion <= 0) {
+    return "0.0.0";
+  }
+
+  const major = Math.floor(userVersion / SEMVER_MULTIPLIER_MAJOR);
+  const minor = Math.floor((userVersion % SEMVER_MULTIPLIER_MAJOR) / SEMVER_MULTIPLIER_MINOR);
+  const patch = userVersion % SEMVER_MULTIPLIER_MINOR;
+  return `${major}.${minor}.${patch}`;
+}
+
+const BASE_SCHEMA_USER_VERSION = encodeSchemaSemver(BASE_SCHEMA_SEMVER);
+
 // ====================================================================
 // SCHEMA MIGRATIONS
-// Lidarr-aligned numbered migration runner. Each entry runs exactly once,
-// gated by PRAGMA user_version. Migrations are appended here in order;
-// the index+1 is the migration version number.
+// Discogenius 1.0.0 resets the schema baseline so SQLite `user_version`
+// tracks a semver-encoded schema version (`1.0.0` -> `10000`).
 //
-// Migrations remain idempotent (they check before altering) so that a
-// fresh database — where CREATE TABLE IF NOT EXISTS already produced the
-// current schema — safely skips the ALTER without errors.
+// The legacy numbered migrations remain so older local databases can still
+// be lifted to the current 1.0.0 schema before the baseline is normalized.
+// Future schema migrations should use explicit semver-encoded versions.
 // ====================================================================
 function tableExists(tableName: string): boolean {
   const row = db
@@ -65,6 +99,16 @@ function columnExists(tableName: string, columnName: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   return columns.some((column) => column.name === columnName);
 }
+
+function tableHasRows(tableName: string): boolean {
+  if (!tableExists(tableName)) {
+    return false;
+  }
+
+  const row = db.prepare(`SELECT 1 as present FROM ${tableName} LIMIT 1`).get() as { present?: number } | undefined;
+  return row?.present === 1;
+}
+
 function ensureUnmappedFilesAudioMetadataColumns() {
   if (!tableExists("unmapped_files")) {
     return;
@@ -85,7 +129,7 @@ function ensureUnmappedFilesAudioMetadataColumns() {
   }
 }
 
-const MIGRATIONS: Array<{ description: string; up: () => void }> = [
+const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
   {
     // 1
     description: "make upgrade_queue.album_id nullable for video upgrade support",
@@ -332,6 +376,9 @@ const MIGRATIONS: Array<{ description: string; up: () => void }> = [
   },
 ];
 
+const LEGACY_SCHEMA_VERSION = LEGACY_MIGRATIONS.length;
+const SEMVER_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
+
 type MigrationRunSummary = {
   fromVersion: number;
   toVersion: number;
@@ -340,23 +387,62 @@ type MigrationRunSummary = {
 
 function runMigrations(): MigrationRunSummary {
   const currentVersion = db.pragma("user_version", { simple: true }) as number;
-  const pending = MIGRATIONS.slice(currentVersion);
-  if (pending.length === 0) {
-    return {
-      fromVersion: currentVersion,
-      toVersion: currentVersion,
-      appliedDescriptions: [],
-    };
+  const appliedDescriptions: string[] = [];
+
+  const runLegacyPending = (fromVersion: number) => {
+    const pending = LEGACY_MIGRATIONS.slice(fromVersion);
+    if (pending.length === 0) {
+      return;
+    }
+
+    console.log(`🛠️  Running ${pending.length} legacy schema migration(s) (${fromVersion} → ${LEGACY_SCHEMA_VERSION})...`);
+    for (let i = 0; i < pending.length; i++) {
+      const version = fromVersion + i + 1;
+      console.log(`  [legacy ${version}] ${pending[i].description}`);
+      pending[i].up();
+      appliedDescriptions.push(pending[i].description);
+      db.pragma(`user_version = ${version}`);
+    }
+  };
+
+  if (currentVersion > 0 && currentVersion < BASE_SCHEMA_USER_VERSION) {
+    const legacyVersion = Math.min(currentVersion, LEGACY_SCHEMA_VERSION);
+    if (legacyVersion < LEGACY_SCHEMA_VERSION) {
+      runLegacyPending(legacyVersion);
+    }
   }
 
-  console.log(`🛠️  Running ${pending.length} schema migration(s) (${currentVersion} → ${MIGRATIONS.length})...`);
-  const appliedDescriptions: string[] = [];
-  for (let i = 0; i < pending.length; i++) {
-    const version = currentVersion + i + 1;
-    console.log(`  [${version}] ${pending[i].description}`);
-    pending[i].up();
-    appliedDescriptions.push(pending[i].description);
-    db.pragma(`user_version = ${version}`);
+  let normalizedVersion = db.pragma("user_version", { simple: true }) as number;
+  const shouldBackfillLegacyUnversionedSchema =
+    normalizedVersion === 0
+    && (tableHasRows("artists") || tableHasRows("albums") || tableHasRows("media") || tableHasRows("library_files"));
+
+  if (shouldBackfillLegacyUnversionedSchema) {
+    runLegacyPending(0);
+    normalizedVersion = db.pragma("user_version", { simple: true }) as number;
+  }
+
+  if (normalizedVersion < BASE_SCHEMA_USER_VERSION) {
+    console.log(`🛠️  Baseline current schema to ${BASE_SCHEMA_SEMVER} (PRAGMA user_version=${BASE_SCHEMA_USER_VERSION})...`);
+    db.pragma(`user_version = ${BASE_SCHEMA_USER_VERSION}`);
+    appliedDescriptions.push(`baseline current schema as ${BASE_SCHEMA_SEMVER} (PRAGMA user_version=${BASE_SCHEMA_USER_VERSION})`);
+    normalizedVersion = BASE_SCHEMA_USER_VERSION;
+  }
+
+  const pending = SEMVER_MIGRATIONS
+    .filter((migration) => migration.version > normalizedVersion)
+    .sort((left, right) => left.version - right.version);
+
+  if (pending.length > 0) {
+    console.log(
+      `🛠️  Running ${pending.length} schema migration(s) (${decodeSchemaUserVersion(normalizedVersion)} → ${decodeSchemaUserVersion(pending[pending.length - 1].version)})...`
+    );
+    for (const migration of pending) {
+      console.log(`  [${decodeSchemaUserVersion(migration.version)}] ${migration.description}`);
+      migration.up();
+      appliedDescriptions.push(migration.description);
+      db.pragma(`user_version = ${migration.version}`);
+    }
   }
 
   return {
@@ -368,9 +454,6 @@ function runMigrations(): MigrationRunSummary {
 
 export function initDatabase() {
   console.log("🗄️  Initializing database schema...");
-
-  // Run versioned schema migrations before touching any tables.
-  const migrationSummary = runMigrations();
 
   // ====================================================================
   // ARTISTS TABLE
@@ -769,6 +852,33 @@ export function initDatabase() {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS history_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artist_id INT,
+      album_id INT,
+      media_id INT,
+      library_file_id INT,
+      event_type TEXT NOT NULL,
+      quality TEXT,
+      source_title TEXT,
+      data TEXT,
+      date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS database_version_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_version TEXT NOT NULL,
+      api_version TEXT NOT NULL,
+      schema_from INT NOT NULL,
+      schema_to INT NOT NULL,
+      migration_notes TEXT,
+      applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // ====================================================================
   // PROVIDER IDS TABLE
   // Maps TIDAL-primary entities to IDs from other providers/sources.
@@ -908,11 +1018,22 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_provider_ids_entity ON provider_ids(entity_type, entity_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_provider_ids_provider ON provider_ids(provider, external_id)`);
 
+  // History / schema provenance indexes
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_date ON history_events(date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_artist ON history_events(artist_id, date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_album ON history_events(album_id, date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_media ON history_events(media_id, date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_event_type ON history_events(event_type, date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_database_version_history_applied_at ON database_version_history(applied_at DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_database_version_history_app_version ON database_version_history(app_version, applied_at DESC)");
+
   // Upgrade queue indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_media_id ON upgrade_queue(media_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
+
+  const migrationSummary = runMigrations();
 
   console.log("✅ Database schema initialized");
 
@@ -926,7 +1047,8 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
   const releaseInfo = getAppReleaseInfo();
   const appVersion = releaseInfo.version;
   const apiVersion = releaseInfo.apiVersion;
-  const schemaVersion = db.pragma("user_version", { simple: true }) as number;
+  const schemaUserVersion = db.pragma("user_version", { simple: true }) as number;
+  const schemaVersion = decodeSchemaUserVersion(schemaUserVersion);
 
   const previousVersionRow = db.prepare(`SELECT value FROM config WHERE key = 'runtime.current_app_version'`).get() as
     | { value: string }
@@ -976,8 +1098,14 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
 
     upsertConfig.run(
       "runtime.current_schema_version",
-      String(schemaVersion),
-      "Current SQLite schema version (PRAGMA user_version)"
+      schemaVersion,
+      "Current Discogenius schema semver"
+    );
+
+    upsertConfig.run(
+      "runtime.current_schema_user_version",
+      String(schemaUserVersion),
+      "Current SQLite schema version encoded in PRAGMA user_version"
     );
 
     if (shouldRecordHistory) {

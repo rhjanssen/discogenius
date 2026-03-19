@@ -34,6 +34,7 @@ Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it 
 - **Frontend**: Theme state must come from `FluentThemeProvider`/`useTheme`; do not duplicate dark-mode detection in layout components.
 - **General**: Use Yarn only. Do not switch this repo to npm or pnpm.
 - **General**: Pre-1.0, prefer deleting stale compatibility paths over carrying aliases, legacy job types, or old route names forward.
+- **General**: Do not introduce parallel implementations or long-lived compatibility layers without a documented migration/removal plan. When a new path replaces an old path, delete or consolidate the superseded path as part of the work whenever feasible.
 - **General**: After meaningful frontend/backend changes, validate with `yarn --cwd app build && yarn --cwd api build`, and when packaging/runtime behavior matters, rebuild and run the Docker container with `docker compose up --build -d`.
 
 ## TypeScript Discipline
@@ -108,5 +109,5 @@ See `.github/workflows` for local + Docker dev steps, Docker deploy, and docs up
   - commit + tag `v<semver>` + push
 - Rely on `.github/workflows/release-dockerhub.yml` for Docker publish + GitHub release asset/notes publication.
 - Keep `CHANGELOG.md` updated and concise; release workflow reads from it.
-- Database schema upgrades remain PRAGMA `user_version` migrations; runtime app/api/schema provenance is tracked in `config` keys and `database_version_history`.
+- Database schema upgrades remain PRAGMA `user_version` migrations; the 1.0.0 baseline uses semver-encoded schema versions (`1.0.0` -> `10000`), and runtime app/api/schema provenance is tracked in `config` keys and `database_version_history`.
 
