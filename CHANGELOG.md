@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.4] - 2026-03-19
+
+### Changed
+- Fixed the initial TIDAL auth popup so the first click opens the real device-login URL instead of `about:blank`.
+- Added auth-flow regression coverage and refreshed stale dashboard, search, library, and manual-import E2E fixtures so the full suite runs green in mock-provider mode.
+- Shared the remaining queue/status/list contracts across the app and API, and stabilized the PWA/service-worker path.
+- Documented the provider/backend abstraction RFC and updated GitHub workflows/release-note generation for cleaner Node 24-compatible releases.
+
 ## [1.0.3] - 2026-03-19
 
 ### Changed
@@ -15,6 +23,7 @@ All notable changes to this project are documented in this file.
 - Validate config and media update payloads
 - Add deterministic provider auth modes
 - Add shared config and media contracts
+
 ## [1.0.1] - 2026-03-19
 
 ### Changed
