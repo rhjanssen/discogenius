@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { db } from "../database.js";
+import { parseMonitoringConfigUpdate } from "../contracts/config-updates.js";
+import { getObjectBody, isRequestValidationError } from "../utils/request-validation.js";
 import {
   getMonitoringStatus,
   updateMonitoringConfig,
@@ -49,28 +51,31 @@ router.get("/status", (_, res) => {
 // Update monitoring config
 router.post("/config", (req, res) => {
   try {
-    const {
-      enabled,
-      startHour,
-      durationHours,
-      scanIntervalHours,
-      removeUnmonitoredFiles,
-      artistRefreshDays,
-      albumRefreshDays,
-      trackRefreshDays,
-      videoRefreshDays,
-    } = req.body;
-
+    const currentStatus = getMonitoringStatus();
+    const validatedUpdates = parseMonitoringConfigUpdate(getObjectBody(req.body), {
+      enabled: currentStatus.config.enable_active_monitoring,
+      scanIntervalHours: currentStatus.config.scan_interval_hours,
+      startHour: currentStatus.config.start_hour,
+      durationHours: currentStatus.config.duration_hours,
+      removeUnmonitoredFiles: currentStatus.config.remove_unmonitored_files,
+      artistRefreshDays: currentStatus.config.artist_refresh_days,
+      albumRefreshDays: currentStatus.config.album_refresh_days,
+      trackRefreshDays: currentStatus.config.track_refresh_days,
+      videoRefreshDays: currentStatus.config.video_refresh_days,
+      lastCheckTimestamp: currentStatus.config.lastCheckTimestamp ?? undefined,
+      checkInProgress: currentStatus.config.checkInProgress,
+      progressArtistIndex: currentStatus.config.progressArtistIndex,
+    });
     const updates: any = {};
-    if (enabled !== undefined) updates.enable_active_monitoring = enabled;
-    if (startHour !== undefined) updates.start_hour = startHour;
-    if (durationHours !== undefined) updates.duration_hours = durationHours;
-    if (scanIntervalHours !== undefined) updates.scan_interval_hours = scanIntervalHours;
-    if (removeUnmonitoredFiles !== undefined) updates.remove_unmonitored_files = removeUnmonitoredFiles;
-    if (artistRefreshDays !== undefined) updates.artist_refresh_days = artistRefreshDays;
-    if (albumRefreshDays !== undefined) updates.album_refresh_days = albumRefreshDays;
-    if (trackRefreshDays !== undefined) updates.track_refresh_days = trackRefreshDays;
-    if (videoRefreshDays !== undefined) updates.video_refresh_days = videoRefreshDays;
+    if ("enabled" in validatedUpdates) updates.enable_active_monitoring = validatedUpdates.enabled;
+    if ("startHour" in validatedUpdates) updates.start_hour = validatedUpdates.startHour;
+    if ("durationHours" in validatedUpdates) updates.duration_hours = validatedUpdates.durationHours;
+    if ("scanIntervalHours" in validatedUpdates) updates.scan_interval_hours = validatedUpdates.scanIntervalHours;
+    if ("removeUnmonitoredFiles" in validatedUpdates) updates.remove_unmonitored_files = validatedUpdates.removeUnmonitoredFiles;
+    if ("artistRefreshDays" in validatedUpdates) updates.artist_refresh_days = validatedUpdates.artistRefreshDays;
+    if ("albumRefreshDays" in validatedUpdates) updates.album_refresh_days = validatedUpdates.albumRefreshDays;
+    if ("trackRefreshDays" in validatedUpdates) updates.track_refresh_days = validatedUpdates.trackRefreshDays;
+    if ("videoRefreshDays" in validatedUpdates) updates.video_refresh_days = validatedUpdates.videoRefreshDays;
 
     const config = updateMonitoringConfig(updates);
 
@@ -92,6 +97,9 @@ router.post("/config", (req, res) => {
 
     res.json({ success: true, config: response });
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
     res.status(500).json({ detail: error.message });
   }
 });

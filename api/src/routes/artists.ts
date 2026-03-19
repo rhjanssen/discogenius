@@ -14,7 +14,13 @@ import { ArtistQueryService } from "../services/artist-query-service.js";
 import { queueArtistBrowseHydration } from "../services/browse-hydration.js";
 import { FollowedArtistsImportService } from "../services/followed-artists-import.js";
 import { TaskQueueService } from "../services/queue.js";
-import { getObjectBody, getRequiredIdentifier, isRequestValidationError } from "../utils/request-validation.js";
+import {
+  getObjectBody,
+  getOptionalBoolean,
+  getRequiredIdentifier,
+  isRequestValidationError,
+  rejectUnknownKeys,
+} from "../utils/request-validation.js";
 
 const router = Router();
 
@@ -223,14 +229,17 @@ router.get("/:artistId/page-db", async (req, res) => {
 router.patch("/:artistId", async (req, res) => {
   try {
     const artistId = req.params.artistId;
+    const body = getObjectBody(req.body);
+    const monitored = getOptionalBoolean(body, "monitored");
+    rejectUnknownKeys(body, ["monitored"], "Artist update");
 
-    if (req.body.monitored === undefined) {
+    if (monitored === undefined) {
       return res.json({ success: true });
     }
 
     const result = await setArtistMonitoredState({
       artistId,
-      monitored: Boolean(req.body.monitored),
+      monitored,
       priority: 1,
       trigger: 1,
     });
@@ -244,6 +253,9 @@ router.patch("/:artistId", async (req, res) => {
       queued: result.jobId !== -1,
     });
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
     console.error(`[Artists] Error updating artist:`, error);
     res.status(500).json({ detail: error.message });
   }

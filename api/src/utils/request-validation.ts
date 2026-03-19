@@ -19,6 +19,17 @@ export function getObjectBody(body: unknown, message = "Request body must be a J
     return body;
 }
 
+export function rejectUnknownKeys(body: JsonObject, allowedKeys: readonly string[], label = "Request body"): void {
+    const allowed = new Set(allowedKeys);
+    const unsupportedKeys = Object.keys(body).filter((key) => !allowed.has(key));
+
+    if (unsupportedKeys.length > 0) {
+        throw new RequestValidationError(
+            `${label} contains unsupported field${unsupportedKeys.length === 1 ? "" : "s"}: ${unsupportedKeys.join(", ")}`,
+        );
+    }
+}
+
 export function getOptionalBoolean(body: JsonObject, key: string): boolean | undefined {
     const value = body[key];
     if (value === undefined) {

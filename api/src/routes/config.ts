@@ -1,11 +1,19 @@
 import { Router } from "express";
-import { getConfigSection, updateConfig, readConfig, writeConfig, CONFIG_FILE, Config } from "../services/config.js";
+import { getConfigSection, updateConfig, CONFIG_FILE, Config } from "../services/config.js";
 import { syncDiscogeniusSettings } from "../services/tidal-dl-ng.js";
 import { syncOrpheusSettings } from "../services/orpheus.js";
 import { UpgraderService } from "../services/upgrader.js";
 import { getAppReleaseInfo } from "../services/app-release.js";
 import {
-  RequestValidationError,
+  parseAccountConfigUpdate,
+  parseFilteringConfigUpdate,
+  parseMetadataConfigUpdate,
+  parseNamingConfigUpdate,
+  parsePathConfigUpdate,
+  parsePublicAppConfigUpdate,
+  parseQualityConfigUpdate,
+} from "../contracts/config-updates.js";
+import {
   getObjectBody,
   getRequiredString,
   isRequestValidationError,
@@ -32,7 +40,8 @@ router.get("/account", (_, res) => {
 
 router.post("/account", (req, res) => {
   try {
-    updateConfig("account", getObjectBody(req.body));
+    const updates = parseAccountConfigUpdate(getObjectBody(req.body), Config.getAccountConfig());
+    updateConfig("account", updates);
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -56,18 +65,9 @@ router.get("/app", (_, res) => {
 
 router.post("/app", (req, res) => {
   try {
-    const body = getObjectBody(req.body);
-    const updates: Partial<PublicAppConfigContract> = {};
-
-    if ("acoustid_api_key" in body) {
-      const rawValue = body.acoustid_api_key;
-      if (rawValue !== undefined && rawValue !== null && typeof rawValue !== "string") {
-        throw new RequestValidationError("acoustid_api_key must be a string");
-      }
-
-      updates.acoustid_api_key = typeof rawValue === "string" ? rawValue.trim() || undefined : undefined;
-    }
-
+    const updates = parsePublicAppConfigUpdate(getObjectBody(req.body), {
+      acoustid_api_key: getConfigSection("app").acoustid_api_key,
+    });
     updateConfig("app", updates);
     res.json({ success: true });
   } catch (error: any) {
@@ -118,7 +118,8 @@ router.get("/quality", (_, res) => {
 
 router.post("/quality", async (req, res) => {
   try {
-    updateConfig("quality", getObjectBody(req.body));
+    const updates = parseQualityConfigUpdate(getObjectBody(req.body), getConfigSection("quality"));
+    updateConfig("quality", updates);
     await syncDownloadBackends();
 
     // Trigger upgrade check asynchronously if enabled
@@ -149,7 +150,8 @@ const getFilteringConfig = (_: any, res: any) => {
 
 const updateFilteringConfig = (req: any, res: any) => {
   try {
-    updateConfig("filtering", getObjectBody(req.body));
+    const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
+    updateConfig("filtering", updates);
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -174,7 +176,8 @@ router.get("/metadata", (_, res) => {
 
 router.post("/metadata", async (req, res) => {
   try {
-    updateConfig("metadata", getObjectBody(req.body));
+    const updates = parseMetadataConfigUpdate(getObjectBody(req.body), getConfigSection("metadata"));
+    updateConfig("metadata", updates);
     await syncDownloadBackends();
 
     // Queue a config prune job to clean up orphaned metadata sidecars
@@ -202,7 +205,8 @@ router.get("/naming", (_, res) => {
 
 router.post("/naming", (req, res) => {
   try {
-    updateConfig("naming", getObjectBody(req.body));
+    const updates = parseNamingConfigUpdate(getObjectBody(req.body), getConfigSection("naming"));
+    updateConfig("naming", updates);
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -223,7 +227,8 @@ router.get("/path", (_, res) => {
 
 router.post("/path", (req, res) => {
   try {
-    updateConfig("path", getObjectBody(req.body));
+    const updates = parsePathConfigUpdate(getObjectBody(req.body), getConfigSection("path"));
+    updateConfig("path", updates);
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {

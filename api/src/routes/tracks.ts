@@ -1,7 +1,14 @@
 import { Router } from "express";
 import { db } from "../database.js";
 import { getMediaDownloadStateMap, updateAlbumDownloadStatus } from "../services/download-state.js";
-import { getObjectBody, getOptionalBoolean, getRequiredBoolean, getRequiredIdentifier, isRequestValidationError } from "../utils/request-validation.js";
+import {
+  getObjectBody,
+  getOptionalBoolean,
+  getRequiredBoolean,
+  getRequiredIdentifier,
+  isRequestValidationError,
+  rejectUnknownKeys,
+} from "../utils/request-validation.js";
 
 const router = Router();
 
@@ -336,6 +343,7 @@ router.patch("/:trackId", (req, res) => {
   try {
     const trackId = req.params.trackId;
     const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["monitored"], "Track update");
     const updates: string[] = [];
     const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");

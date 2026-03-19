@@ -11,6 +11,7 @@ import {
   getOptionalBoolean,
   getRequiredIdentifier,
   isRequestValidationError,
+  rejectUnknownKeys,
 } from "../utils/request-validation.js";
 
 const router = Router();
@@ -464,6 +465,7 @@ router.patch("/:albumId", async (req, res) => {
   try {
     const albumId = req.params.albumId;
     const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Album update");
     const monitored = getOptionalBoolean(body, "monitored");
     const monitorLock = getOptionalBoolean(body, "monitor_lock");
 

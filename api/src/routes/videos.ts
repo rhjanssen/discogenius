@@ -9,6 +9,7 @@ import {
   getOptionalBoolean,
   getRequiredIdentifier,
   isRequestValidationError,
+  rejectUnknownKeys,
 } from "../utils/request-validation.js";
 
 const router = Router();
@@ -255,6 +256,7 @@ router.patch("/:videoId", (req, res) => {
   try {
     const videoId = req.params.videoId;
     const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Video update");
     const updates: string[] = [];
     const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");
