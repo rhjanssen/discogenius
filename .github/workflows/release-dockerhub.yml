@@ -19,6 +19,7 @@ jobs:
     env:
       DEFAULT_DOCKERHUB_IMAGE: rhjanssen/discogenius
       DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Validate repository configuration
         id: config
@@ -32,12 +33,12 @@ jobs:
           echo "dockerhub_image=${resolved_image}" >> "$GITHUB_OUTPUT"
 
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -119,10 +120,10 @@ jobs:
           } > dist/release-body.md
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -141,7 +142,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -154,9 +155,39 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          prerelease: ${{ steps.release.outputs.prerelease == 'true' }}
-          make_latest: ${{ steps.release.outputs.latest == 'true' && 'true' || 'false' }}
-          body_path: dist/release-body.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          prerelease="${{ steps.release.outputs.prerelease }}"
+          latest="${{ steps.release.outputs.latest }}"
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            if [[ "${prerelease}" == "true" ]]; then
+              gh release edit "${tag}" \
+                --title "${tag}" \
+                --notes-file dist/release-body.md \
+                --prerelease
+            else
+              gh release edit "${tag}" \
+                --title "${tag}" \
+                --notes-file dist/release-body.md \
+                --latest
+            fi
+            exit 0
+          fi
+
+          if [[ "${prerelease}" == "true" ]]; then
+            gh release create "${tag}" \
+              --verify-tag \
+              --title "${tag}" \
+              --notes-file dist/release-body.md \
+              --prerelease
+          else
+            gh release create "${tag}" \
+              --verify-tag \
+              --title "${tag}" \
+              --notes-file dist/release-body.md \
+              --latest
+          fi
