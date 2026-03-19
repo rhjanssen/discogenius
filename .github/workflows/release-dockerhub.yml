@@ -113,8 +113,6 @@ jobs:
             if [[ "${{ steps.release.outputs.latest }}" == "true" ]]; then
               echo "- \`${{ steps.config.outputs.dockerhub_image }}:latest\`"
             fi
-            echo
-            echo "GitHub automatically includes source archives (zip and tar.gz) for this tag."
           } > dist/release-body.md
 
       - name: Set up Docker Buildx
