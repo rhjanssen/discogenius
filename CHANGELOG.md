@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.2] - 2026-03-19
+
+### Changed
+- Validate config and media update payloads
+- Add deterministic provider auth modes
+- Add shared config and media contracts
 ## [1.0.1] - 2026-03-19
 
 ### Changed
