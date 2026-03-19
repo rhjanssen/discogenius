@@ -2,6 +2,10 @@ import { Router } from "express";
 import { loadToken, searchTidal } from "../services/tidal.js";
 import { db } from "../database.js";
 import { getProviderAuthMode } from "../services/provider-auth-mode.js";
+import type {
+    SearchResponseContract,
+    SearchResultContract,
+} from "../contracts/catalog.js";
 
 const router = Router();
 const SEARCH_TYPES = ["artists", "albums", "tracks", "videos"] as const;
@@ -58,8 +62,8 @@ function normalizeSearchTypes(input: unknown): SearchType[] {
 }
 
 // Format a result item with all required frontend fields
-function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'video'): any {
-    const result: any = {
+function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'video'): SearchResultContract {
+    const result: SearchResultContract = {
         id: item.id?.toString(),
         name: item.name || item.title,
         type,
@@ -267,12 +271,13 @@ router.get("/", async (req, res) => {
         results.tracks = results.tracks.slice(0, limit);
         results.videos = results.videos.slice(0, limit);
 
-        res.json({
+        const payload: SearchResponseContract = {
             success: true,
             results,
             mode: providerAuthMode,
             remoteCatalogAvailable: hasRemoteAuth,
-        });
+        };
+        res.json(payload);
     } catch (error: any) {
         console.error('[search] Error:', error);
         res.status(500).json({ detail: "Search request failed" });

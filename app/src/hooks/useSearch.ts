@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import type { SearchResponseContract, SearchResultContract } from "@contracts/catalog";
 import { formatDurationSeconds } from "@/utils/format";
 import {
     clearOptimisticMonitorState,
@@ -93,7 +94,7 @@ export const useSearch = () => {
         setIsSearching(true);
         try {
             // Search for all types
-            const data: any = await api.search(
+            const data: SearchResponseContract = await api.search(
                 query,
                 ['artists', 'albums', 'tracks', 'videos'],
                 10,
@@ -103,23 +104,22 @@ export const useSearch = () => {
             // Ignore stale responses from older requests.
             if (searchId !== latestSearchIdRef.current) return;
 
-            const formatItem = (item: any, type: 'artist' | 'album' | 'track' | 'video'): SearchResultItem => {
+            const formatItem = (item: SearchResultContract, type: 'artist' | 'album' | 'track' | 'video'): SearchResultItem => {
 
                 // Helper to get year
-                const getYear = (date?: string) => {
+                const getYear = (date?: string | null) => {
                     if (!date) return '';
                     return new Date(date).getFullYear().toString();
                 };
 
                 // Format the subtitle: Type · Artist · Info
                 const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
-                // Backend now provides standardized subtitle, but we can fallback or enhance
-                const artistPart = item.subtitle || item.artist_name || item.artist?.name || undefined;
+                const artistPart = item.subtitle || undefined;
 
                 let infoPart = undefined;
-                if (type === 'track') infoPart = formatDurationSeconds(item.duration);
-                if (type === 'video') infoPart = formatDurationSeconds(item.duration);
-                if (type === 'album') infoPart = getYear(item.release_date || item.releaseDate);
+                if (type === 'track' && item.duration !== undefined) infoPart = formatDurationSeconds(item.duration);
+                if (type === 'video' && item.duration !== undefined) infoPart = formatDurationSeconds(item.duration);
+                if (type === 'album') infoPart = getYear(item.release_date);
 
                 const parts = [typeLabel];
                 if (artistPart) parts.push(artistPart);
@@ -130,23 +130,23 @@ export const useSearch = () => {
                 return {
                     id: parseInt(String(item.id)),
                     tidalId: item.id?.toString(),
-                    name: item.name || item.title,
+                    name: item.name,
                     imageUrl: null, // Computed on frontend now
                     type,
                     subtitle: finalSubtitle, // Pre-formatted subtitle
                     monitored: !!item.monitored,
-                    inLibrary: !!item.inLibrary || !!item.in_library,
-                    imageId: item.imageId || item.cover_id || item.picture || item.cover || null,
+                    inLibrary: !!item.in_library,
+                    imageId: item.imageId || undefined,
                 };
             };
 
             // Backend now returns grouped results
-            const results = data.results || {};
+            const results = data.results;
 
-            const artists = (results.artists || []).map((i: any) => formatItem(i, 'artist'));
-            const albums = (results.albums || []).map((i: any) => formatItem(i, 'album'));
-            const tracks = (results.tracks || []).map((i: any) => formatItem(i, 'track'));
-            const videos = (results.videos || []).map((i: any) => formatItem(i, 'video'));
+            const artists = (results.artists || []).map((i) => formatItem(i, 'artist'));
+            const albums = (results.albums || []).map((i) => formatItem(i, 'album'));
+            const tracks = (results.tracks || []).map((i) => formatItem(i, 'track'));
+            const videos = (results.videos || []).map((i) => formatItem(i, 'video'));
 
 
             // Determine top result

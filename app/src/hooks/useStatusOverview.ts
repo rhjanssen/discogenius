@@ -3,40 +3,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import type {
+  ActivityJobContract as ActiveJob,
+  CommandStatsContract as CommandStats,
+  StatusOverviewContract as StatusOverviewResponse,
+  TaskQueueStatContract as TaskQueueStat,
+} from "@contracts/status";
 
-export interface ActiveJob {
-    id: number | string;
-    type: string;
-    description: string;
-    startTime: number;
-    endTime?: number;
-    status?: string;
-    error?: string;
-    trigger?: number;
-    payload?: unknown;
-}
-
-export interface TaskQueueStat {
-    type: string;
-    status: string;
-    count: number;
-}
-
-export interface CommandStats {
-    downloads?: { pending?: number; processing?: number; failed?: number };
-    scans?: { pending?: number; processing?: number; failed?: number };
-    other?: { pending?: number; processing?: number; failed?: number };
-}
-
-export interface StatusOverviewResponse {
-    activeJobs: ActiveJob[];
-    queuedJobs: ActiveJob[];
-    jobHistory: ActiveJob[];
-    taskQueueStats: TaskQueueStat[];
-    commandStats: CommandStats;
-    runningCommands?: unknown[];
-    rateLimitMetrics?: unknown;
-}
+export type { ActiveJob, CommandStats, StatusOverviewResponse, TaskQueueStat };
 
 export const statusOverviewQueryKey = ["statusOverview"] as const;
 
@@ -73,7 +47,7 @@ export function useStatusOverview() {
     const query = useQuery({
         queryKey: statusOverviewQueryKey,
         queryFn: async () => {
-            return await api.request("/status") as StatusOverviewResponse;
+            return api.getStatusOverview();
         },
         staleTime: 5_000,
         refetchInterval: 10_000,

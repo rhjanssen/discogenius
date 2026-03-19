@@ -13,6 +13,7 @@ import type {
     DownloadVideoJobPayload,
     ImportDownloadJobPayload,
 } from '../services/job-payloads.js';
+import type { QueueItemContract, QueueListResponseContract } from '../contracts/status.js';
 
 const router: Router = express.Router();
 
@@ -130,7 +131,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
     };
 }
 
-function mapDownloadQueueJob(j: any) {
+function mapDownloadQueueJob(j: any): QueueItemContract {
     const downloadState = j.payload?.downloadState ?? {};
     const contentType = j.type === JobTypes.DownloadVideo
         ? 'video'
@@ -393,13 +394,14 @@ router.get('/queue', async (req: Request, res: Response) => {
             .slice(offset, offset + limit)
             .map(mapDownloadQueueJob);
 
-        res.json({
+        const payload: QueueListResponseContract = {
             items: mapped,
             total,
             limit,
             offset,
             hasMore: offset + mapped.length < total,
-        });
+        };
+        res.json(payload);
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue:', error);
         res.status(500).json({ error: 'Failed to get queue', message: error.message });

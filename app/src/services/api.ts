@@ -25,6 +25,20 @@ import {
   parseQualityConfigContract,
 } from '@contracts/config';
 import type {
+  AlbumsListResponseContract,
+  ArtistsListResponseContract,
+  LibraryStatsContract,
+  SearchResponseContract,
+  VideosListResponseContract,
+} from '@contracts/catalog';
+import {
+  parseAlbumsListResponseContract,
+  parseArtistsListResponseContract,
+  parseLibraryStatsContract,
+  parseSearchResponseContract,
+  parseVideosListResponseContract,
+} from '@contracts/catalog';
+import type {
   AlbumTrackContract,
   AlbumVersionContract,
   LibraryFilesListResponseContract,
@@ -39,6 +53,14 @@ import {
   parseSimilarAlbumsContract,
   parseVideoDetailContract,
 } from '@contracts/media';
+import type {
+  QueueListResponseContract,
+  StatusOverviewContract,
+} from '@contracts/status';
+import {
+  parseQueueListResponseContract,
+  parseStatusOverviewContract,
+} from '@contracts/status';
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
@@ -304,13 +326,13 @@ class ApiClient {
     types: string[] = ['artists', 'albums', 'tracks', 'videos'],
     limit: number = 10,
     signal?: AbortSignal,
-  ) {
+  ): Promise<SearchResponseContract> {
     const params = new URLSearchParams({
       query,
       type: types.join(','),
       limit: limit.toString(),
     });
-    return this.request(`/search?${params}`, { signal });
+    return this.request(`/search?${params}`, { signal }, parseSearchResponseContract);
   }
 
   // Artist endpoints
@@ -322,7 +344,7 @@ class ApiClient {
     sort?: string;
     dir?: 'asc' | 'desc';
     includeDownloadStats?: boolean;
-  }) {
+  }): Promise<ArtistsListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -332,11 +354,11 @@ class ApiClient {
     if (params?.dir) queryParams.set('dir', params.dir);
     if (params?.includeDownloadStats !== undefined) queryParams.set('includeDownloadStats', params.includeDownloadStats ? 'true' : 'false');
     const query = queryParams.toString();
-    return this.request(`/artists${query ? `?${query}` : ''}`);
+    return this.request(`/artists${query ? `?${query}` : ''}`, {}, parseArtistsListResponseContract);
   }
 
-  async getStats() {
-    return this.request('/stats');
+  async getStats(): Promise<LibraryStatsContract> {
+    return this.request('/stats', {}, parseLibraryStatsContract);
   }
 
   async getArtist<T = unknown>(artistId: string) {
@@ -402,7 +424,7 @@ class ApiClient {
     return this.request(`/artists/${artistId}/albums/${albumId}/reset-override`, { method: 'POST' });
   }
 
-  async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
+  async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }): Promise<AlbumsListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -413,7 +435,7 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/albums${query ? `?${query}` : ''}`);
+    return this.request(`/albums${query ? `?${query}` : ''}`, {}, parseAlbumsListResponseContract);
   }
 
   async getAlbum<T = unknown>(albumId: string) {
@@ -490,7 +512,7 @@ class ApiClient {
     return this.request(`/tracks/${trackId}`, { method: 'DELETE' });
   }
 
-  async getVideos(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; sort?: string; dir?: 'asc' | 'desc' }) {
+  async getVideos(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; sort?: string; dir?: 'asc' | 'desc' }): Promise<VideosListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -500,7 +522,7 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/videos${query ? `?${query}` : ''}`);
+    return this.request(`/videos${query ? `?${query}` : ''}`, {}, parseVideosListResponseContract);
   }
 
   async getVideo(videoId: string): Promise<VideoDetailContract> {
@@ -777,12 +799,16 @@ class ApiClient {
   }
 
   // Download queue endpoints
-  async getQueue(params?: { limit?: number; offset?: number }) {
+  async getQueue(params?: { limit?: number; offset?: number }): Promise<QueueListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
-    return this.request(`/queue${query ? `?${query}` : ''}`);
+    return this.request(`/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
+  }
+
+  async getStatusOverview(): Promise<StatusOverviewContract> {
+    return this.request('/status', {}, parseStatusOverviewContract);
   }
 
   async addToQueue(url: string, type: string, tidalId?: string) {

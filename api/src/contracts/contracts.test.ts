@@ -3,6 +3,12 @@ import test from "node:test";
 
 import { parseAuthStatusContract } from "./auth.js";
 import {
+  parseArtistsListResponseContract,
+  parseLibraryStatsContract,
+  parseSearchResponseContract,
+  parseVideosListResponseContract,
+} from "./catalog.js";
+import {
   parseFilteringConfigContract,
   parseMonitoringStatusResponseContract,
   parsePublicAppConfigContract,
@@ -13,6 +19,10 @@ import {
   parseLibraryFilesListResponseContract,
   parseVideoDetailContract,
 } from "./media.js";
+import {
+  parseQueueListResponseContract,
+  parseStatusOverviewContract,
+} from "./status.js";
 
 test("config contract parsers normalize expected public settings shapes", () => {
   const appConfig = parsePublicAppConfigContract({ acoustid_api_key: "abc123" });
@@ -187,4 +197,144 @@ test("auth status parser validates live and bypassed auth shapes", () => {
   });
   assert.equal(bypassed.authBypassed, true);
   assert.equal(bypassed.canAuthenticate, false);
+});
+
+test("catalog contract parsers validate list, stats, and search payloads", () => {
+  const artists = parseArtistsListResponseContract({
+    items: [
+      {
+        id: 10,
+        name: "Bastille",
+        picture: "abc",
+        is_monitored: true,
+        last_scanned: null,
+        album_count: 5,
+        downloaded: 80,
+        is_downloaded: false,
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(artists.items[0].id, "10");
+  assert.equal(artists.items[0].is_monitored, true);
+
+  const stats = parseLibraryStatsContract({
+    artists: { total: 1, monitored: 1, downloaded: 0 },
+    albums: { total: 2, monitored: 2, downloaded: 1 },
+    tracks: { total: 20, monitored: 18, downloaded: 15 },
+    videos: { total: 3, monitored: 2, downloaded: 1 },
+    files: { total: 42, totalSizeBytes: 1234 },
+  });
+  assert.equal(stats.files?.totalSizeBytes, 1234);
+
+  const search = parseSearchResponseContract({
+    success: true,
+    mode: "mock",
+    remoteCatalogAvailable: false,
+    results: {
+      artists: [
+        {
+          id: "10",
+          name: "Bastille",
+          type: "artist",
+          monitored: true,
+          in_library: true,
+          imageId: "abc",
+        },
+      ],
+      albums: [],
+      tracks: [],
+      videos: [],
+    },
+  });
+  assert.equal(search.mode, "mock");
+  assert.equal(search.results.artists[0].in_library, true);
+
+  const videos = parseVideosListResponseContract({
+    items: [
+      {
+        id: "20",
+        title: "Distorted Light Beam",
+        duration: 240,
+        artist_id: "10",
+        artist_name: "Bastille",
+        is_monitored: true,
+        is_downloaded: false,
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(videos.items[0].artist_id, "10");
+});
+
+test("status contract parsers validate queue and status overview payloads", () => {
+  const queue = parseQueueListResponseContract({
+    items: [
+      {
+        id: 7,
+        url: "https://tidal.com/album/243864035",
+        tidalId: "243864035",
+        type: "album",
+        status: "processing",
+        progress: 55,
+        error: null,
+        created_at: "2026-03-19 12:00:00",
+        updated_at: "2026-03-19 12:01:00",
+        title: "Give Me The Future",
+        artist: "Bastille",
+        tracks: [
+          { title: "Track One", trackNum: 1, status: "downloading" },
+        ],
+      },
+    ],
+    total: 1,
+    limit: 100,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(queue.items[0].tracks?.[0].status, "downloading");
+
+  const overview = parseStatusOverviewContract({
+    activeJobs: [
+      {
+        id: 1,
+        type: "RefreshArtist",
+        description: "Refresh Artist: Bastille",
+        startTime: Date.now(),
+        status: "running",
+      },
+    ],
+    queuedJobs: [],
+    jobHistory: [],
+    taskQueueStats: [
+      { type: "DownloadAlbum", status: "pending", count: 2 },
+    ],
+    commandStats: {
+      downloads: { pending: 2, processing: 1, failed: 0 },
+    },
+    runningCommands: [
+      {
+        id: 1,
+        type: "RefreshArtist",
+        name: "Refresh Artist",
+        isExclusive: false,
+        isTypeExclusive: false,
+        requiresDiskAccess: false,
+      },
+    ],
+    rateLimitMetrics: {
+      currentIntervalMs: 150,
+      consecutiveSuccesses: 3,
+      recent429Rate: "0%",
+      rateLimitUntil: null,
+    },
+  });
+  assert.equal(overview.commandStats.downloads?.processing, 1);
+  assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
 });

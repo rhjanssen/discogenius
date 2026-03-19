@@ -28,12 +28,31 @@ export function expectString(value: unknown, label: string): string {
   return value;
 }
 
+export function expectIdentifierString(value: unknown, label: string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  throw new Error(`${label} must be a string or number identifier`);
+}
+
 export function expectOptionalString(value: unknown, label: string): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
 
   return expectString(value, label);
+}
+
+export function expectOptionalIdentifierString(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return expectIdentifierString(value, label);
 }
 
 export function expectNullableString(value: unknown, label: string): string | null | undefined {

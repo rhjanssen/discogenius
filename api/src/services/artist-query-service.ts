@@ -10,6 +10,7 @@ import {
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
+import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
@@ -40,7 +41,7 @@ function hasUsableTidalSession(): boolean {
 }
 
 export class ArtistQueryService {
-    static listArtists(input: ArtistListQuery) {
+    static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
         const offset = input.offset;
         const search = input.search;
@@ -134,19 +135,21 @@ export class ArtistQueryService {
         };
     }
 
-    static async getArtistById(artistId: string): Promise<any | null> {
+    static async getArtistById(artistId: string): Promise<ArtistContract | null> {
         const artist = loadArtistWithEffectiveMonitor(artistId);
 
         if (!artist) {
             try {
                 const tidalArtist = await getArtist(artistId);
                 return {
-                    id: tidalArtist.tidal_id,
+                    id: String(tidalArtist.tidal_id),
                     name: tidalArtist.name,
                     picture: tidalArtist.picture,
                     is_monitored: false,
                     is_downloaded: false,
+                    last_scanned: null,
                     album_count: 0,
+                    downloaded: 0,
                 };
             } catch {
                 return null;
@@ -155,7 +158,14 @@ export class ArtistQueryService {
 
         const artistDownloadStats = getArtistDownloadStats(artistId);
         return {
-            ...artist,
+            id: String(artist.id),
+            name: artist.name ?? "Unknown Artist",
+            picture: artist.picture == null ? null : String(artist.picture),
+            cover_image_url: artist.cover_image_url == null ? null : String(artist.cover_image_url),
+            last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
+            bio: artist.bio == null ? null : String(artist.bio),
+            biography: artist.biography == null ? null : String(artist.biography),
+            album_count: Number(artist.album_count ?? 0),
             downloaded: artistDownloadStats.downloadedPercent,
             is_monitored: Boolean(artist.effective_monitor),
             is_downloaded: artistDownloadStats.isDownloaded,

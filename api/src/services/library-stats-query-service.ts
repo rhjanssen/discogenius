@@ -6,45 +6,19 @@ import {
     countDownloadedTracks,
     countDownloadedVideos,
 } from "./download-state.js";
-
-export interface LibraryStatsSnapshot {
-    artists: {
-        total: number;
-        monitored: number;
-        downloaded: number;
-    };
-    albums: {
-        total: number;
-        monitored: number;
-        downloaded: number;
-    };
-    tracks: {
-        total: number;
-        monitored: number;
-        downloaded: number;
-    };
-    videos: {
-        total: number;
-        monitored: number;
-        downloaded: number;
-    };
-    files?: {
-        total: number;
-        totalSizeBytes: number;
-    };
-}
+import type { LibraryStatsContract } from "../contracts/catalog.js";
 
 export class LibraryStatsQueryService {
     private static readonly SNAPSHOT_TTL_MS = 10_000;
-    private static cachedSnapshot: { value: LibraryStatsSnapshot; createdAtMs: number } | null = null;
+    private static cachedSnapshot: { value: LibraryStatsContract; createdAtMs: number } | null = null;
 
-    static getSnapshot(): LibraryStatsSnapshot {
+    static getSnapshot(): LibraryStatsContract {
         const cached = this.cachedSnapshot;
         if (cached && Date.now() - cached.createdAtMs < this.SNAPSHOT_TTL_MS) {
             return cached.value;
         }
 
-        const stats: LibraryStatsSnapshot = {
+        const stats: LibraryStatsContract = {
             artists: {
                 total: (db.prepare("SELECT COUNT(*) as count FROM artists").get() as { count: number }).count,
                 monitored: countManagedArtists(),

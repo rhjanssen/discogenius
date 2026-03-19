@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import type {
+  AlbumContract as Album,
+  ArtistContract as Artist,
+  LibraryStatsContract as LibraryStats,
+} from "@contracts/catalog";
 import {
   LIBRARY_UPDATED_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
@@ -9,65 +14,7 @@ import {
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
 
-export interface Artist {
-  id: string;
-  name: string;
-  picture?: string | null;
-  cover_image_url?: string | null;
-  is_monitored: boolean;
-  last_scanned: string | null;
-  album_count?: number;
-  bio?: string;
-  biography?: string;
-}
-
-export interface Album {
-  id: string;
-  title: string;
-  cover_id?: string | null;
-  cover_art_url?: string | null;
-  vibrant_color?: string | null;
-  release_date: string;
-  type?: string;
-  quality?: string;
-  is_monitored: boolean;
-  is_downloaded: boolean;
-  artist_id: string;
-  artist_name: string;
-  include_in_monitoring?: number;
-  excluded_reason?: string | null;
-  filtered_out?: number;
-  filtered_reason?: string;
-  redundant_of?: string | null;
-  monitor_locked?: number | boolean;
-  filter_locked?: number; // 0=unlocked, 1=wanted, 2=unwanted
-
-  module?: string;
-  group_type?: string; // Which Tidal API endpoint: ALBUMS, EPSANDSINGLES, COMPILATIONS
-
-  files?: Array<{
-    id: number;
-    file_type: string;
-    file_path: string;
-    relative_path?: string;
-    filename?: string;
-    extension?: string;
-    quality?: string;
-    library_root?: string;
-    file_size?: number;
-    bitrate?: number;
-    sample_rate?: number;
-    bit_depth?: number;
-    codec?: string;
-  }>;
-}
-
-export interface LibraryStats {
-  artists: { total: number; monitored: number; downloaded: number };
-  albums: { total: number; monitored: number; downloaded: number };
-  tracks: { total: number; monitored: number; downloaded: number };
-  videos: { total: number; monitored: number; downloaded: number };
-}
+export type { Album, Artist, LibraryStats };
 
 type SortKey = 'name' | 'releaseDate' | 'popularity' | 'scannedAt';
 type SortDir = 'asc' | 'desc';
@@ -119,7 +66,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   // Load stats first for quick counts
   const fetchStats = useCallback(async () => {
     try {
-      const statsData: any = await api.getStats();
+      const statsData = await api.getStats();
       setStats(statsData);
     } catch (error: any) {
       console.error('Error fetching stats:', error);
@@ -134,7 +81,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
       if (monitored !== artistMonitoredFilter) {
         setArtistMonitoredFilter(monitoredFilter);
       }
-      const data: any = await api.getArtists({
+      const data = await api.getArtists({
         limit: 50,
         offset: page * 50,
         monitored: monitoredFilter,
@@ -147,12 +94,12 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
       if (fetchId !== artistFetchIdRef.current) return;
 
       if (append) {
-        setArtists(prev => [...prev, ...(data.items || data)]);
+        setArtists(prev => [...prev, ...data.items]);
       } else {
-        setArtists(data.items || data);
+        setArtists(data.items);
       }
 
-      setHasMoreArtists(data.hasMore !== undefined ? data.hasMore : false);
+      setHasMoreArtists(data.hasMore);
       setArtistsPage(page);
     } catch (error: any) {
       console.error('Error fetching artists:', error);
@@ -167,7 +114,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   const fetchAlbumsPage = useCallback(async (page: number = 0, append: boolean = false) => {
     const fetchId = ++albumFetchIdRef.current;
     try {
-      const data: any = await api.getAlbums({
+      const data = await api.getAlbums({
         limit: 50,
         offset: page * 50,
         monitored: albumMonitoredFilter,
@@ -181,12 +128,12 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
       if (fetchId !== albumFetchIdRef.current) return;
 
       if (append) {
-        setAlbums(prev => [...prev, ...(data.items || data)]);
+        setAlbums(prev => [...prev, ...data.items]);
       } else {
-        setAlbums(data.items || data);
+        setAlbums(data.items);
       }
 
-      setHasMoreAlbums(data.hasMore !== undefined ? data.hasMore : false);
+      setHasMoreAlbums(data.hasMore);
       setAlbumsPage(page);
     } catch (error: any) {
       console.error('Error fetching albums:', error);

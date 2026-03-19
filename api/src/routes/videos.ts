@@ -3,6 +3,7 @@ import { db } from "../database.js";
 import { getMediaDownloadStateMap, updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
 import { queueArtistBrowseHydration } from "../services/browse-hydration.js";
 import { seedVideo } from "../services/scanner.js";
+import type { VideoContract } from "../contracts/catalog.js";
 import type { VideoDetailContract } from "../contracts/media.js";
 import {
   getObjectBody,
@@ -127,7 +128,7 @@ router.get("/", (req, res) => {
     const totalResult = db.prepare(countQuery).get(...countParams) as any;
     const downloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
 
-    const transformed = videos.map((video): VideoDetailContract => {
+    const transformed = videos.map((video): VideoContract => {
       const { current_quality, ...rest } = video;
       const isDownloaded = downloadStates.get(String(video.id)) ?? false;
       return {

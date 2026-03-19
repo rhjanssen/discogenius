@@ -3,60 +3,12 @@ import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { useGlobalEvents, GlobalEventPayload } from "@/hooks/useGlobalEvents";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
+import type {
+  DownloadProgressContract as DownloadProgress,
+  QueueItemContract as QueueItem,
+} from "@contracts/status";
 
-export interface QueueItem {
-  id: number;
-  url: string;
-  type: string;
-  quality?: string | null;
-  stage?: 'download' | 'import';
-  tidalId: string | null;
-  path: string | null;
-  status: 'pending' | 'processing' | 'downloading' | 'completed' | 'failed';
-  progress: number;
-  error: string | null;
-  created_at: string;
-  updated_at: string;
-  title?: string;
-  artist?: string;
-  cover?: string | null;
-  album_id?: string | null;
-  album_title?: string | null;
-  currentFileNum?: number;
-  totalFiles?: number;
-  currentTrack?: string;
-  trackProgress?: number;
-  trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
-  statusMessage?: string;
-  speed?: string;
-  eta?: string;
-  size?: number;
-  sizeleft?: number;
-  state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
-  tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
-}
-
-export interface DownloadProgress {
-  jobId: number;
-  tidalId: string;
-  type: string;
-  title?: string;
-  artist?: string;
-  cover?: string | null;
-  progress: number;
-  speed?: string;
-  eta?: string;
-  currentTrack?: string;
-  trackProgress?: number;
-  trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
-  currentFileNum?: number;
-  totalFiles?: number;
-  statusMessage?: string;
-  state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
-  size?: number;
-  sizeleft?: number;
-  tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
-}
+export type { DownloadProgress, QueueItem };
 
 interface QueueContextType {
   queue: QueueItem[];
@@ -185,11 +137,11 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       let offset = 0;
 
       while (true) {
-        const data: any = await api.getQueue({ limit: queuePageSize, offset });
-        const pageItems: QueueItem[] = Array.isArray(data) ? data : (data?.items || []);
+        const data = await api.getQueue({ limit: queuePageSize, offset });
+        const pageItems = data.items;
         serverItems.push(...pageItems);
 
-        if (Array.isArray(data) || !data?.hasMore || pageItems.length === 0) {
+        if (!data.hasMore || pageItems.length === 0) {
           break;
         }
 

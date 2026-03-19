@@ -1126,7 +1126,7 @@ const Library = () => {
             <div className={responsiveTabsStyles.desktopTabs}>
               <TabList selectedValue={selectedTab} onTabSelect={(_, data) => setSelectedTab(data.value as string)}>
                 {LIBRARY_TABS.map((tab) => {
-                  const statKey = tab.key as keyof NonNullable<typeof stats>;
+                  const statKey = tab.key as keyof Pick<NonNullable<typeof stats>, 'artists' | 'albums' | 'tracks' | 'videos'>;
                   const tabStats = stats?.[statKey];
                   return (
                     <Tab key={tab.key} value={tab.key} title={tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} in database` : undefined}>

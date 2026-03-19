@@ -2,6 +2,7 @@ import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { scanAlbumBasic } from "./scanner.js";
 import type { AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
+import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 
 const albumDownloadedPredicate = `
   EXISTS (
@@ -35,15 +36,7 @@ export interface AlbumListQuery {
     dir?: string;
 }
 
-export interface PaginatedAlbumsResult {
-    items: any[];
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-}
-
-function normalizeAlbumRow(album: any, downloadedPercent: number, isDownloaded: boolean) {
+function normalizeAlbumRow(album: any, downloadedPercent: number, isDownloaded: boolean): AlbumContract {
     return {
         ...album,
         cover_id: album.cover,
@@ -55,7 +48,7 @@ function normalizeAlbumRow(album: any, downloadedPercent: number, isDownloaded: 
 }
 
 export class AlbumQueryService {
-    static listAlbums(input: AlbumListQuery): PaginatedAlbumsResult {
+    static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
         const limit = input.limit;
         const offset = input.offset;
         const search = input.search;

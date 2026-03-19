@@ -2,25 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { dispatchLibraryUpdated, dispatchMonitorStateChanged } from "@/utils/appEvents";
+import type { VideoContract as Video } from "@contracts/catalog";
 
-export interface Video {
-  id: string;
-  title: string;
-  duration: number;
-  release_date?: string;
-  version?: string;
-  explicit?: boolean;
-  quality?: string;
-  cover_art_url?: string;
-  url?: string;
-  path?: string;
-  artist_id: string;
-  artist_name?: string;
-  is_monitored: boolean;
-  is_downloaded: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
+export type { Video };
 
 export const useVideos = (options?: {
   monitored?: boolean;
@@ -60,7 +44,7 @@ export const useVideos = (options?: {
       if (!append) {
         setLoading(true);
       }
-      const data: any = await api.getVideos({
+      const data = await api.getVideos({
         limit: 50,
         offset: pageNum * 50,
         monitored,
@@ -75,13 +59,13 @@ export const useVideos = (options?: {
       }
 
       if (append) {
-        setVideos(prev => [...prev, ...(data.items || data)]);
+        setVideos(prev => [...prev, ...data.items]);
       } else {
-        setVideos(data.items || data);
+        setVideos(data.items);
       }
 
-      setHasMore(data.hasMore !== undefined ? data.hasMore : false);
-      setTotal(data.total || 0);
+      setHasMore(data.hasMore);
+      setTotal(data.total);
       setPage(pageNum);
     } catch (error: any) {
       if (fetchId !== fetchIdRef.current) {

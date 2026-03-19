@@ -274,7 +274,7 @@ export const mapJob = (job: Job) => {
         type: job.type,
         description: buildDescription(job),
         progress: Number(job.progress || 0),
-        startTime: parseSqliteDate(job.started_at) || parseSqliteDate(job.created_at),
+        startTime: parseSqliteDate(job.started_at) ?? parseSqliteDate(job.created_at) ?? Date.now(),
         endTime: parseSqliteDate(job.completed_at),
         status: job.status === "processing" ? "running" : job.status,
         error: job.error,

@@ -3,13 +3,14 @@ import { TaskQueueService } from "../services/queue.js";
 import { CommandManager } from "../services/command.js";
 import { getRateLimitMetrics } from "../services/tidal.js";
 import { getActiveCommands, getCommandHistory, getQueuedCommands } from "../services/command-history.js";
+import type { StatusOverviewContract, TaskQueueStatContract } from "../contracts/status.js";
 
 const router = Router();
 
 router.get("/", (req, res) => {
     try {
-        const taskQueueStats = TaskQueueService.getStats();
-        res.json({
+        const taskQueueStats = TaskQueueService.getStats() as TaskQueueStatContract[];
+        const payload: StatusOverviewContract = {
             activeJobs: getActiveCommands(100),
             queuedJobs: getQueuedCommands(100),
             jobHistory: getCommandHistory(50, 0),
@@ -24,7 +25,8 @@ router.get("/", (req, res) => {
                 requiresDiskAccess: c.definition.requiresDiskAccess,
             })),
             rateLimitMetrics: getRateLimitMetrics(),
-        });
+        };
+        res.json(payload);
     } catch (error: any) {
         res.status(500).json({ detail: error.message });
     }

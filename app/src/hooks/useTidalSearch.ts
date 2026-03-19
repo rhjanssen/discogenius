@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import type { SearchResponseContract } from "@contracts/catalog";
 import { getArtistPicture } from "@/utils/tidalImages";
 
 export interface TidalArtist {
@@ -25,9 +26,9 @@ export const useTidalSearch = () => {
 
     setIsSearching(true);
     try {
-      const data: any = await api.search(query, ['artists'], 50);
+      const data: SearchResponseContract = await api.search(query, ['artists'], 50);
       const formatted =
-        data.results?.artists?.map((artist: any) => ({
+        data.results?.artists?.map((artist) => ({
           id: parseInt(String(artist.id)),
           name: artist.name,
           imageUrl: artist.imageId ? getArtistPicture(artist.imageId, "small") : null,
