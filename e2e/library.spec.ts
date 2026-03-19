@@ -100,7 +100,19 @@ test.describe('Library page tabs & filtering', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ connected: false, refreshTokenExpired: false, tokenExpired: false }),
+        body: JSON.stringify({
+          connected: false,
+          refreshTokenExpired: false,
+          tokenExpired: false,
+          hoursUntilExpiry: 0,
+          mode: 'mock',
+          canAccessShell: true,
+          canAccessLocalLibrary: true,
+          remoteCatalogAvailable: false,
+          authBypassed: true,
+          canAuthenticate: false,
+          message: 'Mock provider auth mode is active.',
+        }),
       });
     });
 

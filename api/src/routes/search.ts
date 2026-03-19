@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { loadToken, searchTidal } from "../services/tidal.js";
 import { db } from "../database.js";
+import { getProviderAuthMode } from "../services/provider-auth-mode.js";
 
 const router = Router();
 const SEARCH_TYPES = ["artists", "albums", "tracks", "videos"] as const;
@@ -98,10 +99,8 @@ router.get("/", async (req, res) => {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });
         }
 
-        const hasRemoteAuth = Boolean(loadToken()?.access_token);
-        if (!hasRemoteAuth) {
-            return res.status(401).json({ detail: "TIDAL authentication required" });
-        }
+        const providerAuthMode = getProviderAuthMode();
+        const hasRemoteAuth = providerAuthMode === "live" && Boolean(loadToken()?.access_token);
 
         const results: any = {
             artists: [],
@@ -268,7 +267,12 @@ router.get("/", async (req, res) => {
         results.tracks = results.tracks.slice(0, limit);
         results.videos = results.videos.slice(0, limit);
 
-        res.json({ success: true, results });
+        res.json({
+            success: true,
+            results,
+            mode: providerAuthMode,
+            remoteCatalogAvailable: hasRemoteAuth,
+        });
     } catch (error: any) {
         console.error('[search] Error:', error);
         res.status(500).json({ detail: "Search request failed" });

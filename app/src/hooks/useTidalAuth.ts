@@ -1,31 +1,18 @@
-import { useState, useEffect } from "react";
 import { api } from "@/services/api";
+import { useTidalConnection } from "@/hooks/useTidalConnection";
 import { useToast } from "@/hooks/useToast";
 
 export const useTidalAuth = () => {
-  const [tidalConnected, setTidalConnected] = useState(false);
-  const [tidalUsername, setTidalUsername] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    status,
+    isLoading,
+    isConnected,
+    canAuthenticate,
+    canAccessShell,
+    isAuthBypassed,
+    refetch,
+  } = useTidalConnection();
   const { toast } = useToast();
-
-  useEffect(() => {
-    checkTidalConnection();
-  }, []);
-
-  const checkTidalConnection = async () => {
-    try {
-      const status: any = await api.getAuthStatus();
-
-      if (status?.connected && status.user) {
-        setTidalConnected(true);
-        setTidalUsername(status.user.username);
-      }
-    } catch (error) {
-      console.error('Error checking Tidal connection:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const connectTidal = async () => {
     toast({
@@ -37,8 +24,7 @@ export const useTidalAuth = () => {
   const disconnectTidal = async () => {
     try {
       await api.logout();
-      setTidalConnected(false);
-      setTidalUsername(null);
+      await refetch();
       toast({
         title: "Disconnected",
         description: "Successfully logged out from Tidal",
@@ -53,11 +39,15 @@ export const useTidalAuth = () => {
   };
 
   return {
-    tidalConnected,
-    tidalUsername,
-    loading,
+    tidalConnected: isConnected,
+    tidalUsername: status?.user?.username ?? null,
+    loading: isLoading,
+    authMode: status?.mode ?? "live",
+    canAuthenticate,
+    canAccessShell,
+    authBypassed: isAuthBypassed,
     connectTidal,
     disconnectTidal,
-    checkTidalConnection,
+    checkTidalConnection: refetch,
   };
 };

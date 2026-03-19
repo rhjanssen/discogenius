@@ -16,6 +16,7 @@ import {
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useTidalConnection } from "@/hooks/useTidalConnection";
 import GlobalSearch from "./GlobalSearch";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
@@ -352,6 +353,15 @@ const Layout = () => {
   const { colors } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useDownloadQueue();
+  const { status } = useTidalConnection();
+
+  const showProviderModeBanner = Boolean(status?.canAccessShell && !status?.remoteCatalogAvailable);
+  const providerModeLabel = status?.mode === "mock" ? "Mock auth" : "Local only";
+  const providerModeTitle = status?.mode === "mock"
+    ? "Mock provider auth mode"
+    : "Disconnected local-library mode";
+  const providerModeMessage = status?.message
+    || "Remote provider access is unavailable. Library pages and search are limited to indexed local content.";
 
   useEffect(() => {
     if (!isStandaloneDisplayMode()) return;
@@ -434,6 +444,32 @@ const Layout = () => {
             </div>
           </div>
         </nav>
+        {showProviderModeBanner ? (
+          <div className={styles.tidalBannerWrap}>
+            <div className={styles.tidalBanner}>
+              <div className={styles.tidalBannerInfo}>
+                <div className={styles.tidalBannerText}>
+                  <div className={styles.tidalBannerTitleRow}>
+                    <Title3>{providerModeTitle}</Title3>
+                    <Badge appearance="filled" color="warning">
+                      {providerModeLabel}
+                    </Badge>
+                  </div>
+                  <Text className={styles.tidalBannerBody}>{providerModeMessage}</Text>
+                </div>
+              </div>
+              <div className={styles.tidalBannerActions}>
+                <Button
+                  appearance="secondary"
+                  className={styles.tidalBannerPrimaryButton}
+                  onClick={() => navigate("/search")}
+                >
+                  Search local library
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <main className={styles.main}>
           <Outlet />
         </main>

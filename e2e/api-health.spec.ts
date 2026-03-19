@@ -54,7 +54,6 @@ test.describe('API health & key endpoints', () => {
 
   test('/api/history returns persistent history payload', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/history?limit=5`);
-    if (resp.status() === 401) return;
     expect(resp.status()).toBe(200);
 
     const data = await resp.json();
@@ -72,7 +71,6 @@ test.describe('API health & key endpoints', () => {
 
   test('/api/queue returns live queue payload fields used for recovery', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/queue`);
-    if (resp.status() === 401) return;
     expect(resp.status()).toBe(200);
 
     const data = await resp.json();
@@ -129,7 +127,6 @@ test.describe('API health & key endpoints', () => {
       `${baseURL}/api/search?query=${encodeURIComponent(artistName)}&type=artists`
     );
 
-    if (resp.status() === 401) return;
     expect(resp.status()).toBe(200);
 
     const data = await resp.json();
@@ -137,20 +134,21 @@ test.describe('API health & key endpoints', () => {
     expect(data?.results?.albums ?? []).toEqual([]);
     expect(data?.results?.tracks ?? []).toEqual([]);
     expect(data?.results?.videos ?? []).toEqual([]);
+    expect(data?.remoteCatalogAvailable).toBe(false);
   });
 
   test('/api/search returns results for valid query when connected', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/search?query=test`);
-    if (resp.status() === 401) return;
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     expect(data).toHaveProperty('results');
+    expect(data).toHaveProperty('remoteCatalogAvailable');
   });
 
   test('/api/search rejects empty query', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/search?query=`);
     const status = resp.status();
-    expect(status === 400 || status === 401).toBeTruthy();
+    expect(status).toBe(400);
   });
 
   test('/api/status returns queue status', async ({ request }) => {
@@ -164,7 +162,6 @@ test.describe('API health & key endpoints', () => {
 
   test('no secrets leaked in status endpoint', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/status`);
-    if (resp.status() === 401) return;
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     const str = JSON.stringify(data);
@@ -174,13 +171,11 @@ test.describe('API health & key endpoints', () => {
 
   test('safe mode: resume endpoint keeps paused when downloads disabled', async ({ request }) => {
     const resp = await request.post(`${baseURL}/api/queue/resume`);
-    if (resp.status() === 401) return;
     expect(resp.status()).toBeLessThan(500);
   });
 
   test('queue mutation endpoints return 404 for unknown job ids', async ({ request }) => {
     const retryResp = await request.post(`${baseURL}/api/queue/999999999/retry`);
-    if (retryResp.status() === 401) return;
     expect(retryResp.status()).toBe(404);
 
     const deleteResp = await request.delete(`${baseURL}/api/queue/999999999`);

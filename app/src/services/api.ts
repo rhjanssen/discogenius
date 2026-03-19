@@ -1,4 +1,6 @@
 import { getApiBaseUrl } from '@/utils/apiBaseUrl';
+import type { AuthStatusContract } from '@contracts/auth';
+import { parseAuthStatusContract } from '@contracts/auth';
 import type {
   AccountConfigContract,
   FilteringConfigContract,
@@ -174,8 +176,8 @@ class ApiClient {
     return this.request('/auth/check-login');
   }
 
-  async getAuthStatus() {
-    return this.request('/auth/status');
+  async getAuthStatus(): Promise<AuthStatusContract> {
+    return this.request('/auth/status', {}, parseAuthStatusContract);
   }
 
   async logout() {

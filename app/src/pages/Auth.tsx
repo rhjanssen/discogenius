@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/providers/themeContext";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
+import type { AuthStatusContract } from "@contracts/auth";
 const logo = "/assets/images/logo.png";
 const tidalIcon = "/assets/images/tidal_icon.svg";
 
@@ -155,6 +156,7 @@ const Auth = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatusContract | null>(null);
   const refreshPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const devicePollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -168,6 +170,10 @@ const Auth = () => {
     const failedFetch = String(error?.message || '').includes('Failed to fetch');
     return failedFetch && document.visibilityState !== 'visible';
   };
+
+  const isConnectedStatus = useCallback((status?: AuthStatusContract | null) => {
+    return Boolean(status?.connected) && !status?.refreshTokenExpired;
+  }, []);
 
   const navigateAfterAuth = useCallback(() => {
     const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
@@ -184,14 +190,8 @@ const Auth = () => {
     navigate(`${pathname}${search}${hash}`, { replace: true });
   }, [location.state, navigate]);
 
-  const refreshTidalAuthStatusCache = useCallback((status?: { user?: { username?: string } | null }) => {
-    queryClient.setQueryData(["tidalAuthStatus"], (previous: any) => ({
-      ...(previous ?? {}),
-      connected: true,
-      refreshTokenExpired: false,
-      tokenExpired: false,
-      user: status?.user ?? previous?.user ?? null,
-    }));
+  const refreshTidalAuthStatusCache = useCallback((status: AuthStatusContract) => {
+    queryClient.setQueryData(["tidalAuthStatus"], status);
     void queryClient.invalidateQueries({ queryKey: ["tidalAuthStatus"] });
   }, [queryClient]);
 
@@ -204,15 +204,15 @@ const Auth = () => {
   useEffect(() => {
     const checkExistingConnection = async () => {
       try {
-        const status: any = await api.getAuthStatus();
+        const status = await api.getAuthStatus();
 
         if (!isMountedRef.current) {
           return;
         }
 
-        const isConnected = Boolean(status?.connected) && !status?.refreshTokenExpired;
+        setAuthStatus(status);
 
-        if (isConnected) {
+        if (isConnectedStatus(status)) {
           refreshTidalAuthStatusCache(status);
           navigateAfterAuth();
           return;
@@ -236,7 +236,7 @@ const Auth = () => {
 
     checkExistingConnection();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigateAfterAuth, refreshTidalAuthStatusCache]);
+  }, [isConnectedStatus, navigateAfterAuth, refreshTidalAuthStatusCache]);
 
   useEffect(() => {
     return () => {
@@ -259,15 +259,15 @@ const Auth = () => {
 
     refreshPollRef.current = setInterval(async () => {
       try {
-        const status: any = await api.getAuthStatus();
+        const status = await api.getAuthStatus();
 
         if (!isMountedRef.current) {
           return;
         }
 
-        const isConnected = Boolean(status?.connected) && !status?.refreshTokenExpired;
+        setAuthStatus(status);
 
-        if (isConnected) {
+        if (isConnectedStatus(status)) {
           if (refreshPollRef.current) {
             clearInterval(refreshPollRef.current);
             refreshPollRef.current = null;
@@ -301,6 +301,17 @@ const Auth = () => {
   };
 
   const connectTidal = async () => {
+    if (authStatus && !authStatus.canAuthenticate) {
+      toast({
+        title: "Live login disabled",
+        description: authStatus.message || "Provider auth bypass mode is active.",
+      });
+      if (authStatus.canAccessShell) {
+        navigateAfterAuth();
+      }
+      return;
+    }
+
     if (refreshPollRef.current) {
       clearInterval(refreshPollRef.current);
       refreshPollRef.current = null;
@@ -337,11 +348,13 @@ const Auth = () => {
         if (authWindow && !authWindow.closed) {
           authWindow.close();
         }
+        const status = await api.getAuthStatus();
+        setAuthStatus(status);
         toast({
           title: "Already Connected!",
           description: "You are already logged in to TIDAL.",
         });
-        refreshTidalAuthStatusCache(loginData);
+        refreshTidalAuthStatusCache(status);
         navigateAfterAuth();
         return;
       }
@@ -409,11 +422,13 @@ const Auth = () => {
             setConnecting(false);
             setUserCode(null);
             setVerificationUrl(null);
+            const status = await api.getAuthStatus();
+            setAuthStatus(status);
             toast({
               title: "Connected!",
               description: `Welcome ${authData.user?.username || 'user'}!`,
             });
-            refreshTidalAuthStatusCache(authData);
+            refreshTidalAuthStatusCache(status);
             navigateAfterAuth();
           } else {
             // Continue polling
@@ -482,7 +497,48 @@ const Auth = () => {
         </div>
 
         <div className={styles.card}>
-          {!connecting && !userCode && (
+          {!connecting && !userCode && authStatus?.authBypassed && (
+            <div className={styles.content}>
+              <div className={styles.header}>
+                <div className={styles.logoContainer}>
+                  <img src={logo} alt="" role="presentation" className={styles.logoGlow} />
+                  <img src={logo} alt="Discogenius" className={styles.logo} />
+                </div>
+                <Title2>
+                  {authStatus.mode === "mock" ? "Mock provider mode is active" : "Disconnected local-library mode"}
+                </Title2>
+                <Body1 style={{ textAlign: "center", marginTop: tokens.spacingVerticalM, color: tokens.colorNeutralForeground2 }}>
+                  {authStatus.message || "Discogenius can load the local library without a live TIDAL session."}
+                </Body1>
+              </div>
+
+              <Button
+                appearance="primary"
+                onClick={navigateAfterAuth}
+                size="large"
+                style={{ width: '100%' }}
+              >
+                Open Discogenius
+              </Button>
+            </div>
+          )}
+
+          {!connecting && !userCode && !authStatus?.authBypassed && refreshing && (
+            <div className={styles.infoBox}>
+              <div style={{ marginBottom: tokens.spacingVerticalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+                <Title3>Refreshing TIDAL session</Title3>
+                <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
+                  Restoring your provider session before continuing.
+                </Body1>
+              </div>
+              <div className={styles.waitingText}>
+                <Spinner size="tiny" />
+                <Text size={200}>Checking token status...</Text>
+              </div>
+            </div>
+          )}
+
+          {!connecting && !userCode && !authStatus?.authBypassed && !refreshing && (
             <div className={styles.content}>
               <div className={styles.header}>
                 <div className={styles.logoContainer}>

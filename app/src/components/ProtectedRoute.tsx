@@ -20,7 +20,7 @@ const useStyles = makeStyles({
 const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const styles = useStyles();
   const location = useLocation();
-  const { isConnected, isLoading } = useTidalConnection();
+  const { canAccessShell, isLoading } = useTidalConnection();
 
   if (isLoading) {
     return (
@@ -30,7 +30,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     );
   }
 
-  if (!isConnected) {
+  if (!canAccessShell) {
     return <Navigate to="/auth" replace state={{ from: location }} />;
   }
 

@@ -25,6 +25,8 @@ export default defineConfig({
       ...process.env,
       PORT: '3737',
       ADMIN_PASSWORD: '',
+      DISCOGENIUS_PROVIDER_AUTH_MODE: 'mock',
+      DISCOGENIUS_PROVIDER_AUTH_USERNAME: 'discogenius-e2e',
       DISCOGENIUS_DISABLE_DOWNLOADS: '1',
       DISCOGENIUS_DISABLE_MONITORING: '1',
       DISCOGENIUS_DISABLE_SCHEDULER: '1',
