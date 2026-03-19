@@ -92,22 +92,20 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.release.outputs.version }}"
-          changelog_section=""
+          changelog_body=""
           mkdir -p dist
           if [[ -f CHANGELOG.md ]]; then
-            changelog_section="$(awk -v v="${version}" '
+            changelog_body="$(awk -v v="${version}" '
               BEGIN { in_section = 0 }
-              $0 ~ "^## \\[" v "\\]" { in_section = 1 }
-              in_section && /^## \[/ && $0 !~ "^## \\[" v "\\]" { exit }
+              $0 ~ "^## \\[" v "\\]" { in_section = 1; next }
+              in_section && /^## \[/ { exit }
               in_section { print }
             ' CHANGELOG.md)"
           fi
 
           {
-            echo "## Release ${version}"
-            echo
-            if [[ -n "${changelog_section}" ]]; then
-              echo "${changelog_section}"
+            if [[ -n "${changelog_body}" ]]; then
+              printf "%s\n" "${changelog_body}" | sed '/./,$!d'
               echo
             fi
             echo "### Docker image"
