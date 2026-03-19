@@ -2,8 +2,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
 
 function parseArgs(argv) {
   const result = {
@@ -111,7 +113,7 @@ function ensureChangelogSection(version) {
     "",
   ].join("\n");
 
-  const headerMatch = current.match(/^# Changelog\n\nAll notable changes to this project are documented in this file\.\n?/);
+  const headerMatch = current.match(/^# Changelog\r?\n\r?\nAll notable changes to this project are documented in this file\.\r?\n?/);
   if (headerMatch) {
     const header = headerMatch[0].endsWith("\n\n") ? headerMatch[0] : `${headerMatch[0]}\n`;
     const rest = current.slice(headerMatch[0].length).replace(/^\n+/, "");
