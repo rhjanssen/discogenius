@@ -40,49 +40,19 @@ export function closeDatabase() {
   }
 }
 
-const BASE_SCHEMA_SEMVER = "1.0.0";
-const SEMVER_MULTIPLIER_MAJOR = 10000;
-const SEMVER_MULTIPLIER_MINOR = 100;
-
-function encodeSchemaSemver(semver: string): number {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(semver.trim());
-  if (!match) {
-    throw new Error(`Invalid schema semver: ${semver}`);
-  }
-
-  const [, majorRaw, minorRaw, patchRaw] = match;
-  const major = Number.parseInt(majorRaw, 10);
-  const minor = Number.parseInt(minorRaw, 10);
-  const patch = Number.parseInt(patchRaw, 10);
-
-  if (minor >= SEMVER_MULTIPLIER_MINOR || patch >= SEMVER_MULTIPLIER_MINOR) {
-    throw new Error(`Schema semver components must be < ${SEMVER_MULTIPLIER_MINOR}: ${semver}`);
-  }
-
-  return major * SEMVER_MULTIPLIER_MAJOR + minor * SEMVER_MULTIPLIER_MINOR + patch;
-}
-
-function decodeSchemaUserVersion(userVersion: number): string {
-  if (userVersion <= 0) {
-    return "0.0.0";
-  }
-
-  const major = Math.floor(userVersion / SEMVER_MULTIPLIER_MAJOR);
-  const minor = Math.floor((userVersion % SEMVER_MULTIPLIER_MAJOR) / SEMVER_MULTIPLIER_MINOR);
-  const patch = userVersion % SEMVER_MULTIPLIER_MINOR;
-  return `${major}.${minor}.${patch}`;
-}
-
-const BASE_SCHEMA_USER_VERSION = encodeSchemaSemver(BASE_SCHEMA_SEMVER);
+const BASE_SCHEMA_VERSION = 1;
+const LEGACY_SEMVER_BASELINE_VERSION = 10000;
+const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
+const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
 // ====================================================================
 // SCHEMA MIGRATIONS
-// Discogenius 1.0.0 resets the schema baseline so SQLite `user_version`
-// tracks a semver-encoded schema version (`1.0.0` -> `10000`).
+// Discogenius 1.0.x resets the schema baseline so SQLite `user_version`
+// tracks an independent integer schema series starting at `1`.
 //
 // The legacy numbered migrations remain so older local databases can still
-// be lifted to the current 1.0.0 schema before the baseline is normalized.
-// Future schema migrations should use explicit semver-encoded versions.
+// be lifted to the current schema before the baseline is normalized.
+// Future schema migrations should increment the integer schema version.
 // ====================================================================
 function tableExists(tableName: string): boolean {
   const row = db
@@ -107,6 +77,15 @@ function tableHasRows(tableName: string): boolean {
 
   const row = db.prepare(`SELECT 1 as present FROM ${tableName} LIMIT 1`).get() as { present?: number } | undefined;
   return row?.present === 1;
+}
+
+function getConfigValue(key: string): string | undefined {
+  if (!tableExists("config")) {
+    return undefined;
+  }
+
+  const row = db.prepare("SELECT value FROM config WHERE key = ?").get(key) as { value?: string } | undefined;
+  return row?.value;
 }
 
 function ensureUnmappedFilesAudioMetadataColumns() {
@@ -377,7 +356,7 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
 ];
 
 const LEGACY_SCHEMA_VERSION = LEGACY_MIGRATIONS.length;
-const SEMVER_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
+const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
 
 type MigrationRunSummary = {
   fromVersion: number;
@@ -388,6 +367,8 @@ type MigrationRunSummary = {
 function runMigrations(): MigrationRunSummary {
   const currentVersion = db.pragma("user_version", { simple: true }) as number;
   const appliedDescriptions: string[] = [];
+  const schemaVersionFormat = getConfigValue(SCHEMA_VERSION_FORMAT_KEY);
+  const isCurrentIntegerSeries = schemaVersionFormat === INTEGER_SCHEMA_VERSION_FORMAT;
 
   const runLegacyPending = (fromVersion: number) => {
     const pending = LEGACY_MIGRATIONS.slice(fromVersion);
@@ -405,7 +386,7 @@ function runMigrations(): MigrationRunSummary {
     }
   };
 
-  if (currentVersion > 0 && currentVersion < BASE_SCHEMA_USER_VERSION) {
+  if (!isCurrentIntegerSeries && currentVersion > 0 && currentVersion <= LEGACY_SCHEMA_VERSION) {
     const legacyVersion = Math.min(currentVersion, LEGACY_SCHEMA_VERSION);
     if (legacyVersion < LEGACY_SCHEMA_VERSION) {
       runLegacyPending(legacyVersion);
@@ -422,23 +403,28 @@ function runMigrations(): MigrationRunSummary {
     normalizedVersion = db.pragma("user_version", { simple: true }) as number;
   }
 
-  if (normalizedVersion < BASE_SCHEMA_USER_VERSION) {
-    console.log(`🛠️  Baseline current schema to ${BASE_SCHEMA_SEMVER} (PRAGMA user_version=${BASE_SCHEMA_USER_VERSION})...`);
-    db.pragma(`user_version = ${BASE_SCHEMA_USER_VERSION}`);
-    appliedDescriptions.push(`baseline current schema as ${BASE_SCHEMA_SEMVER} (PRAGMA user_version=${BASE_SCHEMA_USER_VERSION})`);
-    normalizedVersion = BASE_SCHEMA_USER_VERSION;
+  const shouldNormalizeToBaseline =
+    normalizedVersion === 0
+    || (!isCurrentIntegerSeries && normalizedVersion <= LEGACY_SCHEMA_VERSION)
+    || normalizedVersion === LEGACY_SEMVER_BASELINE_VERSION;
+
+  if (shouldNormalizeToBaseline) {
+    console.log(`🛠️  Baseline current schema to ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION})...`);
+    db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
+    appliedDescriptions.push(`baseline current schema as ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION})`);
+    normalizedVersion = BASE_SCHEMA_VERSION;
   }
 
-  const pending = SEMVER_MIGRATIONS
+  const pending = SCHEMA_MIGRATIONS
     .filter((migration) => migration.version > normalizedVersion)
     .sort((left, right) => left.version - right.version);
 
   if (pending.length > 0) {
     console.log(
-      `🛠️  Running ${pending.length} schema migration(s) (${decodeSchemaUserVersion(normalizedVersion)} → ${decodeSchemaUserVersion(pending[pending.length - 1].version)})...`
+      `🛠️  Running ${pending.length} schema migration(s) (${normalizedVersion} → ${pending[pending.length - 1].version})...`
     );
     for (const migration of pending) {
-      console.log(`  [${decodeSchemaUserVersion(migration.version)}] ${migration.description}`);
+      console.log(`  [${migration.version}] ${migration.description}`);
       migration.up();
       appliedDescriptions.push(migration.description);
       db.pragma(`user_version = ${migration.version}`);
@@ -1048,7 +1034,7 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
   const appVersion = releaseInfo.version;
   const apiVersion = releaseInfo.apiVersion;
   const schemaUserVersion = db.pragma("user_version", { simple: true }) as number;
-  const schemaVersion = decodeSchemaUserVersion(schemaUserVersion);
+  const schemaVersion = String(schemaUserVersion);
 
   const previousVersionRow = db.prepare(`SELECT value FROM config WHERE key = 'runtime.current_app_version'`).get() as
     | { value: string }
@@ -1073,7 +1059,7 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
     VALUES (?, ?, ?, ?, ?)
   `);
 
-  const shouldRecordHistory = migrationSummary.toVersion > migrationSummary.fromVersion
+  const shouldRecordHistory = migrationSummary.toVersion !== migrationSummary.fromVersion
     || previousVersionRow?.value !== appVersion;
 
   db.exec("BEGIN");
@@ -1099,14 +1085,16 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
     upsertConfig.run(
       "runtime.current_schema_version",
       schemaVersion,
-      "Current Discogenius schema semver"
+      "Current Discogenius schema version"
     );
 
     upsertConfig.run(
-      "runtime.current_schema_user_version",
-      String(schemaUserVersion),
-      "Current SQLite schema version encoded in PRAGMA user_version"
+      SCHEMA_VERSION_FORMAT_KEY,
+      INTEGER_SCHEMA_VERSION_FORMAT,
+      "Schema versioning format used by SQLite PRAGMA user_version"
     );
+
+    db.prepare("DELETE FROM config WHERE key = 'runtime.current_schema_user_version'").run();
 
     if (shouldRecordHistory) {
       const notes = migrationSummary.appliedDescriptions.length > 0

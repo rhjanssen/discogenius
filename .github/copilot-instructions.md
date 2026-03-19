@@ -109,5 +109,5 @@ See `.github/workflows` for local + Docker dev steps, Docker deploy, and docs up
   - commit + tag `v<semver>` + push
 - Rely on `.github/workflows/release-dockerhub.yml` for Docker publish + GitHub release asset/notes publication.
 - Keep `CHANGELOG.md` updated and concise; release workflow reads from it.
-- Database schema upgrades remain PRAGMA `user_version` migrations; the 1.0.0 baseline uses semver-encoded schema versions (`1.0.0` -> `10000`), and runtime app/api/schema provenance is tracked in `config` keys and `database_version_history`.
+- Database schema upgrades remain PRAGMA `user_version` migrations; the 1.0.x baseline uses an independent integer schema series starting at `1`, and runtime app/api/schema provenance is tracked in `config` keys and `database_version_history`.
 
