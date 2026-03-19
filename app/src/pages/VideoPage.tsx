@@ -38,6 +38,8 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useToast } from "@/hooks/useToast";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import type { Artist } from "@/hooks/useLibrary";
+import type { Video as VideoListItem } from "@/hooks/useVideos";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -265,6 +267,26 @@ const useStyles = makeStyles({
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
+type VideoDetail = VideoListItem & {
+    cover_id?: string | null;
+    cover?: string | null;
+    monitor?: boolean;
+    monitor_lock?: boolean | number;
+    monitor_locked?: boolean | number;
+    downloaded?: boolean;
+};
+
+type VideoFilesResponse = {
+    items?: Array<{
+        id: number;
+        file_type: string;
+        codec?: string;
+        file_size?: number;
+        extension?: string;
+        bitrate?: number;
+    }>;
+};
+
 function formatFileSize(bytes?: number): string {
     if (!bytes) return "—";
     if (bytes < 1024) return `${bytes} B`;
@@ -296,30 +318,30 @@ const VideoPage = () => {
         data: video,
         isLoading: isVideoLoading,
         error,
-    } = useQuery({
+    } = useQuery<VideoDetail>({
         queryKey: ["video", videoId],
-        queryFn: () => api.getVideo(videoId!),
+        queryFn: () => api.getVideo<VideoDetail>(videoId!),
         enabled: !!videoId,
         refetchInterval: 5_000,
     });
 
     // We fetch artist data to get the profile picture since it might not be in the video response
-    const { data: artistData } = useQuery({
+    const { data: artistData } = useQuery<Artist | null>({
         queryKey: ["artist", video?.artist_id],
-        queryFn: () => api.getArtist(video!.artist_id!),
+        queryFn: () => api.getArtist<Artist>(video!.artist_id!).catch(() => null),
         enabled: !!video?.artist_id,
     });
 
     // Fetch library files for this video
-    const { data: filesData } = useQuery({
+    const { data: filesData } = useQuery<VideoFilesResponse>({
         queryKey: ["video-files", videoId],
         queryFn: () => api.getLibraryFiles({ mediaId: videoId! }),
         enabled: !!videoId && !!video?.is_downloaded,
     });
 
     const videoFile = useMemo(() => {
-        const files = (filesData as any)?.items ?? [];
-        return files.find((f: any) => f.file_type === "video");
+        const files = filesData?.items ?? [];
+        return files.find((file) => file.file_type === "video");
     }, [filesData]);
 
     const { setBrandKeyColor } = useTheme();

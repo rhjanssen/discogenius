@@ -1262,7 +1262,7 @@ const SettingsPage = () => {
         <div className={noDivider ? styles.rowNoDivider : styles.row}>
             <Checkbox
                 checked={checked}
-                onChange={(_, data) => onChange(data.checked)}
+                onChange={(_, data) => onChange(Boolean(data.checked))}
                 label={<>
                     <Text weight="semibold">{title}</Text>
                     <Text size={200} className={styles.mutedTextBlock}>

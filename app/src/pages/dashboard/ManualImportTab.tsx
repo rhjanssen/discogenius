@@ -611,7 +611,7 @@ const ManualImportTab = () => {
     const [manualImportFile, setManualImportFile] = useState<UnmappedFile | null>(null);
     const [sortKey, setSortKey] = useState<SortKey>('created_at');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-    const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+    const [selectedRowIds, setSelectedRowIds] = useState<Array<string | number>>([]);
 
     const { data: files, isLoading } = useQuery<UnmappedFile[]>({
         queryKey: ['unmapped-files'],
@@ -689,7 +689,7 @@ const ManualImportTab = () => {
     }, [displayRows, sortDirection, sortKey]);
 
     useEffect(() => {
-        const visibleIds = new Set(sortedRows.map((row) => row.id));
+        const visibleIds = new Set<string | number>(sortedRows.map((row) => row.id));
         setSelectedRowIds((current) => current.filter((id) => visibleIds.has(id)));
     }, [sortedRows]);
 

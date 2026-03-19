@@ -7,6 +7,7 @@ export interface QualitySettings {
   video_quality: "sd" | "hd" | "fhd";
   embed_cover: boolean;
   embed_lyrics: boolean;
+  embed_synced_lyrics?: boolean;
   upgrade_existing_files: boolean;
 }
 
@@ -22,6 +23,7 @@ export interface MetadataSettings {
   video_thumbnail_resolution: "origin" | "640x360" | "1280x720" | "160x107" | "480x320" | "750x500" | "1080x720";
   save_lyrics: boolean;
   save_album_review: boolean;
+  embed_album_review?: boolean;
   save_artist_bio: boolean;
   enable_fingerprinting: boolean;
   write_tidal_url: boolean;

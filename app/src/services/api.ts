@@ -297,8 +297,8 @@ class ApiClient {
     return this.request('/stats');
   }
 
-  async getArtist(artistId: string) {
-    return this.request(`/artists/${artistId}`);
+  async getArtist<T = unknown>(artistId: string) {
+    return this.request<T>(`/artists/${artistId}`);
   }
 
   async getArtistPage(artistId: string) {
@@ -374,8 +374,8 @@ class ApiClient {
     return this.request(`/albums${query ? `?${query}` : ''}`);
   }
 
-  async getAlbum(albumId: string) {
-    return this.request(`/albums/${albumId}`);
+  async getAlbum<T = unknown>(albumId: string) {
+    return this.request<T>(`/albums/${albumId}`);
   }
 
   async addAlbum(tidalId: string) {
@@ -396,16 +396,16 @@ class ApiClient {
     return this.request(`/albums/${albumId}`, { method: 'DELETE' });
   }
 
-  async getAlbumTracks(albumId: string) {
-    return this.request(`/albums/${albumId}/tracks`);
+  async getAlbumTracks<T = unknown>(albumId: string) {
+    return this.request<T>(`/albums/${albumId}/tracks`);
   }
 
-  async getAlbumSimilar(albumId: string) {
-    return this.request(`/albums/${albumId}/similar`);
+  async getAlbumSimilar<T = unknown>(albumId: string) {
+    return this.request<T>(`/albums/${albumId}/similar`);
   }
 
-  async getAlbumVersions(albumId: string) {
-    return this.request(`/albums/${albumId}/versions`);
+  async getAlbumVersions<T = unknown>(albumId: string) {
+    return this.request<T>(`/albums/${albumId}/versions`);
   }
 
   async getTracks(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
@@ -461,8 +461,8 @@ class ApiClient {
     return this.request(`/videos${query ? `?${query}` : ''}`);
   }
 
-  async getVideo(videoId: string) {
-    return this.request(`/videos/${videoId}`);
+  async getVideo<T = unknown>(videoId: string) {
+    return this.request<T>(`/videos/${videoId}`);
   }
 
   async addVideo(tidalId: string) {

@@ -225,8 +225,7 @@ export function renderUltraBlur(colors: UltraBlurColors, options: RenderUltraBlu
   if (!ctx) throw new Error("2D canvas not available");
 
   ctx.imageSmoothingEnabled = true;
-  // @ts-expect-error older TS libs might not include this union; safe in modern browsers
-  ctx.imageSmoothingQuality = "high";
+  (ctx as CanvasRenderingContext2D & { imageSmoothingQuality?: "low" | "medium" | "high" }).imageSmoothingQuality = "high";
 
   ctx.save();
   // "Smoked glass" look: slightly darkened, high saturation, low contrast boost.

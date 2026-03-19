@@ -270,8 +270,8 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalM,
     borderRadius: tokens.borderRadiusLarge,
     padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, ${tokens.colorPaletteGoldBorder2} 55%, ${tokens.colorNeutralStroke2})`,
-    backgroundColor: `color-mix(in srgb, ${tokens.colorPaletteGoldBackground2} 65%, ${tokens.colorNeutralBackground1})`,
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, ${tokens.colorPaletteMarigoldBorder2} 55%, ${tokens.colorNeutralStroke2})`,
+    backgroundColor: `color-mix(in srgb, ${tokens.colorPaletteMarigoldBackground2} 65%, ${tokens.colorNeutralBackground1})`,
     boxShadow: tokens.shadow4,
     "@media (min-width: 640px)": {
       flexDirection: "row",

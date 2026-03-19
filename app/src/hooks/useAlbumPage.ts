@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { Album } from '@/hooks/useLibrary';
+import type { Artist } from '@/hooks/useLibrary';
 import { api } from '@/services/api';
 import { getArtistPicture } from '@/utils/tidalImages';
 
@@ -76,12 +77,12 @@ export function useAlbumPage(albumId: string | undefined) {
                 throw new Error('Album ID is required');
             }
 
-            const album = await api.getAlbum(albumId);
+            const album = await api.getAlbum<Album>(albumId);
             const [tracks, artistData, otherVersionsResult, similarAlbumsResult] = await Promise.all([
-                api.getAlbumTracks(albumId) as Promise<AlbumTrack[]>,
-                album.artist_id ? api.getArtist(album.artist_id).catch(() => null) : Promise.resolve(null),
-                api.getAlbumVersions(albumId).catch(() => []),
-                api.getAlbumSimilar(albumId).catch(() => []),
+                api.getAlbumTracks<AlbumTrack[]>(albumId),
+                album.artist_id ? api.getArtist<Artist>(album.artist_id).catch(() => null) : Promise.resolve(null),
+                api.getAlbumVersions<AlbumVersion[]>(albumId).catch(() => []),
+                api.getAlbumSimilar<SimilarAlbum[]>(albumId).catch(() => []),
             ]);
 
             const artistImage = artistData?.picture

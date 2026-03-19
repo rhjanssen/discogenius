@@ -8,7 +8,7 @@
     "dev": "tsx watch --ignore ../library --ignore ../config --ignore ../downloads --ignore ../tmp index.ts",
     "build": "tsc --project ./tsconfig.json",
     "start": "node dist/index.js",
-    "test": "tsx --test 'src/**/*.test.ts'"
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",

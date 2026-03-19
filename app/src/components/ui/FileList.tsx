@@ -104,6 +104,11 @@ const useStyles = makeStyles({
         textOverflow: "ellipsis",
         fontWeight: tokens.fontWeightSemibold,
     },
+    fileStack: {
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
+    },
     filePath: {
         ...shorthands.overflow("hidden"),
         whiteSpace: "nowrap",
@@ -619,11 +624,12 @@ export const FileList: React.FC<FileListProps> = ({
                                     }}
                                 >
                                     <TableCell>
-                                        <TableCellLayout
-                                            media={<span className={styles.fileIcon}>{getFileIcon(file.file_type)}</span>}
-                                            primary={<Text className={styles.fileName} title={name}>{name}</Text>}
-                                            secondary={<Text className={styles.filePath} title={path}>{path}</Text>}
-                                        />
+                                        <TableCellLayout media={<span className={styles.fileIcon}>{getFileIcon(file.file_type)}</span>}>
+                                            <div className={styles.fileStack}>
+                                                <Text className={styles.fileName} title={name}>{name}</Text>
+                                                <Text className={styles.filePath} title={path}>{path}</Text>
+                                            </div>
+                                        </TableCellLayout>
                                     </TableCell>
                                     <TableCell>
                                         <div className={styles.typeStack}>

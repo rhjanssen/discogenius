@@ -9,11 +9,16 @@
     "dev": "concurrently \"yarn --cwd api dev\" \"yarn --cwd app dev\" --names \"backend,frontend\" --prefix-colors \"magenta,cyan\"",
     "dev:all": "yarn dev",
     "build": "concurrently \"yarn --cwd api build\" \"yarn --cwd app build\"",
+    "typecheck": "concurrently \"yarn --cwd api build\" \"yarn --cwd app typecheck\" --names \"api,app\" --prefix-colors \"magenta,cyan\"",
     "lint": "eslint .",
+    "test": "yarn test:api",
+    "test:api": "yarn --cwd api test",
     "app:dev": "yarn --cwd app dev",
     "api:dev": "yarn --cwd api dev",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "test:e2e:smoke": "playwright test -c e2e/playwright.config.ts e2e/api-health.spec.ts e2e/navigation.spec.ts",
     "test:e2e:headed": "playwright test -c e2e/playwright.config.ts --headed",
+    "ci": "yarn lint && yarn typecheck && yarn test:api && yarn build",
     "release:prepare": "node scripts/release/prepare-release.mjs"
   },
   "devDependencies": {
