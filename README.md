@@ -39,6 +39,10 @@ services:
   discogenius:
     image: rhjanssen/discogenius:latest
     container_name: discogenius
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
     ports:
       - 3737:3737
     volumes:
@@ -52,6 +56,9 @@ or run with docker directly:
 ```bash
 docker run -d \
   --name discogenius \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e TZ=Etc/UTC \
   -p 3737:3737 \
   -v /any/path/to/discogenius/config:/config \
   -v /any/path/to/your/library:/library \
@@ -60,6 +67,8 @@ docker run -d \
 ```
 
 Open the app at http://localhost:3737
+
+`PUID` and `PGID` tell Discogenius which host user should own files created under `/config`. Most NAS setups should set them explicitly. `TZ` controls the container timezone; `Etc/UTC` is the safest default and you can replace it with your local zone if needed. There is no separate runtime volume requirement; downloader runtime state now lives under `/config`.
 
 By default, 3737:3737 publishes on all interfaces (0.0.0.0), which is standard Docker behavior.
 If you want localhost-only access, bind explicitly to 127.0.0.1:

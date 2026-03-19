@@ -2,7 +2,6 @@ services:
   discogenius:
     image: rhjanssen/discogenius:latest
     container_name: discogenius
-    user: "1000:1000"
     env_file:
       - .env
     environment:
@@ -11,7 +10,7 @@ services:
       - NODE_ENV=production
       - DOCKER=true
       - PORT=${PORT:-3737}
-      - TZ=Europe/Amsterdam
+      - TZ=Etc/UTC
       - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-1}
       - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
     ports:

@@ -13,7 +13,7 @@ function resolveManagedPath(rawPath: string): string {
 }
 
 const DEFAULT_ORPHEUS_RUNTIME_DIR = IS_DOCKER
-    ? "/app/.runtime/orpheusdl"
+    ? path.join(CONFIG_DIR, "runtime", "orpheusdl")
     : path.join(REPO_ROOT, ".runtime", "orpheusdl");
 const ORPHEUS_RUNTIME_DIR = process.env.ORPHEUSDL_ROOT?.trim()
     ? resolveManagedPath(process.env.ORPHEUSDL_ROOT)

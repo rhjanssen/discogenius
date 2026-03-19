@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.3] - 2026-03-19
+
+### Changed
+- Docker images now honor `PUID` and `PGID` through the container entrypoint instead of requiring a matching `user:` override.
+- Orpheus runtime state now lives under `/config/runtime`, removing the need for a separate writable `/app/.runtime` mount on NAS deployments.
+- Updated Docker examples and documentation to show the supported `PUID`, `PGID`, and `TZ` environment variables with `Etc/UTC` as the default timezone.
+
 ## [1.0.2] - 2026-03-19
 
 ### Changed
