@@ -9,7 +9,6 @@ import {
     Spinner,
     Text,
     Title1,
-    Title3,
     Radio,
     RadioGroup,
     Divider,
@@ -36,6 +35,8 @@ import {
     QuestionCircle24Regular,
     Dismiss24Regular,
 } from "@fluentui/react-icons";
+import { SettingsSection } from "@/components/settings/SettingsSection";
+import { SettingsOverview } from "@/components/settings/SettingsOverview";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useTheme } from "@/providers/themeContext";
@@ -348,14 +349,6 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         gap: tokens.spacingVerticalM,
         marginBottom: tokens.spacingVerticalL,
-    },
-    sectionTitle: {
-        margin: tokens.spacingVerticalNone,
-    },
-    sectionHeading: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXXS,
     },
     card: {
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
@@ -675,11 +668,6 @@ const useStyles = makeStyles({
     },
 });
 
-interface SettingsSectionProps {
-    children: React.ReactNode;
-    className: string;
-}
-
 interface NamingRenameSample {
     id: number;
     file_type: string;
@@ -719,10 +707,6 @@ interface RetagStatus {
     sample: RetagStatusSample[];
 }
 
-const SettingsSection = ({ children, className }: SettingsSectionProps) => (
-    <div className={className}>{children}</div>
-);
-
 const SettingsPage = () => {
     const styles = useStyles();
     const navigate = useNavigate();
@@ -739,8 +723,6 @@ const SettingsPage = () => {
         namingSettings,
         updateNamingSettings,
         accountSettings,
-        appSettings,
-        updateAppSettings,
     } = useUserSettings();
     const { tidalConnected, loading: tidalLoading } = useTidalAuth();
     const { theme, setTheme } = useTheme();
@@ -1246,7 +1228,7 @@ const SettingsPage = () => {
     })() : null;
 
     const currentVersionLabel = releaseInfo?.version || appVersion;
-    const versionStatusColor = releaseInfo?.updateStatus === "update-available"
+    const versionStatusColor: "warning" | "success" | "informative" = releaseInfo?.updateStatus === "update-available"
         ? "warning"
         : releaseInfo?.updateStatus === "current"
             ? "success"
@@ -1262,6 +1244,34 @@ const SettingsPage = () => {
         : releaseInfo?.updateStatus === "current"
             ? "This installation is on the latest stable release."
             : "Discogenius could not reach the release feed right now. Docker deployments still update by pulling a newer image and redeploying the container.";
+
+    const settingsSections = [
+        { id: "account", title: "Account" },
+        { id: "audio-quality", title: "Audio Quality" },
+        { id: "video-quality", title: "Video Quality" },
+        { id: "curation", title: "Curation" },
+        { id: "monitoring", title: "Monitoring" },
+        { id: "metadata", title: "Metadata" },
+        { id: "storage", title: "Storage" },
+        { id: "naming", title: "Naming" },
+        { id: "appearance", title: "Appearance" },
+        { id: "about", title: "About" },
+    ];
+
+    const scrollToSection = (sectionId: string) => {
+        document.getElementById(sectionId)?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+        });
+    };
+
+    const updateSummary = {
+        currentVersionLabel,
+        latestVersionLabel,
+        versionStatusColor,
+        versionStatusLabel,
+        versionHint,
+    };
 
     const renderToggleRow = ({
         title,
@@ -1339,9 +1349,13 @@ const SettingsPage = () => {
                 </Text>
             </div>
 
-            {/* Account Section */}
             {accountSettings && (
-                <div className={styles.sectionFullWidth}>
+                <SettingsSection
+                    id="account"
+                    title="Account"
+                    description="Tidal connection and import actions."
+                    className={styles.sectionFullWidth}
+                >
                     <div className={styles.card}>
                         <div className={styles.profileRow}>
                             <div className={styles.profileInfo}>
@@ -1394,18 +1408,29 @@ const SettingsPage = () => {
                             </Button>
                         </div>
                     </div>
-                </div>
+                </SettingsSection>
             )}
+
+            <SettingsOverview
+                sections={settingsSections}
+                pathSettings={pathSettings}
+                renameStatus={renameStatus}
+                renameStatusLoading={renameStatusLoading}
+                retagStatus={retagStatus}
+                retagStatusLoading={retagStatusLoading}
+                audioRetaggingEnabled={audioRetaggingEnabled}
+                updateSummary={updateSummary}
+                onNavigate={scrollToSection}
+            />
 
             <div className={styles.sectionsContainer}>
                 {/* Audio Quality */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Audio Quality</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Stereo quality for downloaded tracks. Applies to new and upgraded downloads.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="audio-quality"
+                    title="Audio Quality"
+                    description="Stereo quality for downloaded tracks. Applies to new and upgraded downloads."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         <RadioGroup
                             value={qualitySettings?.audio_quality || 'max'}
@@ -1436,13 +1461,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Video Quality */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Video Quality</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Control music video downloads and resolution.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="video-quality"
+                    title="Video Quality"
+                    description="Control music video downloads and resolution."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         {renderToggleRow({
                             title: "Music Videos",
@@ -1480,13 +1504,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Curation Section */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Curation</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Choose what release types to include and how to prioritize versions.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="curation"
+                    title="Curation"
+                    description="Choose what release types to include and how to prioritize versions."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         {curationTypeRows.map((row) => renderCheckboxRow({
                             title: row.title,
@@ -1528,13 +1551,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Monitoring Section */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Monitoring</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Schedule automatic scans and cleanup behavior.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="monitoring"
+                    title="Monitoring"
+                    description="Schedule automatic scans and cleanup behavior."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         {renderToggleRow({
                             title: "Active Monitoring",
@@ -1717,13 +1739,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Metadata */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Metadata</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Decide what metadata is embedded or saved alongside files.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="metadata"
+                    title="Metadata"
+                    description="Decide what metadata is embedded or saved alongside files."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         {renderToggleRow({
                             title: "Embed Tags",
@@ -2030,13 +2051,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Storage */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Storage</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Set the paths where your organized library is stored.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="storage"
+                    title="Storage"
+                    description="Set the paths where your organized library is stored."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
@@ -2083,13 +2103,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Naming */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Naming</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Use templates to organize your library. Click the ? buttons to see available tokens and examples.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="naming"
+                    title="Naming"
+                    description="Use templates to organize your library. Click the ? buttons to see available tokens and examples."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         <div className={styles.namingRow}>
                             <div className={styles.rowContent}>
@@ -2335,13 +2354,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Appearance */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>Appearance</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            Choose the theme used across the app.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="appearance"
+                    title="Appearance"
+                    description="Choose the theme used across the app."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         <RadioGroup
                             value={theme}
@@ -2379,13 +2397,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* About */}
-                <SettingsSection className={styles.section}>
-                    <div className={styles.sectionHeading}>
-                        <Title3 className={styles.sectionTitle}>About</Title3>
-                        <Caption1 className={styles.mutedText}>
-                            App info and version.
-                        </Caption1>
-                    </div>
+                <SettingsSection
+                    id="about"
+                    title="About"
+                    description="App info and version."
+                    className={styles.section}
+                >
                     <div className={styles.card}>
                         <div className={styles.row}>
                             <div className={styles.rowContent}>

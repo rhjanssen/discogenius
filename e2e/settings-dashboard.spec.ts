@@ -8,21 +8,29 @@ test.describe('Settings page', () => {
     if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
   });
 
-  test('renders settings sections', async ({ page }) => {
+  test('renders settings sections and overview', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
     await expect(page.getByRole('main').getByText('Settings', { exact: true })).toBeVisible();
-    await expect(page.getByText('Audio Quality', { exact: true })).toBeVisible();
-    await expect(page.getByText('Video Quality', { exact: true })).toBeVisible();
-    await expect(page.getByText('Curation', { exact: true })).toBeVisible();
-    await expect(page.getByText('Monitoring', { exact: true })).toBeVisible();
-    await expect(page.getByText('About', { exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+    await expect(page.getByText('Paths', { exact: true })).toBeVisible();
+    await expect(page.getByText('Rename plan', { exact: true })).toBeVisible();
+    await expect(page.getByText('Retag plan', { exact: true })).toBeVisible();
+    await expect(page.getByText('Updates', { exact: true })).toBeVisible();
+    await expect(page.locator('#settings-overview').getByRole('button', { name: 'Storage', exact: true })).toBeVisible();
+    await expect(page.locator('#settings-overview').getByRole('button', { name: 'Naming', exact: true })).toBeVisible();
+    await expect(page.locator('#audio-quality').getByText('Audio Quality', { exact: true })).toBeVisible();
+    await expect(page.locator('#video-quality').getByText('Video Quality', { exact: true })).toBeVisible();
+    await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
+    await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
+    await expect(page.locator('#account').getByText('Account', { exact: true })).toBeVisible();
+    await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
   });
 
   test('theme selector works', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
-    const appearanceHeading = page.getByText('Appearance', { exact: true });
+    const appearanceHeading = page.locator('#appearance').getByText('Appearance', { exact: true });
     await appearanceHeading.scrollIntoViewIfNeeded();
     await expect(appearanceHeading).toBeVisible();
     await expect(page.getByRole('radio', { name: /light/i })).toBeVisible();
@@ -54,17 +62,18 @@ test('settings about section shows current and latest version status', async ({ 
   await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
   if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
 
-  const aboutHeading = page.getByText('About', { exact: true });
+  const aboutHeading = page.locator('#about').getByText('About', { exact: true });
   await aboutHeading.scrollIntoViewIfNeeded();
   await expect(aboutHeading).toBeVisible();
 
-  await expect(page.getByText(/Current Version/i)).toBeVisible();
-  await expect(page.getByText(/Latest Version/i)).toBeVisible();
-  await expect(page.getByText(/Update Status/i)).toBeVisible();
-  await expect(page.getByText('v1.0.4', { exact: true })).toBeVisible();
-  await expect(page.getByText('v1.0.5', { exact: true })).toBeVisible();
-  await expect(page.getByText('Update available', { exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: /open latest release notes/i })).toBeVisible();
+  await expect(page.locator('#about').getByText(/Current Version/i)).toBeVisible();
+  await expect(page.locator('#about').getByText(/Latest Version/i)).toBeVisible();
+  await expect(page.locator('#about').getByText(/Update Status/i)).toBeVisible();
+  await expect(page.locator('#about').getByText('v1.0.4', { exact: true })).toBeVisible();
+  await expect(page.locator('#about').getByText('v1.0.5', { exact: true })).toBeVisible();
+  await expect(page.locator('#about').getByText('Update available', { exact: true })).toBeVisible();
+  await expect(page.locator('#about').getByRole('link', { name: /open latest release notes/i })).toBeVisible();
+  await expect(page.locator('#settings-overview').getByRole('button', { name: 'About', exact: true })).toBeVisible();
 });
 
 test.describe('Dashboard page', () => {
