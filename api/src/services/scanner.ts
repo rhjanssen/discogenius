@@ -25,7 +25,7 @@ import { JobTypes, TaskQueueService } from "./queue.js";
 import { ModuleFixer } from "./module-fixer.js";
 import { VersionGrouper } from "./version-grouper.js";
 import { getConfigSection } from "./config.js";
-import { shouldHydrateArtistAlbumTracks } from "./scan-policy.js";
+import { shouldHydrateArtistAlbumTracks, shouldHydrateArtistCatalog } from "./scan-policy.js";
 import pLimit from "p-limit";
 
 export enum ScanLevel {
@@ -520,6 +520,10 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
 
     const includeSimilarArtists = options.includeSimilarArtists !== false;
     const seedSimilarArtists = options.seedSimilarArtists !== false;
+    const hasManagedMetadata = currentLevel >= ScanLevel.DEEP;
+    const shouldHydrateCatalog = options.forceUpdate === true || shouldHydrateArtistCatalog(options, {
+        hasManagedMetadata,
+    });
     const shouldRunShallow =
         options.forceUpdate === true ||
         currentLevel < ScanLevel.SHALLOW ||
@@ -535,95 +539,100 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
         });
     }
 
-    // 1. Fetch artist page layout for module assignments
-    let albumModuleMap: Map<string, string> = new Map();
-    let pageData: any = null;
-    try {
-        pageData = await getArtistPage(artistId);
-        if (pageData?.rows) {
-            albumModuleMap = parseArtistPageModules(pageData, artistId);
-        }
-        console.log(`[Scanner] Mapped ${albumModuleMap.size} albums to modules from page API`);
-    } catch (e) {
-        console.warn(`[Scanner] Failed to fetch page layout for ${artistId}:`, e);
-    }
-
-    // 2. Fetch videos
-    const shouldRefreshArtistVideos =
-        options.forceUpdate === true ||
-        shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
-    if (shouldRefreshArtistVideos) {
+    let albums: any[] = [];
+    if (shouldHydrateCatalog) {
+        // 1. Fetch artist page layout for module assignments
+        let albumModuleMap: Map<string, string> = new Map();
+        let pageData: any = null;
         try {
-            const videos = await getArtistVideos(artistId);
-            console.log(`[Scanner] Found ${videos.length} videos for artist ${artistId}`);
-            await storeVideos(artistId, videos, options);
+            pageData = await getArtistPage(artistId);
+            if (pageData?.rows) {
+                albumModuleMap = parseArtistPageModules(pageData, artistId);
+            }
+            console.log(`[Scanner] Mapped ${albumModuleMap.size} albums to modules from page API`);
         } catch (e) {
-            console.warn(`[Scanner] Failed to fetch videos for ${artistId}:`, e);
+            console.warn(`[Scanner] Failed to fetch page layout for ${artistId}:`, e);
         }
-    } else {
-        console.log(`[Scanner] Skipping video refresh for ${artistId} (fresh)`);
-    }
 
-    // 3. Fetch all albums (the getArtistAlbums function fetches all three endpoints)
-    const albums = await getArtistAlbums(artistId);
-    console.log(`[Scanner] Found ${albums.length} albums for artist ${artistId}`);
-    options.progress?.({ kind: 'albums_total', total: albums.length });
-
-    // Store album metadata (sequential — DB writes + per-album module mapping)
-    for (let i = 0; i < albums.length; i++) {
-        const album = albums[i];
-        const created = await storeAlbum(album, artistId, albumModuleMap, options);
-        options.progress?.({
-            kind: 'album',
-            index: i + 1,
-            total: albums.length,
-            albumId: album.tidal_id,
-            title: album.title,
-            created,
-        });
-    }
-
-    // Inline album track scanning (Lidarr-style: tracks are fetched as part of
-    // artist refresh, not queued as separate jobs). Uses bounded parallelism
-    // since each album scan is an independent API call.
-    if (shouldHydrateArtistAlbumTracks(options)) {
-        const limit = pLimit(3);
-        const albumsNeedingTrackScan = albums.filter((album) => {
-            const expectedTracks = album.num_tracks || 0;
-            const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
-            const hasMissingTracks = expectedTracks > 0
-                ? existingCount.count < expectedTracks
-                : existingCount.count === 0;
-            return options.forceAlbumUpdate === true ||
-                hasMissingTracks ||
-                shouldRefreshTracks(album.tidal_id, monitoringConfig.track_refresh_days);
-        });
-
-        if (albumsNeedingTrackScan.length > 0) {
-            console.log(`[Scanner] Scanning tracks for ${albumsNeedingTrackScan.length}/${albums.length} albums inline`);
-            const trackScanTotal = albumsNeedingTrackScan.length;
-            await Promise.all(albumsNeedingTrackScan.map((album, idx) => limit(async () => {
-                options.progress?.({
-                    kind: 'album_tracks',
-                    index: idx + 1,
-                    total: trackScanTotal,
-                    albumId: album.tidal_id,
-                    title: album.title,
-                });
-                await scanAlbumTracks(album.tidal_id);
-            })));
+        // 2. Fetch videos
+        const shouldRefreshArtistVideos =
+            options.forceUpdate === true ||
+            shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
+        if (shouldRefreshArtistVideos) {
+            try {
+                const videos = await getArtistVideos(artistId);
+                console.log(`[Scanner] Found ${videos.length} videos for artist ${artistId}`);
+                await storeVideos(artistId, videos, options);
+            } catch (e) {
+                console.warn(`[Scanner] Failed to fetch videos for ${artistId}:`, e);
+            }
+        } else {
+            console.log(`[Scanner] Skipping video refresh for ${artistId} (fresh)`);
         }
+
+        // 3. Fetch all albums (the getArtistAlbums function fetches all three endpoints)
+        albums = await getArtistAlbums(artistId);
+        console.log(`[Scanner] Found ${albums.length} albums for artist ${artistId}`);
+        options.progress?.({ kind: 'albums_total', total: albums.length });
+
+        // Store album metadata (sequential — DB writes + per-album module mapping)
+        for (let i = 0; i < albums.length; i++) {
+            const album = albums[i];
+            const created = await storeAlbum(album, artistId, albumModuleMap, options);
+            options.progress?.({
+                kind: 'album',
+                index: i + 1,
+                total: albums.length,
+                albumId: album.tidal_id,
+                title: album.title,
+                created,
+            });
+        }
+
+        // Inline album track scanning (Lidarr-style: tracks are fetched as part of
+        // artist refresh, not queued as separate jobs). Uses bounded parallelism
+        // since each album scan is an independent API call.
+        if (shouldHydrateArtistAlbumTracks(options)) {
+            const limit = pLimit(3);
+            const albumsNeedingTrackScan = albums.filter((album) => {
+                const expectedTracks = album.num_tracks || 0;
+                const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
+                const hasMissingTracks = expectedTracks > 0
+                    ? existingCount.count < expectedTracks
+                    : existingCount.count === 0;
+                return options.forceAlbumUpdate === true ||
+                    hasMissingTracks ||
+                    shouldRefreshTracks(album.tidal_id, monitoringConfig.track_refresh_days);
+            });
+
+            if (albumsNeedingTrackScan.length > 0) {
+                console.log(`[Scanner] Scanning tracks for ${albumsNeedingTrackScan.length}/${albums.length} albums inline`);
+                const trackScanTotal = albumsNeedingTrackScan.length;
+                await Promise.all(albumsNeedingTrackScan.map((album, idx) => limit(async () => {
+                    options.progress?.({
+                        kind: 'album_tracks',
+                        index: idx + 1,
+                        total: trackScanTotal,
+                        albumId: album.tidal_id,
+                        title: album.title,
+                    });
+                    await scanAlbumTracks(album.tidal_id);
+                })));
+            }
+        } else {
+            console.log(`[Scanner] Skipping inline track hydration for artist ${artistId} (monitorAlbums=false)`);
+        }
+
+        // 4. Build version groups (2-level Other Versions traversal)
+        console.log(`[Scanner] Building version groups for artist ${artistId}...`);
+        await VersionGrouper.applyVersionGroups(artistId);
+
+        // 5. Fix module tags — pass cached page data to avoid redundant API call
+        console.log(`[Scanner] Fixing module tags for artist ${artistId}...`);
+        await ModuleFixer.fixModuleTagsForArtist(artistId);
     } else {
-        console.log(`[Scanner] Skipping inline track hydration for artist ${artistId} (monitorAlbums=false)`);
+        console.log(`[Scanner] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
     }
-
-    // 4. Build version groups (2-level Other Versions traversal)
-    console.log(`[Scanner] Building version groups for artist ${artistId}...`);
-    await VersionGrouper.applyVersionGroups(artistId);
-
-    // 5. Fix module tags — pass cached page data to avoid redundant API call
-    console.log(`[Scanner] Fixing module tags for artist ${artistId}...`);
-    await ModuleFixer.fixModuleTagsForArtist(artistId);
 
     // Update last_scanned
     db.prepare(`UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?`).run(artistId);
