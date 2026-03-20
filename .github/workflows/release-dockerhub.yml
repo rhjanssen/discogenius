@@ -110,9 +110,6 @@ jobs:
             fi
             echo "### Docker image"
             echo "- \`${{ steps.config.outputs.dockerhub_image }}:${version}\`"
-            if [[ "${{ steps.release.outputs.latest }}" == "true" ]]; then
-              echo "- \`${{ steps.config.outputs.dockerhub_image }}:latest\`"
-            fi
           } > dist/release-body.md
 
       - name: Set up Docker Buildx
