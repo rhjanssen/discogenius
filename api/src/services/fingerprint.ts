@@ -3,6 +3,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { resolveAcoustIdClientId } from './provider-client-config.js';
+import { Config } from './config.js';
 
 export interface MusicBrainzRecording {
     id: string;
@@ -157,7 +159,10 @@ export async function generateFingerprint(filePath: string): Promise<{ duration:
  * @returns Array of unique MusicBrainz IDs (MBIDs)
  */
 export async function lookupAcoustId(fingerprint: string, duration: number): Promise<string[]> {
-    const clientId = process.env.ACOUSTID_CLIENT_ID || 'QANd68ji1L';
+    const clientId = resolveAcoustIdClientId({
+        env: process.env,
+        appConfig: Config.getAppConfig(),
+    });
     const url = `https://api.acoustid.org/v2/lookup?client=${clientId}&meta=recordingids&duration=${duration}&fingerprint=${fingerprint}`;
 
     try {

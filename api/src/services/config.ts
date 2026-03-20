@@ -442,11 +442,4 @@ export class Config {
     return getConfigSection("account") || {};
   }
 
-  /**
-   * Get AcoustID API Key
-   */
-  static getAcoustIdApiKey(): string {
-    // Always use Lidarr's shared key as requested
-    return "QANd68ji1L";
-  }
 }

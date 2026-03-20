@@ -64,6 +64,10 @@ const useStyles = makeStyles({
         margin: "0 auto",
         paddingBottom: tokens.spacingVerticalXXL,
     },
+    stateShell: {
+        width: "100%",
+        alignSelf: "stretch",
+    },
     backButton: {
         alignSelf: "flex-start",
         marginBottom: tokens.spacingVerticalS,
@@ -295,7 +299,7 @@ const VideoPage = () => {
         queryKey: ["video", videoId],
         queryFn: () => api.getVideo(videoId!),
         enabled: !!videoId,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
     });
 
     // We fetch artist data to get the profile picture since it might not be in the video response
@@ -481,18 +485,22 @@ const VideoPage = () => {
 
     if (isVideoLoading) {
         return (
-            <LoadingState label="Loading video..." minHeight="280px" />
+            <div className={styles.stateShell}>
+                <LoadingState label="Loading video..." minHeight="280px" />
+            </div>
         );
     }
 
     if (error || !video) {
         return (
-            <ErrorState
-                title="Video not found"
-                description={videoErrorDescription}
-                minHeight="320px"
-                actions={<Button appearance="primary" onClick={() => navigate(-1)}>Go Back</Button>}
-            />
+            <div className={styles.stateShell}>
+                <ErrorState
+                    title="Video not found"
+                    description={videoErrorDescription}
+                    minHeight="320px"
+                    actions={<Button appearance="primary" onClick={() => navigate(-1)}>Go Back</Button>}
+                />
+            </div>
         );
     }
 

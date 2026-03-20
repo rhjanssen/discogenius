@@ -43,7 +43,7 @@ export function initCurationListeners() {
 
     // Trigger disk scan after metadata refresh is complete
     appEvents.on(AppEvent.ARTIST_SCANNED, (payload: ArtistScannedEventPayload | undefined) => {
-        if (payload?.monitorAlbums) {
+        if (payload?.scanLibrary) {
             const workflow = resolveRescanWorkflow(payload?.workflow);
             if (!workflow) {
                 console.warn(`[Listeners] Artist ${payload?.artistId ?? "unknown"} metadata refreshed without a rescan workflow; skipping RescanFolders`);

@@ -5,6 +5,7 @@ import { Config } from './config.js';
 import { exec, spawn } from 'child_process';
 import fs from 'fs';
 import { generateFingerprint } from './fingerprint.js';
+import { resolveAcoustIdClientId } from './provider-client-config.js';
 const IS_WINDOWS = process.platform === "win32";
 const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
@@ -170,7 +171,10 @@ export function deriveVideoQuality(metrics: AudioMetrics): string | null {
 }
 
 export async function lookupAcoustId(fingerprint: string, duration: number): Promise<string | null> {
-    const apiKey = Config.getAcoustIdApiKey();
+    const apiKey = resolveAcoustIdClientId({
+        env: process.env,
+        appConfig: Config.getAppConfig(),
+    });
     if (!apiKey) return null;
 
     try {

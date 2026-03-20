@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { loadToken, getArtist, getArtistBio, getArtistPage } from "./tidal.js";
+import { getArtist, getArtistBio, getArtistPage } from "./tidal.js";
 import {
     getAlbumDownloadStats,
     getAlbumDownloadStatsMap,
@@ -31,13 +31,6 @@ export interface ArtistActivitySnapshot {
     libraryScan: boolean;
     totalActive: number;
     jobs: Array<{ id: number; type: string; status: string }>;
-}
-
-function hasUsableTidalSession(): boolean {
-    const token = loadToken();
-    if (!token?.access_token) return false;
-    if (!token.expires_at) return true;
-    return token.expires_at > Math.floor(Date.now() / 1000);
 }
 
 export class ArtistQueryService {
@@ -344,102 +337,12 @@ export class ArtistQueryService {
     }
 
     static async getArtistPageDb(artistId: string): Promise<any | null> {
-        const canUseTidal = hasUsableTidalSession();
-        let artist = loadArtistWithEffectiveMonitor(artistId);
-
-        if (!artist) {
-            if (!canUseTidal) {
-                return null;
-            }
-
-            try {
-                const artistData = await getArtist(artistId);
-                const existing = db.prepare(`
-          SELECT id, monitor, monitored_at
-          FROM artists
-          WHERE id = ?
-        `).get(artistId) as any;
-
-                const artistTypes = JSON.stringify(artistData.artist_types || ["ARTIST"]);
-                const artistRoles = JSON.stringify(artistData.artist_roles || []);
-
-                if (existing) {
-                    db.prepare(`
-            UPDATE artists
-            SET name = ?,
-                picture = ?,
-                popularity = ?,
-                artist_types = ?,
-                artist_roles = ?
-            WHERE id = ?
-          `).run(
-                        artistData.name,
-                        artistData.picture,
-                        artistData.popularity,
-                        artistTypes,
-                        artistRoles,
-                        artistId,
-                    );
-                } else {
-                    db.prepare(`
-            INSERT INTO artists (
-              id,
-              name,
-              picture,
-              popularity,
-              artist_types,
-              artist_roles,
-              monitor,
-              monitored_at,
-              user_date_added,
-              last_scanned
-            )
-            VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL)
-          `).run(
-                        artistId,
-                        artistData.name,
-                        artistData.picture,
-                        artistData.popularity,
-                        artistTypes,
-                        artistRoles,
-                    );
-                }
-
-                artist = loadArtistWithEffectiveMonitor(artistId);
-            } catch {
-                return null;
-            }
-        }
+        const artist = loadArtistWithEffectiveMonitor(artistId);
 
         if (!artist) {
             return null;
         }
-
         const needsEnrichment = !artist.name || artist.name === "Unknown Artist" || artist.artist_types == null;
-        if (needsEnrichment && canUseTidal) {
-            try {
-                const artistData = await getArtist(artistId);
-                db.prepare(`
-          UPDATE artists
-          SET name = ?,
-              picture = ?,
-              popularity = ?,
-              artist_types = ?,
-              artist_roles = ?
-          WHERE id = ?
-        `).run(
-                    artistData.name,
-                    artistData.picture,
-                    artistData.popularity,
-                    JSON.stringify(artistData.artist_types || ["ARTIST"]),
-                    JSON.stringify(artistData.artist_roles || []),
-                    artistId,
-                );
-                artist = loadArtistWithEffectiveMonitor(artistId) || artist;
-            } catch {
-                // Keep rendering from local DB state.
-            }
-        }
 
         const albums = db.prepare(`
       SELECT 
@@ -693,7 +596,7 @@ export class ArtistQueryService {
                 is_downloaded: artistDownloadStats.isDownloaded,
             },
             rows,
-            needs_scan: !artist.last_scanned,
+            needs_scan: !artist.last_scanned || needsEnrichment,
             album_count: transformedAlbums.length,
             monitored_album_count: transformedAlbums.filter((album) => album.is_monitored).length,
         };

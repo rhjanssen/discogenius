@@ -564,7 +564,8 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
             const isMonitored = Boolean(artist.monitor);
             await scanArtistDeep(artist.id, {
                 monitorArtist: isMonitored,
-                monitorAlbums: false,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: false,
                 includeSimilarArtists: false,
                 seedSimilarArtists: false,
             });
@@ -636,7 +637,8 @@ export async function checkNowStreaming(sendEvent: (event: string, data: any) =>
 
             await scanArtistDeep(artist.id, {
                 monitorArtist: isMonitored,
-                monitorAlbums: false,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: false,
                 includeSimilarArtists: false,
                 seedSimilarArtists: false,
             });

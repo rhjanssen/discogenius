@@ -8,23 +8,39 @@ test.describe('Settings page', () => {
     if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
   });
 
-  test('renders settings sections and overview', async ({ page }) => {
+  test('renders settings sections', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
     await expect(page.getByRole('main').getByText('Settings', { exact: true })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
-    await expect(page.getByText('Paths', { exact: true })).toBeVisible();
-    await expect(page.getByText('Rename plan', { exact: true })).toBeVisible();
-    await expect(page.getByText('Retag plan', { exact: true })).toBeVisible();
-    await expect(page.getByText('Updates', { exact: true })).toBeVisible();
-    await expect(page.locator('#settings-overview').getByRole('button', { name: 'Storage', exact: true })).toBeVisible();
-    await expect(page.locator('#settings-overview').getByRole('button', { name: 'Naming', exact: true })).toBeVisible();
     await expect(page.locator('#audio-quality').getByText('Audio Quality', { exact: true })).toBeVisible();
     await expect(page.locator('#video-quality').getByText('Video Quality', { exact: true })).toBeVisible();
     await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
     await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
     await expect(page.locator('#account').getByText('Account', { exact: true })).toBeVisible();
     await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
+  });
+
+  test('uses a stable stacked layout for settings sections', async ({ page }) => {
+    await expect(page.locator('main')).toBeVisible();
+
+    const layout = await page.locator('#audio-quality').evaluate((element) => {
+      const container = element.parentElement?.closest('[data-testid="settings-sections"]') as HTMLElement | null;
+      if (!container) {
+        return null;
+      }
+
+      const styles = window.getComputedStyle(container);
+      return {
+        display: styles.display,
+        flexDirection: styles.flexDirection,
+        columnCount: styles.columnCount,
+      };
+    });
+
+    expect(layout).not.toBeNull();
+    expect(layout?.display).toBe('flex');
+    expect(layout?.flexDirection).toBe('column');
+    expect(layout?.columnCount).toBe('auto');
   });
 
   test('theme selector works', async ({ page }) => {
@@ -73,7 +89,6 @@ test('settings about section shows current and latest version status', async ({ 
   await expect(page.locator('#about').getByText('v1.0.5', { exact: true })).toBeVisible();
   await expect(page.locator('#about').getByText('Update available', { exact: true })).toBeVisible();
   await expect(page.locator('#about').getByRole('link', { name: /open latest release notes/i })).toBeVisible();
-  await expect(page.locator('#settings-overview').getByRole('button', { name: 'About', exact: true })).toBeVisible();
 });
 
 test.describe('Dashboard page', () => {

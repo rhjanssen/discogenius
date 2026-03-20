@@ -20,6 +20,7 @@ import {
 } from "./artist-workflow.js";
 import { LibraryFilesService } from "./library-files.js";
 import { libraryMetadataBackfillService, type MetadataFillResult } from "./library-metadata-backfill.js";
+import { createCooperativeBatcher, yieldToEventLoop } from "../utils/concurrent.js";
 
 // ============================================================================
 // Types
@@ -374,10 +375,10 @@ export class DiskScanService {
         const videoPath = Config.getVideoPath();
         const atmosPath = Config.getAtmosPath();
 
-        fileIndex.set(musicPath, this.buildRootFileIndex(musicPath));
-        fileIndex.set(videoPath, this.buildRootFileIndex(videoPath));
+        fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
+        fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
         if (atmosPath) {
-            fileIndex.set(atmosPath, this.buildRootFileIndex(atmosPath));
+            fileIndex.set(atmosPath, await this.buildRootFileIndex(atmosPath));
         }
 
         for (let index = 0; index < artists.length; index += 1) {
@@ -412,6 +413,7 @@ export class DiskScanService {
             });
             totalOrphans += result.orphansRemoved;
             totalFlagsReset += result.downloadFlagsReset;
+            await yieldToEventLoop();
         }
 
         // Global cleanup for unmapped files
@@ -549,12 +551,13 @@ export class DiskScanService {
             const folderKey = artistFolder.toLowerCase();
             const prebuiltForRoot = prebuiltIndex?.get(rootPath);
             const cachedFiles = prebuiltForRoot?.get(folderKey);
+            const allFiles = cachedFiles ?? await this.getMediaFiles(dir);
 
             scanTargetsByDir.set(dirKey, {
                 key,
                 dir,
                 rootPath,
-                allFiles: cachedFiles ?? this.getMediaFiles(dir),
+                allFiles,
             });
         }
 
@@ -1430,20 +1433,22 @@ export class DiskScanService {
      * top-level subdirectory. Avoids redundant per-artist walks when
      * scanning the full library (Lidarr-style single-pass collection).
      */
-    private static buildRootFileIndex(rootPath: string): Map<string, string[]> {
+    private static async buildRootFileIndex(rootPath: string): Promise<Map<string, string[]>> {
         const index = new Map<string, string[]>();
         if (!fs.existsSync(rootPath)) return index;
 
         try {
+            const cooperateFolderWalk = createCooperativeBatcher(10);
             const topEntries = fs.readdirSync(rootPath, { withFileTypes: true });
             for (const entry of topEntries) {
                 if (!entry.isDirectory()) continue;
                 const folderKey = entry.name.toLowerCase();
                 const folderPath = path.join(rootPath, entry.name);
-                const files = this.getMediaFiles(folderPath);
+                const files = await this.getMediaFiles(folderPath);
                 if (files.length > 0) {
                     index.set(folderKey, files);
                 }
+                await cooperateFolderWalk();
             }
         } catch {
             // Permission errors, etc.
@@ -1455,16 +1460,27 @@ export class DiskScanService {
      * Recursively walk a directory and return all file paths.
      * Named to match Lidarr's GetAudioFiles convention.
      */
-    private static getMediaFiles(dir: string): string[] {
+    private static async getMediaFiles(dir: string): Promise<string[]> {
         const results: string[] = [];
+        const queue: string[] = [dir];
+        const cooperateEntryWalk = createCooperativeBatcher(200);
+
         try {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    results.push(...this.getMediaFiles(fullPath));
-                } else if (entry.isFile()) {
-                    results.push(fullPath);
+            while (queue.length > 0) {
+                const currentDir = queue.pop();
+                if (!currentDir) {
+                    continue;
+                }
+
+                const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(currentDir, entry.name);
+                    if (entry.isDirectory()) {
+                        queue.push(fullPath);
+                    } else if (entry.isFile()) {
+                        results.push(fullPath);
+                    }
+                    await cooperateEntryWalk();
                 }
             }
         } catch {

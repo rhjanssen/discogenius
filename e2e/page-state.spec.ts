@@ -52,7 +52,19 @@ async function stubShellApis(page: Page) {
     });
   });
 
-  await page.route('**/api/queue**', async (route) => {
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -70,6 +82,70 @@ async function stubShellApis(page: Page) {
 }
 
 test.describe('Content state surfaces', () => {
+  test('artist loading state stays centered on mobile', async ({ page }) => {
+    await stubShellApis(page);
+
+    let releaseArtistPage: (() => void) | null = null;
+    const artistGate = new Promise<void>((resolve) => {
+      releaseArtistPage = resolve;
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.route('**/api/artists/artist-mobile-loading/page-db', async (route) => {
+      await artistGate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          artist: {
+            id: 'artist-mobile-loading',
+            name: 'Loading Artist',
+            files: [],
+            is_monitored: true,
+          },
+          rows: [],
+          album_count: 0,
+          monitored_album_count: 0,
+          needs_scan: true,
+          artistInfo: {
+            name: 'Loading Artist',
+          },
+        }),
+      });
+    });
+
+    await page.route('**/api/artists/artist-mobile-loading/activity', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          scanning: false,
+          curating: false,
+          downloading: false,
+          libraryScan: false,
+          totalActive: 0,
+        }),
+      });
+    });
+
+    await page.goto(`${baseURL}/artist/artist-mobile-loading`, { waitUntil: 'domcontentloaded' });
+
+    const mainBox = await page.locator('main').boundingBox();
+    const statusBox = await page.getByRole('status').boundingBox();
+
+    expect(mainBox).not.toBeNull();
+    expect(statusBox).not.toBeNull();
+
+    const mainCenter = (mainBox!.x + (mainBox!.width / 2));
+    const statusCenter = (statusBox!.x + (statusBox!.width / 2));
+
+    expect(Math.abs(statusCenter - mainCenter)).toBeLessThanOrEqual(20);
+
+    releaseArtistPage?.();
+    await expect(page.getByText('No content found')).toBeVisible();
+  });
+
   test('artist loading stays localized and resolves to the shared empty state', async ({ page }) => {
     await stubShellApis(page);
 

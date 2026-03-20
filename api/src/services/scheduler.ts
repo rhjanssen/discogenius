@@ -270,7 +270,9 @@ export class Scheduler {
                     });
                     await scanArtistDeep(job.payload.artistId, {
                         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
-                        monitorAlbums: job.payload.monitorAlbums ?? false,
+                        monitorAlbums: job.payload.monitorAlbums,
+                        hydrateCatalog: job.payload.hydrateCatalog,
+                        hydrateAlbumTracks: job.payload.hydrateAlbumTracks,
                         includeSimilarArtists: job.payload.includeSimilarArtists ?? true,
                         seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
                         forceUpdate: job.payload.forceUpdate ?? false,
@@ -322,7 +324,7 @@ export class Scheduler {
                         artistId: job.payload.artistId,
                         artistName: job.payload.artistName,
                         workflow: job.payload.workflow,
-                        monitorAlbums: job.payload.monitorAlbums ?? false,
+                        scanLibrary: job.payload.scanLibrary ?? false,
                         forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
                         trigger: job.trigger ?? 0
                     });

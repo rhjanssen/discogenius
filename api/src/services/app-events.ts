@@ -39,7 +39,7 @@ export interface ArtistScannedEventPayload {
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;
-    monitorAlbums: boolean;
+    scanLibrary: boolean;
     forceDownloadQueue: boolean;
     trigger: number;
 }

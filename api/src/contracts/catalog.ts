@@ -54,8 +54,6 @@ export interface AlbumContract {
   filter_locked?: number;
   module?: string;
   group_type?: string;
-  browse_hydration_job_id?: number;
-  browse_hydration_status?: string;
   files?: LibraryFileContract[];
 }
 
@@ -192,8 +190,6 @@ function parseAlbumContract(value: unknown, index: number): AlbumContract {
     filter_locked: expectOptionalNumber(record.filter_locked, `${label}.filter_locked`),
     module: expectOptionalString(record.module, `${label}.module`),
     group_type: expectOptionalString(record.group_type, `${label}.group_type`),
-    browse_hydration_job_id: expectOptionalNumber(record.browse_hydration_job_id, `${label}.browse_hydration_job_id`),
-    browse_hydration_status: expectOptionalString(record.browse_hydration_status, `${label}.browse_hydration_status`),
   };
 }
 

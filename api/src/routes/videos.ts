@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { db } from "../database.js";
 import { getMediaDownloadStateMap, updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
-import { queueArtistBrowseHydration } from "../services/browse-hydration.js";
 import { seedVideo } from "../services/scanner.js";
 import type { VideoContract } from "../contracts/catalog.js";
 import type { VideoDetailContract } from "../contracts/media.js";
@@ -189,19 +188,6 @@ router.get("/:videoId", async (req, res) => {
 
     if (!video) {
       return res.status(404).json({ detail: "Video not found" });
-    }
-
-    if (video.artist_id) {
-      try {
-        const artistRow = db.prepare(
-          "SELECT last_scanned FROM artists WHERE id = ?"
-        ).get(video.artist_id) as { last_scanned?: string | null } | undefined;
-        if (!artistRow?.last_scanned) {
-          queueArtistBrowseHydration(String(video.artist_id), video.artist_name || undefined);
-        }
-      } catch {
-        // Browse hydration is best-effort and should not fail video rendering.
-      }
     }
 
     const { current_quality, ...rest } = video;

@@ -16,6 +16,27 @@ type PageModuleKey =
     | 'EPSANDSINGLES'
     | 'ALBUMS';
 
+export function resolveVersionGroupModule(
+    presentModules: Iterable<PageModuleKey>,
+): PageModuleKey | null {
+    const moduleSet = new Set(presentModules);
+
+    if (moduleSet.size === 0) {
+        return null;
+    }
+
+    // Only propagate categories that are stable across release variants.
+    // Relationship buckets like COMPILATION/APPEARS_ON are page-specific and
+    // should not move every version in the group into a different section.
+    if (moduleSet.has('LIVE')) return 'LIVE';
+    if (moduleSet.has('REMIX')) return 'REMIX';
+    if (moduleSet.has('DJ_MIXES')) return 'DJ_MIXES';
+    if (moduleSet.has('EP')) return 'EP';
+    if (moduleSet.has('SINGLE')) return 'SINGLE';
+    if (moduleSet.has('ALBUM')) return 'ALBUM';
+    return null;
+}
+
 function getMbSecondaryFromModule(module: CanonicalModule | null): string | null {
     if (!module) return null;
     switch (module) {
@@ -42,6 +63,92 @@ function getCanonicalModuleForEpOrSingle(tidalType: string | null | undefined): 
     if (type === 'EP') return 'EP';
     if (type === 'SINGLE') return 'SINGLE';
     return 'ALBUM';
+}
+
+export function normalizeStoredModuleToCanonical(
+    moduleValue: string | null | undefined,
+    tidalType: string | null | undefined,
+): CanonicalModule | null {
+    const normalized = (moduleValue || '').trim().toUpperCase();
+    if (!normalized) return null;
+
+    switch (normalized) {
+        case 'ALBUM':
+        case 'ALBUMS':
+        case 'ARTIST_ALBUMS':
+            return 'ALBUM';
+        case 'EP':
+        case 'ARTIST_EPS':
+        case 'ARTIST_EP':
+            return 'EP';
+        case 'SINGLE':
+        case 'ARTIST_SINGLES':
+        case 'ARTIST_SINGLE':
+            return 'SINGLE';
+        case 'COMPILATION':
+        case 'ARTIST_COMPILATIONS':
+            return 'COMPILATION';
+        case 'LIVE':
+        case 'ARTIST_LIVE_ALBUMS':
+            return 'LIVE';
+        case 'REMIX':
+        case 'ARTIST_REMIXES':
+            return 'REMIX';
+        case 'APPEARS_ON':
+        case 'ARTIST_APPEARS_ON':
+            return 'APPEARS_ON';
+        case 'DJ_MIXES':
+        case 'DJ MIXES':
+        case 'DJ-MIXES':
+            return 'DJ_MIXES';
+        case 'ARTIST_EPS_AND_SINGLES':
+        case 'EPSANDSINGLES':
+            return getCanonicalModuleForEpOrSingle(tidalType);
+        default:
+            return null;
+    }
+}
+
+export function resolveAlbumModuleClassification(options: {
+    fromPage?: PageModuleKey | null;
+    currentModule?: string | null;
+    groupType?: string | null;
+    albumType?: string | null;
+}): CanonicalModule {
+    const albumType = (options.albumType || 'ALBUM').toUpperCase();
+    const currentModule = normalizeStoredModuleToCanonical(options.currentModule, albumType);
+
+    let desired: CanonicalModule | null = null;
+    if (options.fromPage) {
+        if (options.fromPage === 'EPSANDSINGLES' || options.fromPage === 'ALBUMS') {
+            desired = getCanonicalModuleForEpOrSingle(albumType);
+        } else {
+            desired = options.fromPage;
+        }
+    }
+
+    // Keep the current managed section unless the page gives us a stronger signal.
+    if (!desired && currentModule) {
+        desired = currentModule;
+    }
+
+    if (!desired) {
+        if ((options.groupType || '').toUpperCase() === 'COMPILATIONS') {
+            desired = 'APPEARS_ON';
+        } else {
+            desired = getCanonicalModuleForEpOrSingle(albumType);
+        }
+    }
+
+    if (currentModule) {
+        const strongTypes = new Set<CanonicalModule>(['REMIX', 'LIVE', 'COMPILATION', 'DJ_MIXES', 'APPEARS_ON']);
+        const isDesiredGeneric = desired === 'ALBUM' || desired === 'EP' || desired === 'SINGLE';
+        if (isDesiredGeneric && strongTypes.has(currentModule)) {
+            desired = currentModule;
+        }
+    }
+
+    return desired;
 }
 
 function normalizePageModuleTitleToKey(title: string | null | undefined): PageModuleKey | null {
@@ -98,8 +205,6 @@ function propagateModulesWithinVersionGroups(
     moduleMap: Map<string, PageModuleKey>,
     artistId: string
 ): void {
-    const expandable = new Set<PageModuleKey>(['LIVE', 'COMPILATION', 'REMIX', 'DJ_MIXES']);
-
     // Get all version groups for this artist's albums from album_artists table
     const albumGroups = db.prepare(`
         SELECT aa.album_id, aa.version_group_id
@@ -129,17 +234,7 @@ function propagateModulesWithinVersionGroups(
 
         if (presentModules.size === 0) continue;
 
-        // Determine best module based on hierarchy
-        let bestModule: PageModuleKey | null = null;
-
-        if (presentModules.has('LIVE')) bestModule = 'LIVE';
-        else if (presentModules.has('COMPILATION')) bestModule = 'COMPILATION';
-        else if (presentModules.has('APPEARS_ON')) bestModule = 'APPEARS_ON';
-        else if (presentModules.has('REMIX')) bestModule = 'REMIX';
-        else if (presentModules.has('DJ_MIXES')) bestModule = 'DJ_MIXES';
-        else if (presentModules.has('EP')) bestModule = 'EP';
-        else if (presentModules.has('SINGLE')) bestModule = 'SINGLE';
-        else if (presentModules.has('ALBUM')) bestModule = 'ALBUM';
+        const bestModule = resolveVersionGroupModule(presentModules);
 
         // Apply best module to ALL albums in the group
         if (bestModule) {
@@ -223,41 +318,12 @@ export class ModuleFixer {
             const albumId = row.album_id?.toString?.() ?? String(row.album_id);
             const groupType = (row.group_type || '').toUpperCase();
             const albumType = (row.album_type || 'ALBUM').toUpperCase();
-
-            let desired: CanonicalModule | null = null;
-            const fromPage = pageMap.get(albumId) || null;
-            if (fromPage) {
-                if (fromPage === 'EPSANDSINGLES') {
-                    desired = getCanonicalModuleForEpOrSingle(albumType);
-                } else if (fromPage === 'ALBUMS') {
-                    desired = getCanonicalModuleForEpOrSingle(albumType);
-                } else {
-                    desired = fromPage;
-                }
-            }
-
-            // Fallback based on group/type (no title heuristics)
-            if (!desired) {
-                if (groupType === 'COMPILATIONS') {
-                    desired = 'APPEARS_ON';
-                } else {
-                    desired = getCanonicalModuleForEpOrSingle(albumType);
-                }
-            }
-
-            // CRITICAL: Prevent overwriting strong signals with generic types
-            // If current_module is already a strong type (REMIX, LIVE, COMPILATION, DJ_MIXES), keep it!
-            // This prevents "Happier (Remixes)" (REMIX) from becoming (EP) just because it has type EP.
-            if (row.current_module) {
-                const current = row.current_module.toUpperCase();
-                const strongTypes = new Set(['REMIX', 'LIVE', 'COMPILATION', 'DJ_MIXES', 'APPEARS_ON']);
-
-                // If we calculated a generic type (ALBUM/EP/SINGLE) but we have a strong type in DB (from page map or title detection), keep the strong type.
-                const isDesiredGeneric = ['ALBUM', 'EP', 'SINGLE'].includes(desired);
-                if (isDesiredGeneric && strongTypes.has(current)) {
-                    desired = current as CanonicalModule;
-                }
-            }
+            const desired = resolveAlbumModuleClassification({
+                fromPage: pageMap.get(albumId) || null,
+                currentModule: row.current_module,
+                groupType,
+                albumType,
+            });
 
             updateModule.run(desired, artistId, albumId);
 

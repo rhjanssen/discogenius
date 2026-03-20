@@ -638,7 +638,7 @@ const Library = () => {
   const handleArtistScan = useCallback(async (e: React.MouseEvent, artist: any) => {
     e.stopPropagation();
     try {
-      const result: any = await api.scanArtist(artist.id, { forceUpdate: Boolean(artist.last_scanned) });
+      const result: any = await api.scanArtist(artist.id, { forceUpdate: false });
       toast({
         title: "Refresh & scan queued",
         description: result?.message || artist.name,

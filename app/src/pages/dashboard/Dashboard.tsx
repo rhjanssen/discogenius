@@ -320,7 +320,7 @@ const Dashboard = () => {
         queryKey: dashboardStatsQueryKey,
         queryFn: async (): Promise<LibraryStats | null> => await api.getStats() as LibraryStats,
         staleTime: 30_000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,
     });
@@ -332,7 +332,7 @@ const Dashboard = () => {
             return { items: result.items };
         },
         staleTime: 15_000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,
     });

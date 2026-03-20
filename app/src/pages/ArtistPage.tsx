@@ -79,7 +79,12 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXL,
+    width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
+  },
+  stateShell: {
+    width: "100%",
+    alignSelf: "stretch",
   },
   header: {
     position: "relative",
@@ -651,7 +656,7 @@ const ArtistPage = () => {
     queryKey: ['artist-activity', artistId],
     queryFn: () => artistId ? api.getArtistActivity(artistId) : null,
     enabled: !!artistId,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
 
   // Combined busy states: local action flags OR server-side activity
@@ -792,7 +797,7 @@ const ArtistPage = () => {
     setSyncing(true);
     dispatchActivityRefresh();
     try {
-      const result: any = await api.scanArtist(artistId, { forceUpdate: hasBeenScanned });
+      const result: any = await api.scanArtist(artistId, { forceUpdate: false });
       toast({
         title: "Refresh & scan queued",
         description: result?.message || "Refreshing TIDAL metadata and scanning local files.",
@@ -1340,22 +1345,26 @@ const ArtistPage = () => {
 
   if (pageLoading) {
     return (
-      <LoadingState
-        size="huge"
-        label="Loading artist details..."
-        minHeight="320px"
-      />
+      <div className={styles.stateShell}>
+        <LoadingState
+          size="huge"
+          label="Loading artist details..."
+          minHeight="320px"
+        />
+      </div>
     );
   }
 
   if (pageError) {
     return (
-      <ErrorState
-        title="Failed to load artist"
-        error={pageError as Error}
-        minHeight="320px"
-        actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
-      />
+      <div className={styles.stateShell}>
+        <ErrorState
+          title="Failed to load artist"
+          error={pageError as Error}
+          minHeight="320px"
+          actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+        />
+      </div>
     );
   }
 

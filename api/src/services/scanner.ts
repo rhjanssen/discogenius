@@ -26,7 +26,9 @@ import { ModuleFixer } from "./module-fixer.js";
 import { VersionGrouper } from "./version-grouper.js";
 import { getConfigSection } from "./config.js";
 import { shouldHydrateArtistAlbumTracks, shouldHydrateArtistCatalog } from "./scan-policy.js";
+import { createCooperativeBatcher } from "../utils/concurrent.js";
 import pLimit from "p-limit";
+import { readIntEnv } from "../utils/env.js";
 
 export enum ScanLevel {
     NONE = 0,
@@ -43,6 +45,8 @@ export enum ScanTargetType {
 interface ScanOptions {
     monitorArtist?: boolean;
     monitorAlbums?: boolean;
+    hydrateCatalog?: boolean;
+    hydrateAlbumTracks?: boolean;
     forceUpdate?: boolean;
     forceAlbumUpdate?: boolean;
     includeSimilarArtists?: boolean;
@@ -59,6 +63,11 @@ export type ArtistScanProgressEvent =
     | { kind: 'album_tracks'; index: number; total: number; albumId: string; title: string };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY = readIntEnv(
+    "DISCOGENIUS_ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY",
+    1,
+    1,
+);
 
 function isRefreshDue(lastScanned: string | null | undefined, refreshDays: number | undefined): boolean {
     if (!refreshDays || refreshDays <= 0) return true;
@@ -576,9 +585,11 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
         options.progress?.({ kind: 'albums_total', total: albums.length });
 
         // Store album metadata (sequential — DB writes + per-album module mapping)
+        const cooperateAlbumStore = createCooperativeBatcher(20);
         for (let i = 0; i < albums.length; i++) {
             const album = albums[i];
             const created = await storeAlbum(album, artistId, albumModuleMap, options);
+            await cooperateAlbumStore();
             options.progress?.({
                 kind: 'album',
                 index: i + 1,
@@ -593,7 +604,9 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
         // artist refresh, not queued as separate jobs). Uses bounded parallelism
         // since each album scan is an independent API call.
         if (shouldHydrateArtistAlbumTracks(options)) {
-            const limit = pLimit(3);
+            // Keep nested album-track scans narrower than the scheduler thread pool so
+            // the API stays responsive while artists are refreshing.
+            const limit = pLimit(ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY);
             const albumsNeedingTrackScan = albums.filter((album) => {
                 const expectedTracks = album.num_tracks || 0;
                 const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
@@ -1304,6 +1317,7 @@ async function scanAlbumTracks(albumId: string): Promise<void> {
         WHERE id=? AND album_id=?
     `);
 
+    const cooperateTrackStore = createCooperativeBatcher(25);
     for (const track of tracks) {
         const trackArtistId = track.artist_id || album.artist_id;
         track.artist_id = trackArtistId;
@@ -1380,6 +1394,7 @@ async function scanAlbumTracks(albumId: string): Promise<void> {
 
         // Handle track artists
         await storeTrackArtists(track);
+        await cooperateTrackStore();
     }
 }
 
@@ -1636,44 +1651,110 @@ async function storeAlbum(
         );
     }
 
-    // Handle album_artists relationship
-    db.prepare(`DELETE FROM album_artists WHERE album_id = ?`).run(album.tidal_id);
-
+    // Handle album_artists relationship.
+    // group_type/module are artist-page classifications, so only the scanning artist's row
+    // should be rewritten from this scan context. Other related artists keep their own
+    // classification until they are scanned directly.
     const albumGroup = album._group_type || album._group || 'ALBUMS';
 
-    const insertRelation = db.prepare(`
-        INSERT OR IGNORE INTO album_artists (album_id, artist_id, type, group_type, module)
-        VALUES (?, ?, ?, ?, ?)
+    const upsertScannedRelation = db.prepare(`
+        INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(artist_id, album_id) DO UPDATE SET
+            artist_name = COALESCE(excluded.artist_name, album_artists.artist_name),
+            ord = COALESCE(excluded.ord, album_artists.ord),
+            type = excluded.type,
+            group_type = excluded.group_type,
+            module = excluded.module
     `);
 
-    const inserted = new Set<string>();
-    const insertAA = (artistId: string, type: string) => {
+    const upsertRelatedRelation = db.prepare(`
+        INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(artist_id, album_id) DO UPDATE SET
+            artist_name = COALESCE(excluded.artist_name, album_artists.artist_name),
+            ord = COALESCE(excluded.ord, album_artists.ord),
+            type = excluded.type,
+            group_type = COALESCE(album_artists.group_type, excluded.group_type),
+            module = COALESCE(album_artists.module, excluded.module)
+    `);
+
+    const participants = new Map<string, { name: string | null; ord: number | null }>();
+    const setParticipant = (artistId: string, name: string | null, ord: number | null) => {
         if (!artistId) return;
         const key = String(artistId);
-        if (inserted.has(key)) return;
-        insertRelation.run(album.tidal_id, key, type, albumGroup, moduleFromPage);
-        inserted.add(key);
+        if (!participants.has(key)) {
+            participants.set(key, { name, ord });
+            return;
+        }
+
+        const current = participants.get(key)!;
+        participants.set(key, {
+            name: current.name || name,
+            ord: current.ord ?? ord,
+        });
     };
+
+    setParticipant(scanningArtistId, scanningArtistId === primaryArtistId ? album.artist_name || null : null, 0);
+    setParticipant(primaryArtistId, album.artist_name || null, 0);
+
+    if (album.artists && Array.isArray(album.artists)) {
+        for (let index = 0; index < album.artists.length; index += 1) {
+            const artist = album.artists[index];
+            const otherArtistId = artist?.id?.toString?.() ?? String(artist?.id ?? '');
+            if (!otherArtistId || otherArtistId === 'undefined' || otherArtistId === 'null') continue;
+            setParticipant(otherArtistId, artist?.name || null, index);
+        }
+    }
 
     // Always link the scanning artist to every album returned by the artist endpoints.
     // This is required for page-db queries (`WHERE aa.artist_id = ?`) to work for "Appears On" albums.
     const scanningType = primaryArtistId === scanningArtistId ? 'MAIN' : 'APPEARS_ON';
-    insertAA(scanningArtistId, scanningType);
+    const scanningParticipant = participants.get(String(scanningArtistId));
+    upsertScannedRelation.run(
+        album.tidal_id,
+        scanningArtistId,
+        scanningParticipant?.name || null,
+        scanningParticipant?.ord ?? null,
+        scanningType,
+        albumGroup,
+        moduleFromPage,
+    );
 
     // Link the album's primary artist as well.
-    insertAA(primaryArtistId, 'MAIN');
+    if (primaryArtistId && primaryArtistId !== scanningArtistId) {
+        const primaryParticipant = participants.get(String(primaryArtistId));
+        upsertRelatedRelation.run(
+            album.tidal_id,
+            primaryArtistId,
+            primaryParticipant?.name || album.artist_name || null,
+            primaryParticipant?.ord ?? 0,
+            'MAIN',
+            null,
+            null,
+        );
+    }
 
     // Add other artists (best-effort)
     if (album.artists && Array.isArray(album.artists)) {
         for (const artist of album.artists) {
             const otherArtistId = artist?.id?.toString?.() ?? String(artist?.id ?? '');
             if (!otherArtistId || otherArtistId === 'undefined' || otherArtistId === 'null') continue;
-            if (!inserted.has(otherArtistId)) {
+            if (otherArtistId !== scanningArtistId && otherArtistId !== primaryArtistId) {
                 const otherArtistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(otherArtistId);
                 if (!otherArtistExists) {
                     db.prepare(`INSERT INTO artists(id, name, monitor) VALUES(?, ?, 0)`).run(otherArtistId, artist.name || 'Unknown Artist');
                 }
-                insertAA(otherArtistId, 'MAIN');
+                const participant = participants.get(otherArtistId);
+                upsertRelatedRelation.run(
+                    album.tidal_id,
+                    otherArtistId,
+                    participant?.name || artist.name || null,
+                    participant?.ord ?? null,
+                    'MAIN',
+                    null,
+                    null,
+                );
             }
         }
     }

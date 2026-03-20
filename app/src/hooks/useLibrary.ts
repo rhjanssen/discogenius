@@ -268,7 +268,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
 
   const syncArtist = useCallback(async (artistId: string) => {
     try {
-      const data: any = await api.scanArtist(artistId, { forceUpdate: true });
+      const data: any = await api.scanArtist(artistId, { forceUpdate: false });
 
       toast({
         title: "Refresh & scan queued",

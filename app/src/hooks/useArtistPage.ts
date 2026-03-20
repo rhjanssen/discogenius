@@ -24,7 +24,7 @@ export function useArtistPage(artistId: string | undefined) {
         // Important UX: when you toggle monitoring from Search and then open the artist page,
         // we must not show a cached stale view.
         refetchOnMount: 'always',
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
         staleTime: 10_000,
     });
 }

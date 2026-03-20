@@ -36,7 +36,6 @@ import {
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { SettingsOverview } from "@/components/settings/SettingsOverview";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useTheme } from "@/providers/themeContext";
@@ -320,27 +319,15 @@ const useStyles = makeStyles({
             textAlign: 'center',
         },
     },
-    // Masonry-style columns
     sectionsContainer: {
         width: '100%',
-        columnGap: tokens.spacingHorizontalL,
-        columnWidth: "400px",
-        columnFill: 'balance',
-        [MEDIA.desktop]: {
-            columnGap: tokens.spacingHorizontalL,
-        },
-        [MEDIA.mobile]: {
-            columnCount: 1,
-            columnGap: tokens.spacingHorizontalM,
-        },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalL,
     },
     section: {
         display: 'flex',
         width: '100%',
-        breakInside: 'avoid',
-        WebkitColumnBreakInside: 'avoid',
-        pageBreakInside: 'avoid',
-        marginBottom: tokens.spacingVerticalL,
         flexDirection: 'column',
         gap: tokens.spacingVerticalM,
     },
@@ -1245,34 +1232,6 @@ const SettingsPage = () => {
             ? "This installation is on the latest stable release."
             : "Discogenius could not reach the release feed right now. Docker deployments still update by pulling a newer image and redeploying the container.";
 
-    const settingsSections = [
-        { id: "account", title: "Account" },
-        { id: "audio-quality", title: "Audio Quality" },
-        { id: "video-quality", title: "Video Quality" },
-        { id: "curation", title: "Curation" },
-        { id: "monitoring", title: "Monitoring" },
-        { id: "metadata", title: "Metadata" },
-        { id: "storage", title: "Storage" },
-        { id: "naming", title: "Naming" },
-        { id: "appearance", title: "Appearance" },
-        { id: "about", title: "About" },
-    ];
-
-    const scrollToSection = (sectionId: string) => {
-        document.getElementById(sectionId)?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-        });
-    };
-
-    const updateSummary = {
-        currentVersionLabel,
-        latestVersionLabel,
-        versionStatusColor,
-        versionStatusLabel,
-        versionHint,
-    };
-
     const renderToggleRow = ({
         title,
         description,
@@ -1411,19 +1370,7 @@ const SettingsPage = () => {
                 </SettingsSection>
             )}
 
-            <SettingsOverview
-                sections={settingsSections}
-                pathSettings={pathSettings}
-                renameStatus={renameStatus}
-                renameStatusLoading={renameStatusLoading}
-                retagStatus={retagStatus}
-                retagStatusLoading={retagStatusLoading}
-                audioRetaggingEnabled={audioRetaggingEnabled}
-                updateSummary={updateSummary}
-                onNavigate={scrollToSection}
-            />
-
-            <div className={styles.sectionsContainer}>
+            <div className={styles.sectionsContainer} data-testid="settings-sections">
                 {/* Audio Quality */}
                 <SettingsSection
                     id="audio-quality"

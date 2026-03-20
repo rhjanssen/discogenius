@@ -4,7 +4,6 @@ import { getTrack } from "../services/tidal.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { getMediaDownloadStateMap, updateAlbumDownloadStatus } from "../services/download-state.js";
 import { AlbumQueryService } from "../services/album-query-service.js";
-import { queueAlbumBrowseHydration } from "../services/browse-hydration.js";
 import type { AlbumTrackContract, LibraryFileContract } from "../contracts/media.js";
 import {
   getObjectBody,
@@ -109,18 +108,6 @@ function getAlbumTrackStats(albumId: string): { storedTracks: number; missingTra
   };
 }
 
-function isAlbumLikelyIncomplete(albumId: string, expectedTracks: unknown, lastScanned: unknown): boolean {
-  const { storedTracks, missingTrackScans } = getAlbumTrackStats(albumId);
-  const expected = Number(expectedTracks || 0);
-
-  return (
-    storedTracks === 0
-    || (expected > 0 && storedTracks < expected)
-    || missingTrackScans > 0
-    || !lastScanned
-  );
-}
-
 function hydrateAlbumTracks(tracks: AlbumTrackRow[]): AlbumTrackContract[] {
   const trackIds = tracks.map((track) => String(track.id));
   const downloadStates = getMediaDownloadStateMap(trackIds, "track");
@@ -209,19 +196,7 @@ router.get("/:albumId", async (req, res) => {
       return res.status(404).json({ detail: "Album not found" });
     }
 
-    const likelyIncomplete = isAlbumLikelyIncomplete(albumId, album.num_tracks, album.last_scanned);
-    if (!likelyIncomplete) {
-      return res.json(album);
-    }
-
-    const hydrationJobId = queueAlbumBrowseHydration(albumId);
-    const hydrationJob = TaskQueueService.getById(hydrationJobId);
-
-    res.json({
-      ...album,
-      browse_hydration_job_id: hydrationJobId,
-      browse_hydration_status: hydrationJob?.status || "pending",
-    });
+    res.json(album);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -237,11 +212,6 @@ router.get("/:albumId/tracks", async (req, res) => {
     `).get(albumId) as any;
 
     const tracks = getAlbumTrackRows(albumId);
-    const incomplete = isAlbumLikelyIncomplete(albumId, album?.num_tracks, album?.last_scanned);
-    if (incomplete) {
-      queueAlbumBrowseHydration(albumId);
-    }
-
     if (tracks.length > 0) {
       return res.json(hydrateAlbumTracks(tracks));
     }

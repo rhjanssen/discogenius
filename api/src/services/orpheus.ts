@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from "child_process";
 import { CONFIG_DIR, REPO_ROOT } from "./config.js";
 import { Config } from "./config.js";
 import type { TidalAuthToken } from "./tidal-auth.js";
+import { resolveOrpheusTidalModuleConfig } from "./provider-client-config.js";
 import {
     checkCommandAvailability,
     checkWritablePath,
@@ -40,10 +41,6 @@ const ORPHEUS_BOOTSTRAP_PYTHON = process.env.ORPHEUSDL_BOOTSTRAP_PYTHON?.trim()
     || (!IS_DOCKER && fs.existsSync(REPO_VENV_PYTHON) ? REPO_VENV_PYTHON : "python3");
 const ORPHEUS_CORE_REPO = process.env.ORPHEUSDL_CORE_REPO?.trim() || "https://github.com/OrfiTeam/OrpheusDL.git";
 const ORPHEUS_TIDAL_REPO = process.env.ORPHEUSDL_TIDAL_REPO?.trim() || "https://github.com/Dniel97/orpheusdl-tidal.git";
-const ORPHEUS_TIDAL_CLIENT_ID = "cgiF7TQuB97BUIu3";
-const ORPHEUS_TIDAL_CLIENT_SECRET = "1nqpgx8uvBdZigrx4hUPDV2hOwgYAAAG5DYXOr6uNf8=";
-const ORPHEUS_MOBILE_HIRES_TOKEN = "6BDSRdpK9hqEBTgU";
-const ORPHEUS_MOBILE_ATMOS_TOKEN = "km8T1xS355y7dd3H";
 const LEGACY_STATE_RUNTIME_ENTRIES = [
     ".git",
     ".gitignore",
@@ -59,6 +56,10 @@ const LEGACY_STATE_RUNTIME_ENTRIES = [
 ];
 
 let runtimeReady: Promise<void> | null = null;
+
+function getOrpheusClientConfig() {
+    return resolveOrpheusTidalModuleConfig(process.env);
+}
 
 function mergeDirectory(sourceDir: string, targetDir: string, options?: { skip?: Set<string> }): void {
     const skip = options?.skip || new Set<string>();
@@ -295,10 +296,10 @@ function buildOrpheusSettings(downloadPath: string) {
         extensions: {},
         modules: {
             tidal: {
-                tv_atmos_token: ORPHEUS_TIDAL_CLIENT_ID,
-                tv_atmos_secret: ORPHEUS_TIDAL_CLIENT_SECRET,
-                mobile_atmos_hires_token: ORPHEUS_MOBILE_ATMOS_TOKEN,
-                mobile_hires_token: ORPHEUS_MOBILE_HIRES_TOKEN,
+                tv_atmos_token: getOrpheusClientConfig().clientId,
+                tv_atmos_secret: getOrpheusClientConfig().clientSecret,
+                mobile_atmos_hires_token: getOrpheusClientConfig().mobileAtmosToken,
+                mobile_hires_token: getOrpheusClientConfig().mobileHiresToken,
                 enable_mobile: false,
                 prefer_ac4: false,
                 fix_mqa: false,

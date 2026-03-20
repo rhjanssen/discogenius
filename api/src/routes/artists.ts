@@ -11,9 +11,7 @@ import {
   setArtistMonitoredState,
 } from "../services/artist-monitoring.js";
 import { ArtistQueryService } from "../services/artist-query-service.js";
-import { queueArtistBrowseHydration } from "../services/browse-hydration.js";
 import { FollowedArtistsImportService } from "../services/followed-artists-import.js";
-import { TaskQueueService } from "../services/queue.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -195,30 +193,7 @@ router.get("/:artistId/page-db", async (req, res) => {
     if (!page) {
       return res.status(404).json({ detail: "Artist not found" });
     }
-
-    const likelyIncomplete =
-      Boolean(page.needs_scan)
-      || !Array.isArray(page.rows)
-      || page.rows.length === 0;
-
-    if (!likelyIncomplete) {
-      return res.json(page);
-    }
-
-    try {
-      const hydrationJobId = queueArtistBrowseHydration(req.params.artistId, page.artist?.name);
-      const hydrationJob = TaskQueueService.getById(hydrationJobId);
-
-      return res.json({
-        ...page,
-        browse_hydration_job_id: hydrationJobId,
-        browse_hydration_status: hydrationJob?.status || "pending",
-      });
-    } catch {
-      // Hydration queueing is best-effort for browse-time resilience.
-      return res.json(page);
-    }
-
+    return res.json(page);
   } catch (error: any) {
     console.error('Error fetching artist page from DB:', error);
     res.status(500).json({ detail: error.message });

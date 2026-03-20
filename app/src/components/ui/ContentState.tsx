@@ -36,8 +36,12 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    alignSelf: "stretch",
     minHeight: "240px",
     padding: tokens.spacingVerticalL,
+    boxSizing: "border-box",
+    marginLeft: "auto",
+    marginRight: "auto",
   },
   panel: {
     width: "100%",
@@ -52,6 +56,9 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     boxShadow: tokens.shadow16,
     borderRadius: tokens.borderRadiusLarge,
+    marginLeft: "auto",
+    marginRight: "auto",
+    boxSizing: "border-box",
   },
   panelLeft: {
     alignItems: "flex-start",

@@ -36,7 +36,7 @@ export function useStatusOverview() {
             return api.getStatusOverview();
         },
         staleTime: 5_000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,
     });

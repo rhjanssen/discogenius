@@ -6,14 +6,16 @@ import {
     syncTokenToTidalDlNg,
 } from "./tidal-dl-ng.js";
 import { clearOrpheusSession, syncTokenToOrpheusSession } from "./orpheus.js";
+import { resolveTidalAuthClientConfig } from "./provider-client-config.js";
 
 const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
 const TIDAL_AUTH_TOKEN_FILE = path.join(TIDAL_AUTH_DIR, "token.json");
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
-const TIDAL_TV_CLIENT_ID = "cgiF7TQuB97BUIu3";
-const TIDAL_TV_CLIENT_SECRET = "1nqpgx8uvBdZigrx4hUPDV2hOwgYAAAG5DYXOr6uNf8=";
-const TIDAL_AUTH_USER_AGENT = "TIDAL_ANDROID/1039 okhttp/3.14.9";
+
+function getTidalAuthClientConfig() {
+    return resolveTidalAuthClientConfig(process.env);
+}
 
 export interface TidalAuthUser {
     userId: number;
@@ -63,11 +65,12 @@ function getJwtExpiry(token: string): number | undefined {
 }
 
 function buildTidalApiHeaders(accessToken: string): Record<string, string> {
+    const tidalClient = getTidalAuthClientConfig();
     return {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
-        "X-Tidal-Token": TIDAL_TV_CLIENT_ID,
-        "User-Agent": TIDAL_AUTH_USER_AGENT,
+        "X-Tidal-Token": tidalClient.clientId,
+        "User-Agent": tidalClient.authUserAgent,
     };
 }
 
@@ -186,17 +189,18 @@ export async function refreshStoredTidalToken(): Promise<TidalAuthToken | null> 
     if (!token?.refresh_token) {
         return null;
     }
+    const tidalClient = getTidalAuthClientConfig();
 
     const response = await fetch(`${TIDAL_AUTH_BASE}/oauth2/token`, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": TIDAL_AUTH_USER_AGENT,
+            "User-Agent": tidalClient.authUserAgent,
         },
         body: new URLSearchParams({
             refresh_token: token.refresh_token,
-            client_id: TIDAL_TV_CLIENT_ID,
-            client_secret: TIDAL_TV_CLIENT_SECRET,
+            client_id: tidalClient.clientId,
+            client_secret: tidalClient.clientSecret,
             grant_type: "refresh_token",
         }).toString(),
     });
@@ -235,15 +239,16 @@ export async function startTidalDeviceLogin(): Promise<{
     if (existing?.access_token) {
         return { alreadyLoggedIn: true };
     }
+    const tidalClient = getTidalAuthClientConfig();
 
     const response = await fetch(`${TIDAL_AUTH_BASE}/oauth2/device_authorization`, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": TIDAL_AUTH_USER_AGENT,
+            "User-Agent": tidalClient.authUserAgent,
         },
         body: new URLSearchParams({
-            client_id: TIDAL_TV_CLIENT_ID,
+            client_id: tidalClient.clientId,
             scope: "r_usr w_usr",
         }).toString(),
     });
@@ -298,16 +303,17 @@ export async function pollTidalDeviceLogin(): Promise<{
             remainingSeconds: 0,
         };
     }
+    const tidalClient = getTidalAuthClientConfig();
 
     const response = await fetch(`${TIDAL_AUTH_BASE}/oauth2/token`, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": TIDAL_AUTH_USER_AGENT,
+            "User-Agent": tidalClient.authUserAgent,
         },
         body: new URLSearchParams({
-            client_id: TIDAL_TV_CLIENT_ID,
-            client_secret: TIDAL_TV_CLIENT_SECRET,
+            client_id: tidalClient.clientId,
+            client_secret: tidalClient.clientSecret,
             device_code: activeDeviceLogin.deviceCode,
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",
             scope: "r_usr w_usr",
@@ -355,4 +361,5 @@ export function getTidalAuthStatus() {
     };
 }
 
-export { TIDAL_AUTH_TOKEN_FILE, TIDAL_TV_CLIENT_ID };
+export const TIDAL_TV_CLIENT_ID = getTidalAuthClientConfig().clientId;
+export { TIDAL_AUTH_TOKEN_FILE };

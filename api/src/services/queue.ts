@@ -158,12 +158,23 @@ function safeParsePayload(raw: unknown, jobId?: number): QueuePayloadCommon {
 function normalizeRefreshArtistPayload(
     payload: Partial<RefreshArtistJobPayload>,
 ): RefreshArtistJobPayload {
+    const hydrateAlbumTracks = Boolean(payload.hydrateAlbumTracks ?? payload.monitorAlbums);
+    const hydrateCatalog = payload.hydrateCatalog ?? true;
+    const scanLibrary = payload.scanLibrary
+        ?? (payload.workflow === "refresh-scan"
+            || payload.workflow === "monitoring-intake"
+            || payload.workflow === "full-monitoring");
     return {
         artistId: String(payload.artistId ?? ""),
         artistName: String(payload.artistName ?? ""),
         workflow: payload.workflow ?? "metadata-refresh",
         monitorArtist: Boolean(payload.monitorArtist),
-        monitorAlbums: Boolean(payload.monitorAlbums),
+        monitorAlbums: hydrateAlbumTracks,
+        hydrateCatalog: Boolean(hydrateCatalog),
+        hydrateAlbumTracks,
+        scanLibrary: Boolean(scanLibrary),
+        includeSimilarArtists: Boolean(payload.includeSimilarArtists),
+        seedSimilarArtists: Boolean(payload.seedSimilarArtists),
         forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
     };
@@ -177,7 +188,11 @@ function areEquivalentRefreshArtistPayloads(
         && left.artistName === right.artistName
         && left.workflow === right.workflow
         && left.monitorArtist === right.monitorArtist
-        && left.monitorAlbums === right.monitorAlbums
+        && left.hydrateCatalog === right.hydrateCatalog
+        && left.hydrateAlbumTracks === right.hydrateAlbumTracks
+        && left.scanLibrary === right.scanLibrary
+        && left.includeSimilarArtists === right.includeSimilarArtists
+        && left.seedSimilarArtists === right.seedSimilarArtists
         && left.forceDownloadQueue === right.forceDownloadQueue
         && left.forceUpdate === right.forceUpdate;
 }

@@ -62,7 +62,12 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXL,
+    width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
+  },
+  stateShell: {
+    width: "100%",
+    alignSelf: "stretch",
   },
   header: {
     position: "relative",
@@ -732,29 +737,35 @@ const AlbumPage = () => {
 
   if (loading) {
     return (
-      <LoadingState size="huge" label="Loading album details..." minHeight="320px" />
+      <div className={styles.stateShell}>
+        <LoadingState size="huge" label="Loading album details..." minHeight="320px" />
+      </div>
     );
   }
 
   if (error) {
     return (
-      <ErrorState
-        title="Failed to load album"
-        error={error as Error}
-        minHeight="320px"
-        actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
-      />
+      <div className={styles.stateShell}>
+        <ErrorState
+          title="Failed to load album"
+          error={error as Error}
+          minHeight="320px"
+          actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+        />
+      </div>
     );
   }
 
   if (!album) {
     return (
-      <EmptyState
-        title="Album not found"
-        description="This album may not be in your library yet."
-        actions={<Button appearance="primary" onClick={() => navigate('/')}>Return to Library</Button>}
-        minHeight="320px"
-      />
+      <div className={styles.stateShell}>
+        <EmptyState
+          title="Album not found"
+          description="This album may not be in your library yet."
+          actions={<Button appearance="primary" onClick={() => navigate('/')}>Return to Library</Button>}
+          minHeight="320px"
+        />
+      </div>
     );
   }
 

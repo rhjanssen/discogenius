@@ -19,6 +19,27 @@ export const DEFAULT_CONFIG: ConcurrencyConfig = {
     trackWorkers: 6,
 };
 
+export async function yieldToEventLoop(): Promise<void> {
+    await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+    });
+}
+
+export function createCooperativeBatcher(batchSize: number): () => Promise<void> {
+    let processed = 0;
+    const normalizedBatchSize = Math.max(1, Math.floor(batchSize));
+
+    return async () => {
+        processed += 1;
+        if (processed < normalizedBatchSize) {
+            return;
+        }
+
+        processed = 0;
+        await yieldToEventLoop();
+    };
+}
+
 /**
  * Concurrent fetcher utility using p-limit
  * Provides controlled concurrency for album and track fetching
