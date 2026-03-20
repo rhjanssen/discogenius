@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
+    Badge,
     Button,
     mergeClasses,
     Spinner,
@@ -13,6 +14,7 @@ import {
 } from "@fluentui/react-icons";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
+import type { HistoryEventItemContract } from "@contracts/history";
 import { useDashboardStyles } from "./dashboardStyles";
 import {
     formatJobType,
@@ -78,8 +80,10 @@ interface ActivityTabProps {
     activeJobs: ActivityJob[];
     queuedJobs: ActivityJob[];
     jobHistory: ActivityJob[];
+    libraryAuditEvents: HistoryEventItemContract[];
     activityFilter: string;
     isInitialLoading: boolean;
+    isLibraryAuditLoading: boolean;
     hasMoreHistory: boolean;
     isLoadingMoreHistory: boolean;
     onLoadMoreHistory: () => Promise<void>;
@@ -97,6 +101,226 @@ function getJobPayload(job: ActivityJob): Record<string, unknown> | null {
     return typeof job.payload === 'object' ? job.payload as Record<string, unknown> : null;
 }
 
+function getHistoryEventData(event: HistoryEventItemContract): Record<string, unknown> | null {
+    return event.data && typeof event.data === "object" && !Array.isArray(event.data)
+        ? event.data as Record<string, unknown>
+        : null;
+}
+
+function compactPath(value?: string | null): string {
+    const text = String(value || "").trim().replace(/\\/g, "/");
+    if (!text) {
+        return "";
+    }
+
+    const segments = text.split("/").filter(Boolean);
+    if (segments.length <= 2) {
+        return text;
+    }
+
+    return `…/${segments.slice(-2).join("/")}`;
+}
+
+function humanizeLifecycleReason(value?: string | null): string {
+    const reason = String(value || "").trim();
+    if (!reason) {
+        return "";
+    }
+
+    const normalized = reason.replace(/_/g, " ");
+    switch (normalized) {
+        case "upgrade": return "Upgrade";
+        case "monitoring": return "Monitoring";
+        case "metadata refresh": return "Metadata refresh";
+        case "manual": return "Manual";
+        case "retry": return "Retry";
+        default:
+            return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    }
+}
+
+function formatTriggerTag(job: ActivityJob): string | null {
+    const trigger = Number(job?.trigger || 0);
+    return trigger > 0 ? `Trigger #${trigger}` : null;
+}
+
+function formatActivityLifecycleBadges(job: ActivityJob, source: ActivitySource): string[] {
+    const payload = getJobPayload(job);
+    const badges: string[] = [];
+
+    if (source === 'active') {
+        badges.push(job.status === 'processing' ? 'Running' : 'In progress');
+    } else if (source === 'queued') {
+        badges.push(job.status === 'pending' ? 'Waiting to start' : 'Queued');
+    } else if (job.status === 'completed') {
+        badges.push('Completed');
+    } else if (job.status === 'failed') {
+        badges.push('Failed');
+    }
+
+    const reason = humanizeLifecycleReason(String(payload?.reason || ''));
+    if (reason) {
+        badges.push(reason);
+    }
+
+    const triggerTag = formatTriggerTag(job);
+    if (triggerTag) {
+        badges.push(triggerTag);
+    }
+
+    if (payload?.originalJobId) {
+        badges.push(`Retry of #${payload.originalJobId}`);
+    }
+
+    if (payload?.workflow) {
+        badges.push(String(payload.workflow).replace(/_/g, " "));
+    }
+
+    return badges;
+}
+
+function formatHistoryAuditLabel(eventType: HistoryEventItemContract["eventType"]): string {
+    switch (eventType) {
+        case "DownloadImported":
+            return "Download imported";
+        case "DownloadFailed":
+            return "Download failed";
+        case "AlbumImportIncomplete":
+            return "Import incomplete";
+        case "TrackFileImported":
+            return "File imported";
+        case "TrackFileRenamed":
+            return "File renamed";
+        case "TrackFileDeleted":
+            return "File deleted";
+        case "TrackFileRetagged":
+            return "File retagged";
+        case "Grabbed":
+            return "Grabbed";
+        case "DownloadIgnored":
+            return "Ignored";
+        default:
+            return "History event";
+    }
+}
+
+function formatHistoryAuditSummary(event: HistoryEventItemContract): string {
+    const data = getHistoryEventData(event);
+    if (!data) {
+        return event.sourceTitle || "Audit entry";
+    }
+
+    if (event.eventType === "DownloadImported") {
+        const processed = data.processedTrackIds as Record<string, unknown> | undefined;
+        const processedCount = processed && typeof processed.count === "number" ? processed.count : undefined;
+        const expectedCount = processed && typeof processed.expected === "number" ? processed.expected : undefined;
+        if (typeof processedCount === "number" && typeof expectedCount === "number") {
+            return `Processed ${processedCount}/${expectedCount} track(s)`;
+        }
+        return `Imported ${String(data.type || "item")}`;
+    }
+
+    if (event.eventType === "AlbumImportIncomplete") {
+        const processed = data.processedTrackIds as Record<string, unknown> | undefined;
+        const processedCount = processed && typeof processed.count === "number" ? processed.count : undefined;
+        const expectedCount = processed && typeof processed.expected === "number" ? processed.expected : undefined;
+        if (typeof processedCount === "number" && typeof expectedCount === "number") {
+            return `Imported ${processedCount}/${expectedCount} track(s)`;
+        }
+        return "Album import incomplete";
+    }
+
+    if (event.eventType === "DownloadFailed") {
+        return `Error: ${String(data.error || "Download failed")}`;
+    }
+
+    if (event.eventType === "TrackFileImported") {
+        return data.importedPath ? `Imported to ${compactPath(String(data.importedPath))}` : "Imported into the library";
+    }
+
+    if (event.eventType === "TrackFileRenamed") {
+        const fromPath = compactPath(String(data.fromPath || ""));
+        const toPath = compactPath(String(data.toPath || ""));
+        if (fromPath && toPath) {
+            return `${fromPath} → ${toPath}`;
+        }
+        return "Renamed file";
+    }
+
+    if (event.eventType === "TrackFileDeleted") {
+        const fileType = String(data.fileType || "").trim();
+        return fileType ? `Deleted ${fileType}` : "Deleted file";
+    }
+
+    if (event.eventType === "TrackFileRetagged") {
+        const fileType = String(data.fileType || "").trim();
+        return fileType ? `Retagged ${fileType}` : "Updated tags";
+    }
+
+    return event.sourceTitle || "Audit entry";
+}
+
+function formatHistoryAuditBadges(event: HistoryEventItemContract): string[] {
+    const data = getHistoryEventData(event);
+    const badges: string[] = [];
+
+    if (event.quality) {
+        badges.push(event.quality);
+    }
+
+    if (event.libraryFileId !== null) {
+        badges.push(`File #${event.libraryFileId}`);
+    }
+
+    if (event.albumId !== null) {
+        badges.push(`Album #${event.albumId}`);
+    }
+
+    if (event.mediaId !== null) {
+        badges.push(`Media #${event.mediaId}`);
+    }
+
+    if (data?.type) {
+        badges.push(String(data.type).replace(/_/g, " "));
+    }
+
+    return badges;
+}
+
+function matchesHistoryAuditFilter(eventType: HistoryEventItemContract["eventType"], activityFilter: string): boolean {
+    if (activityFilter === "all") {
+        return true;
+    }
+
+    switch (activityFilter) {
+        case "downloads":
+            return ["DownloadImported", "DownloadFailed", "AlbumImportIncomplete", "Grabbed", "DownloadIgnored"].includes(eventType);
+        case "imports":
+            return ["TrackFileImported", "TrackFileRenamed", "TrackFileDeleted", "TrackFileRetagged"].includes(eventType);
+        case "metadata":
+            return eventType === "TrackFileRetagged" || eventType === "TrackFileImported";
+        case "curation":
+            return false;
+        default:
+            return true;
+    }
+}
+
+function getHistoryAuditIcon(eventType: HistoryEventItemContract["eventType"]) {
+    switch (eventType) {
+        case "DownloadFailed":
+        case "TrackFileDeleted":
+            return <ErrorCircle24Filled style={{ width: 16, height: 16 }} />;
+        case "DownloadImported":
+        case "TrackFileImported":
+            return <CheckmarkCircle24Filled style={{ width: 16, height: 16 }} />;
+        case "TrackFileRenamed":
+        case "TrackFileRetagged":
+            return <ArrowClockwise24Regular style={{ width: 16, height: 16 }} />;
+        default:
+            return <Clock24Regular style={{ width: 16, height: 16 }} />;
+    }
+}
 function getJobTidalId(job: ActivityJob): string {
     const payload = getJobPayload(job);
     const legacyRefId = (job as ActivityJob & { ref_id?: string }).ref_id;
@@ -131,7 +355,34 @@ function buildSectionEntries(jobs: ActivityJob[], source: ActivitySource, activi
         .sort(compareActivityEntries);
 }
 
-const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isInitialLoading, hasMoreHistory, isLoadingMoreHistory, onLoadMoreHistory }: ActivityTabProps) => {
+function buildAuditEntries(events: HistoryEventItemContract[], activityFilter: string) {
+    return events
+        .filter((event) => matchesHistoryAuditFilter(event.eventType, activityFilter))
+        .map((event) => ({
+            event,
+            sortTime: Number(new Date(event.date).getTime()) || 0,
+        }))
+        .sort((left, right) => {
+            if (left.sortTime !== right.sortTime) {
+                return right.sortTime - left.sortTime;
+            }
+
+            return right.event.id - left.event.id;
+        });
+}
+
+const ActivityTab = ({
+    activeJobs,
+    queuedJobs,
+    jobHistory,
+    libraryAuditEvents,
+    activityFilter,
+    isInitialLoading,
+    isLibraryAuditLoading,
+    hasMoreHistory,
+    isLoadingMoreHistory,
+    onLoadMoreHistory,
+}: ActivityTabProps) => {
     const styles = useDashboardStyles();
     const { retryItem } = useDownloadQueue();
     const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -214,8 +465,10 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
     const activeEntries = buildSectionEntries(activeJobs, 'active', activityFilter);
     const queuedEntries = buildSectionEntries(queuedJobs, 'queued', activityFilter);
     const historyEntries = buildSectionEntries(jobHistory, 'history', activityFilter);
+    const auditEntries = buildAuditEntries(libraryAuditEvents, activityFilter);
     const hasVisibleHistory = historyEntries.length > 0 || hasMoreHistory;
-    const hasAnyEntries = activeEntries.length > 0 || queuedEntries.length > 0 || historyEntries.length > 0;
+    const hasVisibleAudit = auditEntries.length > 0 || isLibraryAuditLoading;
+    const hasAnyEntries = activeEntries.length > 0 || queuedEntries.length > 0 || historyEntries.length > 0 || auditEntries.length > 0;
 
     if (isInitialLoading && !hasAnyEntries) {
         return (
@@ -248,6 +501,7 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
     const renderActiveOrQueuedEntry = ({ job, source }: ActivityEntry) => {
         const payload = getJobPayload(job);
         const isUpgrade = payload?.reason === 'upgrade';
+        const lifecycleBadges = formatActivityLifecycleBadges(job, source);
         return (
             <div key={`${source}-${job.id}`} className={mergeClasses(styles.activityItem, isUpgrade ? styles.activityItemUpgrade : styles.activityItemDefault)}>
                 <div className={styles.activityLeading}>
@@ -269,6 +523,15 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
                             </Text>
                         )}
                     </div>
+                    {lifecycleBadges.length > 0 && (
+                        <div className={styles.activityBadgeRow}>
+                            {lifecycleBadges.map((badge) => (
+                                <Badge key={badge} size="small" appearance="tint" color="informative">
+                                    {badge}
+                                </Badge>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div className={styles.activityTimeColumn}>
                     <Text className={styles.activityTime}>{formatRelativeTime(job.startTime)}</Text>
@@ -280,44 +543,96 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
     const renderHistoryEntry = ({ job }: ActivityEntry) => {
         const retryJobId = Number(job.id);
         const canRetry = Number.isFinite(retryJobId);
+        const lifecycleBadges = formatActivityLifecycleBadges(job, 'history');
 
         return (
-        <div key={`history-${job.id}`} className={styles.activityItem}>
-            <div className={styles.activityLeading}>
-                <div className={styles.activityLeadingContent}>
-                    {getStatusIcon(job.status, job.error)}
-                    {getActivityTypeIcon(job)}
+            <div key={`history-${job.id}`} className={styles.activityItem}>
+                <div className={styles.activityLeading}>
+                    <div className={styles.activityLeadingContent}>
+                        {getStatusIcon(job.status, job.error)}
+                        {getActivityTypeIcon(job)}
+                    </div>
                 </div>
-            </div>
-            <div className={styles.activityContent}>
-                <div className={styles.activitySummaryRow}>
-                    <Text weight="semibold" size={300} className={styles.activityTitleText}>
-                        {formatJobType(job)}
-                    </Text>
-                    {formatJobDescription(job) && (
-                        <Text size={200} className={styles.activityInlineDescription} truncate={!job.error}>
-                            {formatJobDescription(job)}
+                <div className={styles.activityContent}>
+                    <div className={styles.activitySummaryRow}>
+                        <Text weight="semibold" size={300} className={styles.activityTitleText}>
+                            {formatJobType(job)}
+                        </Text>
+                        {formatJobDescription(job) && (
+                            <Text size={200} className={styles.activityInlineDescription} truncate={!job.error}>
+                                {formatJobDescription(job)}
+                            </Text>
+                        )}
+                    </div>
+                    {lifecycleBadges.length > 0 && (
+                        <div className={styles.activityBadgeRow}>
+                            {lifecycleBadges.map((badge) => (
+                                <Badge key={badge} size="small" appearance="tint" color="informative">
+                                    {badge}
+                                </Badge>
+                            ))}
+                        </div>
+                    )}
+                    {job.error && (
+                        <Text size={200} className={styles.activityErrorText}>
+                            Error: {job.error}
                         </Text>
                     )}
                 </div>
-                {job.error && (
-                    <Text size={200} className={styles.activityErrorText}>
-                        Error: {job.error}
-                    </Text>
-                )}
-            </div>
-            <div className={styles.activityTimeColumn}>
-                <div className={styles.activityTimeActions}>
-                    <Text className={styles.activityTime}>
-                        {formatRelativeTime(job.endTime || job.startTime)}
-                    </Text>
-                    {job.error && isRetryableJob(job) && !hasSupersedingSuccess(job) && canRetry && (
-                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} title="Retry Job" onClick={(e) => { e.stopPropagation(); retryItem(retryJobId); }} />
-                    )}
+                <div className={styles.activityTimeColumn}>
+                    <div className={styles.activityTimeActions}>
+                        <Text className={styles.activityTime}>
+                            {formatRelativeTime(job.endTime || job.startTime)}
+                        </Text>
+                        {job.error && isRetryableJob(job) && !hasSupersedingSuccess(job) && canRetry && (
+                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} title="Retry Job" onClick={(e) => { e.stopPropagation(); retryItem(retryJobId); }} />
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
-    );
+        );
+    };
+
+    const renderAuditEntry = (event: HistoryEventItemContract) => {
+        const eventBadges = formatHistoryAuditBadges(event);
+        const eventIcon = getHistoryAuditIcon(event.eventType);
+
+        return (
+            <div key={`audit-${event.id}`} className={styles.activityAuditItem}>
+                <div className={styles.activityLeading}>
+                    <div className={styles.activityLeadingContent}>
+                        <span className={styles.activityAuditIcon}>{eventIcon}</span>
+                    </div>
+                </div>
+                <div className={styles.activityContent}>
+                    <div className={styles.activitySummaryRow}>
+                        <Text weight="semibold" size={300} className={styles.activityTitleText}>
+                            {formatHistoryAuditLabel(event.eventType)}
+                        </Text>
+                        {event.sourceTitle && (
+                            <Text size={200} className={styles.activityInlineDescription} truncate>
+                                {event.sourceTitle}
+                            </Text>
+                        )}
+                    </div>
+                    <Text size={200} className={styles.activitySecondaryText}>
+                        {formatHistoryAuditSummary(event)}
+                    </Text>
+                    {eventBadges.length > 0 && (
+                        <div className={styles.activityBadgeRow}>
+                            {eventBadges.map((badge) => (
+                                <Badge key={badge} size="small" appearance="tint" color="brand">
+                                    {badge}
+                                </Badge>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className={styles.activityTimeColumn}>
+                    <Text className={styles.activityTime}>{formatRelativeTime(event.date)}</Text>
+                </div>
+            </div>
+        );
     };
 
     const renderSection = (label: string, entries: ActivityEntry[], source: ActivitySource) => {
@@ -339,6 +654,35 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
                     {source === 'history'
                         ? entries.map(renderHistoryEntry)
                         : entries.map(renderActiveOrQueuedEntry)}
+                </div>
+            </section>
+        );
+    };
+
+    const renderAuditSection = () => {
+        if (!hasVisibleAudit) {
+            return null;
+        }
+
+        return (
+            <section className={styles.activitySection} aria-label="Library audit">
+                <div className={styles.activitySectionHeader}>
+                    <Text size={200} weight="semibold" className={styles.activitySectionLabel}>
+                        Library audit
+                    </Text>
+                    <Text size={100} className={styles.activitySectionCount}>
+                        {isLibraryAuditLoading && auditEntries.length === 0 ? "…" : auditEntries.length}
+                    </Text>
+                </div>
+                <div className={styles.activitySectionItems}>
+                    {auditEntries.length > 0
+                        ? auditEntries.map(({ event }) => renderAuditEntry(event))
+                        : (
+                            <div className={styles.activityAuditLoadingRow}>
+                                <Spinner size="tiny" />
+                                <Text size={200} className={styles.activitySecondaryText}>Loading recent file activity…</Text>
+                            </div>
+                        )}
                 </div>
             </section>
         );
@@ -372,6 +716,7 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
                         </div>
                     </section>
                 )}
+                {renderAuditSection()}
             </div>
         </div>
     );

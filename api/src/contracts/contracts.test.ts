@@ -14,6 +14,7 @@ import {
   parsePublicAppConfigContract,
   parseQualityConfigContract,
 } from "./config.js";
+import { parseHistoryEventsResponseContract } from "./history.js";
 import {
   parseAlbumTracksContract,
   parseLibraryFilesListResponseContract,
@@ -358,4 +359,31 @@ test("release contract parser validates current and latest release metadata", ()
   assert.equal(release.latestVersion, "1.0.5");
   assert.equal(release.updateStatus, "update-available");
   assert.equal(release.updateAvailable, true);
+});
+
+test("history contract parser validates audit event payloads", () => {
+  const history = parseHistoryEventsResponseContract({
+    items: [
+      {
+        id: 91,
+        artistId: 11,
+        albumId: 22,
+        mediaId: 33,
+        libraryFileId: 44,
+        eventType: "TrackFileImported",
+        quality: "FLAC",
+        sourceTitle: "Queen of NY",
+        data: {
+          importedPath: "E:/music/Queen of NY.flac",
+        },
+        date: "2026-03-20 13:00:00",
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+  });
+
+  assert.equal(history.items[0].eventType, "TrackFileImported");
+  assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });

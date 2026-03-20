@@ -31,6 +31,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { LibraryStats } from "@/hooks/useLibrary";
+import type { HistoryEventItemContract } from "@contracts/history";
 import { useToast } from "@/hooks/useToast";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -251,7 +252,9 @@ const useStyles = makeStyles({
 });
 
 const HISTORY_PAGE_SIZE = 50;
+const HISTORY_AUDIT_PAGE_SIZE = 12;
 const dashboardStatsQueryKey = ["dashboardStats"] as const;
+const historyEventsQueryKey = ["historyEvents"] as const;
 
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
@@ -307,7 +310,7 @@ const Dashboard = () => {
         isLoading: isStatusInitialLoading,
     } = useStatusOverview();
     useDebouncedQueryInvalidation({
-        queryKeys: [dashboardStatsQueryKey],
+        queryKeys: [dashboardStatsQueryKey, historyEventsQueryKey],
         globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated"],
         windowEvents: [LIBRARY_UPDATED_EVENT, ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
@@ -322,6 +325,18 @@ const Dashboard = () => {
         placeholderData: (previousData) => previousData,
     });
     const libraryStats = statsQuery.data ?? null;
+    const historyEventsQuery = useQuery({
+        queryKey: historyEventsQueryKey,
+        queryFn: async (): Promise<{ items: HistoryEventItemContract[] }> => {
+            const result = await api.getHistoryEvents({ limit: HISTORY_AUDIT_PAGE_SIZE });
+            return { items: result.items };
+        },
+        staleTime: 15_000,
+        refetchOnWindowFocus: true,
+        retry: 1,
+        placeholderData: (previousData) => previousData,
+    });
+    const libraryAuditEvents = historyEventsQuery.data?.items ?? [];
     const jobHistory = useMemo(() => {
         const seenIds = new Set(baseJobHistory.map((job) => job.id));
         return [...baseJobHistory, ...historyPages.filter((job) => !seenIds.has(job.id))];
@@ -615,8 +630,10 @@ const Dashboard = () => {
                             activeJobs={activeJobs}
                             queuedJobs={queuedJobs}
                             jobHistory={jobHistory}
+                            libraryAuditEvents={libraryAuditEvents}
                             activityFilter={activityFilter}
                             isInitialLoading={isStatusInitialLoading}
+                            isLibraryAuditLoading={historyEventsQuery.isLoading}
                             hasMoreHistory={hasMoreHistory}
                             isLoadingMoreHistory={isLoadingMoreHistory}
                             onLoadMoreHistory={loadMoreHistory}

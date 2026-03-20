@@ -18,6 +18,17 @@ async function stubDashboardApis(page: Page) {
     await route.fulfill({ json: { jobHistory: [] } });
   });
 
+  await page.route('**/api/history?*', async (route) => {
+    await route.fulfill({
+      json: {
+        items: [],
+        total: 0,
+        limit: 12,
+        offset: 0,
+      },
+    });
+  });
+
   await page.route('**/api/status', async (route) => {
     await route.fulfill({
       json: {
@@ -59,6 +70,47 @@ async function stubDashboardApisWithActivity(page: Page) {
     await route.fulfill({ json: { jobHistory: [] } });
   });
 
+  await page.route('**/api/history?*', async (route) => {
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            id: 90,
+            artistId: 11,
+            albumId: 22,
+            mediaId: 33,
+            libraryFileId: 44,
+            eventType: 'TrackFileImported',
+            quality: 'FLAC',
+            sourceTitle: 'Around the World',
+            data: {
+              importedPath: 'E:/music/Daft Punk/Around the World.flac',
+            },
+            date: new Date(Date.now() - 3_000).toISOString(),
+          },
+          {
+            id: 91,
+            artistId: 11,
+            albumId: 22,
+            mediaId: 33,
+            libraryFileId: 44,
+            eventType: 'TrackFileRenamed',
+            quality: 'FLAC',
+            sourceTitle: 'Around the World',
+            data: {
+              fromPath: 'E:/music/Daft Punk/Old Name.flac',
+              toPath: 'E:/music/Daft Punk/Around the World.flac',
+            },
+            date: new Date(Date.now() - 60_000).toISOString(),
+          },
+        ],
+        total: 2,
+        limit: 12,
+        offset: 0,
+      },
+    });
+  });
+
   await page.route('**/api/status', async (route) => {
     await route.fulfill({
       json: {
@@ -69,7 +121,7 @@ async function stubDashboardApisWithActivity(page: Page) {
             status: 'running',
             description: 'Album: Around the World by Daft Punk',
             startTime: Date.now(),
-            payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
+            payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
           },
           {
             id: 2,
@@ -93,7 +145,7 @@ async function stubDashboardApisWithActivity(page: Page) {
             status: 'pending',
             description: 'Queued album: Discovery by Daft Punk',
             startTime: Date.now() - 15_000,
-            payload: { title: 'Discovery', artist: 'Daft Punk' },
+            payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
           },
         ],
         jobHistory: [
@@ -149,6 +201,17 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
 
   await page.route('**/api/status/history?*', async (route) => {
     await route.fulfill({ json: { jobHistory: [] } });
+  });
+
+  await page.route('**/api/history?*', async (route) => {
+    await route.fulfill({
+      json: {
+        items: [],
+        total: 0,
+        limit: 12,
+        offset: 0,
+      },
+    });
   });
 
   await page.route('**/api/status', async (route) => {
@@ -209,6 +272,17 @@ async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
 
   await page.route('**/api/status/history?*', async (route) => {
     await route.fulfill({ json: { jobHistory: [] } });
+  });
+
+  await page.route('**/api/history?*', async (route) => {
+    await route.fulfill({
+      json: {
+        items: [],
+        total: 0,
+        limit: 12,
+        offset: 0,
+      },
+    });
   });
 
   await page.route('**/api/status', async (route) => {
@@ -314,7 +388,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
 
-    await expect(page.locator('main')).toBeVisible();
+    await expect(page.getByRole('tab', { name: /^Queue$/i })).toBeVisible();
     await page.waitForTimeout(1000);
     expect(statusCalls.length).toBeGreaterThan(0);
   });
@@ -333,6 +407,21 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Daft Punk').first()).toBeVisible();
   });
 
+  test('activity tab surfaces library audit context for imported and renamed files', async ({ page }) => {
+    await stubDashboardApisWithActivity(page);
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+
+    await page.getByRole('tab', { name: /^Activity$/i }).click();
+
+    const auditSection = page.locator('section[aria-label="Library audit"]');
+    await expect(auditSection).toContainText('File imported');
+    await expect(auditSection).toContainText('Imported to …/Daft Punk/Around the World.flac');
+    await expect(auditSection).toContainText('File renamed');
+    await expect(auditSection).toContainText('…/Daft Punk/Old Name.flac → …/Daft Punk/Around the World.flac');
+    await expect(auditSection).toContainText('FLAC');
+  });
+
   test('activity tab keeps running, queued, and recent work in separate sections', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
@@ -348,7 +437,7 @@ test.describe('Dashboard queue and activity tabs', () => {
       elements.map((element) => element.getAttribute('aria-label'))
     );
 
-    expect(sectionLabels).toEqual(['Running', 'Queued', 'Recent']);
+    expect(sectionLabels).toEqual(['Running', 'Queued', 'Recent', 'Library audit']);
   });
 
   test('failed import activity shows context, error, and retry action', async ({ page }) => {

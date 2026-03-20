@@ -63,6 +63,13 @@ import {
   parseQueueListResponseContract,
   parseStatusOverviewContract,
 } from '@contracts/status';
+import type {
+  HistoryEventItemContract,
+  ListHistoryEventsResponseContract,
+} from '@contracts/history';
+import {
+  parseHistoryEventsResponseContract,
+} from '@contracts/history';
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
@@ -811,6 +818,25 @@ class ApiClient {
 
   async getStatusOverview(): Promise<StatusOverviewContract> {
     return this.request('/status', {}, parseStatusOverviewContract);
+  }
+
+  async getHistoryEvents(params?: {
+    limit?: number;
+    offset?: number;
+    artistId?: number;
+    albumId?: number;
+    mediaId?: number;
+    eventType?: HistoryEventItemContract['eventType'];
+  }): Promise<ListHistoryEventsResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
+    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    if (params?.artistId !== undefined) queryParams.set('artistId', params.artistId.toString());
+    if (params?.albumId !== undefined) queryParams.set('albumId', params.albumId.toString());
+    if (params?.mediaId !== undefined) queryParams.set('mediaId', params.mediaId.toString());
+    if (params?.eventType) queryParams.set('eventType', params.eventType);
+    const query = queryParams.toString();
+    return this.request(`/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
   }
 
   async addToQueue(url: string, type: string, tidalId?: string) {

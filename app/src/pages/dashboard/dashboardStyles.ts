@@ -406,6 +406,12 @@ export const useDashboardStyles = makeStyles({
             gap: tokens.spacingHorizontalS,
         },
     },
+    activityBadgeRow: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: tokens.spacingHorizontalXS,
+        marginTop: tokens.spacingVerticalXXS,
+    },
     activityTitleText: {
         minWidth: 0,
         overflow: "hidden",
@@ -423,6 +429,37 @@ export const useDashboardStyles = makeStyles({
     activitySecondaryText: {
         color: tokens.colorNeutralForeground2,
         marginTop: tokens.spacingVerticalSNudge,
+    },
+    activityAuditItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalM,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 20%, transparent)`,
+        cursor: "default",
+        transitionProperty: "background-color",
+        transitionDuration: tokens.durationFaster,
+        ":hover": {
+            backgroundColor: tokens.colorNeutralBackground1Hover,
+        },
+        ":last-child": {
+            borderBottom: "none",
+        },
+    },
+    activityAuditLoadingRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalS,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+    },
+    activityAuditIcon: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: tokens.colorNeutralForeground3,
+        width: "16px",
+        height: "16px",
     },
     activityErrorText: {
         color: tokens.colorPaletteRedForeground1,
