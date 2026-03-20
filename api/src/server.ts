@@ -37,6 +37,11 @@ import { initCurationListeners } from "./services/curation.listener.js";
 import { downloadProcessor } from "./services/download-processor.js";
 import { startMonitoring } from "./services/monitoring-scheduler.js";
 import { setupTidalProxy } from "./services/proxy.js";
+import {
+  getRuntimeDiagnosticsSnapshot,
+  startRuntimeDiagnostics,
+  trackRuntimeRequest,
+} from "./services/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/runtime-maintenance.js";
 import { Scheduler } from "./services/scheduler.js";
 import { readIntEnv } from "./utils/env.js";
@@ -142,8 +147,23 @@ app.use(cors({
 
 initDatabase();
 initAppLogging();
+startRuntimeDiagnostics();
 initCurationListeners();
 setupTidalProxy(app);
+
+app.use((req, res, next) => {
+  const finishTracking = trackRuntimeRequest(req.method, req.originalUrl || req.path);
+
+  res.on("finish", () => {
+    finishTracking(res.statusCode);
+  });
+
+  res.on("close", () => {
+    finishTracking(res.statusCode || 499);
+  });
+
+  next();
+});
 
 app.use("/app-auth", appAuthRouter);
 app.use("/api/app-auth", appAuthRouter);
@@ -174,7 +194,10 @@ app.use("/api/history", authMiddleware, historyRouter);
 app.use("/api/unmapped", authMiddleware, unmappedRouter);
 
 app.get("/health", (_, res) => {
-  res.json({ status: "healthy" });
+  res.json({
+    status: "healthy",
+    runtime: getRuntimeDiagnosticsSnapshot(),
+  });
 });
 
 app.use((err: any, _req: any, res: any, _next: any) => {

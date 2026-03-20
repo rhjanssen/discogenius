@@ -8,6 +8,11 @@ test.describe('API health & key endpoints', () => {
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     expect(data.status).toBe('healthy');
+    expect(data.runtime).toBeTruthy();
+    expect(typeof data.runtime.inFlightRequests).toBe('number');
+    expect(typeof data.runtime.slowRequests).toBe('number');
+    expect(data.runtime.eventLoopLag).toBeTruthy();
+    expect(typeof data.runtime.eventLoopLag.p95Ms).toBe('number');
   });
 
   test('/api/stats returns valid stats', async ({ request }) => {
