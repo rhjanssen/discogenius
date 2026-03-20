@@ -1,14 +1,21 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { Spinner, makeStyles, tokens } from "@fluentui/react-components";
+import { makeStyles, tokens } from "@fluentui/react-components";
 import { LOCALSTORAGE_APP_AUTH_REDIRECT_KEY, useAppAuth } from "@/providers/appAuthContext";
+import { LoadingState } from "@/components/ui/LoadingState";
 
 const useStyles = makeStyles({
   loading: {
-    minHeight: "100vh",
+    width: "100%",
+    minHeight: "40vh",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     padding: tokens.spacingVerticalL,
+  },
+  loadingPanel: {
+    width: "100%",
+    maxWidth: "420px",
+    textAlign: "center",
   },
 });
 
@@ -19,9 +26,11 @@ export default function AppAuthGate() {
 
   if (isAuthActive === undefined) {
     return (
-      <div className={styles.loading}>
-        <Spinner size="large" />
-      </div>
+      <LoadingState
+        className={styles.loading}
+        panelClassName={styles.loadingPanel}
+        label="Checking app access..."
+      />
     );
   }
 

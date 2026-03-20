@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { makeStyles } from "@fluentui/react-components";
 import { Toaster } from "@/components/ui/toaster";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -53,6 +53,22 @@ const PageFallback = () => {
   );
 };
 
+const SuspendedPage = ({
+  children,
+  pageName,
+}: {
+  children: ReactNode;
+  pageName?: string;
+}) => (
+  <Suspense fallback={<PageFallback />}>
+    {pageName ? (
+      <PageErrorBoundary pageName={pageName}>{children}</PageErrorBoundary>
+    ) : (
+      children
+    )}
+  </Suspense>
+);
+
 const App = () => {
   return (
     <ErrorBoundary>
@@ -63,33 +79,97 @@ const App = () => {
               <QueueProvider>
                 <Toaster />
                 <BrowserRouter future={{ v7_relativeSplatPath: true }}>
-                  <Suspense fallback={<PageFallback />}>
-                    <Routes>
-                      <Route path="/login" element={<AdminLogin />} />
+                  <Routes>
+                    <Route
+                      path="/login"
+                      element={
+                        <SuspendedPage>
+                          <AdminLogin />
+                        </SuspendedPage>
+                      }
+                    />
 
+                    <Route element={<Layout />}>
                       <Route element={<AppAuthGate />}>
-                        <Route path="/auth" element={<Auth />} />
                         <Route
+                          path="/auth"
                           element={
-                            <ProtectedRoute>
-                              <Layout />
-                            </ProtectedRoute>
+                            <SuspendedPage>
+                              <Auth />
+                            </SuspendedPage>
                           }
-                        >
-                          <Route path="/" element={<PageErrorBoundary pageName="Library"><Library /></PageErrorBoundary>} />
-                          <Route path="/artist/:artistId" element={<PageErrorBoundary pageName="Artist"><ArtistPage /></PageErrorBoundary>} />
-                          <Route path="/album/:albumId" element={<PageErrorBoundary pageName="Album"><AlbumPage /></PageErrorBoundary>} />
-                          <Route path="/video/:videoId" element={<PageErrorBoundary pageName="Video"><VideoPage /></PageErrorBoundary>} />
-                          <Route path="/search" element={<PageErrorBoundary pageName="Search"><SearchPage /></PageErrorBoundary>} />
-                          <Route path="/dashboard" element={<PageErrorBoundary pageName="Dashboard"><Dashboard /></PageErrorBoundary>} />
-                          <Route path="/settings" element={<PageErrorBoundary pageName="Settings"><SettingsPage /></PageErrorBoundary>} />
+                        />
+                        <Route element={<ProtectedRoute />}>
+                          <Route
+                            path="/"
+                            element={
+                              <SuspendedPage pageName="Library">
+                                <Library />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/artist/:artistId"
+                            element={
+                              <SuspendedPage pageName="Artist">
+                                <ArtistPage />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/album/:albumId"
+                            element={
+                              <SuspendedPage pageName="Album">
+                                <AlbumPage />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/video/:videoId"
+                            element={
+                              <SuspendedPage pageName="Video">
+                                <VideoPage />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/search"
+                            element={
+                              <SuspendedPage pageName="Search">
+                                <SearchPage />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/dashboard"
+                            element={
+                              <SuspendedPage pageName="Dashboard">
+                                <Dashboard />
+                              </SuspendedPage>
+                            }
+                          />
+                          <Route
+                            path="/settings"
+                            element={
+                              <SuspendedPage pageName="Settings">
+                                <SettingsPage />
+                              </SuspendedPage>
+                            }
+                          />
                         </Route>
 
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-                        <Route path="*" element={<NotFound />} />
+                        <Route
+                          path="*"
+                          element={
+                            <SuspendedPage>
+                              <NotFound />
+                            </SuspendedPage>
+                          }
+                        />
                       </Route>
-                    </Routes>
-                  </Suspense>
+                    </Route>
+                  </Routes>
                 </BrowserRouter>
               </QueueProvider>
             </UltraBlurProvider>

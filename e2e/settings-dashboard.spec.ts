@@ -39,14 +39,12 @@ test.describe('Dashboard page', () => {
 
   test('renders dashboard with stats', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
-    const pageText = await page.locator('main').textContent();
-    expect(pageText).toBeTruthy();
-
-    // Dashboard should show library stats or queue info
-    const dashboardKeywords = ['artist', 'album', 'track', 'queue', 'download', 'library', 'overview'];
-    const dashText = (pageText || '').toLowerCase();
-    const found = dashboardKeywords.some(kw => dashText.includes(kw));
-    expect(found).toBeTruthy();
+    await expect(page.getByRole('main').getByText('Dashboard', { exact: true })).toBeVisible();
+    await expect(page.getByText('Artists', { exact: true })).toBeVisible();
+    await expect(page.getByText('Albums', { exact: true })).toBeVisible();
+    await expect(page.getByText('Tracks', { exact: true })).toBeVisible();
+    await expect(page.getByText('Videos', { exact: true })).toBeVisible();
+    await expect(page.getByRole('tablist')).toBeVisible();
   });
 
   test('dashboard tabs work', async ({ page }) => {

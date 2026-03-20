@@ -1,32 +1,36 @@
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { useTidalConnection } from "@/hooks/useTidalConnection";
 import { LoadingState } from "@/components/ui/LoadingState";
 
-interface ProtectedRouteProps {
-  children: React.ReactNode;
-}
-
 const useStyles = makeStyles({
   loading: {
-    minHeight: "100vh",
+    width: "100%",
+    minHeight: "40vh",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     padding: tokens.spacingVerticalL,
   },
+  loadingPanel: {
+    width: "100%",
+    maxWidth: "420px",
+    textAlign: "center",
+  },
 });
 
-const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
+const ProtectedRoute = () => {
   const styles = useStyles();
   const location = useLocation();
   const { canAccessShell, isLoading } = useTidalConnection();
 
   if (isLoading) {
     return (
-      <div className={styles.loading}>
-        <LoadingState label="Checking connection..." />
-      </div>
+      <LoadingState
+        className={styles.loading}
+        panelClassName={styles.loadingPanel}
+        label="Checking connection..."
+      />
     );
   }
 
@@ -34,7 +38,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     return <Navigate to="/auth" replace state={{ from: location }} />;
   }
 
-  return <>{children}</>;
+  return <Outlet />;
 };
 
 export default ProtectedRoute;

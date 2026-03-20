@@ -253,7 +253,9 @@ const useStyles = makeStyles({
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
+        width: "100%",
         minHeight: "50vh",
+        margin: "0 auto",
     },
     errorState: {
         display: "flex",

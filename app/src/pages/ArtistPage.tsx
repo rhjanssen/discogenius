@@ -554,7 +554,9 @@ const useStyles = makeStyles({
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
+    width: "100%",
     minHeight: "400px",
+    margin: "0 auto",
     padding: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
   loadingPanel: {
@@ -566,6 +568,7 @@ const useStyles = makeStyles({
     justifyContent: "center",
     gap: tokens.spacingVerticalM,
     textAlign: "center",
+    margin: "0 auto",
   },
   errorState: {
     padding: `calc(${tokens.spacingVerticalXXXL} + ${tokens.spacingVerticalS})`,
