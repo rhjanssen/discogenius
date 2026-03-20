@@ -271,6 +271,8 @@ export class Scheduler {
                     await scanArtistDeep(job.payload.artistId, {
                         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
                         monitorAlbums: job.payload.monitorAlbums ?? false,
+                        includeSimilarArtists: job.payload.includeSimilarArtists ?? true,
+                        seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
                         forceUpdate: job.payload.forceUpdate ?? false,
                         progress: (event) => {
                             if (event.kind === "status") {

@@ -99,12 +99,15 @@ export function buildRefreshArtistJobPayload(params: {
   forceUpdate?: boolean;
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
+  const hydrateSimilarArtists = params.workflow !== "metadata-refresh";
   return {
     artistId: params.artistId,
     artistName: params.artistName,
     workflow: params.workflow,
     monitorArtist: phases.monitorArtist,
     monitorAlbums: phases.scanLibrary || phases.curate || phases.backfillMetadata || phases.queueDownloads,
+    includeSimilarArtists: hydrateSimilarArtists,
+    seedSimilarArtists: false,
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
   };

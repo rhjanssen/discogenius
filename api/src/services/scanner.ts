@@ -25,6 +25,7 @@ import { JobTypes, TaskQueueService } from "./queue.js";
 import { ModuleFixer } from "./module-fixer.js";
 import { VersionGrouper } from "./version-grouper.js";
 import { getConfigSection } from "./config.js";
+import { shouldHydrateArtistAlbumTracks } from "./scan-policy.js";
 import pLimit from "p-limit";
 
 export enum ScanLevel {
@@ -585,31 +586,35 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
     // Inline album track scanning (Lidarr-style: tracks are fetched as part of
     // artist refresh, not queued as separate jobs). Uses bounded parallelism
     // since each album scan is an independent API call.
-    const limit = pLimit(3);
-    const albumsNeedingTrackScan = albums.filter((album) => {
-        const expectedTracks = album.num_tracks || 0;
-        const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
-        const hasMissingTracks = expectedTracks > 0
-            ? existingCount.count < expectedTracks
-            : existingCount.count === 0;
-        return options.forceAlbumUpdate === true ||
-            hasMissingTracks ||
-            shouldRefreshTracks(album.tidal_id, monitoringConfig.track_refresh_days);
-    });
+    if (shouldHydrateArtistAlbumTracks(options)) {
+        const limit = pLimit(3);
+        const albumsNeedingTrackScan = albums.filter((album) => {
+            const expectedTracks = album.num_tracks || 0;
+            const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
+            const hasMissingTracks = expectedTracks > 0
+                ? existingCount.count < expectedTracks
+                : existingCount.count === 0;
+            return options.forceAlbumUpdate === true ||
+                hasMissingTracks ||
+                shouldRefreshTracks(album.tidal_id, monitoringConfig.track_refresh_days);
+        });
 
-    if (albumsNeedingTrackScan.length > 0) {
-        console.log(`[Scanner] Scanning tracks for ${albumsNeedingTrackScan.length}/${albums.length} albums inline`);
-        const trackScanTotal = albumsNeedingTrackScan.length;
-        await Promise.all(albumsNeedingTrackScan.map((album, idx) => limit(async () => {
-            options.progress?.({
-                kind: 'album_tracks',
-                index: idx + 1,
-                total: trackScanTotal,
-                albumId: album.tidal_id,
-                title: album.title,
-            });
-            await scanAlbumTracks(album.tidal_id);
-        })));
+        if (albumsNeedingTrackScan.length > 0) {
+            console.log(`[Scanner] Scanning tracks for ${albumsNeedingTrackScan.length}/${albums.length} albums inline`);
+            const trackScanTotal = albumsNeedingTrackScan.length;
+            await Promise.all(albumsNeedingTrackScan.map((album, idx) => limit(async () => {
+                options.progress?.({
+                    kind: 'album_tracks',
+                    index: idx + 1,
+                    total: trackScanTotal,
+                    albumId: album.tidal_id,
+                    title: album.title,
+                });
+                await scanAlbumTracks(album.tidal_id);
+            })));
+        }
+    } else {
+        console.log(`[Scanner] Skipping inline track hydration for artist ${artistId} (monitorAlbums=false)`);
     }
 
     // 4. Build version groups (2-level Other Versions traversal)

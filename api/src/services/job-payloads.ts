@@ -75,6 +75,8 @@ export interface QueuePayloadCommon {
   monitor?: boolean;
   monitorArtist?: boolean;
   monitorAlbums?: boolean;
+  includeSimilarArtists?: boolean;
+  seedSimilarArtists?: boolean;
   forceUpdate?: boolean;
   forceDownloadQueue?: boolean;
   skipDownloadQueue?: boolean;
@@ -106,6 +108,8 @@ export interface RefreshArtistJobPayload extends QueuePayloadCommon {
   workflow: ArtistWorkflowValue;
   monitorArtist: boolean;
   monitorAlbums: boolean;
+  includeSimilarArtists?: boolean;
+  seedSimilarArtists?: boolean;
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
 }

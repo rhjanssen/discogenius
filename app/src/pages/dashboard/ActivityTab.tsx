@@ -12,6 +12,7 @@ import {
     Clock24Regular,
 } from "@fluentui/react-icons";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import { useDashboardStyles } from "./dashboardStyles";
 import {
     formatJobType,
@@ -33,20 +34,22 @@ const WORKFLOW_CHILD_JOB_TYPES = new Set([
     'RescanFolders',
 ]);
 
+type ActivitySource = 'active' | 'queued' | 'history';
+
 type ActivityEntry = {
-    job: any;
-    source: 'active' | 'queued' | 'history';
+    job: ActivityJob;
+    source: ActivitySource;
     sortTime: number;
 };
 
-function getActivitySortTime(job: any, source: 'active' | 'queued' | 'history') {
+function getActivitySortTime(job: ActivityJob, source: ActivitySource) {
     const primary = source === 'history'
         ? Number(job?.endTime || job?.startTime || 0)
         : Number(job?.startTime || 0);
     return Number.isFinite(primary) ? primary : 0;
 }
 
-function getActivitySequencePriority(job: any) {
+function getActivitySequencePriority(job: ActivityJob) {
     const type = String(job?.type || '');
     if (COORDINATOR_JOB_TYPES.has(type)) return 2;
     if (WORKFLOW_CHILD_JOB_TYPES.has(type)) return 1;
@@ -72,9 +75,9 @@ function compareActivityEntries(left: ActivityEntry, right: ActivityEntry) {
 }
 
 interface ActivityTabProps {
-    activeJobs: any[];
-    queuedJobs: any[];
-    jobHistory: any[];
+    activeJobs: ActivityJob[];
+    queuedJobs: ActivityJob[];
+    jobHistory: ActivityJob[];
     activityFilter: string;
     isInitialLoading: boolean;
     hasMoreHistory: boolean;
@@ -82,7 +85,7 @@ interface ActivityTabProps {
     onLoadMoreHistory: () => Promise<void>;
 }
 
-function getJobPayload(job: any): Record<string, unknown> | null {
+function getJobPayload(job: ActivityJob): Record<string, unknown> | null {
     if (!job?.payload) return null;
     if (typeof job.payload === 'string') {
         try {
@@ -94,12 +97,13 @@ function getJobPayload(job: any): Record<string, unknown> | null {
     return typeof job.payload === 'object' ? job.payload as Record<string, unknown> : null;
 }
 
-function getJobTidalId(job: any): string {
+function getJobTidalId(job: ActivityJob): string {
     const payload = getJobPayload(job);
-    return String(payload?.tidalId || job?.ref_id || '').trim();
+    const legacyRefId = (job as ActivityJob & { ref_id?: string }).ref_id;
+    return String(payload?.tidalId || legacyRefId || '').trim();
 }
 
-function getJobMediaType(job: any): string {
+function getJobMediaType(job: ActivityJob): string {
     const payload = getJobPayload(job);
     const payloadType = String(payload?.type || '').trim();
     if (payloadType) {
@@ -118,6 +122,13 @@ function getJobMediaType(job: any): string {
         default:
             return '';
     }
+}
+
+function buildSectionEntries(jobs: ActivityJob[], source: ActivitySource, activityFilter: string): ActivityEntry[] {
+    return jobs
+        .filter((job) => matchesActivityFilter(job, activityFilter))
+        .map((job) => ({ job, source, sortTime: getActivitySortTime(job, source) }))
+        .sort(compareActivityEntries);
 }
 
 const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isInitialLoading, hasMoreHistory, isLoadingMoreHistory, onLoadMoreHistory }: ActivityTabProps) => {
@@ -151,12 +162,12 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
         return () => observer.disconnect();
     }, [hasMoreHistory, onLoadMoreHistory]);
 
-    const isRetryableJob = (job: any) => {
+    const isRetryableJob = (job: ActivityJob) => {
         const type = job?.type || '';
         return type.startsWith('Download') || type === 'ImportDownload' || type === 'ImportPlaylist';
     };
 
-    const hasSupersedingSuccess = (job: any) => {
+    const hasSupersedingSuccess = (job: ActivityJob) => {
         if (job?.type !== 'ImportDownload' || !job?.error) {
             return false;
         }
@@ -191,7 +202,7 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
         });
     };
 
-    const getStatusIcon = (status: string, error?: string) => {
+    const getStatusIcon = (status?: string, error?: string) => {
         if (error) return <ErrorCircle24Filled className={styles.statusIconError} />;
         switch (status) {
             case "completed": return <CheckmarkCircle24Filled className={styles.statusIconSuccess} />;
@@ -200,19 +211,13 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
         }
     };
 
-    const activityEntries: ActivityEntry[] = [
-        ...activeJobs
-            .filter((job) => matchesActivityFilter(job, activityFilter))
-            .map((job) => ({ job, source: 'active' as const, sortTime: getActivitySortTime(job, 'active') })),
-        ...queuedJobs
-            .filter((job) => matchesActivityFilter(job, activityFilter))
-            .map((job) => ({ job, source: 'queued' as const, sortTime: getActivitySortTime(job, 'queued') })),
-        ...jobHistory
-            .filter((job) => matchesActivityFilter(job, activityFilter))
-            .map((job) => ({ job, source: 'history' as const, sortTime: getActivitySortTime(job, 'history') })),
-    ].sort(compareActivityEntries);
+    const activeEntries = buildSectionEntries(activeJobs, 'active', activityFilter);
+    const queuedEntries = buildSectionEntries(queuedJobs, 'queued', activityFilter);
+    const historyEntries = buildSectionEntries(jobHistory, 'history', activityFilter);
+    const hasVisibleHistory = historyEntries.length > 0 || hasMoreHistory;
+    const hasAnyEntries = activeEntries.length > 0 || queuedEntries.length > 0 || historyEntries.length > 0;
 
-    if (isInitialLoading && activityEntries.length === 0) {
+    if (isInitialLoading && !hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
                 <div className={styles.emptyState}>
@@ -226,7 +231,7 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
         );
     }
 
-    if (activityEntries.length === 0) {
+    if (!hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
                 <div className={styles.emptyState}>
@@ -240,89 +245,132 @@ const ActivityTab = ({ activeJobs, queuedJobs, jobHistory, activityFilter, isIni
         );
     }
 
+    const renderActiveOrQueuedEntry = ({ job, source }: ActivityEntry) => {
+        const payload = getJobPayload(job);
+        const isUpgrade = payload?.reason === 'upgrade';
+        return (
+            <div key={`${source}-${job.id}`} className={mergeClasses(styles.activityItem, isUpgrade ? styles.activityItemUpgrade : styles.activityItemDefault)}>
+                <div className={styles.activityLeading}>
+                    <div className={styles.activityLeadingContentCompact}>
+                        {source === 'queued' || job.status === 'pending'
+                            ? <Clock24Regular className={styles.statusIconNeutral} />
+                            : <Spinner size="tiny" />}
+                        <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
+                    </div>
+                </div>
+                <div className={styles.activityContent}>
+                    <div className={styles.activitySummaryRow}>
+                        <Text weight="semibold" size={300} className={styles.activityTitleText}>
+                            {formatJobType(job)}
+                        </Text>
+                        {formatJobDescription(job) && (
+                            <Text size={200} className={styles.activityInlineDescription}>
+                                {formatJobDescription(job)}
+                            </Text>
+                        )}
+                    </div>
+                </div>
+                <div className={styles.activityTimeColumn}>
+                    <Text className={styles.activityTime}>{formatRelativeTime(job.startTime)}</Text>
+                </div>
+            </div>
+        );
+    };
+
+    const renderHistoryEntry = ({ job }: ActivityEntry) => {
+        const retryJobId = Number(job.id);
+        const canRetry = Number.isFinite(retryJobId);
+
+        return (
+        <div key={`history-${job.id}`} className={styles.activityItem}>
+            <div className={styles.activityLeading}>
+                <div className={styles.activityLeadingContent}>
+                    {getStatusIcon(job.status, job.error)}
+                    {getActivityTypeIcon(job)}
+                </div>
+            </div>
+            <div className={styles.activityContent}>
+                <div className={styles.activitySummaryRow}>
+                    <Text weight="semibold" size={300} className={styles.activityTitleText}>
+                        {formatJobType(job)}
+                    </Text>
+                    {formatJobDescription(job) && (
+                        <Text size={200} className={styles.activityInlineDescription} truncate={!job.error}>
+                            {formatJobDescription(job)}
+                        </Text>
+                    )}
+                </div>
+                {job.error && (
+                    <Text size={200} className={styles.activityErrorText}>
+                        Error: {job.error}
+                    </Text>
+                )}
+            </div>
+            <div className={styles.activityTimeColumn}>
+                <div className={styles.activityTimeActions}>
+                    <Text className={styles.activityTime}>
+                        {formatRelativeTime(job.endTime || job.startTime)}
+                    </Text>
+                    {job.error && isRetryableJob(job) && !hasSupersedingSuccess(job) && canRetry && (
+                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} title="Retry Job" onClick={(e) => { e.stopPropagation(); retryItem(retryJobId); }} />
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+    };
+
+    const renderSection = (label: string, entries: ActivityEntry[], source: ActivitySource) => {
+        if (entries.length === 0) {
+            return null;
+        }
+
+        return (
+            <section key={source} className={styles.activitySection} aria-label={label}>
+                <div className={styles.activitySectionHeader}>
+                    <Text size={200} weight="semibold" className={styles.activitySectionLabel}>
+                        {label}
+                    </Text>
+                    <Text size={100} className={styles.activitySectionCount}>
+                        {entries.length}
+                    </Text>
+                </div>
+                <div className={styles.activitySectionItems}>
+                    {source === 'history'
+                        ? entries.map(renderHistoryEntry)
+                        : entries.map(renderActiveOrQueuedEntry)}
+                </div>
+            </section>
+        );
+    };
+
     return (
         <div className={styles.tabSection}>
             <div className={styles.activityList}>
-                {activityEntries.map(({ job, source }) => {
-                    const jobDescription = formatJobDescription(job);
-
-                    if (source === 'active' || source === 'queued') {
-                        const payload = getJobPayload(job);
-                        const isUpgrade = payload?.reason === 'upgrade';
-                        return (
-                            <div key={`${source}-${job.id}`} className={mergeClasses(styles.activityItem, isUpgrade ? styles.activityItemUpgrade : styles.activityItemDefault)}>
-                                <div className={styles.activityLeading}>
-                                    <div className={styles.activityLeadingContentCompact}>
-                                        {source === 'queued' || job.status === 'pending'
-                                            ? <Clock24Regular className={styles.statusIconNeutral} />
-                                            : <Spinner size="tiny" />}
-                                        <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
-                                    </div>
-                                </div>
-                                <div className={styles.activityContent}>
-                                    <div className={styles.activitySummaryRow}>
-                                        <Text weight="semibold" size={300} className={styles.activityTitleText}>
-                                            {formatJobType(job)}
-                                        </Text>
-                                        {jobDescription && (
-                                            <Text size={200} className={styles.activityInlineDescription}>
-                                                {jobDescription}
-                                            </Text>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className={styles.activityTimeColumn}>
-                                    <Text className={styles.activityTime}>{formatRelativeTime(job.startTime)}</Text>
-                                </div>
-                            </div>
-                        );
-                    }
-
-                    return (
-                        <div key={`history-${job.id}`} className={styles.activityItem}>
-                            <div className={styles.activityLeading}>
-                                <div className={styles.activityLeadingContent}>
-                                    {getStatusIcon(job.status, job.error)}
-                                    {getActivityTypeIcon(job)}
-                                </div>
-                            </div>
-                            <div className={styles.activityContent}>
-                                <div className={styles.activitySummaryRow}>
-                                    <Text weight="semibold" size={300} className={styles.activityTitleText}>
-                                        {formatJobType(job)}
-                                    </Text>
-                                    {jobDescription && (
-                                        <Text size={200} className={styles.activityInlineDescription} truncate={!job.error}>
-                                            {jobDescription}
-                                        </Text>
-                                    )}
-                                </div>
-                                {job.error && (
-                                    <Text size={200} className={styles.activityErrorText}>
-                                        Error: {job.error}
-                                    </Text>
-                                )}
-                            </div>
-                            <div className={styles.activityTimeColumn}>
-                                <div className={styles.activityTimeActions}>
-                                    <Text className={styles.activityTime}>
-                                        {formatRelativeTime(job.endTime || job.startTime)}
-                                    </Text>
-                                    {job.error && isRetryableJob(job) && !hasSupersedingSuccess(job) && (
-                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} title="Retry Job" onClick={(e) => { e.stopPropagation(); retryItem(job.id); }} />
-                                    )}
-                                </div>
-                            </div>
+                {renderSection("Running", activeEntries, 'active')}
+                {renderSection("Queued", queuedEntries, 'queued')}
+                {hasVisibleHistory && (
+                    <section className={styles.activitySection} aria-label="Recent">
+                        <div className={styles.activitySectionHeader}>
+                            <Text size={200} weight="semibold" className={styles.activitySectionLabel}>
+                                Recent
+                            </Text>
+                            <Text size={100} className={styles.activitySectionCount}>
+                                {historyEntries.length}
+                            </Text>
                         </div>
-                    );
-                })}
-                {hasMoreHistory && (
-                    <div className={styles.loadMoreRow}>
-                        <div ref={loadMoreRef} />
-                        <Button appearance="subtle" onClick={() => void onLoadMoreHistory()} disabled={isLoadingMoreHistory}>
-                            {isLoadingMoreHistory ? 'Loading…' : 'Load More'}
-                        </Button>
-                    </div>
+                        <div className={styles.activitySectionItems}>
+                            {historyEntries.map(renderHistoryEntry)}
+                            {hasMoreHistory && (
+                                <div className={styles.loadMoreRow}>
+                                    <div ref={loadMoreRef} />
+                                    <Button appearance="subtle" onClick={() => void onLoadMoreHistory()} disabled={isLoadingMoreHistory}>
+                                        {isLoadingMoreHistory ? 'Loading…' : 'Load More'}
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    </section>
                 )}
             </div>
         </div>

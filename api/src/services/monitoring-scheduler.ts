@@ -562,7 +562,12 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
         try {
             console.log(`  Checking ${artist.name}...`);
             const isMonitored = Boolean(artist.monitor);
-            await scanArtistDeep(artist.id, { monitorArtist: isMonitored, monitorAlbums: false });
+            await scanArtistDeep(artist.id, {
+                monitorArtist: isMonitored,
+                monitorAlbums: false,
+                includeSimilarArtists: false,
+                seedSimilarArtists: false,
+            });
         } catch (error) {
             console.error(`  ❌ Error checking ${artist.name}:`, error);
         }
@@ -629,7 +634,12 @@ export async function checkNowStreaming(sendEvent: (event: string, data: any) =>
                 total: scanTargets.length,
             });
 
-            await scanArtistDeep(artist.id, { monitorArtist: isMonitored, monitorAlbums: false });
+            await scanArtistDeep(artist.id, {
+                monitorArtist: isMonitored,
+                monitorAlbums: false,
+                includeSimilarArtists: false,
+                seedSimilarArtists: false,
+            });
 
             sendEvent("artist-checked", {
                 name: artist.name,

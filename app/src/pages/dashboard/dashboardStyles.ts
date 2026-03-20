@@ -316,6 +316,34 @@ export const useDashboardStyles = makeStyles({
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         overflow: "hidden",
     },
+    activitySection: {
+        display: "flex",
+        flexDirection: "column",
+        ":not(:first-child)": {
+            borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        },
+    },
+    activitySectionHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalS,
+        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground3} 68%, transparent)`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+    activitySectionItems: {
+        display: "flex",
+        flexDirection: "column",
+    },
+    activitySectionLabel: {
+        color: tokens.colorNeutralForeground2,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+    },
+    activitySectionCount: {
+        color: tokens.colorNeutralForeground3,
+    },
     activityItem: {
         display: "flex",
         alignItems: "center",

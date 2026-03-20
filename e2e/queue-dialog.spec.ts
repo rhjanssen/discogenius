@@ -86,7 +86,16 @@ async function stubDashboardApisWithActivity(page: Page) {
             startTime: Date.now(),
           },
         ],
-        queuedJobs: [],
+        queuedJobs: [
+          {
+            id: 6,
+            type: 'DownloadAlbum',
+            status: 'pending',
+            description: 'Queued album: Discovery by Daft Punk',
+            startTime: Date.now() - 15_000,
+            payload: { title: 'Discovery', artist: 'Daft Punk' },
+          },
+        ],
         jobHistory: [
           {
             id: 4,
@@ -322,6 +331,24 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Missing Album Search')).toBeVisible();
     await expect(page.getByText('Around the World by Daft Punk').first()).toBeVisible();
     await expect(page.getByText('Daft Punk').first()).toBeVisible();
+  });
+
+  test('activity tab keeps running, queued, and recent work in separate sections', async ({ page }) => {
+    await stubDashboardApisWithActivity(page);
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+
+    await page.getByRole('tab', { name: /^Activity$/i }).click();
+
+    await expect(page.getByLabel('Running')).toContainText('Import Album');
+    await expect(page.getByLabel('Queued')).toContainText('Discovery by Daft Punk');
+    await expect(page.getByLabel('Recent')).toContainText('Download Album');
+
+    const sectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('aria-label'))
+    );
+
+    expect(sectionLabels).toEqual(['Running', 'Queued', 'Recent']);
   });
 
   test('failed import activity shows context, error, and retry action', async ({ page }) => {
