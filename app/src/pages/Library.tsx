@@ -335,6 +335,11 @@ const Library = () => {
     videos: false,
   });
 
+  const [isFetchingMoreArtists, setIsFetchingMoreArtists] = useState(false);
+  const [isFetchingMoreAlbums, setIsFetchingMoreAlbums] = useState(false);
+  const [isFetchingMoreTracks, setIsFetchingMoreTracks] = useState(false);
+  const [isFetchingMoreVideos, setIsFetchingMoreVideos] = useState(false);
+
   // Filters - load from persisted settings
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>(
     persistedSettings?.libraryFilter ?? 'all'

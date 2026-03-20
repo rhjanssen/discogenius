@@ -23,7 +23,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
-import { Badge } from "@fluentui/react-components";
+import { DownloadedBadge, MissingBadge } from "@/components/ui/StatusBadges";
 import { LoadingState, EmptyState } from "@/components/ui/ContentState";
 import { MonitorButton } from "@/components/MonitorButton";
 import { LockToggle } from "@/components/LockToggle";
@@ -305,11 +305,7 @@ const TrackList = ({
                 {track.quality && (
                   <QualityBadge quality={track.quality} className={styles.qualityBadge} />
                 )}
-                {track.downloaded ? (
-                  <Badge appearance="filled" color="success" size="small">Downloaded</Badge>
-                ) : (
-                  <Badge appearance="outline" size="small">Missing</Badge>
-                )}
+                {track.downloaded ? <DownloadedBadge /> : <MissingBadge />}
               </div>
             </div>
           </div>
@@ -379,11 +375,7 @@ const TrackList = ({
                     {track.quality && (
                       <QualityBadge quality={track.quality} className={styles.qualityBadge} />
                     )}
-                    {track.downloaded ? (
-                      <Badge appearance="filled" color="success" size="small">Downloaded</Badge>
-                    ) : (
-                      <Badge appearance="outline" size="small">Missing</Badge>
-                    )}
+                    {track.downloaded ? <DownloadedBadge /> : <MissingBadge />}
                   </div>
                 </div>
               </TableCell>

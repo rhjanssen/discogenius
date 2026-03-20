@@ -358,9 +358,30 @@ export class DownloadProcessor {
         }
 
         // Reset any items that were "downloading" (processing) during crash/restart
-        const recovered = TaskQueueService.resetProcessingJobsByTypes(DOWNLOAD_JOB_TYPES);
-        if (recovered > 0) {
-            console.log(`[DOWNLOAD-PROCESSOR] Re-queued ${recovered} interrupted download(s)`);
+        // This ensures interrupted downloads are safely re-queued on app startup
+        try {
+            // Query for jobs that were stuck in processing state (likely from crash/restart)
+            const stuckJobs = db.prepare(`
+                SELECT id, type, ref_id, title, created_at, started_at 
+                FROM job_queue 
+                WHERE status = 'processing' AND type IN (${DOWNLOAD_JOB_TYPES.map(() => '?').join(',')})
+                ORDER BY started_at ASC
+            `).all(...DOWNLOAD_JOB_TYPES) as any[];
+
+            if (stuckJobs.length > 0) {
+                // Log details of what we're recovering (for diagnostic purposes)
+                console.log(`[DOWNLOAD-PROCESSOR] Found ${stuckJobs.length} interrupted download job(s) from previous crash/restart:`);
+                stuckJobs.forEach(job => {
+                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${job.title || 'unknown'}" (started ${new Date(job.started_at).toISOString()})`);
+                });
+
+                // Reset to pending state - will be picked up by next processQueue() call
+                const recovered = TaskQueueService.resetProcessingJobsByTypes(DOWNLOAD_JOB_TYPES);
+                console.log(`[DOWNLOAD-PROCESSOR] Successfully re-queued ${recovered} interrupted download(s) to pending state`);
+            }
+        } catch (error) {
+            console.error('[DOWNLOAD-PROCESSOR] Error during restart recovery:', error);
+            // Non-fatal: continue with normal operation; jobs may be recovered on next cleanup cycle
         }
 
         // We no longer rely on a background poll loop for the download queue.
