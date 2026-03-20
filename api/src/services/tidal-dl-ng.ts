@@ -4,6 +4,12 @@ import fs from "fs";
 import os from "os";
 import { fileURLToPath } from "url";
 import { Config, REPO_ROOT } from "./config.js";
+import {
+    checkCommandAvailability,
+    checkWritablePath,
+    rollupHealthStatus,
+    type BackendCapabilitySnapshot,
+} from "../utils/health.js";
 
 // tidal-dl-ng config location
 const IS_WINDOWS = process.platform === "win32";
@@ -717,6 +723,87 @@ export async function checkAuth(): Promise<boolean> {
     });
 }
 
+export function getTidalDlNgCapabilitySnapshot(): BackendCapabilitySnapshot {
+    const configDirCheck = checkWritablePath("tidal-dl-ng.config", TIDAL_DL_NG_CONFIG_DIR, {
+        kind: "dir",
+        displayName: "tidal-dl-ng config directory",
+    });
+    const commandCheck = checkCommandAvailability(
+        "tidal-dl-ng.command",
+        getTidalDlNgCommand().command,
+        "tidal-dl-ng",
+    );
+    const ffmpegBinary = resolveFfmpegBinary();
+    const ffmpegCheck = ffmpegBinary
+        ? checkCommandAvailability("tidal-dl-ng.ffmpeg", ffmpegBinary, "FFmpeg")
+        : {
+            scope: "tidal-dl-ng.ffmpeg",
+            status: "warning" as const,
+            message: "FFmpeg is not configured yet",
+            details: { configuredPath: null },
+        };
+    const token = readTidalDlNgToken();
+    const tokenValid = Boolean(
+        token?.access_token
+        && token?.refresh_token
+        && token?.expiry_time
+        && token.expiry_time * 1000 > Date.now(),
+    );
+    const tokenCheck = token
+        ? {
+            scope: "tidal-dl-ng.token",
+            status: tokenValid ? "ok" as const : "warning" as const,
+            message: tokenValid
+                ? "TIDAL token is present and valid"
+                : "TIDAL token is present but expired",
+            details: {
+                path: TIDAL_DL_NG_TOKEN_FILE,
+                expiresAt: token.expiry_time ? new Date(token.expiry_time * 1000).toISOString() : null,
+            },
+        }
+        : {
+            scope: "tidal-dl-ng.token",
+            status: "warning" as const,
+            message: "TIDAL token is not present yet",
+            details: { path: TIDAL_DL_NG_TOKEN_FILE },
+        };
+
+    const checks = [
+        configDirCheck,
+        commandCheck,
+        ffmpegCheck,
+        tokenCheck,
+    ];
+    const status = rollupHealthStatus(checks);
+    const available = !checks.some((check) => check.status === "error");
+    const ffmpegRequired = Boolean(Config.getQualityConfig().extract_flac || Config.getQualityConfig().convert_video_mp4);
+    const ready = available && tokenValid && (!ffmpegRequired || ffmpegCheck.status === "ok");
+    const notes: string[] = [];
+
+    if (!tokenValid) {
+        notes.push("Authenticate TIDAL before attempting tidal-dl-ng downloads.");
+    }
+    if (ffmpegRequired && ffmpegCheck.status !== "ok") {
+        notes.push("FFmpeg is required by the current quality settings.");
+    }
+
+    return {
+        name: "tidal-dl-ng",
+        status,
+        available,
+        ready,
+        capabilities: {
+            audio: true,
+            video: true,
+            atmos: true,
+            highResAudio: true,
+            playlists: true,
+        },
+        checks,
+        notes,
+    };
+}
+
 /**
  * Progress event parsed from tidal-dl-ng output
  * 
@@ -1188,5 +1275,6 @@ export default {
     TIDAL_DL_NG_CONFIG_DIR,
     TIDAL_DL_NG_SETTINGS_FILE,
     TIDAL_DL_NG_TOKEN_FILE,
+    getTidalDlNgCapabilitySnapshot,
 };
 

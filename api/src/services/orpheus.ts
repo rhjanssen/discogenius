@@ -4,6 +4,12 @@ import { spawn, ChildProcess } from "child_process";
 import { CONFIG_DIR, REPO_ROOT } from "./config.js";
 import { Config } from "./config.js";
 import type { TidalAuthToken } from "./tidal-auth.js";
+import {
+    checkCommandAvailability,
+    checkWritablePath,
+    rollupHealthStatus,
+    type BackendCapabilitySnapshot,
+} from "../utils/health.js";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_DOCKER = process.env.DOCKER === "true";
@@ -329,6 +335,73 @@ export async function ensureOrpheusRuntime(): Promise<void> {
         runtimeReady = bootstrapRuntime();
     }
     await runtimeReady;
+}
+
+export function getOrpheusCapabilitySnapshot(): BackendCapabilitySnapshot {
+    const runtimeDirCheck = checkWritablePath("orpheus.runtime", ORPHEUS_RUNTIME_DIR, {
+        kind: "dir",
+        displayName: "Orpheus runtime directory",
+    });
+    const stateDirCheck = checkWritablePath("orpheus.state", ORPHEUS_STATE_DIR, {
+        kind: "dir",
+        displayName: "Orpheus state directory",
+    });
+    const entrypointCheck = checkWritablePath("orpheus.entrypoint", ORPHEUS_ENTRYPOINT, {
+        kind: "file",
+        displayName: "Orpheus entrypoint",
+    });
+    const gitCheck = checkCommandAvailability("orpheus.git", "git", "Git");
+    const pythonCheck = checkCommandAvailability("orpheus.python", ORPHEUS_BOOTSTRAP_PYTHON, "Orpheus bootstrap Python");
+    const sessionExists = fs.existsSync(ORPHEUS_LOGIN_STORAGE_FILE);
+    const sessionCheck = sessionExists
+        ? {
+            scope: "orpheus.session",
+            status: "ok" as const,
+            message: "Orpheus session token is present",
+            details: { path: ORPHEUS_LOGIN_STORAGE_FILE },
+        }
+        : {
+            scope: "orpheus.session",
+            status: "warning" as const,
+            message: "Orpheus session token is not present yet",
+            details: { path: ORPHEUS_LOGIN_STORAGE_FILE },
+        };
+
+    const checks = [
+        runtimeDirCheck,
+        stateDirCheck,
+        entrypointCheck,
+        gitCheck,
+        pythonCheck,
+        sessionCheck,
+    ];
+    const status = rollupHealthStatus(checks);
+    const available = !checks.some((check) => check.status === "error");
+    const ready = available && sessionExists && fs.existsSync(ORPHEUS_ENTRYPOINT);
+    const notes: string[] = [];
+
+    if (!sessionExists) {
+        notes.push("Authenticate with TIDAL before attempting Orpheus downloads.");
+    }
+    if (!fs.existsSync(ORPHEUS_ENTRYPOINT)) {
+        notes.push("Orpheus runtime has not been bootstrapped yet.");
+    }
+
+    return {
+        name: "orpheus",
+        status,
+        available,
+        ready,
+        capabilities: {
+            audio: true,
+            video: false,
+            atmos: true,
+            highResAudio: true,
+            playlists: true,
+        },
+        checks,
+        notes,
+    };
 }
 
 export async function syncOrpheusSettings(downloadPath: string = Config.getDownloadPath()): Promise<void> {

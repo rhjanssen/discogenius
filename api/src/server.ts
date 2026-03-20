@@ -43,6 +43,7 @@ import {
   trackRuntimeRequest,
 } from "./services/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/runtime-maintenance.js";
+import { collectHealthDiagnosticsSnapshot } from "./services/health.js";
 import { Scheduler } from "./services/scheduler.js";
 import { readIntEnv } from "./utils/env.js";
 
@@ -148,6 +149,13 @@ app.use(cors({
 initDatabase();
 initAppLogging();
 startRuntimeDiagnostics();
+const startupHealthSnapshot = collectHealthDiagnosticsSnapshot();
+if (startupHealthSnapshot.status !== "healthy") {
+  console.warn("[HEALTH] Startup preflight found issues:");
+  for (const issue of startupHealthSnapshot.issues) {
+    console.warn(`[HEALTH] ${issue.scope}: ${issue.message}`);
+  }
+}
 initCurationListeners();
 setupTidalProxy(app);
 
@@ -197,6 +205,8 @@ app.get("/health", (_, res) => {
   res.json({
     status: "healthy",
     runtime: getRuntimeDiagnosticsSnapshot(),
+    startup: startupHealthSnapshot,
+    preflight: collectHealthDiagnosticsSnapshot(),
   });
 });
 

@@ -13,6 +13,16 @@ test.describe('API health & key endpoints', () => {
     expect(typeof data.runtime.slowRequests).toBe('number');
     expect(data.runtime.eventLoopLag).toBeTruthy();
     expect(typeof data.runtime.eventLoopLag.p95Ms).toBe('number');
+    expect(data.startup).toBeTruthy();
+    expect(data.preflight).toBeTruthy();
+    expect(typeof data.startup.checkedAt).toBe('string');
+    expect(typeof data.preflight.checkedAt).toBe('string');
+    expect(Array.isArray(data.startup.issues)).toBeTruthy();
+    expect(Array.isArray(data.preflight.issues)).toBeTruthy();
+    expect(data.preflight.backends.orpheus.name).toBe('orpheus');
+    expect(data.preflight.backends.tidalDlNg.name).toBe('tidal-dl-ng');
+    expect(data.preflight.paths.config).toHaveProperty('scope');
+    expect(data.preflight.tools.git).toHaveProperty('status');
   });
 
   test('/api/stats returns valid stats', async ({ request }) => {
