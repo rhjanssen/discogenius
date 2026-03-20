@@ -28,6 +28,7 @@ import {
   Play24Regular,
   Stop24Filled,
   Info24Regular,
+  MusicNote224Regular,
 } from "@fluentui/react-icons";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
@@ -36,6 +37,7 @@ import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import {
@@ -447,40 +449,6 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  loadingState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    minHeight: "400px",
-    margin: "0 auto",
-    padding: tokens.spacingHorizontalL,
-  },
-  loadingPanel: {
-    width: "100%",
-    maxWidth: "520px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: tokens.spacingVerticalM,
-    textAlign: "center",
-    margin: "0 auto",
-  },
-  notFoundState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "400px",
-    gap: tokens.spacingVerticalL,
-    textAlign: "center",
-    padding: tokens.spacingHorizontalXXL,
-  },
-  notFoundSubtext: {
-    color: tokens.colorNeutralForeground2,
-  },
   placeholderBg: {
     width: "100%",
     height: "100%",
@@ -488,9 +456,6 @@ const useStyles = makeStyles({
   },
   sectionSpacing: {
     marginTop: tokens.spacingVerticalXXL,
-  },
-  noTracksText: {
-    color: tokens.colorNeutralForeground2,
   },
   trackArtistText: {
     color: tokens.colorNeutralForeground2,
@@ -767,24 +732,29 @@ const AlbumPage = () => {
 
   if (loading) {
     return (
-      <DynamicBrandProvider keyColor={album?.vibrant_color}>
-        <LoadingState
-          className={styles.loadingState}
-          panelClassName={styles.loadingPanel}
-          size="huge"
-          label="Loading album details..."
-        />
-      </DynamicBrandProvider>
+      <LoadingState size="huge" label="Loading album details..." minHeight="320px" />
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        title="Failed to load album"
+        error={error as Error}
+        minHeight="320px"
+        actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+      />
     );
   }
 
   if (!album) {
     return (
-      <div className={styles.notFoundState}>
-        <Text size={500}>Album not found</Text>
-        <Text className={styles.notFoundSubtext}>This album may not be in your library yet.</Text>
-        <Button appearance="primary" onClick={() => navigate('/')}>Return to Library</Button>
-      </div>
+      <EmptyState
+        title="Album not found"
+        description="This album may not be in your library yet."
+        actions={<Button appearance="primary" onClick={() => navigate('/')}>Return to Library</Button>}
+        minHeight="320px"
+      />
     );
   }
 
@@ -940,7 +910,12 @@ const AlbumPage = () => {
 
         {/* Track List Section */}
         {tracks.length === 0 ? (
-          <Text className={styles.noTracksText}>No tracks found for this album.</Text>
+          <EmptyState
+            title="No tracks found"
+            description="This album doesn't have any surfaced tracks yet."
+            icon={<MusicNote224Regular />}
+            minHeight="220px"
+          />
         ) : (() => {
           // Check if multi-volume
           const volumes = [...new Set(tracks.map(t => t.volume_number || 1))].sort((a, b) => a - b);

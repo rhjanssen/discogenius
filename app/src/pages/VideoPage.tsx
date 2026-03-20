@@ -11,9 +11,6 @@ import {
     Text,
     Title1,
     mergeClasses,
-    Title2,
-    Body1,
-    Card,
     makeStyles,
     tokens,
     Tooltip,
@@ -44,6 +41,7 @@ import type { LibraryFilesListResponseContract, VideoDetailContract } from "@con
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { ErrorState } from "@/components/ui/ContentState";
 import {
     ACTIVITY_REFRESH_EVENT,
     LIBRARY_UPDATED_EVENT,
@@ -249,23 +247,6 @@ const useStyles = makeStyles({
     fileBadge: {
         fontSize: tokens.fontSizeBase200,
     },
-    loadingState: {
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        width: "100%",
-        minHeight: "50vh",
-        margin: "0 auto",
-    },
-    errorState: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "50vh",
-        gap: tokens.spacingVerticalL,
-        textAlign: "center",
-    },
 });
 
 /* ------------------------------------------------------------------ */
@@ -413,6 +394,11 @@ const VideoPage = () => {
     const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
     const coverUrl = getTidalImage(video?.cover_id || video?.cover, "video", "large");
     const year = video?.release_date ? new Date(video.release_date).getFullYear() : null;
+    const videoErrorDescription = error instanceof Error && error.message === "Video not found"
+        ? "This video doesn't exist in your library."
+        : error instanceof Error
+            ? error.message
+            : "This video doesn't exist in your library.";
 
     const streamUrl = isDownloaded && videoFile
         ? api.getStreamUrl(videoFile.id)
@@ -495,22 +481,18 @@ const VideoPage = () => {
 
     if (isVideoLoading) {
         return (
-            <LoadingState className={styles.loadingState} label="Loading video..." />
+            <LoadingState label="Loading video..." minHeight="280px" />
         );
     }
 
     if (error || !video) {
         return (
-            <div className={styles.errorState}>
-                <Video24Regular style={{ width: 64, height: 64, color: tokens.colorNeutralForeground4 }} />
-                <Title2>Video Not Found</Title2>
-                <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
-                    This video doesn't exist in your library.
-                </Body1>
-                <Button appearance="primary" onClick={() => navigate(-1)}>
-                    Go Back
-                </Button>
-            </div>
+            <ErrorState
+                title="Video not found"
+                description={videoErrorDescription}
+                minHeight="320px"
+                actions={<Button appearance="primary" onClick={() => navigate(-1)}>Go Back</Button>}
+            />
         );
     }
 

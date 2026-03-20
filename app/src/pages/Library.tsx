@@ -5,8 +5,6 @@ import {
   Badge,
   Spinner,
   Text,
-  Title3,
-  Body1,
   makeStyles,
   tokens,
   Menu,
@@ -38,6 +36,7 @@ import {
   MusicNote224Regular,
   Person24Regular,
 } from "@fluentui/react-icons";
+import { EmptyState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
@@ -186,33 +185,6 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalL,
     },
   },
-  emptyState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "60vh",
-    gap: tokens.spacingVerticalL,
-    textAlign: "center",
-    padding: `${tokens.spacingVerticalNone} ${tokens.spacingHorizontalM}`,
-  },
-  emptyStateContent: {
-    maxWidth: "500px",
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-  },
-  emptyStateHint: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    color: tokens.colorNeutralForeground2,
-  },
-  filterEmptyState: {
-    textAlign: "center",
-    padding: `${tokens.spacingVerticalXXL} ${tokens.spacingHorizontalNone}`,
-    color: tokens.colorNeutralForeground2,
-  },
   tabContent: {
     display: "flex",
     flexDirection: "column",
@@ -227,10 +199,6 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "center",
     padding: tokens.spacingVerticalL,
-  },
-  loadingPanel: {
-    minHeight: "300px",
-    alignItems: "center",
   },
   contentPadding: {
     padding: tokens.spacingHorizontalXXS,
@@ -261,13 +229,6 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "center",
     padding: tokens.spacingVerticalL,
-  },
-  emptyStateTitle: {
-    textAlign: "center",
-  },
-  emptyStateBody: {
-    textAlign: "center",
-    color: tokens.colorNeutralForeground2,
   },
   placeholderIcon: {
     fontSize: "48px",
@@ -990,34 +951,29 @@ const Library = () => {
   // Empty state - only show when not loading and truly no artists exist
   if (!loading && artists.length === 0 && stats?.artists?.total === 0) {
     return (
-      <div className={styles.emptyState}>
-        <div className={styles.emptyStateContent}>
-          <Title3 className={styles.emptyStateTitle}>
-            Your Library is Empty</Title3>
-        </div>
-        <div className={styles.emptyStateHint}>
-          <Search24Regular />
-          <Text>Use search to find artists</Text>
-        </div>
-        <Body1 className={styles.emptyStateBody}>
-          or
-        </Body1>
-        <Button
-          appearance="primary"
-          icon={<ArrowDownload24Regular />}
-          onClick={handleImportFollowed}
-          disabled={importing}
-          title='Import followed artists from TIDAL'
-        >
-          {importing ? 'Importing...' : 'Import Followed Artists'}
-        </Button>
-      </div>
+      <EmptyState
+        title="Your library is empty"
+        description="Use search to find artists or import followed artists from TIDAL."
+        icon={<MusicNote224Regular />}
+        minHeight="320px"
+        actions={
+          <Button
+            appearance="primary"
+            icon={<ArrowDownload24Regular />}
+            onClick={handleImportFollowed}
+            disabled={importing}
+            title='Import followed artists from TIDAL'
+          >
+            {importing ? 'Importing...' : 'Import Followed Artists'}
+          </Button>
+        }
+      />
     );
   }
 
   // Helper to render loading state in content area
   const renderLoadingContent = () => (
-    <LoadingState className={mergeClasses(styles.loadMoreSpinner, styles.loadingPanel)} label="Loading..." />
+    <LoadingState className={styles.loadMoreSpinner} label="Loading..." />
   );
 
   const renderSortMenu = () => (
@@ -1219,9 +1175,12 @@ const Library = () => {
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderLoadingContent() : filteredArtists.length === 0 ? (
-              <div className={styles.filterEmptyState}>
-                No artists match your filters or search.
-              </div>
+              <EmptyState
+                title="No artists found"
+                description="No artists match your filters or search."
+                icon={<Search24Regular />}
+                minHeight="220px"
+              />
             ) : (
               renderPane({
                 scrollRef: artistScrollRef,
@@ -1247,9 +1206,12 @@ const Library = () => {
         {selectedTab === "albums" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderLoadingContent() : filteredAlbums.length === 0 ? (
-              <div className={styles.filterEmptyState}>
-                No albums match your filters or search.
-              </div>
+              <EmptyState
+                title="No albums found"
+                description="No albums match your filters or search."
+                icon={<Search24Regular />}
+                minHeight="220px"
+              />
             ) : (
               renderPane({
                 scrollRef: albumScrollRef,
@@ -1288,9 +1250,12 @@ const Library = () => {
         {selectedTab === "videos" && (
           <div className={styles.virtuosoContainer}>
             {videosLoading ? renderLoadingContent() : filteredVideos.length === 0 ? (
-              <div className={styles.filterEmptyState}>
-                No videos match your filters or search.
-              </div>
+              <EmptyState
+                title="No videos found"
+                description="No videos match your filters or search."
+                icon={<Search24Regular />}
+                minHeight="220px"
+              />
             ) : (
               renderPane({
                 scrollRef: videoScrollRef,

@@ -1,42 +1,9 @@
 import React, { Component, ReactNode } from "react";
 import {
   Button,
-  Text,
-  Title3,
-  Body1,
-  makeStyles,
-  tokens,
 } from "@fluentui/react-components";
-import {
-  ErrorCircle24Filled,
-  ArrowClockwise24Regular,
-} from "@fluentui/react-icons";
-
-const useStyles = makeStyles({
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "40vh",
-    gap: tokens.spacingVerticalL,
-    padding: tokens.spacingHorizontalXL,
-    textAlign: "center",
-  },
-  icon: {
-    color: tokens.colorPaletteRedForeground1,
-    width: "48px",
-    height: "48px",
-  },
-  message: {
-    color: tokens.colorNeutralForeground2,
-    maxWidth: "480px",
-  },
-  actions: {
-    display: "flex",
-    gap: tokens.spacingHorizontalM,
-  },
-});
+import { ArrowClockwise24Regular } from "@fluentui/react-icons";
+import { ErrorState } from "@/components/ui/ContentState";
 
 interface Props {
   children: ReactNode;
@@ -57,17 +24,13 @@ const ErrorFallback = ({
   pageName?: string;
   onReset: () => void;
 }) => {
-  const styles = useStyles();
   return (
-    <div className={styles.container}>
-      <ErrorCircle24Filled className={styles.icon} />
-      <Title3>
-        {pageName ? `Failed to load ${pageName}` : "Something went wrong"}
-      </Title3>
-      <Body1 className={styles.message}>
-        {error?.message || "An unexpected error occurred. Please try again."}
-      </Body1>
-      <div className={styles.actions}>
+    <ErrorState
+      title={pageName ? `Failed to load ${pageName}` : "Something went wrong"}
+      error={error}
+      minHeight="320px"
+      actions={
+        <>
         <Button
           appearance="primary"
           icon={<ArrowClockwise24Regular />}
@@ -81,8 +44,9 @@ const ErrorFallback = ({
         >
           Refresh Page
         </Button>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 };
 

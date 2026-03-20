@@ -196,7 +196,7 @@ test.describe('Library page tabs & filtering', () => {
     await expect.poll(() => monitoredRequests).toBeGreaterThan(0);
 
     await expect(page.getByText('Loading...').first()).toBeVisible();
-    await expect(page.getByText(/No artists match your filters or search/i)).toBeHidden();
+    await expect(page.getByText(/No artists found/i)).toBeHidden();
 
     releaseMonitoredResponse?.();
 

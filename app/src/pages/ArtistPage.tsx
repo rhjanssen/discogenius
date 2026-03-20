@@ -7,7 +7,6 @@ import {
   Text,
   Title1,
   Title2,
-  Body1,
   Spinner,
   Card,
   Badge,
@@ -52,6 +51,7 @@ import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -548,39 +548,6 @@ const useStyles = makeStyles({
     width: "16px",
     height: "16px",
     color: tokens.colorNeutralForegroundDisabled,
-  },
-  loadingState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    minHeight: "400px",
-    margin: "0 auto",
-    padding: `calc(${tokens.spacingVerticalXXXL} * 3)`,
-  },
-  loadingPanel: {
-    width: "100%",
-    maxWidth: "520px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: tokens.spacingVerticalM,
-    textAlign: "center",
-    margin: "0 auto",
-  },
-  errorState: {
-    padding: `calc(${tokens.spacingVerticalXXXL} + ${tokens.spacingVerticalS})`,
-    textAlign: "center",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: tokens.spacingVerticalM,
-  },
-  emptyModules: {
-    textAlign: "center",
-    padding: `calc(${tokens.spacingVerticalXXXL} + ${tokens.spacingVerticalS})`,
   },
   placeholderBg: {
     width: "100%",
@@ -1374,20 +1341,21 @@ const ArtistPage = () => {
   if (pageLoading) {
     return (
       <LoadingState
-        className={styles.loadingState}
-        panelClassName={styles.loadingPanel}
         size="huge"
         label="Loading artist details..."
+        minHeight="320px"
       />
     );
   }
 
   if (pageError) {
     return (
-      <div className={styles.errorState}>
-        <Text>Error loading artist page: {(pageError as Error).message}</Text>
-        <Button onClick={() => window.location.reload()}>Retry</Button>
-      </div>
+      <ErrorState
+        title="Failed to load artist"
+        error={pageError as Error}
+        minHeight="320px"
+        actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+      />
     );
   }
 
@@ -1595,9 +1563,12 @@ const ArtistPage = () => {
         {modules.map((mod, i) => renderModule(mod, i))}
 
         {modules.length === 0 && !pageLoading && (
-          <div className={styles.emptyModules}>
-            <Text>No content found. {!hasBeenScanned && 'Try getting metadata first.'}</Text>
-          </div>
+          <EmptyState
+            title="No content found"
+            description={!hasBeenScanned ? "Try getting metadata first." : "This artist does not have any surfaced modules yet."}
+            icon={<FolderSync24Regular />}
+            minHeight="220px"
+          />
         )}
 
         {/* Track Info Dialog */}

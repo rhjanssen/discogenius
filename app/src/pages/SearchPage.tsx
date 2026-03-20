@@ -7,13 +7,21 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
+    alignItems: "center",
     gap: tokens.spacingVerticalL,
     padding: tokens.spacingHorizontalM,
-    minHeight: "100vh",
+    minHeight: "100%",
+  },
+  content: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalL,
+    width: "100%",
+    maxWidth: "720px",
   },
   searchWrapper: {
     width: "100%",
-    maxWidth: "600px",
+    maxWidth: "100%",
     margin: "0 auto",
   },
   note: {
@@ -33,12 +41,14 @@ const SearchPage = () => {
 
   return (
     <div className={styles.container}>
-      <Title1 align="center">Search</Title1>
-      {!remoteCatalogAvailable ? (
-        <Body1 className={styles.note}>{localOnlyMessage}</Body1>
-      ) : null}
-      <div className={styles.searchWrapper}>
-        <GlobalSearch autoFocus />
+      <div className={styles.content}>
+        <Title1 align="center">Search</Title1>
+        {!remoteCatalogAvailable ? (
+          <Body1 className={styles.note}>{localOnlyMessage}</Body1>
+        ) : null}
+        <div className={styles.searchWrapper}>
+          <GlobalSearch autoFocus />
+        </div>
       </div>
     </div>
   );
