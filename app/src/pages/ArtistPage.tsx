@@ -44,6 +44,7 @@ import {
 import { api } from "@/services/api";
 import { Artist, Album } from "@/hooks/useLibrary";
 import { useArtistPage } from "@/hooks/useArtistPage";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -667,12 +668,20 @@ const ArtistPage = () => {
   const queueCtx = useContext(QueueContext);
   const progressMap = queueCtx?.progress;
 
+  useDebouncedQueryInvalidation({
+    queryKeys: [['artist-activity', artistId]],
+    globalEvents: ['job.added', 'job.deleted', 'queue.cleared'],
+    windowEvents: [ACTIVITY_REFRESH_EVENT],
+    enabled: Boolean(artistId),
+    debounceMs: 400,
+  });
+
   // Poll server for active jobs related to this artist (scanning, curating, downloading)
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', artistId],
     queryFn: () => artistId ? api.getArtistActivity(artistId) : null,
-    refetchInterval: 5000,
     enabled: !!artistId,
+    refetchOnWindowFocus: true,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
 
   // Combined busy states: local action flags OR server-side activity

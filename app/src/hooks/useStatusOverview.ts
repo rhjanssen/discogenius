@@ -1,8 +1,7 @@
-import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
-import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import type {
   ActivityJobContract as ActiveJob,
   CommandStatsContract as CommandStats,
@@ -15,34 +14,21 @@ export type { ActiveJob, CommandStats, StatusOverviewResponse, TaskQueueStat };
 export const statusOverviewQueryKey = ["statusOverview"] as const;
 
 export function useStatusOverview() {
-    const queryClient = useQueryClient();
-    const lastGlobalEvent = useGlobalEvents([
-        "job.added",
-        "job.updated",
-        "job.deleted",
-        "queue.cleared",
-        "config.updated",
-        "file.added",
-        "file.deleted",
-        "file.upgraded",
-    ]);
-
-    useEffect(() => {
-        if (!lastGlobalEvent) {
-            return;
-        }
-
-        queryClient.invalidateQueries({ queryKey: statusOverviewQueryKey });
-    }, [lastGlobalEvent, queryClient]);
-
-    useEffect(() => {
-        const handleRefresh = () => {
-            queryClient.invalidateQueries({ queryKey: statusOverviewQueryKey });
-        };
-
-        window.addEventListener(ACTIVITY_REFRESH_EVENT, handleRefresh);
-        return () => window.removeEventListener(ACTIVITY_REFRESH_EVENT, handleRefresh);
-    }, [queryClient]);
+    useDebouncedQueryInvalidation({
+        queryKeys: [statusOverviewQueryKey],
+        globalEvents: [
+            "job.added",
+            "job.updated",
+            "job.deleted",
+            "queue.cleared",
+            "config.updated",
+            "file.added",
+            "file.deleted",
+            "file.upgraded",
+        ],
+        windowEvents: [ACTIVITY_REFRESH_EVENT],
+        debounceMs: 500,
+    });
 
     const query = useQuery({
         queryKey: statusOverviewQueryKey,
@@ -50,7 +36,6 @@ export function useStatusOverview() {
             return api.getStatusOverview();
         },
         staleTime: 5_000,
-        refetchInterval: 10_000,
         refetchOnWindowFocus: true,
         retry: 1,
         placeholderData: (previousData) => previousData,

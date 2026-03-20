@@ -68,9 +68,14 @@ const initStream = () => {
 
 export function useGlobalEvents(interestEvents?: string[]) {
     const [lastEvent, setLastEvent] = useState<GlobalEventPayload | null>(null);
-    const interestKey = interestEvents?.slice().sort().join('|') || '';
+    const isDisabled = Array.isArray(interestEvents) && interestEvents.length === 0;
+    const interestKey = isDisabled ? null : (interestEvents?.slice().sort().join('|') || '');
 
     const handleEvent = useCallback((payload: GlobalEventPayload) => {
+        if (isDisabled) {
+            return;
+        }
+
         // Filter out events this component doesn't care about (if specified)
         if (interestKey) {
             const allowedEvents = interestKey.split('|');
@@ -79,9 +84,13 @@ export function useGlobalEvents(interestEvents?: string[]) {
             }
         }
         setLastEvent(payload);
-    }, [interestKey]);
+    }, [interestKey, isDisabled]);
 
     useEffect(() => {
+        if (isDisabled) {
+            return;
+        }
+
         // Subscribe to global broadcasts
         globalSubscribers.add(handleEvent);
 
@@ -106,7 +115,7 @@ export function useGlobalEvents(interestEvents?: string[]) {
                 console.log('[GlobalEvents] All subscribers detached, closing stream.');
             }
         };
-    }, [handleEvent]);
+    }, [handleEvent, isDisabled]);
 
     return lastEvent;
 }

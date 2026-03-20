@@ -37,6 +37,7 @@ import { formatDurationSeconds } from "@/utils/format";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useToast } from "@/hooks/useToast";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
@@ -44,6 +45,8 @@ import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
 import {
+    ACTIVITY_REFRESH_EVENT,
+    LIBRARY_UPDATED_EVENT,
     dispatchMonitorStateChanged,
     dispatchLibraryUpdated,
     dispatchActivityRefresh,
@@ -293,6 +296,13 @@ const VideoPage = () => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<{ destroy: () => void } | null>(null);
 
+    useDebouncedQueryInvalidation({
+        queryKeys: [["video", videoId], ["video-files", videoId]],
+        windowEvents: [ACTIVITY_REFRESH_EVENT, LIBRARY_UPDATED_EVENT],
+        enabled: Boolean(videoId),
+        debounceMs: 400,
+    });
+
     // Fetch video data
     const {
         data: video,
@@ -302,7 +312,7 @@ const VideoPage = () => {
         queryKey: ["video", videoId],
         queryFn: () => api.getVideo(videoId!),
         enabled: !!videoId,
-        refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
     });
 
     // We fetch artist data to get the profile picture since it might not be in the video response

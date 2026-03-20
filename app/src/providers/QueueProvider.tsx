@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-import { useGlobalEvents, GlobalEventPayload } from "@/hooks/useGlobalEvents";
+import { useGlobalEvents } from "@/hooks/useGlobalEvents";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
   DownloadProgressContract as DownloadProgress,
@@ -125,6 +125,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const sseReconnectAttempts = useRef(0);
   const queueBackoffRef = useRef(10000);
   const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuePageSize = 100;
 
   useEffect(() => {
@@ -179,18 +180,26 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
+  const scheduleQueueRefresh = useCallback((delay = 250) => {
+    if (queueRefreshTimerRef.current) {
+      clearTimeout(queueRefreshTimerRef.current);
+    }
+
+    queueRefreshTimerRef.current = setTimeout(() => {
+      queueRefreshTimerRef.current = null;
+      void fetchQueue();
+    }, delay);
+  }, [fetchQueue]);
+
   // Use the global event stream to know when to refetch the full queue
   // or apply optimistic updates when jobs are added/removed.
-  const lastGlobalEvent = useGlobalEvents(['job.added', 'job.updated', 'job.deleted', 'queue.cleared']);
+  const lastGlobalEvent = useGlobalEvents(['job.added', 'job.deleted', 'queue.cleared']);
 
   useEffect(() => {
     if (lastGlobalEvent) {
-      // We could optimistically mutate `queue` here based on lastGlobalEvent.data
-      // but for simplicity and correctness, catching a job mutation event
-      // just triggers a background refetch
-      fetchQueue();
+      scheduleQueueRefresh();
     }
-  }, [lastGlobalEvent, fetchQueue]);
+  }, [lastGlobalEvent, scheduleQueueRefresh]);
 
   // Set up SSE for real-time progress
   useEffect(() => {
@@ -340,6 +349,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       isUnmountedRef.current = true;
       if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+      if (queueRefreshTimerRef.current) clearTimeout(queueRefreshTimerRef.current);
       if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
       if (eventSourceRef.current) {
         isManualCloseRef.current = true;
@@ -356,7 +366,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         title: "Added to queue",
         description: "Download will start automatically",
       });
-      await fetchQueue();
+      scheduleQueueRefresh();
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error adding to queue:', error);
@@ -372,7 +382,11 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const processItem = async (id: number) => {
     try {
       await api.processQueueItem(id);
-      await fetchQueue();
+      setQueue(prev => prev.map(item =>
+        item.id === id && item.status === 'pending'
+          ? { ...item, status: 'downloading' as const }
+          : item
+      ));
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error processing item:', error);
@@ -396,7 +410,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         title: response.action === 'queue-redownload' ? "Download queued" : "Retry queued",
         description: response.message,
       });
-      await fetchQueue();
+      scheduleQueueRefresh();
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error retrying item:', error);
@@ -416,7 +430,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         next.delete(id);
         return next;
       });
-      await fetchQueue();
+      setQueue(prev => prev.filter(item => item.id !== id));
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error deleting item:', error);
@@ -445,7 +459,6 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         title: "Queue cleared",
         description: "Finished downloads removed",
       });
-      await fetchQueue();
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error clearing completed:', error);
@@ -460,6 +473,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pauseQueue = async () => {
     try {
       await api.pauseQueue();
+      setIsPaused(true);
       toastRef.current({
         title: "Queue paused",
         description: "Processing stopped",
@@ -478,6 +492,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const resumeQueue = async () => {
     try {
       await api.resumeQueue();
+      setIsPaused(false);
       toastRef.current({
         title: "Queue resumed",
         description: "Processing started",

@@ -2,6 +2,12 @@ import { useQuery } from '@tanstack/react-query';
 import type { Album } from '@/hooks/useLibrary';
 import type { Artist } from '@/hooks/useLibrary';
 import { api } from '@/services/api';
+import { useDebouncedQueryInvalidation } from '@/hooks/useDebouncedQueryInvalidation';
+import {
+    ACTIVITY_REFRESH_EVENT,
+    LIBRARY_UPDATED_EVENT,
+    MONITOR_STATE_CHANGED_EVENT,
+} from '@/utils/appEvents';
 import { getArtistPicture } from '@/utils/tidalImages';
 import type {
     AlbumTrackContract as AlbumTrack,
@@ -26,6 +32,13 @@ export interface AlbumPageData {
 export const albumPageQueryKey = (albumId: string | undefined) => ['albumPage', albumId] as const;
 
 export function useAlbumPage(albumId: string | undefined) {
+    useDebouncedQueryInvalidation({
+        queryKeys: [albumPageQueryKey(albumId)],
+        windowEvents: [ACTIVITY_REFRESH_EVENT, LIBRARY_UPDATED_EVENT, MONITOR_STATE_CHANGED_EVENT],
+        enabled: Boolean(albumId),
+        debounceMs: 400,
+    });
+
     return useQuery({
         queryKey: albumPageQueryKey(albumId),
         queryFn: async (): Promise<AlbumPageData> => {
@@ -55,7 +68,7 @@ export function useAlbumPage(albumId: string | undefined) {
         },
         enabled: !!albumId,
         refetchOnMount: 'always',
-        refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
         staleTime: 10_000,
     });
 }

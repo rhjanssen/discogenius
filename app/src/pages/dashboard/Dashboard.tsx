@@ -28,11 +28,12 @@ import {
     Filter24Regular,
     ArrowSortDownLines24Regular,
 } from "@fluentui/react-icons";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { LibraryStats } from "@/hooks/useLibrary";
 import { useToast } from "@/hooks/useToast";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import {
     ACTIVITY_REFRESH_EVENT,
     LIBRARY_UPDATED_EVENT,
@@ -250,6 +251,7 @@ const useStyles = makeStyles({
 });
 
 const HISTORY_PAGE_SIZE = 50;
+const dashboardStatsQueryKey = ["dashboardStats"] as const;
 
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
@@ -275,7 +277,6 @@ function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
 const Dashboard = () => {
     const styles = useStyles();
     const responsiveTabsStyles = useResponsiveTabsStyles({ collapseOnMobile: false });
-    const queryClient = useQueryClient();
     const { toast } = useToast();
     const {
         isPaused: queueIsPaused,
@@ -305,42 +306,22 @@ const Dashboard = () => {
         taskQueueStats,
         isLoading: isStatusInitialLoading,
     } = useStatusOverview();
+    useDebouncedQueryInvalidation({
+        queryKeys: [dashboardStatsQueryKey],
+        globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated"],
+        windowEvents: [LIBRARY_UPDATED_EVENT, ACTIVITY_REFRESH_EVENT],
+        debounceMs: 500,
+    });
+
     const statsQuery = useQuery<LibraryStats | null>({
-        queryKey: ["dashboardStats"],
+        queryKey: dashboardStatsQueryKey,
         queryFn: async (): Promise<LibraryStats | null> => await api.getStats() as LibraryStats,
-        staleTime: 10_000,
-        refetchInterval: 15_000,
+        staleTime: 30_000,
         refetchOnWindowFocus: true,
         retry: 1,
         placeholderData: (previousData) => previousData,
     });
-    const monitoringQuery = useQuery({
-        queryKey: ["dashboardMonitoringStatus"],
-        queryFn: async () => await api.getMonitoringStatus().catch(() => null),
-        staleTime: 10_000,
-        refetchInterval: 15_000,
-        refetchOnWindowFocus: true,
-        retry: 1,
-        placeholderData: (previousData) => previousData,
-    });
-
     const libraryStats = statsQuery.data ?? null;
-    const monitoringStatus = monitoringQuery.data ?? null;
-
-    useEffect(() => {
-        const refreshDashboardSummary = () => {
-            void queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
-            void queryClient.invalidateQueries({ queryKey: ["dashboardMonitoringStatus"] });
-        };
-
-        window.addEventListener(LIBRARY_UPDATED_EVENT, refreshDashboardSummary);
-        window.addEventListener(ACTIVITY_REFRESH_EVENT, refreshDashboardSummary);
-
-        return () => {
-            window.removeEventListener(LIBRARY_UPDATED_EVENT, refreshDashboardSummary);
-            window.removeEventListener(ACTIVITY_REFRESH_EVENT, refreshDashboardSummary);
-        };
-    }, [queryClient]);
     const jobHistory = useMemo(() => {
         const seenIds = new Set(baseJobHistory.map((job) => job.id));
         return [...baseJobHistory, ...historyPages.filter((job) => !seenIds.has(job.id))];

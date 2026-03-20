@@ -1,7 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
+import { LIBRARY_UPDATED_EVENT } from "@/utils/appEvents";
 
 export function useArtistPage(artistId: string | undefined) {
+    useDebouncedQueryInvalidation({
+        queryKeys: [["artistPage", artistId]],
+        windowEvents: [LIBRARY_UPDATED_EVENT],
+        enabled: Boolean(artistId),
+        debounceMs: 400,
+    });
+
     return useQuery({
         queryKey: ["artistPage", artistId],
         queryFn: async () => {
@@ -15,7 +24,7 @@ export function useArtistPage(artistId: string | undefined) {
         // Important UX: when you toggle monitoring from Search and then open the artist page,
         // we must not show a cached stale view.
         refetchOnMount: 'always',
-        refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
         staleTime: 10_000,
     });
 }
