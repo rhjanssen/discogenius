@@ -15,6 +15,7 @@ import { promisify } from "util";
 import { Readable } from "stream";
 import { getPlaybackInfo, getVideoPlaybackInfo } from "../services/playback.js";
 import type { PlaybackInfo, VideoPlaybackInfo } from "../services/playback.js";
+import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worker.js";
 import { authMiddleware } from "../middleware/auth.js";
 
 const streamPipeline = promisify(pipeline);
@@ -97,7 +98,7 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
             return;
         }
 
-        // ── DASH: segmented MP4 — fetch all segments, concatenate ──
+        // ── DASH: segmented MP4 — offload sequential streaming to a worker ──
         console.log(`[Playback] DASH stream for track ${trackId}: ${info.segments.length} segments`);
 
         res.setHeader("Content-Type", info.contentType);
@@ -105,29 +106,55 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
         // No Content-Length (chunked transfer) — we don't know total size upfront
         res.status(200);
 
-        // Fetch segments sequentially and pipe each into the response
-        for (let i = 0; i < info.segments.length; i++) {
-            const segUrl = info.segments[i];
-            const segRes = await fetch(segUrl);
+        const worker = spawnSegmentedPlaybackWorker({
+            segments: info.segments,
+            contentType: info.contentType,
+        });
 
-            if (!segRes.ok || !segRes.body) {
-                console.error(`[Playback] DASH segment ${i}/${info.segments.length} failed: ${segRes.status}`);
-                // If headers already sent, just end the stream — browser has partial audio
-                if (res.headersSent) { res.end(); return; }
-                return res.status(502).json({ error: `Segment ${i} fetch failed` });
+        const stopWorker = () => {
+            if (!worker.killed) {
+                worker.kill("SIGTERM");
+            }
+        };
+
+        worker.stderr.on("data", (chunk) => {
+            const message = Buffer.from(chunk).toString("utf8").trim();
+            if (message) {
+                console.warn(`[Playback] DASH worker: ${message}`);
+            }
+        });
+
+        worker.once("error", (error) => {
+            console.error(`[Playback] DASH worker failed for track ${trackId}:`, error);
+            stopWorker();
+            if (!res.headersSent) {
+                res.status(502).json({ error: "Playback worker failed" });
+            } else if (!res.writableEnded) {
+                res.end();
+            }
+        });
+
+        worker.once("close", (code, signal) => {
+            if (code === 0 || signal === "SIGTERM") {
+                if (!res.writableEnded) {
+                    res.end();
+                }
+                console.log(`[Playback] DASH stream complete for track ${trackId}`);
+                return;
             }
 
-            // Pipe this segment's bytes into the response
-            const segStream = Readable.fromWeb(segRes.body as any);
-            await new Promise<void>((resolve, reject) => {
-                segStream.on("data", (chunk: Buffer) => res.write(chunk));
-                segStream.on("end", resolve);
-                segStream.on("error", reject);
-            });
-        }
+            console.error(`[Playback] DASH worker exited with code ${code} for track ${trackId}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: "Playback worker exited unexpectedly" });
+            } else if (!res.writableEnded) {
+                res.end();
+            }
+        });
 
-        res.end();
-        console.log(`[Playback] DASH stream complete for track ${trackId}`);
+        req.once("close", stopWorker);
+        res.once("close", stopWorker);
+        worker.stdout.pipe(res);
+        return;
     } catch (err: any) {
         // Ignore premature close (client stopped playback)
         if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;
