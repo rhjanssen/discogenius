@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.5] - 2026-03-20
+
+### Changed
+- Added current-versus-latest release status to Settings > About, including release-note links and Docker/NAS update guidance.
+- Added release metadata contracts and tests so the frontend and API treat update-status payloads as typed data instead of ad hoc JSON.
+- Made the auth screen a true standalone viewport-fit page so it no longer scrolls just enough to hide the theme toggles.
+- Hardened the container entrypoint to fail fast with clearer diagnostics when `/config` or SQLite sidecar files are not writable on NAS deployments.
+- Updated Docker documentation and compose examples to explain why pinned tags are more reliable than `latest` on platforms that cache images aggressively.
+
 ## [1.0.4] - 2026-03-19
 
 ### Changed
