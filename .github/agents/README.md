@@ -22,3 +22,21 @@ Source personas from agency-agents:
 - `testing/testing-reality-checker.md`
 - `engineering/engineering-code-reviewer.md`
 - `engineering/engineering-technical-writer.md`
+
+Agent criteria:
+
+1. Agent files must stay aligned with GitHub's official custom agents documentation, including frontmatter shape, handoff structure, and tool declarations.
+2. Agent guidance must remain Discogenius-specific and consistent with `.github/copilot-instructions.md` and `.github/skills`.
+3. Handoff chains must stay explicit, minimal, and verifiable.
+4. A repository-level `AGENTS.md` must stay present and in sync with this folder so GitHub-supported agent instruction discovery works consistently across tools.
+
+Reference:
+
+- https://docs.github.com/en/copilot/reference/custom-instructions-support
+- https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+- https://github.com/agentsmd/agents.md
+
+Notes:
+
+- GitHub supports agent instructions via `AGENTS.md` (and optionally `CLAUDE.md`/`GEMINI.md`) for coding-agent flows.
+- Keep repository-wide guidance in `.github/copilot-instructions.md`, path-specific guidance in `.github/instructions/**/*.instructions.md`, and agent-operational guidance in `AGENTS.md`.

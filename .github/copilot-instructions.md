@@ -4,6 +4,13 @@
 This repo uses a single agent directory: `.github`.
 All agents (Copilot, Claude, Gemini, GPT) should read instructions here and load skills from `.github/skills`.
 
+## GitHub Custom Instruction Compatibility
+- Keep repository-wide guidance in `.github/copilot-instructions.md`.
+- Keep path-specific guidance in `.github/instructions/**/*.instructions.md` using frontmatter `applyTo` globs when needed.
+- Keep coding-agent operational guidance in a repository-level `AGENTS.md`.
+- Avoid conflicting directives across instruction types; when adding new rules, update all relevant files in the same change.
+- Validate behavior against GitHub docs support matrix and instruction precedence before introducing new instruction files.
+
 ## Project Snapshot
 Discogenius is a self-hosted Tidal library manager inspired by Lidarr. Monorepo with `api/` (Express + TypeScript) and `app/` (React + Vite). Local development (Node + Yarn + a repo-local `.venv` for `tidal-dl-ng`, or `TIDAL_DL_NG_BIN`/PATH override) and Docker builds are both supported.
 

@@ -18,6 +18,7 @@ Focus:
 - Update both product docs and developer-agent guidance when architecture changes.
 - Prefer concise, task-oriented docs with clear ownership boundaries.
 - Prefer consolidation over duplication: update canonical docs and remove stale overlap docs.
+- For updates to `.github/agents`, keep frontmatter and handoff patterns aligned with GitHub custom agent documentation.
 
 Minimum output:
 

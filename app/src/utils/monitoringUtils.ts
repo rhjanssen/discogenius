@@ -4,9 +4,9 @@
  */
 
 export interface Monitorable {
-  monitor_locked?: boolean;
-  monitor_lock?: boolean;
-  is_monitored?: boolean;
+    monitor_locked?: boolean;
+    monitor_lock?: boolean;
+    is_monitored?: boolean;
 }
 
 /**
@@ -14,12 +14,12 @@ export interface Monitorable {
  * Falls back from monitor_locked (new) to monitor_lock (legacy)
  */
 export const isMonitorLocked = (item: Monitorable): boolean => {
-  return !!(item.monitor_locked ?? item.monitor_lock);
+    return !!(item.monitor_locked ?? item.monitor_lock);
 };
 
 /**
  * Check if a media item is being monitored (monitored + not locked)
  */
 export const isMonitored = (item: Monitorable & { is_monitored?: boolean }): boolean => {
-  return item.is_monitored === true && !isMonitorLocked(item);
+    return item.is_monitored === true && !isMonitorLocked(item);
 };

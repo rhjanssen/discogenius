@@ -29,4 +29,5 @@ Validation checklist:
 1. Run build and lint checks for changed surfaces where available.
 2. Run focused test suites when behavior changed.
 3. Confirm acceptance criteria directly.
-4. Report blockers first, then suggestions.
+4. For `.github/agents/*.agent.md` changes, confirm frontmatter and handoff structure align with GitHub custom agent documentation.
+5. Report blockers first, then suggestions.
