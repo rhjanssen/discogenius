@@ -1,87 +1,84 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+import {
+  baseURL,
+  createSearchResponse,
+  stubArtistPage,
+  stubShellApis,
+} from './utils/mockShell';
 
-/**
- * Helper: search for an artist and navigate to the Artists tab,
- * waiting for results to appear.
- */
-async function searchAndGoToArtistTab(page: Page, query: string) {
-  await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-  if (page.url().includes('/auth')) return false;
+const artistId = '777';
+const artistName = 'Deterministic Artist';
 
-  const searchBox = page.getByRole('searchbox', { name: /search/i });
-  await searchBox.fill(query);
+async function stubArtistSearchFlow(page: Page) {
+  await stubShellApis(page);
+  await stubArtistPage(page, {
+    artistId,
+    artistName,
+    monitored: false,
+  });
 
-  await page.waitForResponse(
-    (res) => {
-      try {
-        const url = new URL(res.url());
-        return url.pathname === '/api/search' && res.status() === 200;
-      } catch { return false; }
-    },
-    { timeout: 30_000 }
-  );
-
-  // Switch to Artists tab
-  const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
-  await expect(artistsTab).toBeVisible({ timeout: 5_000 });
-  await artistsTab.click();
-  await page.waitForTimeout(800);
-  return true;
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(createSearchResponse({
+        artists: [
+          {
+            id: artistId,
+            type: 'artist',
+            name: artistName,
+            subtitle: 'Artist',
+            imageId: null,
+            monitored: false,
+            in_library: true,
+          },
+        ],
+      })),
+    });
+  });
 }
 
 test.describe('Artist page', () => {
   test('can navigate to artist detail from search', async ({ page }) => {
-    const ok = await searchAndGoToArtistTab(page, 'radiohead');
-    if (!ok) test.skip(true, 'Auth gate active');
+    await stubArtistSearchFlow(page);
 
-    // Find any clickable artist element
-    const artistLink = page.locator('a[href*="/artist/"]').first();
-    const hasLink = await artistLink.count() > 0 && await artistLink.isVisible();
+    await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
 
-    if (hasLink) {
-      await artistLink.click();
-      await page.waitForURL(/\/artist\//, { timeout: 10_000 });
-      expect(page.url()).toMatch(/\/artist\/\d+/);
-    } else {
-      // Try clicking on a card element instead
-      const card = page.locator('[class*="card"]').first();
-      if (await card.count() > 0) {
-        await card.click();
-        await page.waitForTimeout(2000);
+    const searchBox = page.getByRole('main').getByRole('searchbox', { name: /search/i });
+    await searchBox.fill(artistName);
+
+    await page.waitForResponse((res) => {
+      try {
+        const url = new URL(res.url());
+        return url.pathname === '/api/search' && res.status() === 200;
+      } catch {
+        return false;
       }
-      // If no artist cards, skip
-      test.skip(true, 'No clickable artist elements found');
-    }
+    });
+
+    const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
+    await expect(artistsTab).toBeVisible();
+    await artistsTab.click();
+
+    await page.getByText(artistName, { exact: true }).first().click();
+    await page.waitForURL(new RegExp(`/artist/${artistId}$`), { timeout: 10_000 });
+    await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
   });
 
   test('direct artist page URL renders', async ({ page }) => {
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await stubShellApis(page);
+    await stubArtistPage(page, {
+      artistId,
+      artistName,
+      monitored: true,
+    });
 
-    // Check if there are any artists in the library
-    const response = await page.evaluate(async (url) => {
-      const res = await fetch(`${url}/api/artists?limit=1`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.items || data;
-    }, baseURL);
-
-    if (!response || !response.length) {
-      test.skip(true, 'No artists in library');
-      return;
-    }
-
-    const artistId = response[0].tidal_id || response[0].id;
     await page.goto(`${baseURL}/artist/${artistId}`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('main')).toBeVisible();
-    await page.waitForTimeout(1000);
-
-    // Should show some content
-    const pageText = (await page.locator('main').textContent()) || '';
-    expect(pageText.length).toBeGreaterThan(5);
+    await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Unmonitor$/i })).toBeVisible();
   });
 
   test('artist page has no critical console errors', async ({ page }) => {
@@ -95,30 +92,26 @@ test.describe('Artist page', () => {
       }
     });
 
-    // Navigate to a library artist
-    const response = await page.evaluate(async (url) => {
-      const res = await fetch(`${url}/api/artists?limit=1`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.items || data;
-    }, baseURL);
+    await stubShellApis(page);
+    await stubArtistPage(page, {
+      artistId,
+      artistName,
+      monitored: false,
+    });
 
-    if (!response || !response.length) {
-      test.skip(true, 'No artists in library');
-      return;
-    }
-
-    const artistId = response[0].tidal_id || response[0].id;
     await page.goto(`${baseURL}/artist/${artistId}`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
-
     await expect(page.locator('main')).toBeVisible();
-    await page.waitForTimeout(2000);
+    await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
 
-    // Filter out non-critical errors
-    const critical = errors.filter(e =>
-      !e.includes('Service Worker') && !e.includes('manifest')
+    const critical = errors.filter((error) =>
+      !error.includes('Service Worker')
+      && !error.includes('manifest')
+      && !error.includes('EventSource')
+      && !error.includes('Global SSE stream error')
+      && !error.includes('Global Stream connection failed')
+      && !error.includes('Download progress SSE error')
+      && !error.includes('Download progress stream connection failed'),
     );
-    expect(critical.length).toBeLessThanOrEqual(1);
+    expect(critical).toEqual([]);
   });
 });

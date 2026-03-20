@@ -1,11 +1,15 @@
 import { expect, test } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+import {
+  baseURL,
+  createSearchResponse,
+  stubShellApis,
+} from './utils/mockShell';
 
 test.describe('Restart resilience', () => {
   test('app recovers from temporary API unavailability', async ({ page }) => {
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     // App should be loaded
     await expect(page.locator('main')).toBeVisible();
@@ -45,7 +49,7 @@ test.describe('Restart resilience', () => {
     });
 
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await page.waitForTimeout(2000);
@@ -65,7 +69,7 @@ test.describe('Restart resilience', () => {
     // Set mobile viewport
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await page.waitForTimeout(500);
@@ -92,7 +96,7 @@ test.describe('Restart resilience', () => {
   test('activity tab is reachable on mobile through the dashboard', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
 
@@ -119,7 +123,7 @@ test.describe('Restart resilience', () => {
   test('desktop view keeps the top navigation actions available', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.locator('nav')).toBeVisible();
@@ -129,46 +133,100 @@ test.describe('Restart resilience', () => {
   });
 
   test('dashboard stays navigable after background updates', async ({ page }) => {
+    const artistId = 'resilience-artist';
+    const artistName = 'Resilience Artist';
+
+    await stubShellApis(page);
+    await page.route('**/api/search?*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(createSearchResponse({
+          artists: [
+            {
+              id: artistId,
+              type: 'artist',
+              name: artistName,
+              subtitle: 'Artist',
+              imageId: null,
+              monitored: true,
+              in_library: true,
+            },
+          ],
+        })),
+      });
+    });
+    await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          artist: {
+            id: artistId,
+            name: artistName,
+            is_monitored: true,
+            files: [],
+          },
+          rows: [],
+          album_count: 0,
+          monitored_album_count: 0,
+          needs_scan: false,
+        }),
+      });
+    });
+    await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          scanning: false,
+          curating: false,
+          downloading: false,
+          libraryScan: false,
+          totalActive: 0,
+          jobs: [],
+        }),
+      });
+    });
+
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('main')).toBeVisible();
+    await page.getByRole('button', { name: /^Dashboard$/i }).first().click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
     await expect(page.getByRole('button', { name: /^Library$/i }).first()).toBeVisible();
 
-    // Give the dashboard time to process its interval refetches and event-driven updates.
-    await page.waitForTimeout(12_000);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('discogenius:activity-refresh'));
+      window.dispatchEvent(new Event('library-updated'));
+    });
+    await page.waitForTimeout(1_500);
 
     await page.getByRole('button', { name: /^Settings$/i }).first().click();
     await expect(page).toHaveURL(/\/settings/, { timeout: 10_000 });
 
-    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /^Dashboard$/i }).first().click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 10_000 });
     await expect(page.locator('main')).toBeVisible();
 
-    const artists = await page.evaluate(async (url) => {
-      const res = await fetch(`${url}/api/artists?limit=1`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const items = data.items || data;
-      if (!Array.isArray(items) || items.length === 0) return null;
-      return { id: String(items[0].tidal_id || items[0].id), name: String(items[0].name || '') };
-    }, baseURL);
-
-    if (!artists?.name || !artists?.id) {
-      test.skip(true, 'No artists in library');
-      return;
-    }
-
     const searchBox = page.getByRole('searchbox', { name: /search/i }).first();
-    await searchBox.fill(artists.name);
-    await page.waitForTimeout(1_500);
+    await searchBox.fill(artistName);
+    await page.waitForResponse((res) => {
+      try {
+        const url = new URL(res.url());
+        return url.pathname === '/api/search' && res.status() === 200;
+      } catch {
+        return false;
+      }
+    });
 
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await expect(artistsTab).toBeVisible({ timeout: 5_000 });
     await artistsTab.click();
 
-    await page.getByText(new RegExp(artists.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).first().click();
-    await expect(page).toHaveURL(new RegExp(`/artist/${artists.id}$`), { timeout: 10_000 });
-    await expect(page.getByText(new RegExp(artists.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).first()).toBeVisible();
+    await page.getByText(artistName, { exact: true }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/artist/${artistId}$`), { timeout: 10_000 });
+    await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
   });
 });

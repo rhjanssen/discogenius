@@ -6,7 +6,7 @@ test.describe('Library page tabs & filtering', () => {
   test('library loads with Artists tab by default', async ({ page }) => {
     // Clear localStorage so default tab is used
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
     await page.evaluate(() => localStorage.removeItem('discogenius_library_settings'));
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
@@ -21,7 +21,7 @@ test.describe('Library page tabs & filtering', () => {
   test('library tab switching works (desktop)', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByRole('tablist')).toBeVisible();
@@ -40,7 +40,7 @@ test.describe('Library page tabs & filtering', () => {
   test('sort menu opens and selections persist', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await page.waitForTimeout(500);
@@ -63,7 +63,7 @@ test.describe('Library page tabs & filtering', () => {
   test('view mode toggle between grid and list', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await page.waitForTimeout(500);

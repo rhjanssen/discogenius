@@ -1,276 +1,264 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+import {
+  baseURL,
+  createSearchResponse,
+  stubShellApis,
+  stubVideoDetail,
+} from './utils/mockShell';
+
+const artistId = '777';
+const artistName = 'Deterministic Artist';
+const videoId = '9001';
+const videoTitle = 'Deterministic Video';
+
+async function setupSearchFixtures(page: Page) {
+  let monitored = false;
+
+  await stubShellApis(page);
+  await stubVideoDetail(page, {
+    videoId,
+    title: videoTitle,
+    artistId,
+    artistName,
+  });
+
+  await page.route(`**/api/artists/${artistId}/page-db`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        artist: {
+          id: artistId,
+          name: artistName,
+          is_monitored: monitored,
+          files: [],
+        },
+        rows: [],
+        album_count: 0,
+        monitored_album_count: 0,
+        needs_scan: false,
+      }),
+    });
+  });
+
+  await page.route(`**/api/artists/${artistId}/activity`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        scanning: false,
+        curating: false,
+        downloading: false,
+        libraryScan: false,
+        totalActive: 0,
+        jobs: [],
+      }),
+    });
+  });
+
+  await page.route('**/api/search?*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(createSearchResponse({
+        artists: [
+          {
+            id: artistId,
+            type: 'artist',
+            name: artistName,
+            subtitle: 'Artist',
+            imageId: null,
+            monitored,
+            in_library: monitored,
+          },
+        ],
+        albums: [
+          {
+            id: 'album-1',
+            type: 'album',
+            name: 'Deterministic Album',
+            subtitle: artistName,
+            imageId: null,
+            monitored: false,
+            in_library: false,
+            quality: 'LOSSLESS',
+            release_date: '2024-01-01',
+          },
+        ],
+        tracks: [
+          {
+            id: 'track-1',
+            type: 'track',
+            name: 'Deterministic Track',
+            subtitle: artistName,
+            imageId: null,
+            monitored: false,
+            in_library: false,
+            quality: 'LOSSLESS',
+            duration: 180,
+          },
+        ],
+        videos: [
+          {
+            id: videoId,
+            type: 'video',
+            name: videoTitle,
+            subtitle: artistName,
+            imageId: null,
+            monitored: false,
+            in_library: false,
+            quality: 'FHD',
+            duration: 180,
+          },
+        ],
+      })),
+    });
+  });
+
+  await page.route(`**/api/artists/${artistId}`, async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: artistId,
+          name: artistName,
+          picture: null,
+          is_monitored: monitored,
+          is_downloaded: false,
+          last_scanned: null,
+          album_count: 1,
+          downloaded: 0,
+        }),
+      });
+      return;
+    }
+
+    let nextMonitored = monitored;
+    try {
+      const payload = route.request().postDataJSON() as { monitored?: boolean } | null;
+      if (payload && typeof payload.monitored === 'boolean') {
+        nextMonitored = payload.monitored;
+      }
+    } catch {
+      nextMonitored = true;
+    }
+
+    monitored = nextMonitored;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, monitored }),
+    });
+  });
+
+  await page.route(`**/api/artists/${artistId}/monitor`, async (route) => {
+    monitored = true;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        artistId,
+        monitored,
+        queued: true,
+        message: 'Artist monitored (scan queued)',
+      }),
+    });
+  });
+
+  return {
+    getMonitored: () => monitored,
+  };
+
+}
+
+async function searchForArtist(page: Page) {
+  await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
+
+  const searchBox = page.getByRole('main').getByRole('searchbox', { name: /search/i });
+  await searchBox.fill(artistName);
+
+  await page.waitForResponse((res) => {
+    try {
+      const url = new URL(res.url());
+      return url.pathname === '/api/search' && res.status() === 200;
+    } catch {
+      return false;
+    }
+  });
+}
 
 test.describe('Search → monitor → navigate flow', () => {
   test('search returns results and tabs work', async ({ page }) => {
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await setupSearchFixtures(page);
+    await searchForArtist(page);
 
-    const searchBox = page.getByRole('searchbox', { name: /search/i });
-    await searchBox.fill('daft punk');
-
-    // Wait for search response
-    const response = await page.waitForResponse(
-      (res) => {
-        try {
-          const url = new URL(res.url());
-          return url.pathname === '/api/search' && res.status() === 200;
-        } catch { return false; }
-      },
-      { timeout: 30_000 }
-    );
-
-    const data = await response.json();
-    const results = data?.results || {};
-    const totalResults = ['artists', 'albums', 'tracks', 'videos']
-      .map((k) => (results[k] || []).length)
-      .reduce((a, b) => a + b, 0);
-    expect(totalResults).toBeGreaterThan(0);
-
-    // Top tab should be visible
     await expect(page.getByRole('tab', { name: /^Top$/i }).first()).toBeVisible();
 
-    // Test switching between tabs
-    const tabs = ['Artists', 'Albums', 'Tracks', 'Videos'];
-    for (const tabName of tabs) {
+    for (const tabName of ['Artists', 'Albums', 'Tracks', 'Videos']) {
       const tab = page.getByRole('tab', { name: new RegExp(`^${tabName}$`, 'i') }).first();
-      if (await tab.isVisible()) {
-        await tab.click();
-        // Small delay for content to render
-        await page.waitForTimeout(300);
-      }
+      await expect(tab).toBeVisible();
+      await tab.click();
+      await expect(tab).toHaveAttribute('aria-selected', 'true');
     }
   });
 
   test('monitor toggle works on artist from search', async ({ page }) => {
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    const fixture = await setupSearchFixtures(page);
+    await searchForArtist(page);
 
-    const searchBox = page.getByRole('searchbox', { name: /search/i });
-    await searchBox.fill('daft punk');
-
-    await page.waitForResponse(
-      (res) => {
-        try {
-          const url = new URL(res.url());
-          return url.pathname === '/api/search' && res.status() === 200;
-        } catch { return false; }
-      },
-      { timeout: 30_000 }
-    );
-
-    // Switch to Artists tab
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await artistsTab.click();
-    await page.waitForTimeout(500);
 
-    // Find a monitor button (eye icon) on an artist card
-    const monitorBtn = page.getByRole('button', { name: /monitor/i }).first();
-    if (await monitorBtn.isVisible()) {
-      // Click and verify API call is made
-      const monitorRequest = page.waitForResponse(
-        (res) => res.url().includes('/api/artists/') && (res.status() === 200 || res.status() === 201),
-        { timeout: 15_000 }
-      ).catch(() => null);
-
-      await monitorBtn.click();
-      const resp = await monitorRequest;
-      // Accept if it succeeded or if the button at least toggled
-      if (resp) {
-        expect(resp.status()).toBeLessThan(500);
-      }
-    }
+    const monitorButton = page.locator('button[title="Monitor"], button[title="Unmonitor"]').first();
+    await expect(monitorButton).toBeVisible();
+    await monitorButton.click();
+    await expect.poll(() => fixture.getMonitored()).toBe(true);
+    await expect(monitorButton).toHaveAttribute('title', /unmonitor/i);
   });
 
   test('artist page keeps monitored state when opened immediately after monitoring from search', async ({ page }) => {
-    let monitored = false;
-
-    await page.route('**/api/search?*', async (route) => {
-      await route.fulfill({
-        json: {
-          success: true,
-          results: {
-            artists: [
-              {
-                id: '777',
-                type: 'artist',
-                name: 'Deterministic Artist',
-                subtitle: null,
-                imageId: null,
-                monitored: false,
-                in_library: false,
-              },
-            ],
-            albums: [],
-            tracks: [],
-            videos: [],
-          },
-          mode: 'mock',
-          remoteCatalogAvailable: false,
-        },
-      });
-    });
-
-    await page.route('**/api/artists/777/monitor', async (route) => {
-      let nextMonitored = true;
-      try {
-        const payload = route.request().postDataJSON() as { monitored?: boolean } | null;
-        if (payload && typeof payload.monitored === 'boolean') {
-          nextMonitored = payload.monitored;
-        }
-      } catch {
-        // No JSON payload, keep default monitor=true for this endpoint.
-      }
-      monitored = nextMonitored;
-      await route.fulfill({ json: { success: true, monitored } });
-    });
-
-    await page.route('**/api/artists/777', async (route) => {
-      if (route.request().method() === 'PATCH') {
-        try {
-          const payload = route.request().postDataJSON() as { monitored?: boolean } | null;
-          if (payload && typeof payload.monitored === 'boolean') {
-            monitored = payload.monitored;
-          }
-        } catch {
-          // No JSON payload provided; leave monitored state unchanged.
-        }
-        await route.fulfill({ json: { success: true, monitored } });
-        return;
-      }
-      await route.fallback();
-    });
-
-    await page.route('**/api/artists/777/page-db', async (route) => {
-      await route.fulfill({
-        json: {
-          artist: {
-            id: '777',
-            name: 'Deterministic Artist',
-            is_monitored: monitored,
-            files: [],
-          },
-          rows: [],
-        },
-      });
-    });
-
-    await page.route('**/api/artists/777/activity', async (route) => {
-      await route.fulfill({
-        json: {
-          scanning: false,
-          curating: false,
-          downloading: false,
-          libraryScan: false,
-          totalActive: 0,
-        },
-      });
-    });
-
-    await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
-
-    const searchBox = page.getByRole('main').getByRole('searchbox', { name: /search/i });
-    await searchBox.fill('deterministic artist');
-
-    await page.waitForResponse(
-      (res) => {
-        try {
-          const url = new URL(res.url());
-          return url.pathname === '/api/search' && res.status() === 200;
-        } catch {
-          return false;
-        }
-      },
-      { timeout: 30_000 }
-    );
+    const fixture = await setupSearchFixtures(page);
+    await searchForArtist(page);
 
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await artistsTab.click();
-    await page.waitForTimeout(500);
 
     const monitorButton = page.locator('button[title="Monitor"], button[title="Unmonitor"]').first();
-    await expect(monitorButton).toBeVisible({ timeout: 10_000 });
-
+    await expect(monitorButton).toBeVisible();
     await monitorButton.click();
-    await expect(monitorButton).toHaveAttribute('title', /unmonitor/i, { timeout: 10_000 });
-    await page.getByText('Deterministic Artist').first().click();
+    await expect.poll(() => fixture.getMonitored()).toBe(true);
+    await expect(monitorButton).toHaveAttribute('title', /unmonitor/i);
 
-    await page.waitForURL(/\/artist\//, { timeout: 10_000 });
-
-    await expect(page.getByRole('button', { name: /^Unmonitor$/i })).toBeVisible({ timeout: 10_000 });
+    await page.getByText(artistName, { exact: true }).first().click();
+    await page.waitForURL(new RegExp(`/artist/${artistId}$`), { timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /^Unmonitor$/i })).toBeVisible();
   });
 
   test('clicking artist in search navigates to artist detail', async ({ page }) => {
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await setupSearchFixtures(page);
+    await searchForArtist(page);
 
-    const searchBox = page.getByRole('searchbox', { name: /search/i });
-    await searchBox.fill('daft punk');
-
-    await page.waitForResponse(
-      (res) => {
-        try {
-          const url = new URL(res.url());
-          return url.pathname === '/api/search' && res.status() === 200;
-        } catch { return false; }
-      },
-      { timeout: 30_000 }
-    );
-
-    // Switch to Artists tab and click first artist
     const artistsTab = page.getByRole('tab', { name: /^Artists$/i }).first();
     await artistsTab.click();
-    await page.waitForTimeout(500);
 
-    // Click the artist card (not the monitor button)
-    const artistCard = page.locator('[class*="artistCard"]').first();
-    if (await artistCard.isVisible()) {
-      await artistCard.click();
-      await page.waitForURL(/\/artist\//, { timeout: 10_000 });
-      expect(page.url()).toMatch(/\/artist\/\d+/);
-    }
+    await page.getByText(artistName, { exact: true }).first().click();
+    await page.waitForURL(new RegExp(`/artist/${artistId}$`), { timeout: 10_000 });
+    await expect(page.getByText(artistName, { exact: true }).first()).toBeVisible();
   });
 
   test('clicking video in search navigates to video detail', async ({ page }) => {
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
-
-    const searchBox = page.getByRole('searchbox', { name: /search/i });
-    await searchBox.fill('daft punk');
-
-    await page.waitForResponse(
-      (res) => {
-        try {
-          const url = new URL(res.url());
-          return url.pathname === '/api/search' && res.status() === 200;
-        } catch {
-          return false;
-        }
-      },
-      { timeout: 30_000 }
-    );
+    await setupSearchFixtures(page);
+    await searchForArtist(page);
 
     const videosTab = page.getByRole('tab', { name: /^Videos$/i }).first();
-    if (!(await videosTab.isVisible())) {
-      test.skip(true, 'Videos tab not present in search results');
-    }
-
     await videosTab.click();
-    await page.waitForTimeout(500);
 
-    const searchResults = page.getByRole('dialog', { name: /search results/i });
-    const firstResultImage = searchResults.locator('img[alt]:not([alt="Discogenius"])').first();
-    if (await firstResultImage.isVisible()) {
-      const title = await firstResultImage.getAttribute('alt');
-      if (!title) {
-        test.skip(true, 'Could not resolve a video result title to click');
-      }
-
-      await searchResults.getByText(title, { exact: true }).first().click();
-      await page.waitForURL(/\/video\//, { timeout: 10_000 });
-      expect(page.url()).toMatch(/\/video\/\d+/);
-    }
+    await page.getByText(videoTitle, { exact: true }).first().click();
+    await page.waitForURL(new RegExp(`/video/${videoId}$`), { timeout: 10_000 });
+    await expect(page.locator('main')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Monitor$/i })).toBeVisible();
   });
 });

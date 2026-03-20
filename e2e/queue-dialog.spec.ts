@@ -45,7 +45,19 @@ async function stubDashboardApis(page: Page) {
     await route.fulfill({ json: { running: false, checking: false } });
   });
 
-  await page.route('**/api/queue**', async (route) => {
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
     await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
@@ -178,7 +190,19 @@ async function stubDashboardApisWithActivity(page: Page) {
     await route.fulfill({ json: { running: false, checking: false } });
   });
 
-  await page.route('**/api/queue**', async (route) => {
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
     await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
@@ -249,7 +273,19 @@ async function stubDashboardApisWithFailedImportActivity(page: Page) {
     await route.fulfill({ json: { running: false, checking: false } });
   });
 
-  await page.route('**/api/queue**', async (route) => {
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
     await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
@@ -301,7 +337,19 @@ async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
     await route.fulfill({ json: { running: false, checking: false } });
   });
 
-  await page.route('**/api/queue**', async (route) => {
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
     await route.fulfill({
       json: {
         items: [
@@ -340,7 +388,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('queue tab shows the empty-state card', async ({ page }) => {
     await stubDashboardApis(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByRole('tab', { name: /^Queue$/i })).toBeVisible();
@@ -350,7 +398,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('activity tab shows the empty-state card', async ({ page }) => {
     await stubDashboardApis(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
     await expect(page.getByText('No recent activity')).toBeVisible();
@@ -359,7 +407,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('dashboard tab switching stays stable', async ({ page }) => {
     await stubDashboardApis(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     const queueTab = page.getByRole('tab', { name: /^Queue$/i });
     const activityTab = page.getByRole('tab', { name: /^Activity$/i });
@@ -386,7 +434,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     });
 
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.getByRole('tab', { name: /^Queue$/i })).toBeVisible();
     await page.waitForTimeout(1000);
@@ -396,7 +444,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('activity tab uses action labels and clean subtitles', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
@@ -410,7 +458,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('activity tab surfaces library audit context for imported and renamed files', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
@@ -425,7 +473,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('activity tab keeps running, queued, and recent work in separate sections', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
@@ -443,7 +491,7 @@ test.describe('Dashboard queue and activity tabs', () => {
   test('failed import activity shows context, error, and retry action', async ({ page }) => {
     await stubDashboardApisWithFailedImportActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
@@ -539,7 +587,7 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await stubDashboardApisWithFailedAlbumQueue(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await expect(page.getByText('From A Bakermat Point Of View')).toBeVisible();
     await expect(page.getByText('Network timeout while downloading album').first()).toBeVisible();

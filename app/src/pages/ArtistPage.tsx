@@ -651,12 +651,16 @@ const ArtistPage = () => {
     debounceMs: 400,
   });
 
+  const { data: pageData, isLoading: pageLoading, error: pageError, refetch: refetchPage } = useArtistPage(artistId) as { data: any, isLoading: boolean, error: any, refetch: () => void };
+
   // Poll server for active jobs related to this artist (scanning, curating, downloading)
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', artistId],
     queryFn: () => artistId ? api.getArtistActivity(artistId) : null,
-    enabled: !!artistId,
+    enabled: Boolean(artistId) && !pageLoading && !pageError,
     refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    placeholderData: (previousData) => previousData,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
 
   // Combined busy states: local action flags OR server-side activity
@@ -680,8 +684,6 @@ const ArtistPage = () => {
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [infoTrack, setInfoTrack] = useState<any>(null);
   const [artistInfoOpen, setArtistInfoOpen] = useState(false);
-
-  const { data: pageData, isLoading: pageLoading, error: pageError, refetch: refetchPage } = useArtistPage(artistId) as { data: any, isLoading: boolean, error: any, refetch: () => void };
 
   // Unified Artist Info - prefer pageData.artist since that's the canonical DB-backed artist payload
   const artistInfo = pageData?.artist;

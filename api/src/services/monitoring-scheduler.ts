@@ -38,6 +38,7 @@ let scheduledTaskQueueStampStmt: any | null = null;
 
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
+const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 25, 1);
 
 type ScheduledTaskKey = "refresh-metadata" | "rescan-folders" | "housekeeping";
 
@@ -156,21 +157,28 @@ export function queueMetadataRefreshPass(options: {
     artistIds?: string[];
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const selectedArtistIds = normalizeArtistIds(options.artistIds) ?? [];
     const artists = selectMetadataRefreshArtists({
         artistIds: options.artistIds,
         dueOnly: options.dueOnly,
     });
-    const selectedArtistIds = artists.map((artist) => String(artist.id));
+    const shouldBatchDueRefresh = Boolean(options.dueOnly) && selectedArtistIds.length === 0;
+    const queuedArtists = shouldBatchDueRefresh
+        ? artists.slice(0, METADATA_REFRESH_BATCH_SIZE)
+        : artists;
+    const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
     const jobId = TaskQueueService.addJob(
         JobTypes.RefreshMetadata,
         {
             title: "Refreshing metadata",
-            description: artists.length > 0
-                ? `Queueing metadata refresh for ${artists.length} ${artistLabel}`
+            description: queuedArtists.length > 0
+                ? shouldBatchDueRefresh && queuedArtists.length < artists.length
+                    ? `Queueing metadata refresh for ${queuedArtists.length} of ${artists.length} ${artistLabel}`
+                    : `Queueing metadata refresh for ${queuedArtists.length} ${artistLabel}`
                 : (options.dueOnly ? "No managed artists are due for metadata refresh" : "Queueing metadata refresh"),
-            artistIds: selectedArtistIds,
-            expectedArtists: artists.length,
+            artistIds: queuedArtistIds,
+            expectedArtists: queuedArtists.length,
             monitoringCycle,
         },
         "metadata-refresh",

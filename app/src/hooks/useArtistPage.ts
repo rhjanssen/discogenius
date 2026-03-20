@@ -21,10 +21,8 @@ export function useArtistPage(artistId: string | undefined) {
             return api.getArtistPageDB(artistId);
         },
         enabled: !!artistId,
-        // Important UX: when you toggle monitoring from Search and then open the artist page,
-        // we must not show a cached stale view.
-        refetchOnMount: 'always',
         refetchOnWindowFocus: false,
-        staleTime: 10_000,
+        staleTime: 30_000,
+        placeholderData: (previousData) => previousData,
     });
 }

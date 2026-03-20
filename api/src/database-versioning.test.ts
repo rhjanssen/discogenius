@@ -68,13 +68,14 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
     LIMIT 1
   `).get() as { schemaFrom: number; schemaTo: number; migrationNotes: string } | undefined;
 
-  assert.equal(userVersion, 1);
+  assert.equal(userVersion, 2);
   assert.deepEqual(runtimeRows, [
-    { key: "runtime.current_schema_version", value: "1" },
+    { key: "runtime.current_schema_version", value: "2" },
     { key: "runtime.schema_version_format", value: "integer" },
   ]);
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 10000);
-  assert.equal(latestHistory?.schemaTo, 1);
+  assert.equal(latestHistory?.schemaTo, 2);
   assert.match(latestHistory?.migrationNotes ?? "", /baseline current schema as 1/);
+  assert.match(latestHistory?.migrationNotes ?? "", /add reverse media_artists lookup index/i);
 });

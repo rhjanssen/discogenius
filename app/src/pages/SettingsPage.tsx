@@ -43,6 +43,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
+import { ErrorState } from "@/components/ui/ContentState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
@@ -1131,7 +1132,15 @@ const SettingsPage = () => {
     }
 
     if (!qualitySettings) {
-        return null;
+        return (
+            <div className={styles.container}>
+                <ErrorState
+                    className={styles.loadingState}
+                    title="Settings unavailable"
+                    description="Discogenius could not load the settings payload. Refresh the page or check the API health if this persists."
+                />
+            </div>
+        );
     }
 
     const qualityOptions = [

@@ -356,7 +356,18 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
 ];
 
 const LEGACY_SCHEMA_VERSION = LEGACY_MIGRATIONS.length;
-const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
+const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [
+  {
+    version: 2,
+    description: "add reverse media_artists lookup index for artist page top tracks",
+    up: () => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media
+        ON media_artists(artist_id, type, media_id)
+      `);
+    },
+  },
+];
 
 type MigrationRunSummary = {
   fromVersion: number;
@@ -973,6 +984,7 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_title ON media(title)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_release_date ON media(release_date)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_last_scanned ON media(last_scanned)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media ON media_artists(artist_id, type, media_id)`);
 
   // Job indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON job_queue(status)`);

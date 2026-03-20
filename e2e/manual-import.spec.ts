@@ -134,7 +134,7 @@ test.describe('Manual import flow', () => {
     });
 
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Unmapped Files$/i }).click();
     await page.getByRole('button', { name: /Review Test Album/i }).click();

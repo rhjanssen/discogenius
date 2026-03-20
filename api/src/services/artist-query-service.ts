@@ -387,7 +387,7 @@ export class ArtistQueryService {
         }
 
         const topTracks = db.prepare(`
-      SELECT DISTINCT
+      SELECT
         t.*, 
         a.title as album_title,
         a.cover as album_cover,
@@ -398,7 +398,7 @@ export class ArtistQueryService {
       WHERE t.album_id IS NOT NULL
         AND t.type <> 'Music Video'
         AND ma.artist_id = ?
-        AND UPPER(ma.type) = 'MAIN'
+        AND ma.type = 'MAIN'
       ORDER BY COALESCE(t.popularity, 0) DESC, t.id ASC
       LIMIT 50
     `).all(artistId) as any[];

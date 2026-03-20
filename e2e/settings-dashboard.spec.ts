@@ -5,7 +5,7 @@ const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
 test.describe('Settings page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
   });
 
   test('renders settings sections', async ({ page }) => {
@@ -76,7 +76,7 @@ test('settings about section shows current and latest version status', async ({ 
   });
 
   await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
-  if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+  await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
   const aboutHeading = page.locator('#about').getByText('About', { exact: true });
   await aboutHeading.scrollIntoViewIfNeeded();
@@ -94,7 +94,7 @@ test('settings about section shows current and latest version status', async ({ 
 test.describe('Dashboard page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
   });
 
   test('renders dashboard with stats', async ({ page }) => {

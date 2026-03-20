@@ -57,14 +57,16 @@ test.describe('API health & key endpoints', () => {
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     expect(Array.isArray(data.items)).toBeTruthy();
+    expect(data).toHaveProperty('limit');
+    expect(data).toHaveProperty('offset');
 
-    test.skip(!data.items.length, 'requires at least one indexed library file');
-
-    const item = data.items[0];
-    expect(item).toHaveProperty('qualityTarget');
-    expect(item).toHaveProperty('qualityChangeWanted');
-    expect(item).toHaveProperty('qualityChangeDirection');
-    expect(item).toHaveProperty('qualityCutoffNotMet');
+    if (data.items.length > 0) {
+      const item = data.items[0];
+      expect(item).toHaveProperty('qualityTarget');
+      expect(item).toHaveProperty('qualityChangeWanted');
+      expect(item).toHaveProperty('qualityChangeDirection');
+      expect(item).toHaveProperty('qualityCutoffNotMet');
+    }
   });
 
   test('/api/history returns persistent history payload', async ({ request }) => {
@@ -131,15 +133,8 @@ test.describe('API health & key endpoints', () => {
   });
 
   test('/api/search applies type filters when authenticated', async ({ request }) => {
-    const artistsResp = await request.get(`${baseURL}/api/artists?limit=1`);
-    expect(artistsResp.status()).toBe(200);
-    const artistsData = await artistsResp.json();
-    const artistName = artistsData?.items?.[0]?.name;
-
-    test.skip(!artistName || artistName.length < 2, 'requires at least one indexed artist');
-
     const resp = await request.get(
-      `${baseURL}/api/search?query=${encodeURIComponent(artistName)}&type=artists`
+      `${baseURL}/api/search?query=test&type=artists`
     );
 
     expect(resp.status()).toBe(200);
