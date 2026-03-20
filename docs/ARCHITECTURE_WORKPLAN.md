@@ -85,6 +85,7 @@ Items 1–2 are low-risk and can start pre-1.0. Items 3–5 are post-1.0.
 
 See also:
 
+- `docs/RFC_PROVIDER_NEUTRAL_IDS.md` for the approved provider-neutral internal ID and migration direction
 - `docs/RFC_PROVIDER_BACKEND_ABSTRACTION.md` for the approved provider/backend interface and capability-routing direction
 
 **MusicBrainz enrichment background job:**
