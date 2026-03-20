@@ -23,6 +23,7 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
+    Link,
 } from "@fluentui/react-components";
 import {
     DoorArrowLeft24Regular,
@@ -50,6 +51,7 @@ import type {
     MonitoringStatusResponseContract,
     NamingConfigContract,
 } from "@contracts/config";
+import type { AppReleaseInfoContract } from "@contracts/release";
 
 type NamingFieldKey =
     | "artist_folder"
@@ -515,6 +517,28 @@ const useStyles = makeStyles({
     rowNoDivider: {
         ...rowBase,
     },
+    aboutBadgeRow: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+        gap: tokens.spacingHorizontalXS,
+        rowGap: tokens.spacingVerticalXS,
+        [MEDIA.mobile]: {
+            justifyContent: 'flex-start',
+        },
+    },
+    aboutMetaList: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXS,
+        marginTop: tokens.spacingVerticalXS,
+    },
+    aboutHint: {
+        color: tokens.colorNeutralForeground2,
+    },
+    aboutLink: {
+        color: tokens.colorNeutralForeground2Link,
+    },
     profileRow: {
         display: 'flex',
         alignItems: 'center',
@@ -656,12 +680,6 @@ interface SettingsSectionProps {
     className: string;
 }
 
-interface AppReleaseInfo {
-    version: string;
-    appVersion: string;
-    apiVersion: string;
-}
-
 interface NamingRenameSample {
     id: number;
     file_type: string;
@@ -738,7 +756,7 @@ const SettingsPage = () => {
     const [scanningRoots, setScanningRoots] = useState(false);
     const [monitorNewArtists, setMonitorNewArtists] = useState(true);
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
-    const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfo | null>(null);
+    const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
     const [renameStatusLoading, setRenameStatusLoading] = useState(false);
     const [renameApplying, setRenameApplying] = useState(false);
@@ -867,8 +885,8 @@ const SettingsPage = () => {
         let active = true;
 
         api.getAppReleaseInfo()
-            .then((info: any) => {
-                if (active) setReleaseInfo(info as AppReleaseInfo);
+            .then((info) => {
+                if (active) setReleaseInfo(info);
             })
             .catch((error) => {
                 console.error("Error fetching release info:", error);
@@ -1228,6 +1246,22 @@ const SettingsPage = () => {
     })() : null;
 
     const currentVersionLabel = releaseInfo?.version || appVersion;
+    const versionStatusColor = releaseInfo?.updateStatus === "update-available"
+        ? "warning"
+        : releaseInfo?.updateStatus === "current"
+            ? "success"
+            : "informative";
+    const versionStatusLabel = releaseInfo?.updateStatus === "update-available"
+        ? "Update available"
+        : releaseInfo?.updateStatus === "current"
+            ? "Up to date"
+            : "Check unavailable";
+    const latestVersionLabel = releaseInfo?.latestVersion ? `v${releaseInfo.latestVersion}` : "Unavailable";
+    const versionHint = releaseInfo?.updateStatus === "update-available"
+        ? "A newer Discogenius image is available. Update Docker deployments by pulling the new image and redeploying the container."
+        : releaseInfo?.updateStatus === "current"
+            ? "This installation is on the latest stable release."
+            : "Discogenius could not reach the release feed right now. Docker deployments still update by pulling a newer image and redeploying the container.";
 
     const renderToggleRow = ({
         title,
@@ -2353,11 +2387,48 @@ const SettingsPage = () => {
                         </Caption1>
                     </div>
                     <div className={styles.card}>
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Current Version</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Installed Discogenius app version.
+                                </Text>
+                            </div>
+                            <div className={styles.aboutBadgeRow}>
+                                <Badge appearance="filled" color={versionStatusColor}>v{currentVersionLabel}</Badge>
+                            </div>
+                        </div>
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Latest Version</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Latest stable release Discogenius could verify.
+                                </Text>
+                            </div>
+                            <div className={styles.aboutBadgeRow}>
+                                <Badge appearance="outline" color={versionStatusColor}>{latestVersionLabel}</Badge>
+                            </div>
+                        </div>
                         <div className={styles.rowNoDivider}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Version</Text>
+                                <Text weight="semibold">Update Status</Text>
+                                <div className={styles.aboutMetaList}>
+                                    <Badge appearance="filled" color={versionStatusColor}>{versionStatusLabel}</Badge>
+                                    <Text size={200} className={styles.aboutHint}>
+                                        {versionHint}
+                                    </Text>
+                                    {releaseInfo?.latestReleaseUrl && (
+                                        <Link href={releaseInfo.latestReleaseUrl} target="_blank" className={styles.aboutLink}>
+                                            Open latest release notes
+                                        </Link>
+                                    )}
+                                    {releaseInfo?.checkedAt && (
+                                        <Text size={200} className={styles.mutedText}>
+                                            Last checked: {new Date(releaseInfo.checkedAt).toLocaleString()}
+                                        </Text>
+                                    )}
+                                </div>
                             </div>
-                            <Badge appearance="filled" color="brand">v{currentVersionLabel}</Badge>
                         </div>
                     </div>
                 </SettingsSection>

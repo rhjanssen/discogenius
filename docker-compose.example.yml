@@ -1,5 +1,7 @@
 services:
   discogenius:
+    # Pin release tags on NAS/custom-app platforms when possible.
+    # Some hosts cache `latest` unless you force a pull before redeploying.
     image: rhjanssen/discogenius:latest
     container_name: discogenius
     env_file:

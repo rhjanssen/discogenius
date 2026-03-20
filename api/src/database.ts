@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
-import { getAppReleaseInfo } from "./services/app-release.js";
+import { getCurrentAppReleaseInfo } from "./services/app-release.js";
 
 console.log(`📁 Database path: ${DB_PATH}`);
 
@@ -1030,7 +1030,7 @@ export function initDatabase() {
 }
 
 function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
-  const releaseInfo = getAppReleaseInfo();
+  const releaseInfo = getCurrentAppReleaseInfo();
   const appVersion = releaseInfo.version;
   const apiVersion = releaseInfo.apiVersion;
   const schemaUserVersion = db.pragma("user_version", { simple: true }) as number;

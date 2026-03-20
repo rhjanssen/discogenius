@@ -78,9 +78,9 @@ router.post("/app", (req, res) => {
   }
 });
 
-router.get("/about", (_, res) => {
+router.get("/about", async (_, res) => {
   try {
-    res.json(getAppReleaseInfo());
+    res.json(await getAppReleaseInfo());
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

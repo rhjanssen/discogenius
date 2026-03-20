@@ -22,7 +22,7 @@ const mockConnectedStatus = {
 };
 
 test.describe('Shell loading states', () => {
-  test('keeps the shell visible while app auth status is loading', async ({ page }) => {
+  test('keeps the auth screen stable while app auth status is loading', async ({ page }) => {
     let releaseAppAuthCheck: (() => void) | null = null;
     const appAuthGate = new Promise<void>((resolve) => {
       releaseAppAuthCheck = resolve;
@@ -62,7 +62,7 @@ test.describe('Shell loading states', () => {
 
     await page.goto(`${baseURL}/auth`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('nav')).toBeVisible();
+    await expect(page.locator('nav')).toHaveCount(0);
     await expect(page.locator('main')).toBeVisible();
     await expect(page.locator('main')).toContainText('Checking app access...');
 

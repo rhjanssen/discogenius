@@ -23,6 +23,7 @@ import {
   parseQueueListResponseContract,
   parseStatusOverviewContract,
 } from "./status.js";
+import { parseAppReleaseInfoContract } from "./release.js";
 
 test("config contract parsers normalize expected public settings shapes", () => {
   const appConfig = parsePublicAppConfigContract({ acoustid_api_key: "abc123" });
@@ -337,4 +338,24 @@ test("status contract parsers validate queue and status overview payloads", () =
   });
   assert.equal(overview.commandStats.downloads?.processing, 1);
   assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
+});
+
+test("release contract parser validates current and latest release metadata", () => {
+  const release = parseAppReleaseInfoContract({
+    version: "1.0.4",
+    appVersion: "1.0.4",
+    apiVersion: "1.0.4",
+    latestVersion: "1.0.5",
+    latestReleaseName: "v1.0.5",
+    latestReleaseUrl: "https://github.com/rhjanssen/discogenius/releases/tag/v1.0.5",
+    latestReleasePublishedAt: "2026-03-20T12:00:00.000Z",
+    updateAvailable: true,
+    updateStatus: "update-available",
+    checkedAt: "2026-03-20T12:30:00.000Z",
+  });
+
+  assert.equal(release.version, "1.0.4");
+  assert.equal(release.latestVersion, "1.0.5");
+  assert.equal(release.updateStatus, "update-available");
+  assert.equal(release.updateAvailable, true);
 });

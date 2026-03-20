@@ -37,6 +37,8 @@ Example docker-compose.yml:
 ```yaml
 services:
   discogenius:
+    # Pin release tags on NAS/custom-app platforms when possible.
+    # Some hosts cache `latest` aggressively unless you force a pull.
     image: rhjanssen/discogenius:latest
     container_name: discogenius
     environment:
@@ -70,6 +72,8 @@ Open the app at http://localhost:3737
 
 `PUID` and `PGID` tell Discogenius which host user should own files created under `/config`. Most NAS setups should set them explicitly. `TZ` controls the container timezone; `Etc/UTC` is the safest default and you can replace it with your local zone if needed. There is no separate runtime volume requirement; downloader runtime state now lives under `/config`.
 
+On TrueNAS and similar custom-app UIs, pinned tags such as `rhjanssen/discogenius:1.0.5` are usually more predictable than `latest`. If you do use `latest`, make sure the host actually pulls a fresh image before redeploying.
+
 By default, 3737:3737 publishes on all interfaces (0.0.0.0), which is standard Docker behavior.
 If you want localhost-only access, bind explicitly to 127.0.0.1:
 
@@ -86,6 +90,8 @@ Docker upgrades are pull-and-restart. There is no in-container self-updater.
 docker compose pull
 docker compose up -d
 ```
+
+If your platform caches `latest`, redeploying may continue to use an older image. In that case, either pin a specific release tag or explicitly remove and re-pull `rhjanssen/discogenius:latest` before restarting.
 
 ## Local Development (Contributors)
 

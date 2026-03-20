@@ -31,6 +31,42 @@ test.describe('Settings page', () => {
   });
 });
 
+test('settings about section shows current and latest version status', async ({ page }) => {
+  await page.route('**/api/config/about', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        version: '1.0.4',
+        appVersion: '1.0.4',
+        apiVersion: '1.0.4',
+        latestVersion: '1.0.5',
+        latestReleaseName: 'v1.0.5',
+        latestReleaseUrl: 'https://github.com/rhjanssen/discogenius/releases/tag/v1.0.5',
+        latestReleasePublishedAt: '2026-03-20T12:00:00.000Z',
+        updateAvailable: true,
+        updateStatus: 'update-available',
+        checkedAt: '2026-03-20T12:30:00.000Z',
+      }),
+    });
+  });
+
+  await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
+  if (page.url().includes('/auth')) test.skip(true, 'Auth gate active');
+
+  const aboutHeading = page.getByText('About', { exact: true });
+  await aboutHeading.scrollIntoViewIfNeeded();
+  await expect(aboutHeading).toBeVisible();
+
+  await expect(page.getByText(/Current Version/i)).toBeVisible();
+  await expect(page.getByText(/Latest Version/i)).toBeVisible();
+  await expect(page.getByText(/Update Status/i)).toBeVisible();
+  await expect(page.getByText('v1.0.4', { exact: true })).toBeVisible();
+  await expect(page.getByText('v1.0.5', { exact: true })).toBeVisible();
+  await expect(page.getByText('Update available', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /open latest release notes/i })).toBeVisible();
+});
+
 test.describe('Dashboard page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });

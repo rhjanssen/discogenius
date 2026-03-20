@@ -1,6 +1,8 @@
 import { getApiBaseUrl } from '@/utils/apiBaseUrl';
 import type { AuthStatusContract } from '@contracts/auth';
 import { parseAuthStatusContract } from '@contracts/auth';
+import type { AppReleaseInfoContract } from '@contracts/release';
+import { parseAppReleaseInfoContract } from '@contracts/release';
 import type {
   AccountConfigContract,
   FilteringConfigContract,
@@ -240,8 +242,8 @@ class ApiClient {
     });
   }
 
-  async getAppReleaseInfo() {
-    return this.request('/config/about');
+  async getAppReleaseInfo(): Promise<AppReleaseInfoContract> {
+    return this.request('/config/about', {}, parseAppReleaseInfoContract);
   }
 
   async getMonitoringConfig(): Promise<MonitoringConfigContract> {

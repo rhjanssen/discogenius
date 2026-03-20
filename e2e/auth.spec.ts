@@ -53,6 +53,8 @@ test.describe('Auth flow', () => {
     await page.goto(`${baseURL}/auth`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('button', { name: /connect with tidal/i })).toBeVisible();
+    await page.mouse.wheel(0, 400);
+    await expect.poll(async () => page.evaluate(() => window.scrollY)).toBe(0);
 
     const popupPromise = page.waitForEvent('popup');
     await page.getByRole('button', { name: /connect with tidal/i }).click();

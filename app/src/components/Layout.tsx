@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Button,
   Text,
@@ -246,6 +246,22 @@ const useStyles = makeStyles({
       paddingTop: tokens.spacingVerticalL,
     },
   },
+  authMain: {
+    maxWidth: "none",
+    minHeight: "100dvh",
+    paddingTop: "env(safe-area-inset-top)",
+    paddingRight: "env(safe-area-inset-right)",
+    paddingBottom: "env(safe-area-inset-bottom)",
+    paddingLeft: "env(safe-area-inset-left)",
+    display: "flex",
+    alignItems: "stretch",
+    "@media (min-width: 640px)": {
+      paddingTop: "env(safe-area-inset-top)",
+      paddingRight: "env(safe-area-inset-right)",
+      paddingBottom: "env(safe-area-inset-bottom)",
+      paddingLeft: "env(safe-area-inset-left)",
+    },
+  },
   wrapper: {
     minHeight: "100vh",
     position: "relative",
@@ -350,10 +366,12 @@ const useStyles = makeStyles({
 const Layout = () => {
   const styles = useStyles();
   const navigate = useNavigate();
+  const location = useLocation();
   const { colors } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useDownloadQueue();
   const { status } = useTidalConnection();
+  const isAuthRoute = location.pathname === "/auth";
 
   const showProviderModeBanner = Boolean(status?.canAccessShell && !status?.remoteCatalogAvailable);
   const providerModeLabel = status?.mode === "mock" ? "Mock auth" : "Local only";
@@ -383,18 +401,44 @@ const Layout = () => {
     <>
       <UltraBlurBackground colors={colors} />
       <div className={styles.wrapper}>
-        <nav className={mergeClasses(styles.nav, isDarkMode ? styles.navDark : styles.navLight)}>
-          <div className={styles.container}>
-            <div className={styles.headerRow}>
-              <button
-                className={mergeClasses(styles.logoSection, styles.logoButton)}
-                onClick={() => navigate("/")}
-              >
-                <img src={logo} alt="Discogenius" className={styles.logo} />
-                <Title3 className={styles.logoTitle}>Discogenius</Title3>
-              </button>
+        {!isAuthRoute ? (
+          <nav className={mergeClasses(styles.nav, isDarkMode ? styles.navDark : styles.navLight)}>
+            <div className={styles.container}>
+              <div className={styles.headerRow}>
+                <button
+                  className={mergeClasses(styles.logoSection, styles.logoButton)}
+                  onClick={() => navigate("/")}
+                >
+                  <img src={logo} alt="Discogenius" className={styles.logo} />
+                  <Title3 className={styles.logoTitle}>Discogenius</Title3>
+                </button>
 
-              <div className={styles.mobileActions}>
+                <div className={styles.mobileActions}>
+                  <Button
+                    appearance="subtle"
+                    icon={<DataUsage24Regular />}
+                    onClick={() => navigate("/dashboard")}
+                    title="Dashboard"
+                    className={styles.navIconButton}
+                  />
+
+                  <Button
+                    appearance="subtle"
+                    icon={<Settings24Regular />}
+                    onClick={() => navigate("/settings")}
+                    title="Settings"
+                    className={styles.navIconButton}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.searchSection}>
+                <div className={styles.searchContainer}>
+                  <GlobalSearch />
+                </div>
+              </div>
+
+              <div className={styles.desktopActions}>
                 <Button
                   appearance="subtle"
                   icon={<DataUsage24Regular />}
@@ -402,7 +446,13 @@ const Layout = () => {
                   title="Dashboard"
                   className={styles.navIconButton}
                 />
-
+                <Button
+                  appearance="subtle"
+                  icon={<Library24Regular />}
+                  onClick={() => navigate("/")}
+                  title="Library"
+                  className={styles.navIconButton}
+                />
                 <Button
                   appearance="subtle"
                   icon={<Settings24Regular />}
@@ -412,39 +462,9 @@ const Layout = () => {
                 />
               </div>
             </div>
-
-            <div className={styles.searchSection}>
-              <div className={styles.searchContainer}>
-                <GlobalSearch />
-              </div>
-            </div>
-
-            <div className={styles.desktopActions}>
-              <Button
-                appearance="subtle"
-                icon={<DataUsage24Regular />}
-                onClick={() => navigate("/dashboard")}
-                title="Dashboard"
-                className={styles.navIconButton}
-              />
-              <Button
-                appearance="subtle"
-                icon={<Library24Regular />}
-                onClick={() => navigate("/")}
-                title="Library"
-                className={styles.navIconButton}
-              />
-              <Button
-                appearance="subtle"
-                icon={<Settings24Regular />}
-                onClick={() => navigate("/settings")}
-                title="Settings"
-                className={styles.navIconButton}
-              />
-            </div>
-          </div>
-        </nav>
-        {showProviderModeBanner ? (
+          </nav>
+        ) : null}
+        {!isAuthRoute && showProviderModeBanner ? (
           <div className={styles.tidalBannerWrap}>
             <div className={styles.tidalBanner}>
               <div className={styles.tidalBannerInfo}>
@@ -470,11 +490,13 @@ const Layout = () => {
             </div>
           </div>
         ) : null}
-        <main className={styles.main}>
+        <main className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}>
           <Outlet />
         </main>
 
-        <MobileBottomTabs isDark={isDarkMode} queueCount={stats.downloading + stats.pending} />
+        {!isAuthRoute ? (
+          <MobileBottomTabs isDark={isDarkMode} queueCount={stats.downloading + stats.pending} />
+        ) : null}
       </div>
     </>
   );

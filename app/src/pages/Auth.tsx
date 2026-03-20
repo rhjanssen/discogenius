@@ -31,11 +31,13 @@ const tidalIcon = "/assets/images/tidal_icon.svg";
 
 const useStyles = makeStyles({
   container: {
-    minHeight: '100vh',
+    minHeight: '100%',
+    width: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     padding: tokens.spacingVerticalL,
+    boxSizing: 'border-box',
     position: 'relative',
     zIndex: 1,
   },
