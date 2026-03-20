@@ -107,6 +107,30 @@ const useStyles = makeStyles({
   actionsLeft: {
     justifyContent: "flex-start",
   },
+  emptyStateContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    gap: tokens.spacingVerticalM,
+    color: tokens.colorNeutralForeground2,
+  },
+  emptyStateIcon: {
+    marginBottom: tokens.spacingVerticalS,
+    color: tokens.colorNeutralForeground4,
+    "& svg": {
+      width: "48px",
+      height: "48px",
+    }
+  },
+  emptyStateTitle: {
+    color: tokens.colorNeutralForeground1,
+  },
+  emptyStateSubtitle: {
+    color: tokens.colorNeutralForeground3,
+    maxWidth: "400px",
+  },
 });
 
 function StateFrame({
@@ -183,23 +207,37 @@ export const EmptyState = ({
   icon,
   actions,
   className,
-  panelClassName,
-  minHeight,
+  minHeight = "200px",
   align = "center",
 }: EmptyStateProps) => {
+  const styles = useStyles();
+
   return (
-    <StateFrame
-      className={className}
-      panelClassName={panelClassName}
-      minHeight={minHeight}
-      align={align}
+    <div
+      className={mergeClasses(styles.root, className)}
+      style={minHeight !== undefined ? { minHeight, padding: tokens.spacingVerticalXXXL } : { padding: tokens.spacingVerticalXXXL }}
       role="status"
-      ariaLive="polite"
-      title={title}
-      description={description}
-      icon={icon}
-      actions={actions}
-    />
+      aria-live="polite"
+    >
+      <div className={mergeClasses(styles.emptyStateContainer, align === "left" && styles.panelLeft)}>
+        {icon ? (
+          <div className={styles.emptyStateIcon}>
+            {icon}
+          </div>
+        ) : null}
+        {title ? <Text className={styles.emptyStateTitle} size={500} weight="semibold">{title}</Text> : null}
+        {description ? (
+          <Text className={styles.emptyStateSubtitle} size={300}>
+            {description}
+          </Text>
+        ) : null}
+        {actions ? (
+          <div className={mergeClasses(styles.actions, align === "left" ? styles.actionsLeft : undefined)}>
+            {actions}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 };
 

@@ -23,7 +23,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { Badge } from "@fluentui/react-components";
+import { LoadingState, EmptyState } from "@/components/ui/ContentState";
 import { MonitorButton } from "@/components/MonitorButton";
 import { LockToggle } from "@/components/LockToggle";
 import { getTidalImage } from "@/utils/tidalImages";
@@ -229,11 +230,11 @@ const TrackList = ({
 
   if (!tracks || tracks.length === 0) {
     return (
-      <div className={styles.emptyState}>
-        <MusicNote224Regular style={{ width: 48, height: 48, color: tokens.colorNeutralForeground4 }} />
-        <Text weight="semibold" size={400}>No tracks found</Text>
-        <Text size={300}>Try adjusting your filters or add artists to your library.</Text>
-      </div>
+      <EmptyState
+        title="No tracks found"
+        description="Try adjusting your filters or add artists to your library."
+        icon={<MusicNote224Regular />}
+      />
     );
   }
 
@@ -304,6 +305,11 @@ const TrackList = ({
                 {track.quality && (
                   <QualityBadge quality={track.quality} className={styles.qualityBadge} />
                 )}
+                {track.downloaded ? (
+                  <Badge appearance="filled" color="success" size="small">Downloaded</Badge>
+                ) : (
+                  <Badge appearance="outline" size="small">Missing</Badge>
+                )}
               </div>
             </div>
           </div>
@@ -372,6 +378,11 @@ const TrackList = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, marginTop: tokens.spacingVerticalXS }}>
                     {track.quality && (
                       <QualityBadge quality={track.quality} className={styles.qualityBadge} />
+                    )}
+                    {track.downloaded ? (
+                      <Badge appearance="filled" color="success" size="small">Downloaded</Badge>
+                    ) : (
+                      <Badge appearance="outline" size="small">Missing</Badge>
                     )}
                   </div>
                 </div>

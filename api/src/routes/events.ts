@@ -15,6 +15,12 @@ router.get("/", (req, res) => {
     // Flush headers immediately
     res.write('\n');
 
+    // Setup keep-alive heartbeat to prevent proxies/browsers from dropping idle connections
+    const keepAliveId = setInterval(() => {
+        // SSE comment used as a ping
+        res.write(':\n\n');
+    }, 30000);
+
     // Generic event forwarder
     const forwardEvent = <K extends AppEvent>(eventType: K, payload?: AppEventPayloadMap[K]) => {
         res.write(`event: ${eventType}\n`);
@@ -35,6 +41,7 @@ router.get("/", (req, res) => {
 
     // Handle client disconnect
     req.on("close", () => {
+        clearInterval(keepAliveId);
         for (const removeListener of removeListeners) {
             removeListener();
         }

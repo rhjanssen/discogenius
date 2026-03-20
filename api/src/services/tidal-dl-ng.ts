@@ -852,6 +852,16 @@ function normalizeProgressOutput(output: string): string {
  * - "Switching session context to Dolby Atmos..."
  * - "Session is now in Atmos mode."
  * - "Session is now in Normal mode."
+
+/**
+ * Parse progress from tidal-dl-ng output
+ * 
+ * Output examples from tidal-dl-ng:
+ * - "Downloaded item 'Artist - Track Title'."
+ * - "Item 'Artist - Track Title'   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%"
+ * - "Switching session context to Dolby Atmos..."
+ * - "Session is now in Atmos mode."
+ * - "Session is now in Normal mode."
  * - "Finished list 'Album Name'."
  * - "List 'Album Name' ━━━━━━━━━━ 50% 5/10"
  * - "Download skipped, since file exists: 'path'"
@@ -864,7 +874,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for "Downloaded item" completion
-    const downloadedMatch = normalized.match(/Downloaded item '([^']+)'/);
+    const downloadedMatch = normalized.match(/Downloaded (?:item|video|track|file) '([^']+)'/i);
     if (downloadedMatch) {
         return {
             trackTitle: downloadedMatch[1],
@@ -876,7 +886,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for "Finished list" completion
-    const finishedListMatch = normalized.match(/Finished list '([^']+)'/);
+    const finishedListMatch = normalized.match(/Finished list '([^']+)'/i);
     if (finishedListMatch) {
         return {
             trackTitle: "",
@@ -890,7 +900,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for list progress "List 'name' ━━━ 50% 5/10"
-    const listProgressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*List '([^']+)'.*?(\d+)%\s*(\d+)\/(\d+)/);
+    const listProgressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*List '([^']+)'.*?(\d+)%\s*(\d+)\/(\d+)/i);
     if (listProgressMatch) {
         return {
             trackTitle: "",
@@ -906,7 +916,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
 
     // Check for item progress bar "Item 'title' ━━━━━━━ 50%"
     // Also match the size and speed if available: "Item 'title' ━━━━━━━ 50% 1.2/2.4 MB 1.2 MB/s"
-    const progressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*Item '([^']+)'.*?(\d+)%(?:\s+([\d.]+\s*[KMGTPE]i?B)\/([\d.]+\s*[KMGTPE]i?B))?(?:\s+([\d.]+\s*[KMGTPE]i?B\/s))?/i);
+    const progressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*(?:Item|Video|Track|File) '([^']+)'.*?(\d+)%(?:\s+([\d.]+\s*[KMGTPE]i?B)\/([\d.]+\s*[KMGTPE]i?B))?(?:\s+([\d.]+\s*[KMGTPE]i?B\/s))?/i);
     if (progressMatch) {
         const percent = parseInt(progressMatch[2], 10);
         const statusMessage = progressMatch[5] ? `Speed: ${progressMatch[5]}` : undefined;

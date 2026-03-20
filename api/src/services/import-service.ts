@@ -85,11 +85,15 @@ export class ImportService {
                     scopedGroups = [];
                     for (const folderName of targetFolders) {
                         // Find the actual cased folder name on disk
-                        const actualName = this.resolveActualFolderName(root.path, folderName);
+                        const actualName = await this.resolveActualFolderName(root.path, folderName);
                         if (!actualName) continue;
 
                         const subPath = path.join(root.path, actualName);
-                        if (!fs.existsSync(subPath)) continue;
+                        try {
+                            await fs.promises.access(subPath);
+                        } catch {
+                            continue;
+                        }
 
                         const groups = await scanImportDirectory(subPath, root.path, root.libraryRoot);
                         scopedGroups.push(...groups);
@@ -518,7 +522,7 @@ export class ImportService {
                     const fingerprint = await calculateFingerprint(file.path);
                     collectSiblingSidecarTargets(file.path, expectedPath, [".jpg", ".jpeg", ".png", ".webp"], explicitSidecarTargets);
 
-                    const stats = fs.statSync(file.path);
+                    const stats = await fs.promises.stat(file.path);
 
                     upsertImportedLibraryFile({
                         artistId,
@@ -695,7 +699,7 @@ export class ImportService {
                     const fingerprint = await calculateFingerprint(file.path);
                     collectSiblingSidecarTargets(file.path, expectedPath, [".lrc"], explicitSidecarTargets);
 
-                    const stats = fs.statSync(file.path);
+                    const stats = await fs.promises.stat(file.path);
 
                     upsertImportedLibraryFile({
                         artistId,
@@ -766,9 +770,9 @@ export class ImportService {
      * Resolve the actual cased folder name on disk from a lowercased name.
      * Returns null if no matching directory is found.
      */
-    private resolveActualFolderName(rootPath: string, lowercaseName: string): string | null {
+    private async resolveActualFolderName(rootPath: string, lowercaseName: string): Promise<string | null> {
         try {
-            const entries = fs.readdirSync(rootPath, { withFileTypes: true });
+            const entries = await fs.promises.readdir(rootPath, { withFileTypes: true });
             for (const entry of entries) {
                 if (entry.isDirectory() && entry.name.toLowerCase() === lowercaseName) {
                     return entry.name;

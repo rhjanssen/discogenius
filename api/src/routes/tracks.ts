@@ -79,14 +79,13 @@ router.get("/", (req, res) => {
     let countQuery = `
       SELECT COUNT(*) as total
       FROM media
-      LEFT JOIN albums ON media.album_id = albums.id
-      LEFT JOIN artists ON media.artist_id = artists.id
     `;
     const params: any[] = [];
     const countParams: any[] = [];
     const where: string[] = ["media.album_id IS NOT NULL"];
 
     if (search) {
+      countQuery += ` LEFT JOIN artists ON media.artist_id = artists.id`;
       where.push("(media.title LIKE ? OR artists.name LIKE ?)");
       const searchParam = `%${search}%`;
       params.push(searchParam, searchParam);
@@ -120,12 +119,12 @@ router.get("/", (req, res) => {
         case 'name':
           return ` ORDER BY media.title ${sortDir}, media.id ASC`;
         case 'popularity':
-          return ` ORDER BY COALESCE(media.popularity, 0) ${sortDir}, media.id ASC`;
+          return ` ORDER BY media.popularity ${sortDir}, media.id ASC`;
         case 'scannedAt':
-          return ` ORDER BY (media.last_scanned IS NULL) ASC, media.last_scanned ${sortDir}, media.id ASC`;
+          return ` ORDER BY media.last_scanned ${sortDir}, media.id ASC`;
         case 'releaseDate':
         default:
-          return ` ORDER BY (media.release_date IS NULL) ASC, media.release_date ${sortDir}, media.id ASC`;
+          return ` ORDER BY media.release_date ${sortDir}, media.id ASC`;
       }
     })();
 

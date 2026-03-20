@@ -349,12 +349,12 @@ LIMIT ? OFFSET ?
         const job = db.prepare(`
             SELECT * FROM job_queue 
             WHERE status = 'pending' AND type LIKE ?
-    ORDER BY 
+            ORDER BY 
                 priority DESC,
-    CASE WHEN trigger = 1 THEN 0 ELSE 1 END,
-        created_at ASC 
+                trigger DESC,
+                created_at ASC 
             LIMIT 1
-    `).get(typePattern) as any;
+        `).get(typePattern) as any;
 
         if (!job) return null;
 
@@ -372,7 +372,7 @@ LIMIT ? OFFSET ?
             WHERE status = 'pending' AND type IN (${placeholders})
             ORDER BY
                 priority DESC,
-                CASE WHEN trigger = 1 THEN 0 ELSE 1 END,
+                trigger DESC,
                 created_at ASC
             LIMIT 1
         `).get(...types) as any;
@@ -396,7 +396,7 @@ LIMIT ? OFFSET ?
             WHERE status = 'pending' AND type IN (${placeholders})
             ORDER BY
                 priority DESC,
-                CASE WHEN trigger = 1 THEN 0 ELSE 1 END,
+                trigger DESC,
                 created_at ASC
             LIMIT ?
         `).all(...types, limit) as any[];

@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import {
     Badge,
     Button,
@@ -22,6 +23,7 @@ import { useNavigate } from "react-router-dom";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { EmptyState, LoadingState } from "@/components/ui/ContentState";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import { useDashboardStyles } from "./dashboardStyles";
 
@@ -271,18 +273,21 @@ const QueueTab = () => {
         });
     }, [activeDownloads, pendingDownloads, failedDownloads]);
 
+    const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+
+    const virtualizer = useWindowVirtualizer({
+        count: groupedDownloads.length,
+        estimateSize: () => 75,
+        overscan: 10,
+        scrollMargin: listElement?.offsetTop ?? 0,
+    });
+
     const hasQueueRows = groupedDownloads.length > 0;
 
     if (loading && !hasQueueRows) {
         return (
             <div className={styles.tabSection}>
-                <div className={styles.emptyState}>
-                    <Spinner size="small" />
-                    <Text className={styles.emptyStateTitle} size={500}>Loading queue</Text>
-                    <Text className={styles.emptyStateSubtitle} size={300}>
-                        Fetching current downloads and pending items.
-                    </Text>
-                </div>
+                <LoadingState label="Loading queue..." />
             </div>
         );
     }
@@ -290,21 +295,20 @@ const QueueTab = () => {
     if (!loading && !hasQueueRows) {
         return (
             <div className={styles.tabSection}>
-                <div className={styles.emptyState}>
-                    <ArrowDownload24Regular className={styles.emptyStateIcon} />
-                    <Text className={styles.emptyStateTitle} size={500}>No items in queue</Text>
-                    <Text className={styles.emptyStateSubtitle} size={300}>
-                        Browse your library and download albums, or enable monitoring to automate downloads.
-                    </Text>
-                </div>
+                <EmptyState
+                    title="No items in queue"
+                    description="Browse your library and download albums, or enable monitoring to automate downloads."
+                    icon={<ArrowDownload24Regular />}
+                />
             </div>
         );
     }
 
     return (
-        <div className={styles.tabSection}>
-            <div className={styles.downloadList}>
-                {groupedDownloads.map(group => {
+        <div className={styles.tabSection} ref={setListElement}>
+            <div className={styles.downloadList} style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                {virtualizer.getVirtualItems().map(virtualRow => {
+                    const group = groupedDownloads[virtualRow.index];
                     const isVideo = group.type === 'video';
                     const coverUrl = group.cover ? (isVideo ? getTidalImage(group.cover, 'video', 'small') : getAlbumCover(group.cover, 'small')) : null;
                     const isDownloading = group.status === 'downloading';
@@ -331,7 +335,7 @@ const QueueTab = () => {
                     };
 
                     return (
-                        <div key={group.id}>
+                        <div key={group.id} ref={virtualizer.measureElement} data-index={virtualRow.index} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start - virtualizer.options.scrollMargin}px)` }}>
                             <div className={styles.downloadItem} style={{ opacity: isFailed ? 0.9 : 1, cursor: groupNavPath ? 'pointer' : 'default' }} onClick={handleGroupClick}>
                                 {coverUrl ? (
                                     <img src={coverUrl} alt="" className={isVideo ? styles.downloadCoverVideo : styles.downloadCover} />

@@ -108,37 +108,45 @@ export class DownloadProcessor {
         }
     }
 
-    private hasDownloadedMediaFiles(downloadPath?: string): boolean {
-        if (!downloadPath || !fs.existsSync(downloadPath)) return false;
+    private async hasDownloadedMediaFiles(downloadPath?: string): Promise<boolean> {
+        if (!downloadPath) return false;
+        try {
+            await fs.promises.access(downloadPath);
+        } catch {
+            return false;
+        }
 
-        const walk = (dir: string): boolean => {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    if (walk(fullPath)) return true;
-                    continue;
-                }
+        const walk = async (dir: string): Promise<boolean> => {
+            try {
+                const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (await walk(fullPath)) return true;
+                        continue;
+                    }
 
-                const ext = path.extname(entry.name).toLowerCase();
-                if (['.flac', '.m4a', '.mp3', '.aac', '.wav', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mkv', '.mov', '.m4v', '.webm', '.ts'].includes(ext)) {
-                    return true;
+                    const ext = path.extname(entry.name).toLowerCase();
+                    if (['.flac', '.m4a', '.mp3', '.aac', '.wav', '.ogg', '.opus', '.aif', '.aiff', '.mp4', '.mkv', '.mov', '.m4v', '.webm', '.ts'].includes(ext)) {
+                        return true;
+                    }
                 }
+            } catch {
+                // Ignore dir read errors
             }
-
             return false;
         };
 
         return walk(downloadPath);
     }
 
-    private cleanupDownloadSourcePath(): void {
+    private async cleanupDownloadSourcePath(): Promise<void> {
         if (!this.currentDownloadPath) {
             return;
         }
 
         try {
-            fs.rmSync(this.currentDownloadPath, { recursive: true, force: true });
+            await fs.promises.rm(this.currentDownloadPath, { recursive: true, force: true });
             console.log(`[DOWNLOAD-PROCESSOR] Cleaned up download source path: ${this.currentDownloadPath}`);
         } catch {
             // ignore cleanup errors
@@ -355,17 +363,8 @@ export class DownloadProcessor {
             console.log(`[DOWNLOAD-PROCESSOR] Re-queued ${recovered} interrupted download(s)`);
         }
 
-        // In some scenarios we don't want a background poll loop (manual resume only).
-        if (process.env.DISCOGENIUS_DISABLE_DOWNLOAD_POLL !== '1') {
-            if (!this.pollTimer) {
-                this.pollTimer = setInterval(() => {
-                    this.processQueue().catch((error) => {
-                        console.error('[DOWNLOAD-PROCESSOR] Poll error:', error);
-                    });
-                }, POLL_INTERVAL);
-            }
-        }
-
+        // We no longer rely on a background poll loop for the download queue.
+        // It's purely event-driven: triggered on app startup, when items are added, or when the previous item finishes.
         await this.processQueue();
     }
 
@@ -468,7 +467,7 @@ export class DownloadProcessor {
             // Check if the item-specific download path has any media files before attempting organization.
             // tidal-dl-ng may skip all items (e.g. "already in history") and exit successfully
             // without producing any new files.
-            if (!this.hasDownloadedMediaFiles(this.currentDownloadPath)) {
+            if (!await this.hasDownloadedMediaFiles(this.currentDownloadPath)) {
                 // tidal-dl-ng exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
@@ -495,7 +494,7 @@ export class DownloadProcessor {
                         updateAlbumDownloadStatus(String(tidalId));
 
                         TaskQueueService.complete(job.id);
-                        this.cleanupDownloadSourcePath();
+                        await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
                             tidalId, type,
@@ -518,7 +517,7 @@ export class DownloadProcessor {
                     if (payload?.reason !== 'upgrade' && row) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${tidalId} is already downloaded — marking job as complete.`);
                         TaskQueueService.complete(job.id);
-                        this.cleanupDownloadSourcePath();
+                        await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
                             tidalId, type,
@@ -585,7 +584,7 @@ export class DownloadProcessor {
             }
 
             // Cleanup failed downloads so the next attempt gets a clean item workspace.
-            this.cleanupDownloadSourcePath();
+            await this.cleanupDownloadSourcePath();
         } finally {
             this.processing = false;
             this.currentProcess = undefined;
@@ -605,22 +604,22 @@ export class DownloadProcessor {
         type: DownloadJobType,
         payload: DownloadJobPayload
     ): Promise<void> {
+        const downloadPath = getDownloadWorkspacePath(type, id);
+        this.currentDownloadPath = downloadPath;
+
+        // Ensure the target subtree is empty before starting.
+        try {
+            await fs.promises.rm(downloadPath, { recursive: true, force: true });
+        } catch {
+            // ignore
+        }
+        await fs.promises.mkdir(path.dirname(downloadPath), { recursive: true });
+
         return new Promise((resolve, reject) => {
             const tidalUrl = buildStreamingMediaUrl(type, id);
             const backend = getDownloadBackendForMediaType(type);
 
             console.log(`[DOWNLOAD-PROCESSOR] Downloading ${type} ${id} from ${tidalUrl} via ${backend}`);
-
-            const downloadPath = getDownloadWorkspacePath(type, id);
-            this.currentDownloadPath = downloadPath;
-
-            // Ensure the target subtree is empty before starting.
-            try {
-                fs.rmSync(downloadPath, { recursive: true, force: true });
-            } catch {
-                // ignore
-            }
-            fs.mkdirSync(path.dirname(downloadPath), { recursive: true });
 
             const qualityConfig = Config.getQualityConfig();
             console.log(

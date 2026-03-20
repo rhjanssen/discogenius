@@ -1236,7 +1236,14 @@ const Library = () => {
 
         {selectedTab === "tracks" && (
           <div className={styles.virtuosoContainer}>
-            {tracksLoading ? renderLoadingContent() : (
+            {tracksLoading ? renderLoadingContent() : filteredTracks.length === 0 ? (
+              <EmptyState
+                title="No tracks found"
+                description="No tracks match your filters or search."
+                icon={<Search24Regular />}
+                minHeight="220px"
+              />
+            ) : (
               renderPane({
                 scrollRef: trackScrollRef,
                 sentinelRef: trackSentinelRef,

@@ -20,7 +20,9 @@ export async function scanImportDirectory(
 ): Promise<LocalGroup[]> {
     const groups: LocalGroup[] = [];
 
-    if (!fs.existsSync(scanPath)) {
+    try {
+        await fs.promises.access(scanPath);
+    } catch {
         console.warn(`Path does not exist: ${scanPath}`);
         return [];
     }
