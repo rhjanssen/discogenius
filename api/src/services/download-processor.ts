@@ -961,6 +961,120 @@ export class DownloadProcessor {
                         return true;
                     };
 
+                    const handleTidalDlNgProgress = (progress: ReturnType<typeof parseProgress>) => {
+                        if (!progress) {
+                            return false;
+                        }
+
+                        if (progress.statusMessage) {
+                            statusMessage = progress.statusMessage;
+                        }
+
+                        if (progress.totalTracks && progress.currentTrack) {
+                            totalTracks = progress.totalTracks;
+                            currentTrackIndex = Math.max(0, progress.currentTrack - 1);
+                            const overallProgress = Math.round((progress.currentTrack / progress.totalTracks) * 100);
+
+                            if (overallProgress !== lastProgress) {
+                                lastProgress = overallProgress;
+                                emitDownloadProgress({
+                                    progress: overallProgress,
+                                    currentFileNum: progress.currentTrack,
+                                    totalFiles: progress.totalTracks,
+                                    currentTrack: progress.listName || currentTrackName,
+                                    state: progress.state || 'downloading',
+                                    statusMessage,
+                                    tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                                });
+                            }
+                        }
+
+                        if (progress.isComplete && progress.trackTitle) {
+                            completedTracks += 1;
+                            trackProgress.set(progress.trackTitle, 100);
+                            currentTrackName = progress.trackTitle;
+                            updateAlbumTrackStatus(progress.trackTitle, progress.state === 'failed' ? 'error' : 'completed', currentTrackIndex);
+
+                            const overallProgress = totalTracks > 0
+                                ? Math.round((completedTracks / totalTracks) * 100)
+                                : Math.round((completedTracks / Math.max(completedTracks, 1)) * 100);
+
+                            emitDownloadProgress({
+                                progress: overallProgress,
+                                currentFileNum: completedTracks,
+                                totalFiles: totalTracks,
+                                currentTrack: progress.trackTitle,
+                                trackProgress: 100,
+                                trackStatus: progress.state === 'failed' ? 'error' : 'completed',
+                                state: progress.state || 'downloading',
+                                statusMessage: progress.statusMessage || `Downloaded: ${progress.trackTitle}`,
+                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                            });
+                        } else if (progress.progress > 0 && progress.trackTitle) {
+                            trackProgress.set(progress.trackTitle, progress.progress);
+                            currentTrackName = progress.trackTitle;
+                            updateAlbumTrackStatus(progress.trackTitle, 'downloading', currentTrackIndex);
+
+                            const overallProgress = totalTracks > 0
+                                ? Math.round(((completedTracks + progress.progress / 100) / totalTracks) * 100)
+                                : progress.progress;
+
+                            if (overallProgress !== lastProgress) {
+                                lastProgress = overallProgress;
+                                emitDownloadProgress({
+                                    progress: overallProgress,
+                                    currentFileNum: completedTracks + 1,
+                                    totalFiles: totalTracks || undefined,
+                                    currentTrack: progress.trackTitle,
+                                    trackProgress: progress.progress,
+                                    trackStatus: 'downloading',
+                                    state: 'downloading',
+                                    statusMessage,
+                                    tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                                });
+                            }
+                        }
+
+                        if (progress.isListComplete && progress.listName) {
+                            totalTracks = completedTracks;
+                            emitDownloadProgress({
+                                progress: 100,
+                                currentFileNum: completedTracks,
+                                totalFiles: completedTracks,
+                                state: 'completed',
+                                statusMessage: `Finished: ${progress.listName}`,
+                                tracks: albumTracks.length > 0 ? albumTracks.map(t => ({
+                                    ...t,
+                                    status: t.status === 'error' || t.status === 'skipped' ? t.status : 'completed' as const,
+                                })) : undefined,
+                            });
+                        }
+
+                        if (progress.statusMessage && !progress.trackTitle && !progress.totalTracks && !progress.isListComplete) {
+                            emitDownloadProgress({
+                                progress: lastProgress,
+                                currentFileNum: completedTracks > 0 ? completedTracks : undefined,
+                                totalFiles: totalTracks || undefined,
+                                currentTrack: currentTrackName || undefined,
+                                trackProgress: currentTrackName ? trackProgress.get(currentTrackName) : undefined,
+                                trackStatus: currentTrackName ? 'downloading' : undefined,
+                                statusMessage: progress.statusMessage,
+                                state: progress.state || 'downloading',
+                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                            });
+                        }
+
+                        return true;
+                    };
+
+                    const handleBackendProgressLine = (line: string) => {
+                        if (backend === 'tidal-dl-ng') {
+                            return handleTidalDlNgProgress(parseProgress(line));
+                        }
+
+                        return handleOrpheusProgress(parseOrpheusProgress(line));
+                    };
+
                     downloadProcess.stdout?.on("data", (data: Buffer) => {
                         try {
                             resetIdleTimeout();
@@ -971,198 +1085,9 @@ export class DownloadProcessor {
                             for (const line of lines) {
                                 if (!line.trim()) continue;
                                 console.log(`[${backend}] ${line}`);
-
-                                if (backend === 'tidal-dl-ng') {
-                                    const progress = parseProgress(line);
-                                    if (!progress) {
-                                        continue;
-                                    }
-
-                                    if (progress.statusMessage) {
-                                        statusMessage = progress.statusMessage;
-                                    }
-
-                                    if (progress.totalTracks && progress.currentTrack) {
-                                        totalTracks = progress.totalTracks;
-                                        currentTrackIndex = Math.max(0, progress.currentTrack - 1);
-                                        const overallProgress = Math.round((progress.currentTrack / progress.totalTracks) * 100);
-
-                                        if (overallProgress !== lastProgress) {
-                                            lastProgress = overallProgress;
-                                            this.persistDownloadState(jobId, {
-                                                progress: overallProgress,
-                                                currentFileNum: progress.currentTrack,
-                                                totalFiles: progress.totalTracks,
-                                                currentTrack: progress.listName || currentTrackName,
-                                                state: progress.state || 'downloading',
-                                                statusMessage,
-                                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                            });
-
-                                            downloadEvents.emitProgress(jobId, {
-                                                tidalId: id,
-                                                type,
-                                                title: payload.title,
-                                                artist: payload.artist,
-                                                cover: payload.cover,
-                                                progress: overallProgress,
-                                                currentFileNum: progress.currentTrack,
-                                                totalFiles: progress.totalTracks,
-                                                currentTrack: progress.listName || currentTrackName,
-                                                state: progress.state || 'downloading',
-                                                statusMessage,
-                                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                            });
-                                        }
-                                    }
-
-                                    if (progress.isComplete && progress.trackTitle) {
-                                        completedTracks++;
-                                        trackProgress.set(progress.trackTitle, 100);
-                                        currentTrackName = progress.trackTitle;
-                                        updateAlbumTrackStatus(progress.trackTitle, progress.state === 'failed' ? 'error' : 'completed', currentTrackIndex);
-
-                                        const overallProgress = totalTracks > 0
-                                            ? Math.round((completedTracks / totalTracks) * 100)
-                                            : Math.round((completedTracks / Math.max(completedTracks, 1)) * 100);
-
-                                        this.persistDownloadState(jobId, {
-                                            progress: overallProgress,
-                                            currentFileNum: completedTracks,
-                                            totalFiles: totalTracks,
-                                            currentTrack: progress.trackTitle,
-                                            trackProgress: 100,
-                                            trackStatus: progress.state === 'failed' ? 'error' : 'completed',
-                                            state: progress.state || 'downloading',
-                                            statusMessage: progress.statusMessage || `Downloaded: ${progress.trackTitle}`,
-                                            tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                        });
-
-                                        downloadEvents.emitProgress(jobId, {
-                                            tidalId: id,
-                                            type,
-                                            title: payload.title,
-                                            artist: payload.artist,
-                                            cover: payload.cover,
-                                            progress: overallProgress,
-                                            currentFileNum: completedTracks,
-                                            totalFiles: totalTracks,
-                                            currentTrack: progress.trackTitle,
-                                            trackProgress: 100,
-                                            trackStatus: progress.state === 'failed' ? 'error' : 'completed',
-                                            state: progress.state || 'downloading',
-                                            statusMessage: progress.statusMessage || `Downloaded: ${progress.trackTitle}`,
-                                            tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                        });
-                                    } else if (progress.progress > 0 && progress.trackTitle) {
-                                        trackProgress.set(progress.trackTitle, progress.progress);
-                                        currentTrackName = progress.trackTitle;
-                                        updateAlbumTrackStatus(progress.trackTitle, 'downloading', currentTrackIndex);
-
-                                        let overallProgress: number;
-                                        if (totalTracks > 0) {
-                                            const partialProgress = (completedTracks + progress.progress / 100) / totalTracks * 100;
-                                            overallProgress = Math.round(partialProgress);
-                                        } else {
-                                            overallProgress = progress.progress;
-                                        }
-
-                                        if (overallProgress !== lastProgress) {
-                                            lastProgress = overallProgress;
-                                            this.persistDownloadState(jobId, {
-                                                progress: overallProgress,
-                                                currentFileNum: completedTracks + 1,
-                                                totalFiles: totalTracks || undefined,
-                                                currentTrack: progress.trackTitle,
-                                                trackProgress: progress.progress,
-                                                trackStatus: 'downloading',
-                                                state: 'downloading',
-                                                statusMessage,
-                                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                            });
-
-                                            downloadEvents.emitProgress(jobId, {
-                                                tidalId: id,
-                                                type,
-                                                title: payload.title,
-                                                artist: payload.artist,
-                                                cover: payload.cover,
-                                                progress: overallProgress,
-                                                currentFileNum: completedTracks + 1,
-                                                totalFiles: totalTracks || undefined,
-                                                currentTrack: progress.trackTitle,
-                                                trackProgress: progress.progress,
-                                                trackStatus: 'downloading',
-                                                state: 'downloading',
-                                                statusMessage,
-                                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                            });
-                                        }
-                                    }
-
-                                    if (progress.isListComplete && progress.listName) {
-                                        totalTracks = completedTracks;
-                                        this.persistDownloadState(jobId, {
-                                            progress: 100,
-                                            currentFileNum: completedTracks,
-                                            totalFiles: completedTracks,
-                                            state: 'completed',
-                                            statusMessage: `Finished: ${progress.listName}`,
-                                            tracks: albumTracks.length > 0 ? albumTracks.map(t => ({
-                                                ...t,
-                                                status: t.status === 'error' || t.status === 'skipped' ? t.status : 'completed' as const,
-                                            })) : undefined,
-                                        });
-                                        downloadEvents.emitProgress(jobId, {
-                                            tidalId: id,
-                                            type,
-                                            title: payload.title,
-                                            artist: payload.artist,
-                                            cover: payload.cover,
-                                            progress: 100,
-                                            currentFileNum: completedTracks,
-                                            totalFiles: completedTracks,
-                                            state: 'completed',
-                                            statusMessage: `Finished: ${progress.listName}`,
-                                            tracks: albumTracks.length > 0 ? albumTracks.map(t => ({
-                                                ...t,
-                                                status: t.status === 'error' || t.status === 'skipped' ? t.status : 'completed' as const,
-                                            })) : undefined,
-                                        });
-                                    }
-
-                                    if (progress.statusMessage && !progress.trackTitle && !progress.totalTracks && !progress.isListComplete) {
-                                        this.persistDownloadState(jobId, {
-                                            progress: lastProgress,
-                                            currentFileNum: completedTracks > 0 ? completedTracks : undefined,
-                                            totalFiles: totalTracks || undefined,
-                                            currentTrack: currentTrackName || undefined,
-                                            trackProgress: currentTrackName ? trackProgress.get(currentTrackName) : undefined,
-                                            trackStatus: currentTrackName ? 'downloading' : undefined,
-                                            statusMessage: progress.statusMessage,
-                                            state: progress.state || 'downloading',
-                                            tracks: albumTracks.length > 0 ? albumTracks : undefined,
-                                        });
-                                        downloadEvents.emitProgress(jobId, {
-                                            tidalId: id,
-                                            type,
-                                            title: payload.title,
-                                            artist: payload.artist,
-                                            cover: payload.cover,
-                                            progress: lastProgress,
-                                            statusMessage: progress.statusMessage,
-                                            state: progress.state || 'downloading',
-                                        });
-                                    }
-
+                                if (handleBackendProgressLine(line)) {
                                     continue;
                                 }
-
-                                const progress = parseOrpheusProgress(line);
-                                if (!progress) {
-                                    continue;
-                                }
-                                handleOrpheusProgress(progress);
                             }
                         } catch (error: any) {
                             const message = `Failed to parse download output for job ${jobId}: ${error?.message || 'unknown parser error'}`;
@@ -1184,19 +1109,13 @@ export class DownloadProcessor {
                             const lines = output.split(/\r?\n|\r/g);
                             let handledProgress = false;
 
-                            if (backend === 'orpheus') {
+                            if (backend === 'orpheus' || backend === 'tidal-dl-ng') {
                                 for (const line of lines) {
                                     if (!line.trim()) {
                                         continue;
                                     }
 
-                                    const progress = parseOrpheusProgress(line);
-                                    if (!progress) {
-                                        continue;
-                                    }
-
-                                    handledProgress = true;
-                                    handleOrpheusProgress(progress);
+                                    handledProgress = handleBackendProgressLine(line) || handledProgress;
                                 }
                             }
 

@@ -836,6 +836,13 @@ export interface TidalDlNgProgress {
     state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused';
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+function normalizeProgressOutput(output: string): string {
+    return output.replace(ANSI_ESCAPE_PATTERN, "").replace(/\r/g, "").trim();
+}
+
 /**
  * Parse progress from tidal-dl-ng output
  * 
@@ -851,8 +858,13 @@ export interface TidalDlNgProgress {
  * - "Something went wrong. Skipping 'Artist - Track Title'."
  */
 export function parseProgress(output: string): TidalDlNgProgress | null {
+    const normalized = normalizeProgressOutput(output);
+    if (!normalized) {
+        return null;
+    }
+
     // Check for "Downloaded item" completion
-    const downloadedMatch = output.match(/Downloaded item '([^']+)'/);
+    const downloadedMatch = normalized.match(/Downloaded item '([^']+)'/);
     if (downloadedMatch) {
         return {
             trackTitle: downloadedMatch[1],
@@ -864,7 +876,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for "Finished list" completion
-    const finishedListMatch = output.match(/Finished list '([^']+)'/);
+    const finishedListMatch = normalized.match(/Finished list '([^']+)'/);
     if (finishedListMatch) {
         return {
             trackTitle: "",
@@ -878,7 +890,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for list progress "List 'name' ━━━ 50% 5/10"
-    const listProgressMatch = output.match(/List '([^']+)'.*?(\d+)%\s*(\d+)\/(\d+)/);
+    const listProgressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*List '([^']+)'.*?(\d+)%\s*(\d+)\/(\d+)/);
     if (listProgressMatch) {
         return {
             trackTitle: "",
@@ -894,7 +906,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
 
     // Check for item progress bar "Item 'title' ━━━━━━━ 50%"
     // Also match the size and speed if available: "Item 'title' ━━━━━━━ 50% 1.2/2.4 MB 1.2 MB/s"
-    const progressMatch = output.match(/Item '([^']+)'.*?(\d+)%(?:\s+([\d.]+\s*[KMG]B)\/([\d.]+\s*[KMG]B))?(?:\s+([\d.]+\s*[KMG]B\/s))?/);
+    const progressMatch = normalized.match(/(?:\[[^\]]+\]\s*)*Item '([^']+)'.*?(\d+)%(?:\s+([\d.]+\s*[KMGTPE]i?B)\/([\d.]+\s*[KMGTPE]i?B))?(?:\s+([\d.]+\s*[KMGTPE]i?B\/s))?/i);
     if (progressMatch) {
         const percent = parseInt(progressMatch[2], 10);
         const statusMessage = progressMatch[5] ? `Speed: ${progressMatch[5]}` : undefined;
@@ -909,8 +921,8 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for skipped download
-    if (output.includes("Download skipped, since file exists")) {
-        const skippedMatch = output.match(/since file exists:\s*'([^']+)'/);
+    if (normalized.includes("Download skipped, since file exists")) {
+        const skippedMatch = normalized.match(/since file exists:\s*'([^']+)'/);
         return {
             trackTitle: skippedMatch ? skippedMatch[1] : "",
             progress: 100,
@@ -922,8 +934,8 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for error/skip
-    if (output.includes("Something went wrong. Skipping")) {
-        const errorMatch = output.match(/Skipping '([^']+)'/);
+    if (normalized.includes("Something went wrong. Skipping")) {
+        const errorMatch = normalized.match(/Skipping '([^']+)'/);
         return {
             trackTitle: errorMatch ? errorMatch[1] : "",
             progress: 0,
@@ -935,7 +947,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for Atmos mode switch
-    if (output.includes("Switching session context to Dolby Atmos")) {
+    if (normalized.includes("Switching session context to Dolby Atmos")) {
         return {
             trackTitle: "",
             progress: 0,
@@ -946,7 +958,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
         };
     }
 
-    if (output.includes("Session is now in Atmos mode")) {
+    if (normalized.includes("Session is now in Atmos mode")) {
         return {
             trackTitle: "",
             progress: 0,
@@ -957,7 +969,7 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
         };
     }
 
-    if (output.includes("Session is now in Normal mode")) {
+    if (normalized.includes("Session is now in Normal mode")) {
         return {
             trackTitle: "",
             progress: 0,
@@ -969,8 +981,8 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
     }
 
     // Check for rate limiting
-    if (output.includes("Next download will start in")) {
-        const delayMatch = output.match(/start in\s*([\d.]+)\s*seconds/);
+    if (normalized.includes("Next download will start in")) {
+        const delayMatch = normalized.match(/start in\s*([\d.]+)\s*seconds/);
         return {
             trackTitle: "",
             progress: 0,
