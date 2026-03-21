@@ -139,33 +139,15 @@ function humanizeLifecycleReason(value?: string | null): string {
     }
 }
 
-function formatTriggerTag(job: ActivityJob): string | null {
-    const trigger = Number(job?.trigger || 0);
-    return trigger > 0 ? `Trigger #${trigger}` : null;
-}
 
 function formatActivityLifecycleBadges(job: ActivityJob, source: ActivitySource): string[] {
     const payload = getJobPayload(job);
     const badges: string[] = [];
 
-    if (source === 'active') {
-        badges.push(job.status === 'processing' ? 'Running' : 'In progress');
-    } else if (source === 'queued') {
-        badges.push(job.status === 'pending' ? 'Waiting to start' : 'Queued');
-    } else if (job.status === 'completed') {
-        badges.push('Completed');
-    } else if (job.status === 'failed') {
-        badges.push('Failed');
-    }
-
+    // Only show meaningful badges, not status (already shown by icons) or trigger (always 1)
     const reason = humanizeLifecycleReason(String(payload?.reason || ''));
     if (reason) {
         badges.push(reason);
-    }
-
-    const triggerTag = formatTriggerTag(job);
-    if (triggerTag) {
-        badges.push(triggerTag);
     }
 
     if (payload?.originalJobId) {

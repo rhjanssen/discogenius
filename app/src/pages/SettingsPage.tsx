@@ -325,6 +325,11 @@ const useStyles = makeStyles({
         display: 'flex',
         flexDirection: 'column',
         gap: tokens.spacingVerticalL,
+        [MEDIA.desktop]: {
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: tokens.spacingHorizontalL,
+        },
     },
     section: {
         display: 'flex',

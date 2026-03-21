@@ -38,6 +38,7 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
+        overflow: "visible",
     },
     searchBox: {
         width: "100%",
@@ -119,6 +120,7 @@ const useStyles = makeStyles({
         position: "absolute",
         top: `calc(100% + ${tokens.spacingVerticalXXS})`,
         left: 0,
+        right: 0,
         width: "100%",
         maxHeight: "calc(100vh - 120px)",
         backgroundColor: tokens.colorNeutralBackground2,
@@ -129,7 +131,7 @@ const useStyles = makeStyles({
         flexDirection: "column",
         overflow: "hidden",
         "@media (max-width: 639px)": {
-            maxHeight: "min(68dvh, calc(100dvh - 168px))",
+            maxHeight: "calc(100dvh - 120px)",
         },
     },
     tabContainer: {

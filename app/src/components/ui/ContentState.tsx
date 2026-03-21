@@ -44,8 +44,8 @@ const useStyles = makeStyles({
     marginRight: "auto",
   },
   panel: {
-    width: "100%",
     maxWidth: "560px",
+    width: "100%",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -56,8 +56,6 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     boxShadow: tokens.shadow16,
     borderRadius: tokens.borderRadiusLarge,
-    marginLeft: "auto",
-    marginRight: "auto",
     boxSizing: "border-box",
   },
   panelLeft: {
