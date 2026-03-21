@@ -35,6 +35,13 @@
 - [Contributing](#contributing)
 - [License & Disclaimers](#license--disclaimers)
 
+> [!WARNING]
+> **Disclaimer**
+>
+> - Discogenius is an independent project and is **not affiliated with, endorsed by, or associated with TIDAL**.
+> - This software is provided for personal use only and requires your own active TIDAL subscription. You are responsible for complying with service terms and applicable copyright and intellectual property laws.
+> - **Do not use Discogenius to distribute or pirate music.**
+
 ## Features
 
 - **Curated Discography Management**: Build and maintain your personal music collection.
@@ -191,11 +198,9 @@ That means:
 
 Please review code carefully before deploying in production.
 
-### TIDAL
 
-Discogenius is an independent project and is **not affiliated with, endorsed by, or associated with TIDAL**.
 
-This software is provided for personal use only and requires your own active TIDAL subscription. You are responsible for complying with service terms and applicable copyright and intellectual property laws.
 
-**Do not use Discogenius to distribute or pirate music.**
+
+
 
