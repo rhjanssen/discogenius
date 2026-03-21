@@ -8,6 +8,8 @@ type CanonicalModule =
     | 'COMPILATION'
     | 'LIVE'
     | 'REMIX'
+    | 'SOUNDTRACK'
+    | 'DEMO'
     | 'APPEARS_ON'
     | 'DJ_MIXES';
 
@@ -15,6 +17,28 @@ type PageModuleKey =
     | CanonicalModule
     | 'EPSANDSINGLES'
     | 'ALBUMS';
+
+// MusicBrainz release-group secondary types (https://musicbrainz.org/doc/Release_Group/Type)
+const VALID_MUSICBRAINZ_SECONDARY_TYPES = new Set<string>([
+    'compilation',
+    'soundtrack',
+    'spokenword',
+    'interview',
+    'audiobook',
+    'audio drama',
+    'live',
+    'remix',
+    'dj-mix',
+    'mixtape/street',
+    'demo',
+    'field recording',
+]);
+
+export function normalizeMusicBrainzSecondaryType(value: string | null | undefined): string | null {
+    const normalized = (value || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return VALID_MUSICBRAINZ_SECONDARY_TYPES.has(normalized) ? normalized : null;
+}
 
 export function resolveVersionGroupModule(
     presentModules: Iterable<PageModuleKey>,
@@ -25,11 +49,14 @@ export function resolveVersionGroupModule(
         return null;
     }
 
-    // Only propagate categories that are stable across release variants.
-    // Relationship buckets like COMPILATION/APPEARS_ON are page-specific and
-    // should not move every version in the group into a different section.
+    // Propagate stable artist-page module tags across release variants in the same version group.
+    // Deterministic precedence handles mixed module signals.
     if (moduleSet.has('LIVE')) return 'LIVE';
+    if (moduleSet.has('COMPILATION')) return 'COMPILATION';
     if (moduleSet.has('REMIX')) return 'REMIX';
+    if (moduleSet.has('SOUNDTRACK')) return 'SOUNDTRACK';
+    if (moduleSet.has('DEMO')) return 'DEMO';
+    if (moduleSet.has('APPEARS_ON')) return 'APPEARS_ON';
     if (moduleSet.has('DJ_MIXES')) return 'DJ_MIXES';
     if (moduleSet.has('EP')) return 'EP';
     if (moduleSet.has('SINGLE')) return 'SINGLE';
@@ -39,10 +66,13 @@ export function resolveVersionGroupModule(
 
 function getMbSecondaryFromModule(module: CanonicalModule | null): string | null {
     if (!module) return null;
+    // APPEARS_ON is a relationship bucket, not a MusicBrainz secondary type.
     switch (module) {
-        case 'LIVE': return 'live';
-        case 'COMPILATION': return 'compilation';
-        case 'REMIX': return 'remix';
+        case 'LIVE': return normalizeMusicBrainzSecondaryType('live');
+        case 'COMPILATION': return normalizeMusicBrainzSecondaryType('compilation');
+        case 'REMIX': return normalizeMusicBrainzSecondaryType('remix');
+        case 'SOUNDTRACK': return normalizeMusicBrainzSecondaryType('soundtrack');
+        case 'DEMO': return normalizeMusicBrainzSecondaryType('demo');
         default: return null;
     }
 }
@@ -63,6 +93,18 @@ function getCanonicalModuleForEpOrSingle(tidalType: string | null | undefined): 
     if (type === 'EP') return 'EP';
     if (type === 'SINGLE') return 'SINGLE';
     return 'ALBUM';
+}
+
+function normalizeMbSecondaryToModule(value: string | null | undefined): CanonicalModule | null {
+    const secondary = normalizeMusicBrainzSecondaryType(value);
+    if (!secondary) return null;
+
+    if (secondary === 'live') return 'LIVE';
+    if (secondary === 'compilation') return 'COMPILATION';
+    if (secondary === 'remix') return 'REMIX';
+    if (secondary === 'soundtrack') return 'SOUNDTRACK';
+    if (secondary === 'demo') return 'DEMO';
+    return null;
 }
 
 export function normalizeStoredModuleToCanonical(
@@ -94,6 +136,12 @@ export function normalizeStoredModuleToCanonical(
         case 'REMIX':
         case 'ARTIST_REMIXES':
             return 'REMIX';
+        case 'SOUNDTRACK':
+        case 'ARTIST_SOUNDTRACKS':
+            return 'SOUNDTRACK';
+        case 'DEMO':
+        case 'ARTIST_DEMOS':
+            return 'DEMO';
         case 'APPEARS_ON':
         case 'ARTIST_APPEARS_ON':
             return 'APPEARS_ON';
@@ -111,44 +159,24 @@ export function normalizeStoredModuleToCanonical(
 
 export function resolveAlbumModuleClassification(options: {
     fromPage?: PageModuleKey | null;
-    currentModule?: string | null;
     groupType?: string | null;
     albumType?: string | null;
 }): CanonicalModule {
     const albumType = (options.albumType || 'ALBUM').toUpperCase();
-    const currentModule = normalizeStoredModuleToCanonical(options.currentModule, albumType);
 
-    let desired: CanonicalModule | null = null;
     if (options.fromPage) {
         if (options.fromPage === 'EPSANDSINGLES' || options.fromPage === 'ALBUMS') {
-            desired = getCanonicalModuleForEpOrSingle(albumType);
-        } else {
-            desired = options.fromPage;
+            return getCanonicalModuleForEpOrSingle(albumType);
         }
+
+        return options.fromPage;
     }
 
-    // Keep the current managed section unless the page gives us a stronger signal.
-    if (!desired && currentModule) {
-        desired = currentModule;
+    if ((options.groupType || '').toUpperCase() === 'COMPILATIONS') {
+        return 'APPEARS_ON';
     }
 
-    if (!desired) {
-        if ((options.groupType || '').toUpperCase() === 'COMPILATIONS') {
-            desired = 'APPEARS_ON';
-        } else {
-            desired = getCanonicalModuleForEpOrSingle(albumType);
-        }
-    }
-
-    if (currentModule) {
-        const strongTypes = new Set<CanonicalModule>(['REMIX', 'LIVE', 'COMPILATION', 'DJ_MIXES', 'APPEARS_ON']);
-        const isDesiredGeneric = desired === 'ALBUM' || desired === 'EP' || desired === 'SINGLE';
-        if (isDesiredGeneric && strongTypes.has(currentModule)) {
-            desired = currentModule;
-        }
-    }
-
-    return desired;
+    return getCanonicalModuleForEpOrSingle(albumType);
 }
 
 function normalizePageModuleTitleToKey(title: string | null | undefined): PageModuleKey | null {
@@ -158,7 +186,6 @@ function normalizePageModuleTitleToKey(title: string | null | undefined): PageMo
     if (t.includes('live')) return 'LIVE';
     if (t.includes('compilation')) return 'COMPILATION';
     if (t.includes('appears')) return 'APPEARS_ON';
-    if (t.includes('remix')) return 'REMIX';
     if (t.includes('mix') || t.includes('dj')) return 'DJ_MIXES';
 
     // These are "primary" buckets; we still normalize to EP/SINGLE/ALBUM using album.type.
@@ -177,6 +204,7 @@ async function buildArtistPageModuleMap(artistId: string, cachedPageData?: any):
     for (const row of rows) {
         const modules = row?.modules;
         if (!Array.isArray(modules)) continue;
+
         for (const mod of modules) {
             const items = mod?.pagedList?.items || mod?.items || [];
             if (!Array.isArray(items) || items.length === 0) continue;
@@ -198,50 +226,75 @@ async function buildArtistPageModuleMap(artistId: string, cachedPageData?: any):
 /**
  * Propagate module tags within version groups.
  * Uses pre-computed version_group_id from album_artists table.
- * If any album in a group has a special module (LIVE, COMPILATION, etc.), 
+ * If any album in a group has a special module (LIVE, COMPILATION, etc.),
  * all albums in that group should inherit it.
  */
 function propagateModulesWithinVersionGroups(
     moduleMap: Map<string, PageModuleKey>,
-    artistId: string
+    artistId: string,
 ): void {
-    // Get all version groups for this artist's albums from album_artists table
     const albumGroups = db.prepare(`
-        SELECT aa.album_id, aa.version_group_id
+        SELECT aa.album_id, aa.version_group_id, aa.module, a.mb_secondary, a.type as album_type
         FROM album_artists aa
+        JOIN albums a ON a.id = aa.album_id
         WHERE aa.artist_id = ? AND aa.version_group_id IS NOT NULL
-    `).all(artistId) as { album_id: number; version_group_id: number }[];
+    `).all(artistId) as Array<{
+        album_id: number;
+        version_group_id: number;
+        module: string | null;
+        mb_secondary: string | null;
+        album_type: string | null;
+    }>;
 
-    // Build a map of version_group_id -> album IDs
-    const groupToAlbums = new Map<number, string[]>();
+    const groupToAlbums = new Map<number, Array<{ albumId: string; module: string | null; mbSecondary: string | null; albumType: string | null }>>();
     for (const row of albumGroups) {
         const albumId = row.album_id.toString();
         const groupId = row.version_group_id;
         if (!groupToAlbums.has(groupId)) {
             groupToAlbums.set(groupId, []);
         }
-        groupToAlbums.get(groupId)!.push(albumId);
+
+        groupToAlbums.get(groupId)!.push({
+            albumId,
+            module: row.module,
+            mbSecondary: row.mb_secondary,
+            albumType: row.album_type,
+        });
     }
 
-    // For each group, determine the best module and apply to all members
-    for (const [, albumIds] of groupToAlbums) {
-        // Collect all modules present in this group
-        const presentModules = new Set<PageModuleKey>();
-        for (const albumId of albumIds) {
-            const mod = moduleMap.get(albumId);
-            if (mod) presentModules.add(mod);
+    // If any variant in the group has a secondary classification, propagate it across the whole group.
+    for (const [, albumRows] of groupToAlbums) {
+        const signals = new Set<PageModuleKey>();
+
+        for (const row of albumRows) {
+            const pageModule = moduleMap.get(row.albumId);
+            if (pageModule) signals.add(pageModule);
+
+            const normalizedModule = normalizeStoredModuleToCanonical(row.module, row.albumType);
+            if (normalizedModule && (
+                normalizedModule === 'LIVE'
+                || normalizedModule === 'COMPILATION'
+                || normalizedModule === 'REMIX'
+                || normalizedModule === 'SOUNDTRACK'
+                || normalizedModule === 'DEMO'
+                || normalizedModule === 'APPEARS_ON'
+            )) {
+                signals.add(normalizedModule);
+            }
+
+            const secondaryModule = normalizeMbSecondaryToModule(row.mbSecondary);
+            if (secondaryModule) {
+                signals.add(secondaryModule);
+            }
         }
 
-        if (presentModules.size === 0) continue;
+        if (signals.size === 0) continue;
 
-        const bestModule = resolveVersionGroupModule(presentModules);
+        const bestModule = resolveVersionGroupModule(signals);
+        if (!bestModule) continue;
 
-        // Apply best module to ALL albums in the group
-        if (bestModule) {
-            for (const albumId of albumIds) {
-                // Force update even if already set, to ensure consistency (e.g. ALBUM -> LIVE)
-                moduleMap.set(albumId, bestModule!);
-            }
+        for (const row of albumRows) {
+            moduleMap.set(row.albumId, bestModule);
         }
     }
 }
@@ -253,7 +306,7 @@ export class ModuleFixer {
      * In our schema, module tags live on `album_artists.module` (per-artist classification),
      * not on the `albums` table.
      */
-    static async fixModuleTagsForArtist(artistId: string) {
+    static async fixModuleTagsForArtist(artistId: string, cachedPageData?: any) {
         console.log(`[MODULE-FIXER] Fixing module tags for artist ${artistId}...`);
 
         // 0) Normalize legacy module values to the canonical set used by the UI layer
@@ -267,6 +320,8 @@ export class ModuleFixer {
                 WHEN UPPER(module) IN ('COMPILATION', 'ARTIST_COMPILATIONS') THEN 'COMPILATION'
                 WHEN UPPER(module) IN ('LIVE', 'ARTIST_LIVE_ALBUMS') THEN 'LIVE'
                 WHEN UPPER(module) IN ('REMIX', 'ARTIST_REMIXES') THEN 'REMIX'
+                WHEN UPPER(module) IN ('SOUNDTRACK', 'ARTIST_SOUNDTRACKS') THEN 'SOUNDTRACK'
+                WHEN UPPER(module) IN ('DEMO', 'ARTIST_DEMOS') THEN 'DEMO'
                 WHEN UPPER(module) IN ('APPEARS_ON', 'ARTIST_APPEARS_ON') THEN 'APPEARS_ON'
                 WHEN UPPER(module) IN ('DJ_MIXES', 'DJ MIXES', 'DJ-MIXES') THEN 'DJ_MIXES'
                 WHEN UPPER(module) IN ('ARTIST_EPS_AND_SINGLES', 'EPSANDSINGLES') THEN (
@@ -282,24 +337,17 @@ export class ModuleFixer {
         `).run(artistId);
 
         // 1) Page-derived tagging (Tidal artist page modules), with propagation via version_group
-        let pageMap: Map<string, PageModuleKey> = new Map();
-        try {
-            pageMap = await buildArtistPageModuleMap(artistId);
-            // Propagate modules within version groups (uses pre-computed version_group)
-            propagateModulesWithinVersionGroups(pageMap, artistId);
-        } catch (e) {
-            console.warn(`[MODULE-FIXER] Failed to fetch page modules for artist ${artistId}:`, e);
-        }
+        const pageMap = await buildArtistPageModuleMap(artistId, cachedPageData);
+        propagateModulesWithinVersionGroups(pageMap, artistId);
 
         const albumRows = db.prepare(`
             SELECT aa.album_id as album_id,
                    aa.group_type as group_type,
-                   aa.module as current_module,
                    a.type as album_type
             FROM album_artists aa
             JOIN albums a ON a.id = aa.album_id
             WHERE aa.artist_id = ?
-        `).all(artistId) as any[];
+        `).all(artistId) as Array<{ album_id: number | string; group_type: string | null; album_type: string | null }>;
 
         const updateModule = db.prepare(`
             UPDATE album_artists
@@ -320,7 +368,6 @@ export class ModuleFixer {
             const albumType = (row.album_type || 'ALBUM').toUpperCase();
             const desired = resolveAlbumModuleClassification({
                 fromPage: pageMap.get(albumId) || null,
-                currentModule: row.current_module,
                 groupType,
                 albumType,
             });
@@ -335,3 +382,6 @@ export class ModuleFixer {
         console.log(`[MODULE-FIXER] Module tag fixing complete for artist ${artistId}`);
     }
 }
+
+
+

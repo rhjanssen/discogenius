@@ -434,6 +434,8 @@ export class ArtistQueryService {
             ARTIST_APPEARS_ON: [],
             ARTIST_LIVE_ALBUMS: [],
             ARTIST_REMIXES: [],
+            ARTIST_SOUNDTRACKS: [],
+            ARTIST_DEMOS: [],
         };
 
         const moduleToBucket: Record<string, string> = {
@@ -444,6 +446,8 @@ export class ArtistQueryService {
             COMPILATION: "ARTIST_COMPILATIONS",
             LIVE: "ARTIST_LIVE_ALBUMS",
             REMIX: "ARTIST_REMIXES",
+            SOUNDTRACK: "ARTIST_SOUNDTRACKS",
+            DEMO: "ARTIST_DEMOS",
         };
 
         transformedAlbums.forEach((album) => {
@@ -544,6 +548,8 @@ export class ArtistQueryService {
         pushAlbumModule("Singles", modules.ARTIST_SINGLES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
         pushAlbumModule("Compilations", modules.ARTIST_COMPILATIONS, "COMPILATIONS");
         pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
+        pushAlbumModule("Soundtracks", modules.ARTIST_SOUNDTRACKS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
+        pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
         pushAlbumModule("Appears On", modules.ARTIST_APPEARS_ON, "APPEARS_ON");
 
         if (videos.length > 0) {

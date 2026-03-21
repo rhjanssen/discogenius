@@ -2,11 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.10] - 2026-03-21
+
+### Added
+
+- **Phase 1 Scheduler Commands**: Added 8 manually-triggerable non-download job types: `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune`. All commands are accessible via POST `/api/command` with case-insensitive JSON body `{ "name": "CommandName" }`. Each command includes proper payload typing, command exclusivity rules, scheduler handlers with job progress tracking, and REST route integration.
+
+### Changed
+- Updated [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) with Phase 1 command summary table, grouping manually-triggerable commands and legacy orchestration commands separately.
+- Updated [docs/ARCHITECTURE_WORKPLAN.md](docs/ARCHITECTURE_WORKPLAN.md) to mark Phase 1 complete and define Phase 2 scope (UI dashboard exposure and periodic scheduling configuration).
+
 ## [1.0.9] - 2026-03-21
 
 ### Changed
 - Frontend improvements: README restructured and simplified, activity badges cleaned, responsive UI fixes
-## [1.0.8] - 2026-03-21
+
+## [1.0.8]
+ - 2026-03-21
 
 ### Changed
 - Release preparation and maintenance updates
@@ -74,3 +86,4 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - Initial public release.
+

@@ -20,7 +20,7 @@ test.describe('Settings page', () => {
     await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
   });
 
-  test('uses a stable stacked layout for settings sections', async ({ page }) => {
+  test('uses masonry-style layout for settings sections', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
     const layout = await page.locator('#audio-quality').evaluate((element) => {
@@ -32,15 +32,15 @@ test.describe('Settings page', () => {
       const styles = window.getComputedStyle(container);
       return {
         display: styles.display,
-        flexDirection: styles.flexDirection,
-        columnCount: styles.columnCount,
+        columnWidth: styles.columnWidth,
+        columnFill: styles.columnFill,
       };
     });
 
     expect(layout).not.toBeNull();
-    expect(layout?.display).toBe('flex');
-    expect(layout?.flexDirection).toBe('column');
-    expect(layout?.columnCount).toBe('auto');
+    expect(layout?.display).toBe('block');
+    expect(layout?.columnWidth).not.toBe('auto');
+    expect(layout?.columnFill).toBe('balance');
   });
 
   test('theme selector works', async ({ page }) => {
@@ -124,3 +124,4 @@ test.describe('Dashboard page', () => {
     }
   });
 });
+

@@ -7,6 +7,7 @@ import { DiskScanService } from "../services/library-scan.js";
 import { resolveStoredLibraryPath } from "../services/library-paths.js";
 import { queueArtistWorkflow } from "../services/artist-workflow.js";
 import { queueRescanFoldersPass } from "../services/monitoring-scheduler.js";
+import { getConfigSection } from "../services/config.js";
 import { UpgradableSpecification } from "../services/upgradable-specification.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import type { LibraryFileContract, LibraryFilesListResponseContract } from "../contracts/media.js";
@@ -363,9 +364,14 @@ router.post("/scan-now/:artistId", async (req, res) => {
  */
 router.post("/scan-roots", (req, res) => {
   try {
+    const monitorArtist = typeof req.body?.monitorArtist === "boolean"
+      ? req.body.monitorArtist
+      : undefined;
+
     const jobId = queueRescanFoldersPass({
       trigger: 1,
       fullProcessing: req.body?.fullProcessing === true,
+      monitorArtist,
     });
     res.json({ success: true, jobId, message: "Root folder scan queued" });
   } catch (error: any) {
@@ -401,7 +407,9 @@ router.post("/scan-roots-now", async (req, res) => {
   immediateRootScanInProgress = true;
 
   try {
-    const monitorArtist = req.body?.monitorArtist !== false; // default true
+    const monitorArtist = typeof req.body?.monitorArtist === "boolean"
+      ? req.body.monitorArtist
+      : getConfigSection("monitoring").monitor_new_artists;
 
     const result = await DiskScanService.scan({
       addNewArtists: true,
@@ -421,3 +429,6 @@ router.post("/scan-roots-now", async (req, res) => {
 });
 
 export default router;
+
+
+

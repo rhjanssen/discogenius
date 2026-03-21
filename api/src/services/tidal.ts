@@ -1062,16 +1062,20 @@ export async function getArtistAlbums(artistId: string) {
 
   // Tag each album with group_type (which API endpoint) and derive initial module category
   // group_type: ALBUMS, EPSANDSINGLES, COMPILATIONS (matches Tidal API filters)
-  // module: Derived UI category - ALBUM, EP, SINGLE, APPEARS_ON, REMIX (LIVE determined by page API)
+  // module: Derived UI category - ALBUM, EP, SINGLE, APPEARS_ON, REMIX, SOUNDTRACK, DEMO (LIVE determined by page API)
   const tag = (arr: any[], groupType: 'ALBUMS' | 'EPSANDSINGLES' | 'COMPILATIONS') =>
     (arr || []).map(item => {
       // Derive module from group_type, release type, and title
-      // REMIX is detected by title, LIVE is left to page API module mapping
+      // REMIX/SOUNDTRACK/DEMO are detected by title, LIVE is left to page API module mapping
       let module: string;
       const titleLower = (item.title || '').toLowerCase();
 
       if (groupType === 'COMPILATIONS') {
         module = 'APPEARS_ON';  // Various artists albums
+      } else if (titleLower.includes('soundtrack') || titleLower.includes('o.s.t.') || titleLower.includes('original score') || titleLower.includes('motion picture')) {
+        module = 'SOUNDTRACK';
+      } else if (titleLower.includes('demo') || titleLower.includes('demos')) {
+        module = 'DEMO';
       } else if (titleLower.includes('remix') || titleLower.includes('remixes') || titleLower.includes('remixed')) {
         module = 'REMIX';  // Remix albums/EPs/singles
       } else if (item.type === 'EP') {
@@ -1127,7 +1131,7 @@ export async function getArtistAlbums(artistId: string) {
         copyright: item.copyright || null,
         upc: item.upc || null,
         _group_type: item._group_type || 'ALBUMS',  // API endpoint: ALBUMS, EPSANDSINGLES, COMPILATIONS
-        _module: item._module || 'ALBUM'  // UI category: ALBUM, EP, SINGLE, APPEARS_ON (can be refined by page data)
+        _module: item._module || 'ALBUM'  // UI category: ALBUM, EP, SINGLE, APPEARS_ON, REMIX, SOUNDTRACK, DEMO (can be refined by page data)
       });
     }
   });
@@ -1720,3 +1724,4 @@ export class TidalService {
     return getVideo(videoId);
   }
 }
+

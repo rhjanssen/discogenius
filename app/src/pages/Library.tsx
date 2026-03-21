@@ -981,6 +981,15 @@ const Library = () => {
     <LoadingState className={styles.loadMoreSpinner} label="Loading..." />
   );
 
+  const renderNoResultsContent = (mediaLabel: "artists" | "albums" | "tracks" | "videos") => (
+    <EmptyState
+      title={`No ${mediaLabel} found`}
+      description={`No ${mediaLabel} match your current filters or search.`}
+      icon={<Search24Regular />}
+      minHeight="220px"
+    />
+  );
+
   const renderSortMenu = () => (
     <Menu>
       <MenuTrigger disableButtonEnhancement>
@@ -1180,12 +1189,7 @@ const Library = () => {
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderLoadingContent() : filteredArtists.length === 0 ? (
-              <EmptyState
-                title="No artists found"
-                description="No artists match your filters or search."
-                icon={<Search24Regular />}
-                minHeight="220px"
-              />
+              renderNoResultsContent("artists")
             ) : (
               renderPane({
                 scrollRef: artistScrollRef,
@@ -1211,12 +1215,7 @@ const Library = () => {
         {selectedTab === "albums" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderLoadingContent() : filteredAlbums.length === 0 ? (
-              <EmptyState
-                title="No albums found"
-                description="No albums match your filters or search."
-                icon={<Search24Regular />}
-                minHeight="220px"
-              />
+              renderNoResultsContent("albums")
             ) : (
               renderPane({
                 scrollRef: albumScrollRef,
@@ -1242,12 +1241,7 @@ const Library = () => {
         {selectedTab === "tracks" && (
           <div className={styles.virtuosoContainer}>
             {tracksLoading ? renderLoadingContent() : filteredTracks.length === 0 ? (
-              <EmptyState
-                title="No tracks found"
-                description="No tracks match your filters or search."
-                icon={<Search24Regular />}
-                minHeight="220px"
-              />
+              renderNoResultsContent("tracks")
             ) : (
               renderPane({
                 scrollRef: trackScrollRef,
@@ -1262,12 +1256,7 @@ const Library = () => {
         {selectedTab === "videos" && (
           <div className={styles.virtuosoContainer}>
             {videosLoading ? renderLoadingContent() : filteredVideos.length === 0 ? (
-              <EmptyState
-                title="No videos found"
-                description="No videos match your filters or search."
-                icon={<Search24Regular />}
-                minHeight="220px"
-              />
+              renderNoResultsContent("videos")
             ) : (
               renderPane({
                 scrollRef: videoScrollRef,

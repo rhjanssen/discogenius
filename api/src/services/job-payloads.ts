@@ -203,9 +203,28 @@ export interface ApplyRenamesJobPayload extends QueuePayloadCommon {
   applyAll?: boolean;
 }
 
+export type RefreshAllMonitoredJobPayload = QueuePayloadCommon;
+
+export interface DownloadMissingForceJobPayload extends QueuePayloadCommon {
+  skipFlags?: boolean;
+}
+
+export interface RescanAllRootsJobPayload extends QueuePayloadCommon {
+  addNewArtists?: boolean;
+}
+
+export type HealthCheckJobPayload = QueuePayloadCommon;
+
+export type CompactDatabaseJobPayload = QueuePayloadCommon;
+
+export type CleanupTempFilesJobPayload = QueuePayloadCommon;
+
+export type UpdateLibraryMetadataJobPayload = QueuePayloadCommon;
+
 export interface ApplyRetagsJobPayload extends QueuePayloadCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
   applyAll?: boolean;
 }
+

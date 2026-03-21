@@ -51,6 +51,7 @@ test("config contract parsers normalize expected public settings shapes", () => 
       scanIntervalHours: 24,
       startHour: 2,
       durationHours: 6,
+      monitorNewArtists: true,
       removeUnmonitoredFiles: true,
       artistRefreshDays: 30,
       albumRefreshDays: 60,
@@ -387,3 +388,5 @@ test("history contract parser validates audit event payloads", () => {
   assert.equal(history.items[0].eventType, "TrackFileImported");
   assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });
+
+

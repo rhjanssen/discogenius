@@ -64,7 +64,7 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `tidal-dl-ng.ts` | tidal-dl-ng CLI wrapper for video downloads, environment setup, progress parsing |
 | `orpheus.ts` | Orpheus runtime bootstrap, TIDAL session sync, and music download spawning |
 | `download-processor.ts` | Handles exact media download jobs: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist` |
-| `scheduler.ts` | Handles non-download jobs such as `DownloadMissing`, `RefreshMetadata`, `RefreshArtist`, `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ApplyRenames`, and `ApplyRetags` |
+| `scheduler.ts` | Handles non-download jobs: `DownloadMissing`, `RefreshMetadata`, `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ApplyRenames`, `ApplyRetags` and Phase 1 commands: `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` |
 | `command.ts` | Defines command types and exclusivity rules (Lidarr-style) |
 | `command-history.ts` | Builds `/api/status` activity from queued jobs, including pending command-style work |
 | `queue.ts` | `TaskQueueService` and job type definitions for the persistent task queue |

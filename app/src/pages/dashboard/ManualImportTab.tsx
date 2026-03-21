@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Badge,
     Button,
-    Spinner,
     Text,
     makeStyles,
     mergeClasses,
@@ -18,6 +17,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DataGrid, type DataGridColumn } from '@/components/DataGrid';
 import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
+import { EmptyState, LoadingState } from '@/components/ui/ContentState';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
@@ -84,39 +84,7 @@ const useStyles = makeStyles({
         paddingBottom: tokens.spacingVerticalXXL,
     },
     emptyState: {
-        textAlign: 'center',
         padding: tokens.spacingVerticalXXL,
-        color: tokens.colorNeutralForeground3,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: tokens.spacingVerticalM,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderRadius: tokens.borderRadiusMedium,
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        overflow: 'hidden',
-    },
-    loadingState: {
-        border: 'none',
-        background: 'transparent',
-    },
-    emptyStateIcon: {
-        width: '64px',
-        height: '64px',
-        color: tokens.colorNeutralForeground4,
-        opacity: 0.6,
-    },
-    emptyStateTitle: {
-        color: tokens.colorNeutralForeground1,
-        fontWeight: tokens.fontWeightBold,
-        textAlign: 'center',
-    },
-    emptyStateSubtitle: {
-        color: tokens.colorNeutralForeground3,
-        textAlign: 'center',
-        maxWidth: '560px',
     },
     toolbar: {
         display: 'flex',
@@ -971,25 +939,21 @@ const ManualImportTab = () => {
 
     if (isLoading) {
         return (
-            <div className={mergeClasses(styles.emptyState, styles.loadingState)}>
-                <Spinner size="extra-large" />
-                <Text size={400}>Loading unmapped files...</Text>
-            </div>
+            <LoadingState label="Loading unmapped files..." className={styles.emptyState} />
         );
     }
 
     return (
         <div className={styles.container}>
             {sortedRows.length === 0 ? (
-                <div className={styles.emptyState}>
-                    <DocumentSearch24Regular className={styles.emptyStateIcon} />
-                    <Text className={styles.emptyStateTitle} size={500}>All caught up!</Text>
-                    <Text className={styles.emptyStateSubtitle} size={300}>
-                        {fileList.length === 0
-                            ? 'There are no files waiting for review in your library folders.'
-                            : 'No active unmapped files remain. The rest are currently ignored.'}
-                    </Text>
-                </div>
+                <EmptyState
+                    className={styles.emptyState}
+                    title="No unmapped files found"
+                    description={fileList.length === 0
+                        ? 'There are no files waiting for review in your library folders.'
+                        : 'No active unmapped files match this view. Show ignored files to review the remaining items.'}
+                    icon={<DocumentSearch24Regular />}
+                />
             ) : (
                 <>
                     <div className={styles.toolbar}>

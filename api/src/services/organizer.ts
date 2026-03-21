@@ -322,7 +322,7 @@ export class OrganizerService {
     console.log(`[Organizer] Pruning complete. Deleted ${deletedCount} disabled sidecar(s).`);
   }
 
-    private static ensureDir(dirPath: string) {
+  private static ensureDir(dirPath: string) {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
@@ -390,7 +390,7 @@ export class OrganizerService {
     const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);
     const templateDirSegments = templateSegments.slice(0, -1);
 
-    const volumeDirIndex = templateDirSegments.findIndex((seg) => seg.includes("{volumeNumber"));
+    const volumeDirIndex = templateDirSegments.findIndex((seg) => /\{[^}]*?(?:volumeNumber|medium)/i.test(seg));
     if (volumeDirIndex >= 0) {
       return volumeDirIndex > 0 ? path.join(...dirSegments.slice(0, volumeDirIndex)) : "";
     }
@@ -846,7 +846,9 @@ export class OrganizerService {
       if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
 
       const artistId = String(album.artist_id);
-      let artistName = (db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any)?.name as string | undefined;
+      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      let artistName = existingArtist?.name as string | undefined;
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
         artistName = remoteArtist.name;
@@ -860,6 +862,8 @@ export class OrganizerService {
       const artistFolder = renderRelativePath(naming.artist_folder, {
         artistName: resolvedArtistName,
         artistId,
+        artistMbId,
+        explicit: album.explicit === 1,
       });
 
       const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
@@ -931,16 +935,25 @@ export class OrganizerService {
         const trackTitle = trackRow.title || "Unknown Track";
         const trackNumber = Number(trackRow.track_number || 0);
         const volumeNumber = Number(trackRow.volume_number || 1);
+        const trackArtistId = String(trackRow.artist_id || artistId);
+        const trackArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(trackArtistId) as any;
+        const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
+        const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
 
         const relativeTrackPath = renderRelativePath(trackTemplate, {
           artistName: resolvedArtistName,
           artistId,
+          artistMbId,
           albumTitle: album.title,
           albumId: tidalId,
+          albumType: album.type || album.mb_primary || null,
+          albumMbId: album.mbid || null,
           albumVersion: album.version || null,
           releaseYear: year,
           trackTitle,
           trackId,
+          trackArtistName: resolvedTrackArtistName,
+          trackArtistMbId,
           trackVersion: trackRow.version || null,
           explicit: trackRow.explicit === 1,
           trackNumber,
@@ -1262,8 +1275,9 @@ export class OrganizerService {
       if (!trackRow) throw new Error(`Track ${tidalId} not found in DB after scan`);
 
       const artistId = String(album.artist_id);
-      let artistName =
-        (db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any)?.name as string | undefined;
+      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      let artistName = existingArtist?.name as string | undefined;
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
         artistName = remoteArtist.name;
@@ -1277,7 +1291,9 @@ export class OrganizerService {
 
       const artistFolder = renderRelativePath(naming.artist_folder, {
         artistName: resolvedArtistName,
-        artistId
+        artistId,
+        artistMbId,
+        explicit: trackRow.explicit === 1,
       });
 
       const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
@@ -1287,6 +1303,10 @@ export class OrganizerService {
       const trackTitle = trackRow.title || trackData.title || path.basename(src, ext);
       const trackNumber = Number(trackRow.track_number || trackData.track_number || 0);
       const volumeNumber = Number(trackRow.volume_number || trackData.volume_number || 1);
+      const trackArtistId = String(trackRow.artist_id || artistId);
+      const trackArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(trackArtistId) as any;
+      const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
+      const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
 
       const trackTemplate = Number(album.num_volumes || 1) > 1
         ? naming.album_track_path_multi
@@ -1295,15 +1315,21 @@ export class OrganizerService {
       const relativeTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
         artistId,
+        artistMbId,
         albumTitle: album.title,
         albumId,
+        albumType: album.type || album.mb_primary || null,
+        albumMbId: album.mbid || null,
         albumVersion: album.version || null,
         releaseYear: year,
         trackTitle,
         trackId: tidalId,
+        trackArtistName: resolvedTrackArtistName,
+        trackArtistMbId,
         trackNumber,
         volumeNumber,
         trackVersion: trackRow.version || null,
+        explicit: trackRow.explicit === 1,
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
@@ -1656,7 +1682,9 @@ export class OrganizerService {
       });
 
       const artistId = String(video.artist_id);
-      let artistName = (db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any)?.name as string | undefined;
+      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      let artistName = existingArtist?.name as string | undefined;
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
         artistName = remoteArtist.name;
@@ -1669,7 +1697,9 @@ export class OrganizerService {
       const artistFolder = renderRelativePath(naming.artist_folder, {
         artistName: resolvedArtistName,
         artistId,
-        videoTitle: video.title
+        artistMbId,
+        videoTitle: video.title,
+        explicit: video.explicit === 1,
       });
       const targetDir = path.join(videoRoot, artistFolder);
       this.ensureDir(targetDir);
@@ -1678,8 +1708,10 @@ export class OrganizerService {
       const destName = `${renderFileStem(naming.video_file, {
         artistName: resolvedArtistName,
         artistId,
+        artistMbId,
         trackId: tidalId,
-        videoTitle: video.title
+        videoTitle: video.title,
+        explicit: video.explicit === 1,
       })}.mp4`;
       const dest = path.join(targetDir, destName);
 

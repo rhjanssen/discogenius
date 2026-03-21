@@ -112,6 +112,7 @@ export interface MonitoringConfigContract {
   scanIntervalHours: number;
   startHour: number;
   durationHours: number;
+  monitorNewArtists: boolean;
   removeUnmonitoredFiles: boolean;
   artistRefreshDays: number;
   albumRefreshDays: number;
@@ -258,6 +259,7 @@ export function parseMonitoringConfigContract(value: unknown): MonitoringConfigC
     scanIntervalHours: expectNumber(record.scanIntervalHours, "monitoring.scanIntervalHours"),
     startHour: expectNumber(record.startHour, "monitoring.startHour"),
     durationHours: expectNumber(record.durationHours, "monitoring.durationHours"),
+    monitorNewArtists: expectBoolean(record.monitorNewArtists, "monitoring.monitorNewArtists"),
     removeUnmonitoredFiles: expectBoolean(record.removeUnmonitoredFiles, "monitoring.removeUnmonitoredFiles"),
     artistRefreshDays: expectNumber(record.artistRefreshDays, "monitoring.artistRefreshDays"),
     albumRefreshDays: expectNumber(record.albumRefreshDays, "monitoring.albumRefreshDays"),
@@ -285,3 +287,5 @@ export function parseMonitoringConfigUpdateResponseContract(value: unknown): Mon
     config: parseMonitoringConfigContract(record.config),
   };
 }
+
+

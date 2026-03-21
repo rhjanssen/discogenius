@@ -75,6 +75,7 @@ export interface MonitoringConfig {
   scan_interval_hours: number;         // How often to re-scan monitored artists (daily, weekly, monthly)
   start_hour: number;                  // When to start monitoring window
   duration_hours: number;              // How long monitoring window lasts
+  monitor_new_artists: boolean;        // Auto-monitor artists discovered during root scans
   remove_unmonitored_files: boolean;   // Remove files for items no longer monitored
   last_check?: string;                 // Timestamp of last successful check
   artist_refresh_days: number;         // Minimum days between artist scans
@@ -177,6 +178,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     scan_interval_hours: 24,
     start_hour: 2,
     duration_hours: 6,
+    monitor_new_artists: true,
     remove_unmonitored_files: true,
     artist_refresh_days: 30,
     album_refresh_days: 120,
@@ -443,3 +445,6 @@ export class Config {
   }
 
 }
+
+
+

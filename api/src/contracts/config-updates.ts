@@ -103,6 +103,7 @@ const MONITORING_UPDATE_KEYS = [
   "scanIntervalHours",
   "startHour",
   "durationHours",
+  "monitorNewArtists",
   "removeUnmonitoredFiles",
   "artistRefreshDays",
   "albumRefreshDays",
@@ -233,3 +234,4 @@ export function parseMonitoringConfigUpdate(
 ): Partial<MonitoringConfigContract> {
   return parsePartialUpdate(value, current, MONITORING_UPDATE_KEYS, parseMonitoringConfigContract, "Monitoring config update");
 }
+

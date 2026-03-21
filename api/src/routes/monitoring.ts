@@ -31,6 +31,7 @@ router.get("/status", (_, res) => {
         scanIntervalHours: status.config.scan_interval_hours,
         startHour: status.config.start_hour,
         durationHours: status.config.duration_hours,
+        monitorNewArtists: status.config.monitor_new_artists,
         removeUnmonitoredFiles: status.config.remove_unmonitored_files,
         artistRefreshDays: status.config.artist_refresh_days,
         albumRefreshDays: status.config.album_refresh_days,
@@ -57,6 +58,7 @@ router.post("/config", (req, res) => {
       scanIntervalHours: currentStatus.config.scan_interval_hours,
       startHour: currentStatus.config.start_hour,
       durationHours: currentStatus.config.duration_hours,
+      monitorNewArtists: currentStatus.config.monitor_new_artists,
       removeUnmonitoredFiles: currentStatus.config.remove_unmonitored_files,
       artistRefreshDays: currentStatus.config.artist_refresh_days,
       albumRefreshDays: currentStatus.config.album_refresh_days,
@@ -71,6 +73,7 @@ router.post("/config", (req, res) => {
     if ("startHour" in validatedUpdates) updates.start_hour = validatedUpdates.startHour;
     if ("durationHours" in validatedUpdates) updates.duration_hours = validatedUpdates.durationHours;
     if ("scanIntervalHours" in validatedUpdates) updates.scan_interval_hours = validatedUpdates.scanIntervalHours;
+    if ("monitorNewArtists" in validatedUpdates) updates.monitor_new_artists = validatedUpdates.monitorNewArtists;
     if ("removeUnmonitoredFiles" in validatedUpdates) updates.remove_unmonitored_files = validatedUpdates.removeUnmonitoredFiles;
     if ("artistRefreshDays" in validatedUpdates) updates.artist_refresh_days = validatedUpdates.artistRefreshDays;
     if ("albumRefreshDays" in validatedUpdates) updates.album_refresh_days = validatedUpdates.albumRefreshDays;
@@ -85,6 +88,7 @@ router.post("/config", (req, res) => {
       scanIntervalHours: config.scan_interval_hours,
       startHour: config.start_hour,
       durationHours: config.duration_hours,
+      monitorNewArtists: config.monitor_new_artists,
       removeUnmonitoredFiles: config.remove_unmonitored_files,
       artistRefreshDays: config.artist_refresh_days,
       albumRefreshDays: config.album_refresh_days,
@@ -233,3 +237,7 @@ router.post("/check-upgrades", async (_, res) => {
 });
 
 export default router;
+
+
+
+

@@ -1,4 +1,5 @@
 import { db } from "../database.js";
+import { shouldRefreshArtistLidarrStyle } from "./refresh-policy.js";
 
 export interface ManagedArtistRow {
   id: number;
@@ -12,25 +13,9 @@ export interface ManagedArtistOptions {
   artistIds?: Array<string | number>;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function isRefreshDue(lastScanned: string | null | undefined, refreshDays: number | undefined): boolean {
-  if (!refreshDays || refreshDays <= 0) return true;
-  if (!lastScanned) return true;
-  const last = new Date(lastScanned).getTime();
-  if (Number.isNaN(last)) return true;
-  return Date.now() - last >= refreshDays * DAY_MS;
-}
-
-export function buildManagedArtistPredicate(
-  alias: string = "a",
-  options: ManagedArtistOptions = {},
-): string {
+export function buildManagedArtistPredicate(alias: string = "a", options: ManagedArtistOptions = {}): string {
   const { includeLibraryFiles = false } = options;
-
-  const clauses = [
-    `${alias}.monitor = 1`,
-  ];
+  const clauses = [ `${alias}.monitor = 1` ];
 
   if (includeLibraryFiles) {
     clauses.push(`EXISTS (
@@ -66,13 +51,9 @@ export function buildArtistCompletionPredicate(alias: string = "a"): string {
 export function countManagedArtists(options: ManagedArtistOptions = {}): number {
   const predicate = buildManagedArtistPredicate("a", options);
   const artistIds = options.artistIds?.map((value) => String(value)).filter(Boolean) ?? [];
-  if (options.artistIds && artistIds.length === 0) {
-    return 0;
-  }
+  if (options.artistIds && artistIds.length === 0) return 0;
 
-  const idClause = artistIds.length > 0
-    ? ` AND a.id IN (${artistIds.map(() => "?").join(",")})`
-    : "";
+  const idClause = artistIds.length > 0 ? ` AND a.id IN (${artistIds.map(() => "?").join(",")})` : "";
   const row = db.prepare(`
     SELECT COUNT(*) AS count
     FROM artists a
@@ -82,26 +63,15 @@ export function countManagedArtists(options: ManagedArtistOptions = {}): number 
   return Number(row?.count || 0);
 }
 
-export function getManagedArtists(options: {
-  includeLibraryFiles?: boolean;
-  orderByLastScanned?: boolean;
-  artistIds?: Array<string | number>;
-} = {}): ManagedArtistRow[] {
+export function getManagedArtists(options: { includeLibraryFiles?: boolean; orderByLastScanned?: boolean; artistIds?: Array<string | number>; } = {}): ManagedArtistRow[] {
   const { includeLibraryFiles = false, orderByLastScanned = false } = options;
   const predicate = buildManagedArtistPredicate("a", { includeLibraryFiles });
   const artistIds = options.artistIds?.map((value) => String(value)).filter(Boolean) ?? [];
 
-  if (options.artistIds && artistIds.length === 0) {
-    return [];
-  }
+  if (options.artistIds && artistIds.length === 0) return [];
 
-  const idClause = artistIds.length > 0
-    ? ` AND a.id IN (${artistIds.map(() => "?").join(",")})`
-    : "";
-
-  const orderBy = orderByLastScanned
-    ? "ORDER BY a.last_scanned IS NULL DESC, a.last_scanned ASC"
-    : "ORDER BY a.name COLLATE NOCASE ASC";
+  const idClause = artistIds.length > 0 ? ` AND a.id IN (${artistIds.map(() => "?").join(",")})` : "";
+  const orderBy = orderByLastScanned ? "ORDER BY a.last_scanned IS NULL DESC, a.last_scanned ASC" : "ORDER BY a.name COLLATE NOCASE ASC";
 
   return db.prepare(`
     SELECT DISTINCT a.id, a.name, a.monitor, a.last_scanned
@@ -111,16 +81,7 @@ export function getManagedArtists(options: {
   `).all(...artistIds) as ManagedArtistRow[];
 }
 
-export function getManagedArtistsDueForRefresh(options: {
-  includeLibraryFiles?: boolean;
-  artistIds?: Array<string | number>;
-  refreshDays?: number;
-} = {}): ManagedArtistRow[] {
-  const artists = getManagedArtists({
-    includeLibraryFiles: options.includeLibraryFiles,
-    orderByLastScanned: true,
-    artistIds: options.artistIds,
-  });
-
-  return artists.filter((artist) => isRefreshDue(artist.last_scanned, options.refreshDays));
+export function getManagedArtistsDueForRefresh(options: { includeLibraryFiles?: boolean; artistIds?: Array<string | number>; refreshDays?: number; } = {}): ManagedArtistRow[] {
+  const artists = getManagedArtists({ includeLibraryFiles: options.includeLibraryFiles, orderByLastScanned: true, artistIds: options.artistIds });
+  return artists.filter((artist) => shouldRefreshArtistLidarrStyle({ artistId: artist.id, lastScanned: artist.last_scanned }));
 }

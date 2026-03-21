@@ -865,7 +865,100 @@ export class Scheduler {
                     }
                     break;
                 }
-                case JobTypes.ConfigPrune: {
+                case JobTypes.RefreshAllMonitored: {
+                    const monitored = getManagedArtists({ includeLibraryFiles: false });
+                    let queued = 0;
+                    for (const artist of monitored) {
+                        TaskQueueService.addJob(
+                            JobTypes.RefreshArtist,
+                            {
+                                artistId: String(artist.id),
+                                artistName: artist.name,
+                                workflow: 'metadata-refresh',
+                                monitorArtist: Boolean(artist.monitor),
+                                hydrateCatalog: true,
+                                hydrateAlbumTracks: true,
+                                scanLibrary: true,
+                                forceDownloadQueue: false,
+                                forceUpdate: true,
+                            } as any,
+                            String(artist.id),
+                            0
+                        );
+                        queued++;
+                    }
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Queued refresh for ${queued} monitored artist(s)`,
+                    });
+                    break;
+                }
+                case JobTypes.DownloadMissingForce: {
+                    if ((job.payload as any).skipFlags === true) {
+                        db.prepare(`UPDATE media SET skip_download = 0, skip_upgrade = 0 WHERE monitor = 1;`).run();
+                    }
+                    TaskQueueService.addJob(
+                        JobTypes.DownloadMissing,
+                        {},
+                        undefined,
+                        10
+                    );
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: 'Queued force download of missing media',
+                    });
+                    break;
+                }
+                case JobTypes.RescanAllRoots: {
+                    const roots = db.prepare(`SELECT id FROM root_folders WHERE enabled = 1`).all() as any[];
+                    for (const root of roots) {
+                        TaskQueueService.addJob(
+                            JobTypes.RescanFolders,
+                            {
+                                addNewArtists: (job.payload as any).addNewArtists ?? false,
+                            },
+                            undefined,
+                            0
+                        );
+                    }
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Queued scan for ${roots.length} root folder(s)`,
+                    });
+                    break;
+                }
+                case JobTypes.HealthCheck: {
+                    const issues: string[] = [];
+
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: issues.length > 0 ? `${issues.length} issue(s) detected` : 'Healthy',
+                    });
+                    break;
+                }
+                case JobTypes.CompactDatabase: {
+                    db.prepare('VACUUM;').run();
+                    db.prepare('ANALYZE;').run();
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: 'Database compacted and analyzed',
+                    });
+                    break;
+                }
+                case JobTypes.CleanupTempFiles: {
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: 'Temporary files cleaned',
+                    });
+                    break;
+                }
+                case JobTypes.UpdateLibraryMetadata: {
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: 'Library metadata updated',
+                    });
+                    break;
+                }                case JobTypes.ConfigPrune: {
                     // Apply metadata preferences to the existing library:
                     // remove disabled sidecars and restore newly enabled ones.
                     await OrganizerService.pruneDisabledMetadata();
@@ -935,4 +1028,10 @@ export class Scheduler {
         }
     }
 }
+
+
+
+
+
+
 

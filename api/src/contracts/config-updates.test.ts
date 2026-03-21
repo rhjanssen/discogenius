@@ -37,6 +37,7 @@ test("config update parsers return only validated partial updates", () => {
     scanIntervalHours: 24,
     startHour: 2,
     durationHours: 6,
+    monitorNewArtists: true,
     removeUnmonitoredFiles: true,
     artistRefreshDays: 30,
     albumRefreshDays: 120,
@@ -106,7 +107,8 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       scanIntervalHours: 24,
       startHour: 2,
       durationHours: 6,
-      removeUnmonitoredFiles: true,
+      monitorNewArtists: true,
+    removeUnmonitoredFiles: true,
       artistRefreshDays: 30,
       albumRefreshDays: 120,
       trackRefreshDays: 240,
@@ -114,3 +116,5 @@ test("config update parsers reject unsupported keys and invalid values", () => {
     });
   }, RequestValidationError);
 });
+
+

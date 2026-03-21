@@ -40,7 +40,7 @@ const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
 const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 25, 1);
 
-type ScheduledTaskKey = "refresh-metadata" | "rescan-folders" | "housekeeping";
+type ScheduledTaskKey = "monitoring-cycle" | "housekeeping" | "health-check" | "compact-database" | "cleanup-temp-files" | "update-library-metadata";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
@@ -187,7 +187,7 @@ export function queueMetadataRefreshPass(options: {
     );
 
     if (jobId !== -1) {
-        markScheduledTaskQueued("refresh-metadata");
+        
     }
 
     return jobId;
@@ -206,6 +206,7 @@ export function queueRescanFoldersPass(options: {
     fullProcessing?: boolean;
     monitoringCycle?: Extract<MonitoringPassWorkflow, "full-cycle" | "root-scan-cycle">;
     artistIds?: string[];
+    monitorArtist?: boolean;
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const jobId = TaskQueueService.addJob(
@@ -213,7 +214,7 @@ export function queueRescanFoldersPass(options: {
         {
             addNewArtists: true,
             artistIds: normalizeArtistIds(options.artistIds),
-            monitorArtist: true,
+            monitorArtist: options.monitorArtist ?? true,
             fullProcessing: options.fullProcessing ?? false,
             monitoringCycle,
         },
@@ -223,7 +224,7 @@ export function queueRescanFoldersPass(options: {
     );
 
     if (jobId !== -1) {
-        markScheduledTaskQueued("rescan-folders");
+        
     }
 
     return jobId;
@@ -274,6 +275,101 @@ export function queueDownloadMissingPass(options: {
     );
 }
 
+/**
+ * Queue all monitoring phases upfront with staggered priorities.
+ * Instead of chaining sequentially (metadata → rescan → curation → download),
+ * this allows them to run in parallel within the worker pool:
+ * - Metadata refresh gets priority 100 (runs first slot)
+ * - Rescan gets priority 50 (can start while metadata still running)
+ * - Curation gets priority 25 (can start while rescan still running)
+ * - Download gets priority 10 (lowest priority, but can run concurrently)
+ * 
+ * This matches Lidarr's approach: queue all work at once, let scheduler parallelization handle it.
+ */
+export function queueMonitoringPhasesConcurrent(options: {
+    trigger?: number;
+    monitoringCycle?: MonitoringPassWorkflow;
+    includeRootScan?: boolean;
+    artistIds?: string[];
+    monitorArtist?: boolean;
+} = {}) {
+    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const trigger = options.trigger ?? 0;
+    const artistIds = normalizeArtistIds(options.artistIds) ?? [];
+    
+    // Priority ordering: metadata > rescan > curation > download
+    // Higher priority starts first, but can run concurrently with lower priority work
+    const results = {
+        metadataJobId: -1,
+        rescanJobId: -1,
+        curationJobId: -1,
+        downloadJobId: -1,
+    };
+    
+    // Metadata refresh: highest priority, starts first
+    // addJob signature: (type, payload, refId, priority, trigger)
+    results.metadataJobId = TaskQueueService.addJob(
+        JobTypes.RefreshMetadata,
+        {
+            title: "Refreshing metadata",
+            description: "Metadata refresh phase (interleaved with other phases)",
+            artistIds: artistIds.length > 0 ? artistIds : undefined,
+            expectedArtists: 0,
+            monitoringCycle,
+        },
+        "metadata-refresh-phase",
+        100, // Priority 100
+        trigger,
+    );
+    
+    // Rescan folders: medium-high priority, can start after metadata begins
+    if (monitoringCycle === "full-cycle" || monitoringCycle === "root-scan-cycle") {
+        results.rescanJobId = TaskQueueService.addJob(
+            JobTypes.RescanFolders,
+            {
+                addNewArtists: true,
+                artistIds: artistIds.length > 0 ? artistIds : undefined,
+                monitorArtist: options.monitorArtist ?? true,
+            fullProcessing: monitoringCycle === "full-cycle",
+                monitoringCycle,
+            },
+            "rescan-folders-phase",
+            50, // Priority 50
+            trigger,
+        );
+    }
+    
+    // Curation: medium priority, interleaves with refresh and rescan
+    results.curationJobId = TaskQueueService.addJob(
+        JobTypes.ApplyCuration,
+        {
+            title: "Applying curation",
+            description: "Curation phase (interleaved with other phases)",
+            artistIds: artistIds.length > 0 ? artistIds : undefined,
+            expectedArtists: 0,
+            monitoringCycle,
+        },
+        "apply-curation-phase",
+        25, // Priority 25
+        trigger,
+    );
+    
+    // Download missing: lowest priority within monitoring cycle
+    results.downloadJobId = TaskQueueService.addJob(
+        JobTypes.DownloadMissing,
+        {
+            artistIds: artistIds.length > 0 ? artistIds : undefined,
+            title: "Queueing missing downloads",
+            description: "Download phase (interleaved with other phases)",
+            monitoringCycle,
+        },
+        "download-missing-phase",
+        10, // Priority 10
+        trigger,
+    );
+    
+    return results;
+}
 export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
     const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
     if (!monitoringCycle) {
@@ -353,15 +449,8 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
 
     return [
         {
-            key: "refresh-metadata",
-            name: "Refresh Metadata",
-            taskName: JobTypes.RefreshMetadata,
-            intervalMinutes: refreshIntervalMinutes,
-            enabled: Boolean(config.enable_active_monitoring),
-        },
-        {
-            key: "rescan-folders",
-            name: "Rescan Folders",
+            key: "monitoring-cycle",
+            name: "Monitoring Cycle",
             taskName: JobTypes.RescanFolders,
             intervalMinutes: refreshIntervalMinutes,
             enabled: Boolean(config.enable_active_monitoring),
@@ -375,7 +464,6 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
         },
     ];
 }
-
 function syncScheduledTasks() {
     const definitions = getScheduledTaskDefinitions();
 
@@ -415,7 +503,7 @@ export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
 
         const monitoringConfig = getMonitoringStatus().config;
         const nextRunAt = definition.enabled
-            ? (definition.key === "refresh-metadata" || definition.key === "rescan-folders"
+            ? (definition.key === "monitoring-cycle"
                 ? getNextMonitoringWindowAtOrAfter(nextDueAt, monitoringConfig.start_hour, monitoringConfig.duration_hours)
                 : new Date(nextDueAt).toISOString())
             : null;
@@ -446,7 +534,7 @@ function queueDueScheduledTasks() {
             continue;
         }
 
-        if (definition.key === "refresh-metadata") {
+        if (definition.key === "monitoring-cycle") {
             const monitoringConfig = getMonitoringStatus().config;
             if (!isWithinTimeWindow(monitoringConfig.start_hour, monitoringConfig.duration_hours)) {
                 continue;
@@ -458,36 +546,18 @@ function queueDueScheduledTasks() {
 
             isChecking = true;
             saveMonitoringProgress(0, true);
-            const jobId = queueMetadataRefreshPass({ trigger: 2, dueOnly: true });
-            if (jobId !== -1) {
-                markScheduledTaskQueued(definition.key);
-                updateConfig("monitoring", { last_check: new Date().toISOString() });
-                console.log("🔍 Scheduled metadata refresh queued");
-            }
-            isChecking = false;
-            saveMonitoringProgress(0, false);
-            continue;
-        }
-
-        if (definition.key === "rescan-folders") {
-            const monitoringConfig = getMonitoringStatus().config;
-            if (!isWithinTimeWindow(monitoringConfig.start_hour, monitoringConfig.duration_hours)) {
-                continue;
+            try {
+                const jobId = queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+                if (jobId !== -1) {
+                    markScheduledTaskQueued(definition.key);
+                    updateConfig("monitoring", { last_check: new Date().toISOString() });
+                    console.log("🔄 Scheduled monitoring cycle queued");
+                }
+            } finally {
+                isChecking = false;
+                saveMonitoringProgress(0, false);
             }
 
-            if (isChecking || hasActiveArtistWorkflow()) {
-                continue;
-            }
-
-            const jobId = queueRescanFoldersPass({
-                trigger: 2,
-                fullProcessing: true,
-                monitoringCycle: "root-scan-cycle",
-            });
-            if (jobId !== -1) {
-                markScheduledTaskQueued(definition.key);
-                console.log("📂 Scheduled root folder scan queued");
-            }
             continue;
         }
 
@@ -504,7 +574,6 @@ function queueDueScheduledTasks() {
         }
     }
 }
-
 export function startMonitoring() {
     if (isMonitoring) {
         console.log("⚠️  Monitoring already running");
@@ -702,3 +771,103 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
     console.log(`✅ Download queue complete: ${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos`);
     return { albums: totalAlbums, tracks: totalTracks, videos: totalVideos };
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ============================================================================
+// Phase 1: Manual Command Queue Functions
+// ============================================================================
+
+export function queueRefreshAllMonitored(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.RefreshAllMonitored,
+        {},
+        'refresh-all-monitored',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
+    const skipFlags = true;  // Clear skip_* flags before queueing DownloadMissing
+    return TaskQueueService.addJob(
+        JobTypes.DownloadMissingForce,
+        { skipFlags },
+        'download-missing-force',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueRescanAllRoots(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.RescanAllRoots,
+        { addNewArtists: false },
+        'rescan-all-roots',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueHealthCheck(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.HealthCheck,
+        {},
+        'health-check',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueCompactDatabase(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CompactDatabase,
+        {},
+        'compact-database',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueCleanupTempFiles(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CleanupTempFiles,
+        {},
+        'cleanup-temp-files',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.UpdateLibraryMetadata,
+        {},
+        'update-library-metadata',
+        0,
+        options.trigger ?? 1,
+    );
+}
+export function queueConfigPrune(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.ConfigPrune,
+        {},
+        'config-prune',
+        0,
+        options.trigger ?? 1,
+    );
+}
+

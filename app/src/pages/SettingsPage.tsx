@@ -64,17 +64,24 @@ type NamingToken = { token: string; example: string };
 
 type NamingContext = {
     artistName: string;
+    artistMbId?: string | null;
     albumTitle?: string | null;
+    albumType?: string | null;
+    albumMbId?: string | null;
     albumVersion?: string | null;
     albumFullTitle?: string | null;
     releaseYear?: string | null;
     trackTitle?: string | null;
+    trackArtistName?: string | null;
+    trackArtistMbId?: string | null;
     trackVersion?: string | null;
     trackFullTitle?: string | null;
     videoTitle?: string | null;
+    explicit?: boolean | null;
     artistId?: string | null;
     albumId?: string | null;
     trackId?: string | null;
+    videoId?: string | null;
     trackNumber?: number | null;
     volumeNumber?: number | null;
 };
@@ -90,6 +97,14 @@ const NAMING_HELP: Record<
         description: "Template for the artist folder name.",
         tokens: [
             { token: "{artistName}", example: "Daft Punk" },
+            { token: "{Artist Name}", example: "Daft Punk" },
+            { token: "{artist_name}", example: "Daft Punk" },
+            { token: "{artist-name}", example: "Daft Punk" },
+            { token: "{artist.clean_name}", example: "Daft Punk" },
+            { token: "{artistNameThe}", example: "Daft Punk" },
+            { token: "{artistCleanNameThe}", example: "Daft Punk" },
+            { token: "{artistNameFirstCharacter}", example: "D" },
+            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
             { token: "{artistId}", example: "8847" },
         ],
     },
@@ -97,17 +112,40 @@ const NAMING_HELP: Record<
         title: "Single-volume Album Track Path",
         description: "Relative path (inside the artist folder) for tracks in single-volume albums. Include album folder + track filename (without extension).",
         tokens: [
+            { token: "{artistName}", example: "Daft Punk" },
+            { token: "{artistCleanName}", example: "Daft Punk" },
+            { token: "{artistNameThe}", example: "Daft Punk" },
+            { token: "{artistCleanNameThe}", example: "Daft Punk" },
+            { token: "{artistNameFirstCharacter}", example: "D" },
+            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
+            { token: "{artistId}", example: "8847" },
             { token: "{albumTitle}", example: "Discovery" },
+            { token: "{Album Title}", example: "Discovery" },
+            { token: "{albumCleanTitle}", example: "Discovery" },
+            { token: "{albumTitleThe}", example: "Discovery" },
+            { token: "{albumCleanTitleThe}", example: "Discovery" },
+            { token: "{albumType}", example: "ALBUM" },
+            { token: "{albumMbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
             { token: "{albumFullTitle}", example: "Discovery (Deluxe)" },
             { token: "{releaseYear}", example: "2001" },
             { token: "{albumId}", example: "1550545" },
             { token: "{trackTitle}", example: "One More Time" },
+            { token: "{trackCleanTitle}", example: "One More Time" },
             { token: "{trackFullTitle}", example: "One More Time (Radio Edit)" },
+            { token: "{trackArtistName}", example: "Daft Punk" },
+            { token: "{trackArtistCleanName}", example: "Daft Punk" },
+            { token: "{trackArtistNameThe}", example: "Daft Punk" },
+            { token: "{trackArtistCleanNameThe}", example: "Daft Punk" },
+            { token: "{trackArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
             { token: "{trackId}", example: "1550546" },
             { token: "{trackNumber}", example: "1" },
             { token: "{trackNumber0}", example: "1" },
             { token: "{trackNumber00}", example: "01" },
             { token: "{trackNumber000}", example: "001" },
+            { token: "{track:00}", example: "01" },
+            { token: "{track:000}", example: "001" },
+            { token: "{medium:00}", example: "01" },
+            { token: "{medium:000}", example: "001" },
             { token: "{explicit}", example: "(Explicit) or empty" },
             { token: "{E}", example: "[E] or empty" },
         ],
@@ -116,21 +154,43 @@ const NAMING_HELP: Record<
         title: "Multi-volume Album Track Path",
         description: "Relative path (inside the artist folder) for tracks in multi-volume albums. Include album folder + optional disc folder + track filename (without extension).",
         tokens: [
+            { token: "{artistName}", example: "Daft Punk" },
+            { token: "{artistCleanName}", example: "Daft Punk" },
+            { token: "{artistNameThe}", example: "Daft Punk" },
+            { token: "{artistCleanNameThe}", example: "Daft Punk" },
+            { token: "{artistNameFirstCharacter}", example: "D" },
+            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
+            { token: "{artistId}", example: "8847" },
             { token: "{albumTitle}", example: "Discovery" },
+            { token: "{albumCleanTitle}", example: "Discovery" },
+            { token: "{albumTitleThe}", example: "Discovery" },
+            { token: "{albumCleanTitleThe}", example: "Discovery" },
+            { token: "{albumType}", example: "ALBUM" },
+            { token: "{albumMbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
             { token: "{albumFullTitle}", example: "Discovery (Deluxe)" },
             { token: "{releaseYear}", example: "2001" },
             { token: "{albumId}", example: "1550545" },
             { token: "{trackTitle}", example: "One More Time" },
+            { token: "{trackCleanTitle}", example: "One More Time" },
             { token: "{trackFullTitle}", example: "One More Time (Radio Edit)" },
+            { token: "{trackArtistName}", example: "Daft Punk" },
+            { token: "{trackArtistCleanName}", example: "Daft Punk" },
+            { token: "{trackArtistNameThe}", example: "Daft Punk" },
+            { token: "{trackArtistCleanNameThe}", example: "Daft Punk" },
+            { token: "{trackArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
             { token: "{trackId}", example: "1550546" },
             { token: "{trackNumber}", example: "1" },
             { token: "{trackNumber0}", example: "1" },
             { token: "{trackNumber00}", example: "01" },
             { token: "{trackNumber000}", example: "001" },
+            { token: "{track:00}", example: "01" },
+            { token: "{track:000}", example: "001" },
             { token: "{volumeNumber}", example: "2" },
             { token: "{volumeNumber0}", example: "2" },
             { token: "{volumeNumber00}", example: "02" },
             { token: "{volumeNumber000}", example: "002" },
+            { token: "{medium:00}", example: "01" },
+            { token: "{medium:000}", example: "001" },
             { token: "{explicit}", example: "(Explicit) or empty" },
             { token: "{E}", example: "[E] or empty" },
         ],
@@ -140,9 +200,13 @@ const NAMING_HELP: Record<
         description: "Template for the video filename (without extension).",
         tokens: [
             { token: "{artistName}", example: "Daft Punk" },
+            { token: "{artistCleanName}", example: "Daft Punk" },
+            { token: "{artistNameThe}", example: "Daft Punk" },
+            { token: "{artistNameFirstCharacter}", example: "D" },
+            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
             { token: "{artistId}", example: "8847" },
-            { token: "{videoTitle}", example: "One More Time" },
-            { token: "{trackId}", example: "44187598" },
+            { token: "{videoTitle}", example: "Around the World" },
+            { token: "{trackId}", example: "1550546" },
         ],
     },
 };
@@ -150,34 +214,48 @@ const NAMING_HELP: Record<
 const SAMPLE_NAMING: Required<Pick<
     NamingContext,
     | "artistName"
+    | "artistMbId"
     | "albumTitle"
+    | "albumType"
+    | "albumMbId"
     | "albumVersion"
     | "albumFullTitle"
     | "releaseYear"
     | "trackTitle"
+    | "trackArtistName"
+    | "trackArtistMbId"
     | "trackVersion"
     | "trackFullTitle"
     | "videoTitle"
+    | "explicit"
     | "trackNumber"
     | "volumeNumber"
     | "artistId"
     | "albumId"
     | "trackId"
+    | "videoId"
 >> = {
     artistName: "Daft Punk",
+    artistMbId: "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
     albumTitle: "Discovery",
+    albumType: "ALBUM",
+    albumMbId: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53",
     albumVersion: "Deluxe",
     albumFullTitle: "Discovery (Deluxe)",
     releaseYear: "2001",
     trackTitle: "One More Time",
+    trackArtistName: "Daft Punk",
+    trackArtistMbId: "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
     trackVersion: "Radio Edit",
     trackFullTitle: "One More Time (Radio Edit)",
-    videoTitle: "One More Time",
+    videoTitle: "Around the World",
+    explicit: true,
     trackNumber: 1,
-    volumeNumber: 2,
+    volumeNumber: 1,
     artistId: "8847",
     albumId: "1550545",
     trackId: "1550546",
+    videoId: "44187439",
 };
 
 function sanitizeNamingSegment(input: string): string {
@@ -196,56 +274,172 @@ function cleanupRenderedNaming(input: string): string {
         .trim();
 }
 
-function renderNamingTemplate(template: string, context: NamingContext): string {
+function toCleanNamingText(input: string): string {
+    return (input || "")
+        .replace(/[^a-zA-Z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function toNameThe(input: string): string {
+    const value = (input || "").trim();
+    if (!value) return "";
+    const match = /^the\s+(.+)$/i.exec(value);
+    if (!match) return value;
+    const rest = match[1].trim();
+    return rest ? `${rest}, The` : value;
+}
+
+function normalizeNamingTokenName(input: string): string {
+    return (input || "").toLowerCase().replace(/[\s._-]+/g, "").trim();
+}
+
+function applyNamingNumberFormat(value: number, format?: string): string {
+    const normalizedFormat = (format || "").trim();
+    if (!normalizedFormat) {
+        return String(value);
+    }
+
+    if (/^0+$/.test(normalizedFormat)) {
+        return String(value).padStart(normalizedFormat.length, "0");
+    }
+
+    const width = Number.parseInt(normalizedFormat, 10);
+    if (Number.isFinite(width) && width > 0) {
+        return String(value).padStart(width, "0");
+    }
+
+    return String(value);
+}
+
+function parseLegacyPaddedNamingToken(normalizedName: string, base: string): number | null {
+    const match = new RegExp(`^${base}(0+)$`).exec(normalizedName);
+    if (!match) return null;
+    return match[1].length;
+}
+
+function resolveNamingToken(rawTokenBody: string, context: NamingContext): string {
+    const separator = rawTokenBody.indexOf(":");
+    const tokenName = separator >= 0 ? rawTokenBody.slice(0, separator) : rawTokenBody;
+    const customFormat = separator >= 0 ? rawTokenBody.slice(separator + 1).trim() : "";
+    const normalizedName = normalizeNamingTokenName(tokenName);
+
     const trackNumber = Number(context.trackNumber || 0);
     const volumeNumber = Number(context.volumeNumber || 1);
 
-    const albumTitle = context.albumTitle || "";
-    const albumVersion = context.albumVersion || "";
+    const artistName = context.artistName || "Unknown Artist";
+    const artistMbId = context.artistMbId || "";
+    const artistNameThe = toNameThe(artistName);
+    const artistNameFirstCharacter = artistName.trim().charAt(0) || "";
+
+    const albumTitle = context.albumTitle || "Unknown Album";
+    const albumVersion = context.albumVersion ?? "";
     const albumFullTitle = context.albumFullTitle
         || (albumVersion && !albumTitle.toLowerCase().includes(albumVersion.toLowerCase())
             ? `${albumTitle} (${albumVersion})`
             : albumTitle);
 
-    const trackTitle = context.trackTitle || "";
-    const trackVersion = context.trackVersion || "";
+    const trackTitle = context.trackTitle || "Unknown Track";
+    const trackVersion = context.trackVersion ?? "";
+    const trackArtistName = context.trackArtistName || artistName;
+    const trackArtistMbId = context.trackArtistMbId || artistMbId;
     const trackFullTitle = context.trackFullTitle
         || (trackVersion && !trackTitle.toLowerCase().includes(trackVersion.toLowerCase())
             ? `${trackTitle} (${trackVersion})`
             : trackTitle);
 
-    const replacements: Record<string, string> = {
-        "{artistName}": sanitizeNamingSegment(context.artistName || "Unknown Artist"),
-        "{artistId}": sanitizeNamingSegment(context.artistId || "UnknownID"),
-
-        "{albumTitle}": sanitizeNamingSegment(albumTitle),
-        "{albumFullTitle}": sanitizeNamingSegment(albumFullTitle),
-        "{albumId}": sanitizeNamingSegment(context.albumId || "UnknownID"),
-        "{releaseYear}": sanitizeNamingSegment((context.releaseYear || "").toString()),
-
-        "{trackTitle}": sanitizeNamingSegment(trackTitle),
-        "{trackFullTitle}": sanitizeNamingSegment(trackFullTitle),
-        "{trackId}": sanitizeNamingSegment(context.trackId || "UnknownID"),
-
-        "{videoTitle}": sanitizeNamingSegment(context.videoTitle || "Unknown Video"),
-
-        "{trackNumber}": String(trackNumber),
-        "{trackNumber0}": String(trackNumber).padStart(1, "0"),
-        "{trackNumber00}": String(trackNumber).padStart(2, "0"),
-        "{trackNumber000}": String(trackNumber).padStart(3, "0"),
-
-        "{volumeNumber}": String(volumeNumber),
-        "{volumeNumber0}": String(volumeNumber).padStart(1, "0"),
-        "{volumeNumber00}": String(volumeNumber).padStart(2, "0"),
-        "{volumeNumber000}": String(volumeNumber).padStart(3, "0"),
-    };
-
-    let rendered = template || "";
-    for (const [token, value] of Object.entries(replacements)) {
-        rendered = rendered.split(token).join(value);
+    const trackLegacyPad = parseLegacyPaddedNamingToken(normalizedName, "tracknumber");
+    if (trackLegacyPad !== null) {
+        return applyNamingNumberFormat(trackNumber, "0".repeat(trackLegacyPad));
     }
 
-    return cleanupRenderedNaming(rendered);
+    const volumeLegacyPad = parseLegacyPaddedNamingToken(normalizedName, "volumenumber");
+    if (volumeLegacyPad !== null) {
+        return applyNamingNumberFormat(volumeNumber, "0".repeat(volumeLegacyPad));
+    }
+
+    switch (normalizedName) {
+        case "artistname":
+            return sanitizeNamingSegment(artistName);
+        case "artistcleanname":
+            return sanitizeNamingSegment(toCleanNamingText(artistName));
+        case "artistnamethe":
+            return sanitizeNamingSegment(artistNameThe);
+        case "artistcleannamethe":
+            return sanitizeNamingSegment(toCleanNamingText(artistNameThe));
+        case "artistnamefirstcharacter":
+            return sanitizeNamingSegment(artistNameFirstCharacter);
+        case "artistmbid":
+            return sanitizeNamingSegment(artistMbId);
+        case "artistid":
+            return sanitizeNamingSegment(context.artistId || "");
+
+        case "albumtitle":
+            return sanitizeNamingSegment(albumTitle);
+        case "albumcleantitle":
+            return sanitizeNamingSegment(toCleanNamingText(albumTitle));
+        case "albumtitlethe":
+            return sanitizeNamingSegment(toNameThe(albumTitle));
+        case "albumcleantitlethe":
+            return sanitizeNamingSegment(toCleanNamingText(toNameThe(albumTitle)));
+        case "albumtype":
+            return sanitizeNamingSegment(context.albumType || "");
+        case "albummbid":
+            return sanitizeNamingSegment(context.albumMbId || "");
+        case "albumid":
+            return sanitizeNamingSegment(context.albumId || "");
+        case "albumfulltitle":
+            return sanitizeNamingSegment(albumFullTitle);
+        case "releaseyear":
+            return sanitizeNamingSegment((context.releaseYear || "").toString());
+
+        case "tracktitle":
+            return sanitizeNamingSegment(trackTitle);
+        case "trackcleantitle":
+            return sanitizeNamingSegment(toCleanNamingText(trackTitle));
+        case "trackfulltitle":
+            return sanitizeNamingSegment(trackFullTitle);
+        case "trackartistname":
+            return sanitizeNamingSegment(trackArtistName);
+        case "trackartistcleanname":
+            return sanitizeNamingSegment(toCleanNamingText(trackArtistName));
+        case "trackartistnamethe":
+            return sanitizeNamingSegment(toNameThe(trackArtistName));
+        case "trackartistcleannamethe":
+            return sanitizeNamingSegment(toCleanNamingText(toNameThe(trackArtistName)));
+        case "trackartistmbid":
+            return sanitizeNamingSegment(trackArtistMbId);
+        case "trackid":
+            return sanitizeNamingSegment(context.trackId || "");
+
+        case "videotitle":
+            return sanitizeNamingSegment(context.videoTitle || "Unknown Video");
+
+        case "tracknumber":
+        case "track":
+            return applyNamingNumberFormat(trackNumber, customFormat);
+        case "volumenumber":
+        case "medium":
+            return applyNamingNumberFormat(volumeNumber, customFormat);
+
+        case "explicit":
+            return context.explicit ? "(Explicit)" : "";
+        case "e":
+            return context.explicit ? "[E]" : "";
+
+        case "albumversion":
+        case "trackversion":
+            return "";
+
+        default:
+            return "";
+    }
+}
+
+function renderNamingTemplate(template: string, context: NamingContext): string {
+    return cleanupRenderedNaming(
+        (template || "").replace(/\{([^{}]+)\}/g, (_token, body: string) => resolveNamingToken(body, context)),
+    );
 }
 
 function renderNamingFileStem(template: string, context: NamingContext): string {
@@ -260,7 +454,7 @@ function renderNamingRelativePath(template: string, context: NamingContext): str
         .map((s) => sanitizeNamingSegment(s))
         .filter(Boolean)
         .filter((s) => s !== "." && s !== "..");
-    return segments.join("/");
+    return segments.length > 0 ? segments.join("/") : "Unknown";
 }
 
 // Section layout helpers
@@ -322,18 +516,24 @@ const useStyles = makeStyles({
     },
     sectionsContainer: {
         width: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalL,
+        columnGap: tokens.spacingHorizontalL,
+        columnWidth: '400px',
+        columnFill: 'balance',
         [MEDIA.desktop]: {
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: tokens.spacingHorizontalL,
+            columnGap: tokens.spacingHorizontalXL,
+        },
+        [MEDIA.mobile]: {
+            columnCount: 1,
+            columnGap: tokens.spacingHorizontalM,
         },
     },
     section: {
         display: 'flex',
         width: '100%',
+        breakInside: 'avoid',
+        WebkitColumnBreakInside: 'avoid',
+        pageBreakInside: 'avoid',
+        marginBottom: tokens.spacingVerticalL,
         flexDirection: 'column',
         gap: tokens.spacingVerticalM,
     },
@@ -729,7 +929,6 @@ const SettingsPage = () => {
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importing, setImporting] = useState(false);
     const [scanningRoots, setScanningRoots] = useState(false);
-    const [monitorNewArtists, setMonitorNewArtists] = useState(true);
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
@@ -892,6 +1091,7 @@ const SettingsPage = () => {
                 scanIntervalHours: 24,
                 startHour: 23,
                 durationHours: 4,
+                monitorNewArtists: true,
                 removeUnmonitoredFiles: false,
                 artistRefreshDays: 30,
                 albumRefreshDays: 60,
@@ -1041,7 +1241,7 @@ const SettingsPage = () => {
     const handleScanRootFolders = async () => {
         setScanningRoots(true);
         try {
-            const result: any = await api.scanRootFolders({ monitorArtist: monitorNewArtists });
+            const result: any = await api.scanRootFolders({ monitorArtist: monitoringConfig?.monitorNewArtists ?? true });
             toast({
                 title: "Rescan Folders Queued",
                 description: result?.message || "Scanning library roots for new artist folders...",
@@ -1179,38 +1379,19 @@ const SettingsPage = () => {
 
     const namingExamples = namingSettings ? (() => {
         const artistFolder = renderNamingRelativePath(namingSettings.artist_folder, {
-            artistName: SAMPLE_NAMING.artistName,
+            ...SAMPLE_NAMING,
         });
 
         const trackPathSingle = renderNamingRelativePath(namingSettings.album_track_path_single, {
-            artistName: SAMPLE_NAMING.artistName,
-            albumTitle: SAMPLE_NAMING.albumTitle,
-            albumVersion: SAMPLE_NAMING.albumVersion,
-            albumFullTitle: SAMPLE_NAMING.albumFullTitle,
-            releaseYear: SAMPLE_NAMING.releaseYear,
-            trackTitle: SAMPLE_NAMING.trackTitle,
-            trackVersion: SAMPLE_NAMING.trackVersion,
-            trackFullTitle: SAMPLE_NAMING.trackFullTitle,
-            trackNumber: SAMPLE_NAMING.trackNumber,
-            volumeNumber: SAMPLE_NAMING.volumeNumber,
+            ...SAMPLE_NAMING,
         });
 
         const trackPathMulti = renderNamingRelativePath(namingSettings.album_track_path_multi, {
-            artistName: SAMPLE_NAMING.artistName,
-            albumTitle: SAMPLE_NAMING.albumTitle,
-            albumVersion: SAMPLE_NAMING.albumVersion,
-            albumFullTitle: SAMPLE_NAMING.albumFullTitle,
-            releaseYear: SAMPLE_NAMING.releaseYear,
-            trackTitle: SAMPLE_NAMING.trackTitle,
-            trackVersion: SAMPLE_NAMING.trackVersion,
-            trackFullTitle: SAMPLE_NAMING.trackFullTitle,
-            trackNumber: SAMPLE_NAMING.trackNumber,
-            volumeNumber: SAMPLE_NAMING.volumeNumber,
+            ...SAMPLE_NAMING,
         });
 
         const videoFile = renderNamingFileStem(namingSettings.video_file, {
-            artistName: SAMPLE_NAMING.artistName,
-            videoTitle: SAMPLE_NAMING.videoTitle,
+            ...SAMPLE_NAMING,
         });
 
         const fullSingleTrackPath = [artistFolder, `${trackPathSingle}.flac`].filter(Boolean).join("/");
@@ -1322,69 +1503,71 @@ const SettingsPage = () => {
                 </Text>
             </div>
 
-            {accountSettings && (
-                <SettingsSection
-                    id="account"
-                    title="Account"
-                    description="Tidal connection and import actions."
-                    className={styles.sectionFullWidth}
-                >
-                    <div className={styles.card}>
-                        <div className={styles.profileRow}>
-                            <div className={styles.profileInfo}>
-                                <Avatar
-                                    name={accountSettings.fullName || accountSettings.username}
-                                    image={accountSettings.picture ? { src: accountSettings.picture } : undefined}
-                                    size={64}
-                                />
-                                <div className={styles.profileDetails}>
-                                    <Text weight="semibold" size={400}>
-                                        {accountSettings.firstName && accountSettings.lastName
-                                            ? `${accountSettings.firstName} ${accountSettings.lastName}`
-                                            : accountSettings.fullName || accountSettings.username}
-                                    </Text>
-                                    {accountSettings.email && (
-                                        <Caption1 className={styles.mutedText}>
-                                            {accountSettings.email}
-                                        </Caption1>
-                                    )}
+            <div className={styles.sectionsContainer} data-testid="settings-sections">
+
+
+                {accountSettings && (
+                    <SettingsSection
+                        id="account"
+                        title="Account"
+                        description="Tidal connection and import actions."
+                        className={styles.section}
+                    >
+                        <div className={styles.card}>
+                            <div className={styles.profileRow}>
+                                <div className={styles.profileInfo}>
+                                    <Avatar
+                                        name={accountSettings.fullName || accountSettings.username}
+                                        image={accountSettings.picture ? { src: accountSettings.picture } : undefined}
+                                        size={64}
+                                    />
+                                    <div className={styles.profileDetails}>
+                                        <Text weight="semibold" size={400}>
+                                            {accountSettings.firstName && accountSettings.lastName
+                                                ? `${accountSettings.firstName} ${accountSettings.lastName}`
+                                                : accountSettings.fullName || accountSettings.username}
+                                        </Text>
+                                        {accountSettings.email && (
+                                            <Caption1 className={styles.mutedText}>
+                                                {accountSettings.email}
+                                            </Caption1>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className={styles.profileActions}>
+                                    <Tooltip content="Disconnect your Tidal account" relationship="label">
+                                        <Button
+                                            appearance="outline"
+                                            className={styles.signOutButton}
+                                            icon={<DoorArrowLeft24Regular />}
+                                            onClick={handleLogout}
+                                        >
+                                            Sign Out
+                                        </Button>
+                                    </Tooltip>
                                 </div>
                             </div>
-                            <div className={styles.profileActions}>
-                                <Tooltip content="Disconnect your Tidal account" relationship="label">
-                                    <Button
-                                        appearance="outline"
-                                        className={styles.signOutButton}
-                                        icon={<DoorArrowLeft24Regular />}
-                                        onClick={handleLogout}
-                                    >
-                                        Sign Out
-                                    </Button>
-                                </Tooltip>
+                            <div className={styles.row}>
+                                <div className={styles.rowContent}>
+                                    <Text weight="semibold">Import Followed Artists</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        Add all artists you follow on Tidal to your library
+                                    </Text>
+                                </div>
+                                <Button
+                                    appearance="outline"
+                                    icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
+                                    onClick={handleImportFollowed}
+                                    disabled={importing}
+                                    className={styles.inlineActionButton}
+                                >
+                                    {importing ? "Importing..." : "Import"}
+                                </Button>
                             </div>
                         </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Import Followed Artists</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Add all artists you follow on Tidal to your library
-                                </Text>
-                            </div>
-                            <Button
-                                appearance="outline"
-                                icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
-                                onClick={handleImportFollowed}
-                                disabled={importing}
-                                className={styles.inlineActionButton}
-                            >
-                                {importing ? "Importing..." : "Import"}
-                            </Button>
-                        </div>
-                    </div>
-                </SettingsSection>
-            )}
+                    </SettingsSection>
+                )}
 
-            <div className={styles.sectionsContainer} data-testid="settings-sections">
                 {/* Audio Quality */}
                 <SettingsSection
                     id="audio-quality"
@@ -1420,7 +1603,6 @@ const SettingsPage = () => {
                         })}
                     </div>
                 </SettingsSection>
-
                 {/* Video Quality */}
                 <SettingsSection
                     id="video-quality"
@@ -1534,8 +1716,8 @@ const SettingsPage = () => {
                         {renderToggleRow({
                             title: "Monitor Discovered Artists",
                             description: "Auto-monitor artists found during a folder rescan and download their full discography",
-                            checked: monitorNewArtists,
-                            onChange: (checked) => setMonitorNewArtists(checked),
+                            checked: monitoringConfig?.monitorNewArtists ?? true,
+                            onChange: (checked) => updateMonitoring({ monitorNewArtists: checked }),
                         })}
                         {renderToggleRow({
                             title: "Delete Unmonitored Files",
@@ -1795,6 +1977,42 @@ const SettingsPage = () => {
                         })}
 
                         {renderToggleRow({
+                            title: "Embed Lyrics",
+                            description: "Write lyrics into supported audio files",
+                            checked: qualitySettings?.embed_lyrics === true,
+                            onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
+                        })}
+
+                        {renderToggleRow({
+                            title: "Save Lyrics",
+                            description: "Save lyrics as a sidecar .txt / .lrc file next to the track",
+                            checked: metadataSettings?.save_lyrics === true,
+                            onChange: (checked) => updateMetadataSettings({ save_lyrics: checked }),
+                        })}
+
+                        {(qualitySettings?.embed_lyrics === true || metadataSettings?.save_lyrics === true) && (
+                            <RadioGroup
+                                value={qualitySettings?.embed_synced_lyrics === true ? 'synced' : 'plain'}
+                                onChange={(_, data) => updateQualitySettings({ embed_synced_lyrics: data.value === 'synced' })}
+                            >
+                                <label className={styles.qualityOption} htmlFor="lyrics-plain">
+                                    <Radio value="plain" id="lyrics-plain" />
+                                    <div className={styles.qualityContent}>
+                                        <Text weight="semibold">Plain</Text>
+                                        <Text size={200} className={styles.mutedText}>Unsynchronised text (embedded as-is, saved as .txt)</Text>
+                                    </div>
+                                </label>
+                                <label className={styles.qualityOption} htmlFor="lyrics-synced">
+                                    <Radio value="synced" id="lyrics-synced" />
+                                    <div className={styles.qualityContent}>
+                                        <Text weight="semibold">Synced</Text>
+                                        <Text size={200} className={styles.mutedText}>Time-stamped when TIDAL provides them, plain as fallback (saved as .lrc)</Text>
+                                    </div>
+                                </label>
+                            </RadioGroup>
+                        )}
+
+                        {renderToggleRow({
                             title: "Save Artist Pictures",
                             description: "Save artist artwork in the artist folder",
                             checked: metadataSettings?.save_artist_picture === true,
@@ -1872,42 +2090,6 @@ const SettingsPage = () => {
                                     <option value="1080x720">1080x720</option>
                                 </Select>
                             </div>
-                        )}
-
-                        {renderToggleRow({
-                            title: "Embed Lyrics",
-                            description: "Write lyrics into supported audio files",
-                            checked: qualitySettings?.embed_lyrics === true,
-                            onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
-                        })}
-
-                        {renderToggleRow({
-                            title: "Save Lyrics",
-                            description: "Save lyrics as a sidecar .txt / .lrc file next to the track",
-                            checked: metadataSettings?.save_lyrics === true,
-                            onChange: (checked) => updateMetadataSettings({ save_lyrics: checked }),
-                        })}
-
-                        {(qualitySettings?.embed_lyrics === true || metadataSettings?.save_lyrics === true) && (
-                            <RadioGroup
-                                value={qualitySettings?.embed_synced_lyrics === true ? 'synced' : 'plain'}
-                                onChange={(_, data) => updateQualitySettings({ embed_synced_lyrics: data.value === 'synced' })}
-                            >
-                                <label className={styles.qualityOption} htmlFor="lyrics-plain">
-                                    <Radio value="plain" id="lyrics-plain" />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">Plain</Text>
-                                        <Text size={200} className={styles.mutedText}>Unsynchronised text (embedded as-is, saved as .txt)</Text>
-                                    </div>
-                                </label>
-                                <label className={styles.qualityOption} htmlFor="lyrics-synced">
-                                    <Radio value="synced" id="lyrics-synced" />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">Synced</Text>
-                                        <Text size={200} className={styles.mutedText}>Time-stamped when TIDAL provides them, plain as fallback (saved as .lrc)</Text>
-                                    </div>
-                                </label>
-                            </RadioGroup>
                         )}
 
                         <div className={styles.row}>
@@ -2416,3 +2598,9 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
+
+
+
+
+
+

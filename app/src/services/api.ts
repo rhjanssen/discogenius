@@ -1102,7 +1102,22 @@ class ApiClient {
     return eventSource;
   }
 
+
+  /**
+   * Execute a system command (Phase 1 scheduler commands)
+   * POST /api/command
+   * Examples: RefreshAllMonitored, DownloadMissingForce, RescanAllRoots, HealthCheck,
+   * CompactDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune
+   */
+  async executeCommand(commandName: string): Promise<{ id: number }> {
+    return this.request('/command', {
+      method: 'POST',
+      body: JSON.stringify({ name: commandName }),
+    });
+  }
+
   // Import endpoints handled earlier in this class
 }
 
 export const api = new ApiClient(API_BASE_URL);
+

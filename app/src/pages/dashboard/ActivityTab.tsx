@@ -15,6 +15,7 @@ import {
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import type { HistoryEventItemContract } from "@contracts/history";
+import { EmptyState, LoadingState } from "@/components/ui/ContentState";
 import { useDashboardStyles } from "./dashboardStyles";
 import {
     formatJobType,
@@ -455,13 +456,7 @@ const ActivityTab = ({
     if (isInitialLoading && !hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
-                <div className={styles.emptyState}>
-                    <Spinner size="small" />
-                    <Text className={styles.emptyStateTitle} size={500}>Loading activity</Text>
-                    <Text className={styles.emptyStateSubtitle} size={300}>
-                        Fetching active and queued jobs.
-                    </Text>
-                </div>
+                <LoadingState label="Loading activity..." />
             </div>
         );
     }
@@ -469,13 +464,11 @@ const ActivityTab = ({
     if (!hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
-                <div className={styles.emptyState}>
-                    <Clock24Regular className={styles.emptyStateIcon} />
-                    <Text className={styles.emptyStateTitle} size={500}>No recent activity</Text>
-                    <Text className={styles.emptyStateSubtitle} size={300}>
-                        Background jobs, scans, and imports will appear here.
-                    </Text>
-                </div>
+                <EmptyState
+                    title="No recent activity"
+                    description="Background jobs, scans, and imports will appear here."
+                    icon={<Clock24Regular />}
+                />
             </div>
         );
     }

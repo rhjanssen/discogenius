@@ -36,11 +36,38 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 ### Queue and Command Lifecycle
 
-- api/src/services/queue.ts: SQLite-backed persistent job queue and payload typing
-- api/src/services/command.ts: command exclusivity and dedup gating
-- api/src/services/download-processor.ts: exact media download jobs
-- api/src/services/scheduler.ts: non-download jobs (scan/import/curation/maintenance)
-- api/src/services/command-history.ts + api/src/routes/status.ts: activity/status projection
+- [api/src/services/queue.ts](api/src/services/queue.ts): SQLite-backed persistent job queue and payload typing
+- [api/src/services/command.ts](api/src/services/command.ts): command exclusivity and dedup gating
+- [api/src/services/download-processor.ts](api/src/services/download-processor.ts): exact media download jobs
+- [api/src/services/scheduler.ts](api/src/services/scheduler.ts): non-download jobs (scan/import/curation/maintenance)
+- [api/src/services/command-history.ts](api/src/services/command-history.ts) + [api/src/routes/status.ts](api/src/routes/status.ts): activity/status projection
+
+#### Command Summary
+
+**Phase 1 Manually-Triggerable Commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive):
+
+| Command | Purpose | Exclusivity |
+| --------- | --------- | ----------- || --------- | --------- | ----------- || --------- | --------- | ----------- |----|
+| `RefreshAllMonitored` | Refresh metadata for all monitored artists | Type-exclusive |
+| `DownloadMissingForce` | Reset skip flags and requeue missing downloads for all monitored media | Type-exclusive |
+| `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
+| `HealthCheck` | System health validation (auth, runtime, paths) | Globally exclusive |
+| `CompactDatabase` | SQLite VACUUM + ANALYZE for maintenance | Globally exclusive |
+| `CleanupTempFiles` | Remove orphaned staging files | Globally exclusive |
+| `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
+| `ConfigPrune` | Prune disabled metadata sources, backfill enabled ones | Globally exclusive |
+
+**Legacy Orchestration Commands** (used by monitoring scheduler; remain queryable):
+
+| Command | Purpose |
+| --------- | --------- | ----------- || --------- | --------- | ----------- ||
+| `RefreshMetadata` | Metadata refresh pass for queued artists |
+| `MonitoringCycle` | Full monitoring lifecycle (refresh → root scan → curation → download) |
+| `ApplyCuration` | Apply curation rules and update redundancy flags |
+| `DownloadMissing` | Queue concrete downloads for missing monitored media |
+| `CheckUpgrades` | Check for upgrade candidates in library |
+| `Housekeeping` | General system cleanup and maintenance |
+| `RescanFolders` | Disk scan for root folders with minimal reprocessing |
 
 ### Persistent History
 
@@ -79,6 +106,24 @@ Detailed flow and semantics are documented in docs/CURATION_DEDUPLICATION.md.
 - api/src/services/organizer.ts: stage-to-library file organization
 - api/src/services/library-files.ts: managed file tracking/prune helpers
 - api/src/services/naming.ts + library-paths.ts: naming/path conventions
+
+Naming renderer behavior (api/src/services/naming.ts):
+
+- Supports Discogenius camelCase tokens and Lidarr-style aliases by normalizing token names as space/underscore/dot/dash-insensitive.
+- Implements Lidarr-compatible naming cleaners:
+  - `CleanTitle`: removes special chars, replaces & with "and", replaces / with space, removes diacritics
+  - `TitleThe`: moves prefix (The/An/A) to end of name (e.g., "The Beatles" → "Beatles, The"), preserves parenthetical suffixes
+  - `CleanTitleThe`: splits prefix, cleans main and suffix parts separately, rebuilds (e.g., "The AC/DC" → "AC DC, The")
+- Provides named variable variants for all text fields:
+  - Base form: `{artistName}`, `{albumTitle}`, `{trackTitle}`, `{trackArtistName}`, `{videoTitle}`
+  - Clean form: `{artistCleanName}`, `{albumCleanTitle}`, `{trackCleanTitle}`, etc. (applies CleanTitle)
+  - The form: `{artistNameThe}`, `{albumTitleThe}`, `{trackTitleThe}`, etc. (applies TitleThe)
+  - Clean+The form: `{artistCleanNameThe}`, `{albumCleanTitleThe}`, `{trackCleanTitleThe}`, etc. (applies CleanTitleThe)
+- Supports numeric formatting for track and medium tokens using format suffixes such as `{trackNumber:00}`, `{trackNumber:000}`, `{medium:00}`, and `{medium:000}`.
+- Supports quality metadata tokens: `{quality}`, `{codec}`, `{bitrate}`, `{sampleRate}`, `{bitDepth}`, `{channels}` with optional format modifiers (e.g., `{sampleRate:kHz}`)
+- Legacy modifier syntax (e.g., `{artistName:clean:the}`) is deprecated but still supported for backward compatibility; new code should use named variables instead.
+- Unknown tokens resolve to an empty string; if the rendered relative path has no valid segments, it normalizes to `Unknown`.
+- MBID and track-artist fields are metadata-dependent: `artistMbId`, `albumMbId`, and `trackArtistMbId` are optional, and track-artist naming fields use available track-artist metadata when present.
 
 ## Data and State Model
 
@@ -140,3 +185,4 @@ Operationally important semantics:
 - docs/CURATION_DEDUPLICATION.md: curation/redundancy deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
 - docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance
+

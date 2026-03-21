@@ -120,6 +120,72 @@ From monitoring config:
 
 - remove_unmonitored_files
 
+## Module and MusicBrainz Tag Determination
+
+This section defines how release module categories and MusicBrainz release-group tags are derived today.
+
+### Canonical module categories
+
+Discogenius currently uses these stable module categories for album-level grouping:
+
+- ALBUM
+- EP
+- SINGLE
+- COMPILATION
+- LIVE
+- REMIX
+- SOUNDTRACK
+- DEMO
+- APPEARS_ON
+
+DJ_MIXES remains recognized where already present, but we intentionally do not expand into less reliable secondary buckets beyond the currently supported set.
+
+### Determination precedence (per artist scan)
+
+1. Artist page modules from TIDAL (/pages/artist) are treated as strongest explicit section signals when available.
+2. Version-group propagation is then applied so secondary module signals can normalize all variants in the same release group.
+3. If page module is absent, group/type fallback applies:
+- group_type = COMPILATIONS -> APPEARS_ON
+- otherwise derive from release type (EP, SINGLE, else ALBUM)
+
+### Title-derived module heuristics
+
+For initial classification where page/module data is incomplete, title signals may set:
+
+- REMIX ("remix", "remixed", "remixes")
+- SOUNDTRACK ("soundtrack", "o.s.t.", "original score", "motion picture")
+- DEMO ("demo", "demos")
+
+These feed canonical module assignment and are later normalized by module-fixer.
+
+### MusicBrainz tag mapping
+
+albums.mb_secondary is constrained to valid MusicBrainz release-group secondary values.
+
+Current module -> mb_secondary mapping:
+
+- LIVE -> live
+- COMPILATION -> compilation
+- REMIX -> remix
+- SOUNDTRACK -> soundtrack
+- DEMO -> demo
+
+APPEARS_ON is relationship context and is not written to mb_secondary.
+
+When any mb_secondary is present, mb_primary is forced to album; otherwise primary falls back to release type (album/ep/single).
+
+### Supported vs intentionally omitted
+
+Supported in module determination today:
+
+- compilation, live, remix, soundtrack, demo
+
+Intentionally omitted from module expansion for now due to inconsistent real-world behavior across toolchains/clients:
+
+- dj-mix
+- mixtape/street
+- other less reliably surfaced MusicBrainz secondary types
+
 ## Implemented vs Planned
 
 ### Implemented today
@@ -138,3 +204,4 @@ From monitoring config:
 - Additional typed lifecycle events around file and curation state transitions.
 
 Track these architecture changes in docs/ARCHITECTURE_WORKPLAN.md.
+

@@ -9,6 +9,15 @@ import {
   queueHousekeepingPass,
   queueMetadataRefreshPass,
   queueRescanFoldersPass,
+
+  queueRefreshAllMonitored,
+  queueDownloadMissingForce,
+  queueRescanAllRoots,
+  queueHealthCheck,
+  queueCompactDatabase,
+  queueCleanupTempFiles,
+  queueUpdateLibraryMetadata,
+  queueConfigPrune,
 } from "../services/monitoring-scheduler.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../utils/request-validation.js";
 
@@ -34,7 +43,22 @@ function startCommand(name: string): number {
       return queueHousekeepingPass({ trigger: 1 });
     case "rescanfolders":
       return queueRescanFoldersPass({ trigger: 1, fullProcessing: false });
-    default:
+    case "refreshallmonitored":
+      return queueRefreshAllMonitored({ trigger: 1 });
+    case "downloadmissingforce":
+      return queueDownloadMissingForce({ trigger: 1 });
+    case "rescanallroots":
+      return queueRescanAllRoots({ trigger: 1 });
+    case "healthcheck":
+      return queueHealthCheck({ trigger: 1 });
+    case "compactdatabase":
+      return queueCompactDatabase({ trigger: 1 });
+    case "cleanuptempfiles":
+      return queueCleanupTempFiles({ trigger: 1 });
+    case "updatelibrarymetadata":
+      return queueUpdateLibraryMetadata({ trigger: 1 });
+        case "configprune":
+      return queueConfigPrune({ trigger: 1 });    default:
       return -1;
   }
 }
@@ -105,3 +129,6 @@ router.delete("/:id", (req, res) => {
 });
 
 export default router;
+
+
+

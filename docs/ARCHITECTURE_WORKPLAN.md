@@ -31,12 +31,13 @@ Measured 2026-03-13:
 
 1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 1.0.x schema baseline now uses an independent integer `PRAGMA user_version` starting at `1`, with app/api/schema provenance tracked in `database_version_history`.
 2. ~~Add a persistent history table and write path for key file lifecycle events.~~ **Done** — `history_events` table, backend write path, and `/api/history` endpoint are implemented.
-3. Continue route thinning in high-traffic routes so route files remain adapters.
-4. Finish import decision extraction into import-decision specifications.
-5. Add a minimal typed health surface for auth/runtime/path checks.
-6. Continue scheduler and download-processor handler extraction by job type.
-7. Ensure config and file lifecycle events are emitted consistently where already modeled.
-8. ~~Consolidate quality normalization paths to one authoritative implementation.~~ **Done** — `HIRES_LOSSLESS` is canonical throughout; `HI_RES_LOSSLESS` alias and `QUALITY_ALIASES` map removed from `quality.ts`.
+3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). **Phase 2**: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.
+4. Continue route thinning in high-traffic routes so route files remain adapters.
+5. Finish import decision extraction into import-decision specifications.
+6. Add a minimal typed health surface for auth/runtime/path checks.
+7. Continue scheduler and download-processor handler extraction by job type.
+8. Ensure config and file lifecycle events are emitted consistently where already modeled.
+9. ~~Consolidate quality normalization paths to one authoritative implementation.~~ **Done** — `HIRES_LOSSLESS` is canonical throughout; `HI_RES_LOSSLESS` alias and `QUALITY_ALIASES` map removed from `quality.ts`.
 
 ## Post-1.0 Work Items
 

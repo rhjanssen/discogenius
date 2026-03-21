@@ -61,6 +61,62 @@ export const COMMAND_DEFINITIONS: Record<string, CommandDefinition> = {
         isExclusive: false,
         isLongRunning: false,
     },
+    [JobTypes.RefreshAllMonitored]: {
+        type: JobTypes.RefreshAllMonitored,
+        name: 'Refresh All Monitored Artists',
+        requiresDiskAccess: false,
+        isTypeExclusive: true,
+        isExclusive: false,
+        isLongRunning: true,
+    },
+    [JobTypes.DownloadMissingForce]: {
+        type: JobTypes.DownloadMissingForce,
+        name: 'Download Missing (Force)',
+        requiresDiskAccess: false,
+        isTypeExclusive: false,
+        isExclusive: false,
+        isLongRunning: true,
+    },
+    [JobTypes.RescanAllRoots]: {
+        type: JobTypes.RescanAllRoots,
+        name: 'Rescan All Roots',
+        requiresDiskAccess: true,
+        isTypeExclusive: true,
+        isExclusive: false,
+        isLongRunning: true,
+    },
+    [JobTypes.HealthCheck]: {
+        type: JobTypes.HealthCheck,
+        name: 'Health Check',
+        requiresDiskAccess: false,
+        isTypeExclusive: true,
+        isExclusive: false,
+        isLongRunning: false,
+    },
+    [JobTypes.CompactDatabase]: {
+        type: JobTypes.CompactDatabase,
+        name: 'Compact Database',
+        requiresDiskAccess: true,
+        isTypeExclusive: true,
+        isExclusive: false,
+        isLongRunning: false,
+    },
+    [JobTypes.CleanupTempFiles]: {
+        type: JobTypes.CleanupTempFiles,
+        name: 'Cleanup Temporary Files',
+        requiresDiskAccess: true,
+        isTypeExclusive: false,
+        isExclusive: false,
+        isLongRunning: false,
+    },
+    [JobTypes.UpdateLibraryMetadata]: {
+        type: JobTypes.UpdateLibraryMetadata,
+        name: 'Update Library Metadata',
+        requiresDiskAccess: false,
+        isTypeExclusive: true,
+        isExclusive: false,
+        isLongRunning: true,
+    },
     [JobTypes.DownloadVideo]: {
         type: JobTypes.DownloadVideo,
         name: 'Download Video',
@@ -462,3 +518,4 @@ export class CommandManager {
 }
 
 export default CommandManager;
+

@@ -131,7 +131,7 @@ const useStyles = makeStyles({
         flexDirection: "column",
         overflow: "hidden",
         "@media (max-width: 639px)": {
-            maxHeight: "calc(100dvh - 120px)",
+            maxHeight: "calc(100dvh - 96px)",
         },
     },
     tabContainer: {
@@ -157,6 +157,7 @@ const useStyles = makeStyles({
     },
     scrollableContent: {
         flex: 1,
+        minHeight: 0,
         overflowY: "auto",
         padding: tokens.spacingVerticalS,
         "@media (min-width: 640px)": {

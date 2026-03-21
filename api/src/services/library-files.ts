@@ -18,6 +18,13 @@ type LibraryFileRow = {
   library_root: string | null;
   file_type: string;
   extension: string;
+  // Quality metadata
+  quality?: string | null;
+  codec?: string | null;
+  bitrate?: number | null;
+  sample_rate?: number | null;
+  bit_depth?: number | null;
+  channels?: number | null;
 };
 
 type TrackedAssetRow = LibraryFileRow & {
@@ -187,18 +194,28 @@ export class LibraryFilesService {
     const naming = getNamingConfig();
     const metadataConfig = getConfigSection("metadata");
 
-    const artist = db.prepare("SELECT name FROM artists WHERE id = ?").get(row.artist_id) as any;
+    const artist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(row.artist_id) as any;
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
+    const artistMbId = artist?.mbid ? String(artist.mbid) : null;
 
-    const contextBase: NamingContext = { artistName };
+    const contextBase: NamingContext = {
+      artistName,
+      artistId: String(row.artist_id),
+      artistMbId,
+    };
 
     // Videos (do not use album folder)
     if (row.file_type === "video") {
       const video = row.media_id
-        ? (db.prepare("SELECT title FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
+        ? (db.prepare("SELECT id, title, explicit FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
-      const context: NamingContext = { ...contextBase, videoTitle: video?.title || "Unknown Video" };
+      const context: NamingContext = {
+        ...contextBase,
+        videoTitle: video?.title || "Unknown Video",
+        trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
+        explicit: video?.explicit === 1,
+      };
 
       const artistFolder = renderRelativePath(naming.artist_folder, context);
       const fileStem = renderFileStem(naming.video_file, context);
@@ -211,10 +228,15 @@ export class LibraryFilesService {
 
     if (row.file_type === "video_thumbnail") {
       const video = row.media_id
-        ? (db.prepare("SELECT title FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
+        ? (db.prepare("SELECT id, title, explicit FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
       const ext = row.extension || "jpg";
-      const context: NamingContext = { ...contextBase, videoTitle: video?.title || "Unknown Video" };
+      const context: NamingContext = {
+        ...contextBase,
+        videoTitle: video?.title || "Unknown Video",
+        trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
+        explicit: video?.explicit === 1,
+      };
 
       const artistFolder = renderRelativePath(naming.artist_folder, context);
       const fileStem = renderFileStem(naming.video_file, context);
@@ -242,15 +264,19 @@ export class LibraryFilesService {
       return { expectedPath: null, reason: "missing_album_id" };
     }
 
-    const album = db.prepare("SELECT title, version, release_date, num_volumes FROM albums WHERE id = ?").get(row.album_id) as any;
+    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, version, explicit, release_date, num_volumes FROM albums WHERE id = ?").get(row.album_id) as any;
     if (!album) return { expectedPath: null, reason: "album_not_found" };
 
     const releaseYear = getReleaseYear(album.release_date);
     const albumContext: NamingContext = {
       ...contextBase,
+      albumId: String(album.id ?? row.album_id),
       albumTitle: album.title,
+      albumType: album.type || album.mb_primary || null,
+      albumMbId: album.mbid || null,
       albumVersion: album.version || null,
       releaseYear,
+      explicit: album.explicit === 1,
     };
 
     const artistFolder = renderRelativePath(naming.artist_folder, albumContext);
@@ -261,7 +287,7 @@ export class LibraryFilesService {
     const deriveAlbumDirRelativeFromTemplate = (trackTemplate: string) => {
       const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);
       const templateDirSegments = templateSegments.slice(0, -1);
-      const volumeDirIndex = templateDirSegments.findIndex((seg) => seg.includes("{volumeNumber"));
+      const volumeDirIndex = templateDirSegments.findIndex((seg) => /\{[^}]*?(?:volumeNumber|medium)/i.test(seg));
 
       const renderedTrackPath = renderRelativePath(trackTemplate, {
         ...albumContext,
@@ -298,16 +324,31 @@ export class LibraryFilesService {
 
     if (row.file_type === "track") {
       if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
-      const track = db.prepare("SELECT title, version, track_number, volume_number FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit FROM media WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
+
+      const trackArtist = track.artist_id != null
+        ? (db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(track.artist_id) as any)
+        : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: track.title,
+        trackId: String(track.id ?? row.media_id),
         trackVersion: track.version || null,
+        explicit: track.explicit === 1,
+        trackArtistName: (trackArtist?.name as string | undefined) || artistName,
+        trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
         trackNumber: track.track_number,
         volumeNumber: track.volume_number,
+        // Quality metadata from library_files
+        quality: row.quality || null,
+        codec: row.codec || null,
+        bitrate: row.bitrate || null,
+        sampleRate: row.sample_rate || null,
+        bitDepth: row.bit_depth || null,
+        channels: row.channels || null,
       };
 
       const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
@@ -328,16 +369,31 @@ export class LibraryFilesService {
         LIMIT 1
       `).get(row.media_id) as any;
 
-      const track = db.prepare("SELECT title, version, track_number, volume_number FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit FROM media WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
+
+      const trackArtist = track.artist_id != null
+        ? (db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(track.artist_id) as any)
+        : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: track.title,
+        trackId: String(track.id ?? row.media_id),
         trackVersion: track.version || null,
+        explicit: track.explicit === 1,
+        trackArtistName: (trackArtist?.name as string | undefined) || artistName,
+        trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
         trackNumber: track.track_number,
         volumeNumber: track.volume_number,
+        // Quality metadata from library_files
+        quality: row.quality || null,
+        codec: row.codec || null,
+        bitrate: row.bitrate || null,
+        sampleRate: row.sample_rate || null,
+        bitDepth: row.bit_depth || null,
+        channels: row.channels || null,
       };
 
       const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
@@ -862,7 +918,7 @@ export class LibraryFilesService {
     }
 
     const sql = `
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM library_files
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY created_at DESC

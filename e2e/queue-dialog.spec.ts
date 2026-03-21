@@ -1,387 +1,245 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+import { baseURL, stubShellApis } from './utils/mockShell';
 
-async function stubDashboardApis(page: Page) {
-  await page.route('**/api/stats', async (route) => {
-    await route.fulfill({
-      json: {
-        artists: { total: 0, monitored: 0, downloaded: 0 },
-        albums: { total: 0, monitored: 0, downloaded: 0 },
-        tracks: { total: 0, monitored: 0, downloaded: 0 },
-        videos: { total: 0, monitored: 0, downloaded: 0 },
-      },
-    });
+type DashboardStubOptions = {
+  stats?: Record<string, unknown>;
+  status?: Record<string, unknown>;
+  queue?: Record<string, unknown>;
+  historyItems?: unknown[];
+  statusHistory?: Record<string, unknown>;
+  unmapped?: unknown[];
+  retryJobId?: number;
+  retryResponse?: Record<string, unknown>;
+};
+
+const EMPTY_STATS = {
+  artists: { total: 0, monitored: 0, downloaded: 0 },
+  albums: { total: 0, monitored: 0, downloaded: 0 },
+  tracks: { total: 0, monitored: 0, downloaded: 0 },
+  videos: { total: 0, monitored: 0, downloaded: 0 },
+};
+
+async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
+  await stubShellApis(page, {
+    libraryStats: {
+      ...EMPTY_STATS,
+      ...(options?.stats || {}),
+    },
+    statusOverview: {
+      activeJobs: [],
+      queuedJobs: [],
+      jobHistory: [],
+      taskQueueStats: [],
+      commandStats: {},
+      ...(options?.status || {}),
+    },
+    queueResponse: {
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      hasMore: false,
+      ...(options?.queue || {}),
+    },
+    monitoringStatus: {
+      running: false,
+      checking: false,
+    },
   });
 
   await page.route('**/api/status/history?*', async (route) => {
-    await route.fulfill({ json: { jobHistory: [] } });
+    await route.fulfill({ json: options?.statusHistory || { jobHistory: [] } });
   });
 
   await page.route('**/api/history?*', async (route) => {
+    const items = options?.historyItems || [];
     await route.fulfill({
       json: {
-        items: [],
-        total: 0,
+        items,
+        total: items.length,
         limit: 12,
         offset: 0,
       },
     });
-  });
-
-  await page.route('**/api/status', async (route) => {
-    await route.fulfill({
-      json: {
-        activeJobs: [],
-        queuedJobs: [],
-        jobHistory: [],
-        taskQueueStats: [],
-        commandStats: {},
-      },
-    });
-  });
-
-  await page.route('**/api/monitoring/status', async (route) => {
-    await route.fulfill({ json: { running: false, checking: false } });
-  });
-
-  await page.route('**/api/queue/progress-stream*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-      body: 'event: ready\ndata: {"ok":true}\n\n',
-    });
-  });
-
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
-    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
   });
 
   await page.route('**/api/unmapped**', async (route) => {
-    await route.fulfill({ json: [] });
+    await route.fulfill({ json: options?.unmapped || [] });
   });
+
+  if (typeof options?.retryJobId === 'number') {
+    await page.route(
+      '**/api/queue/${options.retryJobId}/retry',
+      async (route) => {
+        await route.fulfill({ json: options?.retryResponse || { message: 'Job queued for retry' } });
+      },
+    );
+  }
 }
 
-async function stubDashboardApisWithActivity(page: Page) {
-  await page.route('**/api/stats', async (route) => {
-    await route.fulfill({
-      json: {
-        artists: { total: 1, monitored: 1, downloaded: 0 },
-        albums: { total: 1, monitored: 1, downloaded: 0 },
-        tracks: { total: 2, monitored: 2, downloaded: 0 },
-        videos: { total: 0, monitored: 0, downloaded: 0 },
+function createActivityFixture() {
+  const now = Date.now();
+  return {
+    stats: {
+      artists: { total: 1, monitored: 1, downloaded: 0 },
+      albums: { total: 1, monitored: 1, downloaded: 0 },
+      tracks: { total: 2, monitored: 2, downloaded: 0 },
+      videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    status: {
+      activeJobs: [
+        {
+          id: 1,
+          type: 'ImportDownload',
+          status: 'running',
+          description: 'Album: Around the World by Daft Punk',
+          startTime: now,
+          payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
+        },
+        {
+          id: 2,
+          type: 'RefreshArtist',
+          status: 'running',
+          description: 'Daft Punk',
+          startTime: now,
+        },
+        {
+          id: 3,
+          type: 'MissingAlbumSearch',
+          status: 'running',
+          description: 'Daft Punk',
+          startTime: now,
+        },
+      ],
+      queuedJobs: [
+        {
+          id: 6,
+          type: 'DownloadAlbum',
+          status: 'pending',
+          description: 'Queued album: Discovery by Daft Punk',
+          startTime: now - 15_000,
+          payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
+        },
+      ],
+      jobHistory: [
+        {
+          id: 4,
+          type: 'DownloadAlbum',
+          status: 'completed',
+          description: 'Downloading album: Around the World by Daft Punk',
+          startTime: now - 30_000,
+          endTime: now - 10_000,
+          payload: { title: 'Around the World', artist: 'Daft Punk' },
+        },
+        {
+          id: 5,
+          type: 'ImportDownload',
+          status: 'completed',
+          description: 'Album: Around the World by Daft Punk',
+          startTime: now - 20_000,
+          endTime: now - 5_000,
+          payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
+        },
+      ],
+    },
+    historyItems: [
+      {
+        id: 90,
+        artistId: 11,
+        albumId: 22,
+        mediaId: 33,
+        libraryFileId: 44,
+        eventType: 'TrackFileImported',
+        quality: 'FLAC',
+        sourceTitle: 'Around the World',
+        data: {
+          importedPath: 'E:/music/Daft Punk/Around the World.flac',
+        },
+        date: new Date(now - 3_000).toISOString(),
       },
-    });
-  });
-
-  await page.route('**/api/status/history?*', async (route) => {
-    await route.fulfill({ json: { jobHistory: [] } });
-  });
-
-  await page.route('**/api/history?*', async (route) => {
-    await route.fulfill({
-      json: {
-        items: [
-          {
-            id: 90,
-            artistId: 11,
-            albumId: 22,
-            mediaId: 33,
-            libraryFileId: 44,
-            eventType: 'TrackFileImported',
-            quality: 'FLAC',
-            sourceTitle: 'Around the World',
-            data: {
-              importedPath: 'E:/music/Daft Punk/Around the World.flac',
-            },
-            date: new Date(Date.now() - 3_000).toISOString(),
-          },
-          {
-            id: 91,
-            artistId: 11,
-            albumId: 22,
-            mediaId: 33,
-            libraryFileId: 44,
-            eventType: 'TrackFileRenamed',
-            quality: 'FLAC',
-            sourceTitle: 'Around the World',
-            data: {
-              fromPath: 'E:/music/Daft Punk/Old Name.flac',
-              toPath: 'E:/music/Daft Punk/Around the World.flac',
-            },
-            date: new Date(Date.now() - 60_000).toISOString(),
-          },
-        ],
-        total: 2,
-        limit: 12,
-        offset: 0,
+      {
+        id: 91,
+        artistId: 11,
+        albumId: 22,
+        mediaId: 33,
+        libraryFileId: 44,
+        eventType: 'TrackFileRenamed',
+        quality: 'FLAC',
+        sourceTitle: 'Around the World',
+        data: {
+          fromPath: 'E:/music/Daft Punk/Old Name.flac',
+          toPath: 'E:/music/Daft Punk/Around the World.flac',
+        },
+        date: new Date(now - 60_000).toISOString(),
       },
-    });
-  });
-
-  await page.route('**/api/status', async (route) => {
-    await route.fulfill({
-      json: {
-        activeJobs: [
-          {
-            id: 1,
-            type: 'ImportDownload',
-            status: 'running',
-            description: 'Album: Around the World by Daft Punk',
-            startTime: Date.now(),
-            payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
-          },
-          {
-            id: 2,
-            type: 'RefreshArtist',
-            status: 'running',
-            description: 'Daft Punk',
-            startTime: Date.now(),
-          },
-          {
-            id: 3,
-            type: 'MissingAlbumSearch',
-            status: 'running',
-            description: 'Daft Punk',
-            startTime: Date.now(),
-          },
-        ],
-        queuedJobs: [
-          {
-            id: 6,
-            type: 'DownloadAlbum',
-            status: 'pending',
-            description: 'Queued album: Discovery by Daft Punk',
-            startTime: Date.now() - 15_000,
-            payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
-          },
-        ],
-        jobHistory: [
-          {
-            id: 4,
-            type: 'DownloadAlbum',
-            status: 'completed',
-            description: 'Downloading album: Around the World by Daft Punk',
-            startTime: Date.now() - 30_000,
-            endTime: Date.now() - 10_000,
-            payload: { title: 'Around the World', artist: 'Daft Punk' },
-          },
-          {
-            id: 5,
-            type: 'ImportDownload',
-            status: 'completed',
-            description: 'Album: Around the World by Daft Punk',
-            startTime: Date.now() - 20_000,
-            endTime: Date.now() - 5_000,
-            payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
-          },
-        ],
-        taskQueueStats: [],
-        commandStats: {},
-      },
-    });
-  });
-
-  await page.route('**/api/monitoring/status', async (route) => {
-    await route.fulfill({ json: { running: false, checking: false } });
-  });
-
-  await page.route('**/api/queue/progress-stream*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-      body: 'event: ready\ndata: {"ok":true}\n\n',
-    });
-  });
-
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
-    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
-  });
-
-  await page.route('**/api/unmapped**', async (route) => {
-    await route.fulfill({ json: [] });
-  });
+    ],
+  };
 }
 
-async function stubDashboardApisWithFailedImportActivity(page: Page) {
-  await page.route('**/api/stats', async (route) => {
-    await route.fulfill({
-      json: {
-        artists: { total: 1, monitored: 1, downloaded: 0 },
-        albums: { total: 1, monitored: 1, downloaded: 0 },
-        tracks: { total: 10, monitored: 10, downloaded: 0 },
-        videos: { total: 0, monitored: 0, downloaded: 0 },
-      },
-    });
-  });
-
-  await page.route('**/api/status/history?*', async (route) => {
-    await route.fulfill({ json: { jobHistory: [] } });
-  });
-
-  await page.route('**/api/history?*', async (route) => {
-    await route.fulfill({
-      json: {
-        items: [],
-        total: 0,
-        limit: 12,
-        offset: 0,
-      },
-    });
-  });
-
-  await page.route('**/api/status', async (route) => {
-    await route.fulfill({
-      json: {
-        activeJobs: [],
-        queuedJobs: [],
-        jobHistory: [
-          {
-            id: 77,
-            type: 'ImportDownload',
-            status: 'failed',
-            description: 'Album: Around the World by Daft Punk',
-            startTime: Date.now() - 40_000,
-            endTime: Date.now() - 15_000,
-            error: 'Failed to move files into the library',
-            payload: {
-              type: 'album',
-              originalJobId: 12,
-              resolved: { title: 'Around the World', artist: 'Daft Punk' },
-            },
-          },
-        ],
-        taskQueueStats: [],
-        commandStats: {},
-      },
-    });
-  });
-
-  await page.route('**/api/queue/77/retry', async (route) => {
-    await route.fulfill({ json: { message: 'Job queued for retry' } });
-  });
-
-  await page.route('**/api/monitoring/status', async (route) => {
-    await route.fulfill({ json: { running: false, checking: false } });
-  });
-
-  await page.route('**/api/queue/progress-stream*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-      body: 'event: ready\ndata: {"ok":true}\n\n',
-    });
-  });
-
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
-    await route.fulfill({ json: { items: [], total: 0, limit: 50, offset: 0, hasMore: false } });
-  });
-
-  await page.route('**/api/unmapped**', async (route) => {
-    await route.fulfill({ json: [] });
-  });
-}
-
-async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
-  await page.route('**/api/stats', async (route) => {
-    await route.fulfill({
-      json: {
-        artists: { total: 1, monitored: 1, downloaded: 0 },
-        albums: { total: 1, monitored: 1, downloaded: 0 },
-        tracks: { total: 10, monitored: 10, downloaded: 0 },
-        videos: { total: 0, monitored: 0, downloaded: 0 },
-      },
-    });
-  });
-
-  await page.route('**/api/status/history?*', async (route) => {
-    await route.fulfill({ json: { jobHistory: [] } });
-  });
-
-  await page.route('**/api/history?*', async (route) => {
-    await route.fulfill({
-      json: {
-        items: [],
-        total: 0,
-        limit: 12,
-        offset: 0,
-      },
-    });
-  });
-
-  await page.route('**/api/status', async (route) => {
-    await route.fulfill({
-      json: {
-        activeJobs: [],
-        queuedJobs: [],
-        jobHistory: [],
-        taskQueueStats: [],
-        commandStats: {},
-      },
-    });
-  });
-
-  await page.route('**/api/monitoring/status', async (route) => {
-    await route.fulfill({ json: { running: false, checking: false } });
-  });
-
-  await page.route('**/api/queue/progress-stream*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-      body: 'event: ready\ndata: {"ok":true}\n\n',
-    });
-  });
-
-  await page.route((url) => url.pathname === '/api/queue', async (route) => {
-    await route.fulfill({
-      json: {
-        items: [
-          {
-            id: 501,
-            url: 'https://tidal.com/album/album-501',
-            tidalId: 'album-501',
+function createFailedImportFixture() {
+  const now = Date.now();
+  return {
+    stats: {
+      artists: { total: 1, monitored: 1, downloaded: 0 },
+      albums: { total: 1, monitored: 1, downloaded: 0 },
+      tracks: { total: 10, monitored: 10, downloaded: 0 },
+      videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    status: {
+      jobHistory: [
+        {
+          id: 77,
+          type: 'ImportDownload',
+          status: 'failed',
+          description: 'Album: Around the World by Daft Punk',
+          startTime: now - 40_000,
+          endTime: now - 15_000,
+          error: 'Failed to move files into the library',
+          payload: {
             type: 'album',
-            status: 'failed',
-            progress: 62,
-            error: 'Network timeout while downloading album',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            title: 'From A Bakermat Point Of View',
-            artist: 'Bakermat',
-            cover: null,
-            album_id: 'album-501',
-            album_title: 'From A Bakermat Point Of View',
+            originalJobId: 12,
+            resolved: { title: 'Around the World', artist: 'Daft Punk' },
           },
-        ],
-        total: 1,
-        limit: 50,
-        offset: 0,
-        hasMore: false,
-      },
-    });
-  });
+        },
+      ],
+    },
+    retryJobId: 77,
+  };
+}
 
-  await page.route('**/api/unmapped**', async (route) => {
-    await route.fulfill({ json: [] });
-  });
-
+function createFailedAlbumQueueFixture() {
+  const nowIso = new Date().toISOString();
+  return {
+    stats: {
+      artists: { total: 1, monitored: 1, downloaded: 0 },
+      albums: { total: 1, monitored: 1, downloaded: 0 },
+      tracks: { total: 10, monitored: 10, downloaded: 0 },
+      videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    queue: {
+      items: [
+        {
+          id: 501,
+          url: 'https://tidal.com/album/album-501',
+          tidalId: 'album-501',
+          type: 'album',
+          status: 'failed',
+          progress: 62,
+          error: 'Network timeout while downloading album',
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'From A Bakermat Point Of View',
+          artist: 'Bakermat',
+          cover: null,
+          album_id: 'album-501',
+          album_title: 'From A Bakermat Point Of View',
+        },
+      ],
+      total: 1,
+      hasMore: false,
+    },
+  };
 }
 
 test.describe('Dashboard queue and activity tabs', () => {

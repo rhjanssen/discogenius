@@ -19,6 +19,13 @@ import type {
     RescanFoldersJobPayload,
     ScanAlbumJobPayload,
     ScanPlaylistJobPayload,
+    RefreshAllMonitoredJobPayload,
+    DownloadMissingForceJobPayload,
+    RescanAllRootsJobPayload,
+    HealthCheckJobPayload,
+    CompactDatabaseJobPayload,
+    CleanupTempFilesJobPayload,
+    UpdateLibraryMetadataJobPayload,
 } from "./job-payloads.js";
 
 export const JobTypes = {
@@ -40,6 +47,13 @@ export const JobTypes = {
     ConfigPrune: 'ConfigPrune',
     ApplyRenames: 'ApplyRenames',
     ApplyRetags: 'ApplyRetags',
+    RefreshAllMonitored: 'RefreshAllMonitored',
+    DownloadMissingForce: 'DownloadMissingForce',
+    RescanAllRoots: 'RescanAllRoots',
+    HealthCheck: 'HealthCheck',
+    CompactDatabase: 'CompactDatabase',
+    CleanupTempFiles: 'CleanupTempFiles',
+    UpdateLibraryMetadata: 'UpdateLibraryMetadata',
 } as const;
 
 export type JobType = typeof JobTypes[keyof typeof JobTypes];
@@ -81,6 +95,13 @@ export const NON_DOWNLOAD_JOB_TYPES = [
     JobTypes.ConfigPrune,
     JobTypes.ApplyRenames,
     JobTypes.ApplyRetags,
+    JobTypes.RefreshAllMonitored,
+    JobTypes.DownloadMissingForce,
+    JobTypes.RescanAllRoots,
+    JobTypes.HealthCheck,
+    JobTypes.CompactDatabase,
+    JobTypes.CleanupTempFiles,
+    JobTypes.UpdateLibraryMetadata,
 ] as const;
 
 export function isDownloadJobType(type: string): type is typeof DOWNLOAD_JOB_TYPES[number] {
@@ -112,6 +133,13 @@ export interface JobPayloadMap {
     [JobTypes.ConfigPrune]: ConfigPruneJobPayload;
     [JobTypes.ApplyRenames]: ApplyRenamesJobPayload;
     [JobTypes.ApplyRetags]: ApplyRetagsJobPayload;
+    [JobTypes.RefreshAllMonitored]: RefreshAllMonitoredJobPayload;
+    [JobTypes.DownloadMissingForce]: DownloadMissingForceJobPayload;
+    [JobTypes.RescanAllRoots]: RescanAllRootsJobPayload;
+    [JobTypes.HealthCheck]: HealthCheckJobPayload;
+    [JobTypes.CompactDatabase]: CompactDatabaseJobPayload;
+    [JobTypes.CleanupTempFiles]: CleanupTempFilesJobPayload;
+    [JobTypes.UpdateLibraryMetadata]: UpdateLibraryMetadataJobPayload;
 }
 
 export type AnyJobPayload = JobPayloadMap[JobType];
@@ -732,3 +760,4 @@ status = 'pending',
         if (job) appEvents.emit(AppEvent.JOB_DELETED, { id, type: job.type, status: job.status, progress: job.progress } as JobEventPayload);
     }
 }
+
