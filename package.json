@@ -19,7 +19,7 @@
     "test:e2e:smoke": "playwright test -c e2e/playwright.config.ts e2e/api-health.spec.ts e2e/navigation.spec.ts e2e/auth.spec.ts",
     "test:e2e:headed": "playwright test -c e2e/playwright.config.ts --headed",
     "ci": "yarn lint && yarn typecheck && yarn test:api && yarn build",
-    "release:prepare": "node scripts/release/prepare-release.mjs"
+    "release:prepare": "node .github/workflows/release/prepare-release.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -29,3 +29,4 @@
   },
   "packageManager": "yarn@1.22.22"
 }
+

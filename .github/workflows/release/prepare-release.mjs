@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
-const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
+const repoRoot = path.resolve(path.dirname(scriptPath), "../../..");
 
 function parseArgs(argv) {
   const result = {
@@ -146,3 +146,4 @@ try {
   console.error(`release prep failed: ${message}`);
   process.exit(1);
 }
+

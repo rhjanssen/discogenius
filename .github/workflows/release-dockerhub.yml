@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEFAULT_DOCKERHUB_IMAGE: rhjanssen/discogenius
-      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Validate repository configuration
@@ -184,3 +183,4 @@ jobs:
               --notes-file dist/release-body.md \
               --latest
           fi
+

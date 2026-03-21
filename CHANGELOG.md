@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.8] - 2026-03-21
+
+### Changed
+- Release preparation and maintenance updates
 ## [1.0.7] - 2026-03-21
 
 ### Changed

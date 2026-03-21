@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { execFileSync, execSync } from "child_process";
 import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config } from "./config.js";
@@ -321,8 +322,21 @@ export class OrganizerService {
     console.log(`[Organizer] Pruning complete. Deleted ${deletedCount} disabled sidecar(s).`);
   }
 
-  private static ensureDir(dirPath: string) {
-    if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+    private static ensureDir(dirPath: string) {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    // Enforce container app ownership for NFSv4 mounts.
+    // On TrueNAS, this ensures created directories are writable by the app UID.
+    // Whether running as root (chown succeeds) or as UID 568 (chown from 568 to 568),
+    // this normalizes ownership so subsequent file operations don't fail with EPERM.
+    const puid = process.env.PUID || "568";
+    const pgid = process.env.PGID || "568";
+    try {
+      execSync(`chown ${puid}:${pgid} "${dirPath}"`, { stdio: "ignore" });
+    } catch {
+      // Silently ignore chown failures (e.g., on non-Unix systems)
+    }
   }
 
   private static isMediaFile(filePath: string): boolean {
@@ -758,12 +772,21 @@ export class OrganizerService {
 
     try {
       fs.renameSync(sourcePath, destPath);
+      return;
     } catch {
-      fs.copyFileSync(sourcePath, destPath);
-      fs.rmSync(sourcePath, { force: true });
+      // Fall through to copy path.
     }
-  }
 
+    if (process.platform === "win32") {
+      fs.copyFileSync(sourcePath, destPath);
+    } else {
+      // Match Tidarr-style transfer semantics: shell cp without preserve flags.
+      // This avoids chmod/chown metadata operations on ACL-backed destinations.
+      execFileSync("cp", ["-f", sourcePath, destPath], { stdio: "ignore" });
+    }
+
+    fs.rmSync(sourcePath, { force: true });
+  }
   private static upsertLibraryFile(params: {
     artistId: string;
     albumId?: string | null;
@@ -1796,3 +1819,5 @@ export class OrganizerService {
     throw new Error(`[Organizer] Unhandled type: ${type}`);
   }
 }
+
+

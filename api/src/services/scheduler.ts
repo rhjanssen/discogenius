@@ -545,6 +545,7 @@ export class Scheduler {
                 case JobTypes.ImportDownload: {
                     const { type, tidalId, resolved, originalJobId, path: payloadPath } = job.payload;
                     const downloadPath = payloadPath || getDownloadWorkspacePath(type as 'album' | 'track' | 'video' | 'playlist', tidalId);
+                    let shouldCleanupDownloadPath = false;
 
                     const resolveImportHistoryContext = () => {
                         const fallback = {
@@ -817,6 +818,10 @@ export class Scheduler {
                             cover: resolved?.cover,
                         });
 
+                        // Keep staged files on failed imports so retries can reuse them.
+                        // Cleanup only once the import workflow has fully completed.
+                        shouldCleanupDownloadPath = true;
+
                         console.log(`[Scheduler] Successfully processed download ${type} ${tidalId}`);
                     } catch (error) {
                         // upgrade_queue is a transient worklist. If import/post-processing fails,
@@ -854,7 +859,9 @@ export class Scheduler {
 
                         throw error;
                     } finally {
-                        try { fs.rmSync(downloadPath, { recursive: true, force: true }); } catch { /* ignore */ }
+                        if (shouldCleanupDownloadPath) {
+                            try { fs.rmSync(downloadPath, { recursive: true, force: true }); } catch { /* ignore */ }
+                        }
                     }
                     break;
                 }
@@ -928,3 +935,4 @@ export class Scheduler {
         }
     }
 }
+
