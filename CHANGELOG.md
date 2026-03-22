@@ -1,6 +1,6 @@
 # Changelog
 
-<!-- markdownlint-disable MD024 -->
+<!-- markdownlint-disable MD024 MD012 -->
 
 All notable changes to this project are documented in this file.
 
@@ -117,4 +117,3 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - Initial public release.
-

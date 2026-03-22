@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
 Last updated: 2026-03-16
@@ -191,4 +192,3 @@ Operationally important semantics:
 - docs/CURATION_DEDUPLICATION.md: curation/redundancy deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
 - docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance
-
