@@ -1089,14 +1089,14 @@ const SettingsPage = () => {
             setMonitoringConfig({
                 enabled: false,
                 scanIntervalHours: 24,
-                startHour: 23,
-                durationHours: 4,
-                monitorNewArtists: true,
+                startHour: 2,
+                durationHours: 6,
+                monitorNewArtists: false,
                 removeUnmonitoredFiles: false,
                 artistRefreshDays: 30,
-                albumRefreshDays: 60,
-                trackRefreshDays: 60,
-                videoRefreshDays: 60,
+                albumRefreshDays: 120,
+                trackRefreshDays: 240,
+                videoRefreshDays: 365,
             });
             setMonitoringStatus({ running: false, checking: false });
             setCurationConfig({

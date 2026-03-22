@@ -186,10 +186,6 @@ export function queueMetadataRefreshPass(options: {
         options.trigger ?? 1,
     );
 
-    if (jobId !== -1) {
-        
-    }
-
     return jobId;
 }
 
@@ -222,10 +218,6 @@ export function queueRescanFoldersPass(options: {
         0,
         options.trigger ?? 1,
     );
-
-    if (jobId !== -1) {
-        
-    }
 
     return jobId;
 }

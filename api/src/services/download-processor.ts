@@ -362,7 +362,7 @@ export class DownloadProcessor {
         try {
             // Query for jobs that were stuck in processing state (likely from crash/restart)
             const stuckJobs = db.prepare(`
-                SELECT id, type, ref_id, title, created_at, started_at 
+                SELECT id, type, ref_id, payload, created_at, started_at 
                 FROM job_queue 
                 WHERE status = 'processing' AND type IN (${DOWNLOAD_JOB_TYPES.map(() => '?').join(',')})
                 ORDER BY started_at ASC
@@ -372,7 +372,7 @@ export class DownloadProcessor {
                 // Log details of what we're recovering (for diagnostic purposes)
                 console.log(`[DOWNLOAD-PROCESSOR] Found ${stuckJobs.length} interrupted download job(s) from previous crash/restart:`);
                 stuckJobs.forEach(job => {
-                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${job.title || 'unknown'}" (started ${new Date(job.started_at).toISOString()})`);
+                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${(() => { try { const parsed = typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload; return parsed?.title || "unknown"; } catch { return "unknown"; } })()}" (started ${new Date(job.started_at).toISOString()})`);
                 });
 
                 // Reset to pending state - will be picked up by next processQueue() call

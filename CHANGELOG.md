@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.0] - 2026-03-22
+
+### Added
+- Lidarr-style named naming variables with clean/the/clean+the variants and quality metadata tokens (`quality`, `codec`, `bitrate`, `sampleRate`, `bitDepth`, `channels`).
+- New backend refresh policy helpers and expanded scheduler command surface introduced in this cycle.
+
+### Changed
+- Refactored naming token resolution to be cleaner and less redundant while preserving legacy compatibility where practical.
+- Updated default configuration values to match current Discogenius runtime preferences (monitoring, quality, metadata, and naming defaults).
+- Aligned Settings fallback monitoring defaults with backend defaults.
+
+### Fixed
+- Startup download-processor recovery no longer relies on a nonexistent `job_queue.title` column; recovery now works with the durable queue schema.
+- Release preparation metadata updated for app/api package versions to `1.1.0`.
 ## [1.0.10] - 2026-03-21
 
 ### Added
