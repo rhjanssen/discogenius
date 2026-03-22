@@ -21,16 +21,22 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 ## Stable Architectural Principles
 
 1. Keep long-running work in the queue, not in route handlers.
-2. Keep download backends split by media type:
+
+1. Keep download backends split by media type:
+
 - Orpheus for music (album, track, playlist)
 - tidal-dl-ng for video
-3. Preserve explicit workflow boundaries:
+
+1. Preserve explicit workflow boundaries:
+
 - queue and exclusivity
 - scheduling and orchestration
 - scanning/import and organization
 - curation/dedup and download queueing
-4. Treat library_files as canonical on-disk inventory for managed media and sidecars.
-5. Respect lock semantics (monitor_lock) as intentional user state.
+
+1. Treat library_files as canonical on-disk inventory for managed media and sidecars.
+
+1. Respect lock semantics (monitor_lock) as intentional user state.
 
 ## Runtime Components
 
@@ -47,7 +53,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 **Phase 1 Manually-Triggerable Commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive):
 
 | Command | Purpose | Exclusivity |
-| --------- | --------- | ----------- || --------- | --------- | ----------- || --------- | --------- | ----------- |----|
+| --- | --- | --- |
 | `RefreshAllMonitored` | Refresh metadata for all monitored artists | Type-exclusive |
 | `DownloadMissingForce` | Reset skip flags and requeue missing downloads for all monitored media | Type-exclusive |
 | `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
@@ -60,7 +66,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 **Legacy Orchestration Commands** (used by monitoring scheduler; remain queryable):
 
 | Command | Purpose |
-| --------- | --------- | ----------- || --------- | --------- | ----------- ||
+| --- | --- |
 | `RefreshMetadata` | Metadata refresh pass for queued artists |
 | `MonitoringCycle` | Full monitoring lifecycle (refresh → root scan → curation → download) |
 | `ApplyCuration` | Apply curation rules and update redundancy flags |
