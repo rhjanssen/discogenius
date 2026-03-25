@@ -18,6 +18,7 @@ interface CardGridSkeletonProps {
 interface TrackListSkeletonProps {
   rows?: number;
   showCover?: boolean;
+  showNumber?: boolean;
   className?: string;
 }
 
@@ -32,6 +33,14 @@ interface ListRowsSkeletonProps {
   className?: string;
 }
 
+interface TrackTableSkeletonProps {
+  rows?: number;
+  showCover?: boolean;
+  showArtist?: boolean;
+  showAlbum?: boolean;
+  className?: string;
+}
+
 interface SettingsPageSkeletonProps {
   sections?: number;
   rowsPerSection?: number;
@@ -42,7 +51,7 @@ const useStyles = makeStyles({
   mediaRoot: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
@@ -61,6 +70,11 @@ const useStyles = makeStyles({
       padding: tokens.spacingHorizontalXL,
       paddingTop: tokens.spacingVerticalXXL,
       paddingBottom: tokens.spacingVerticalXL,
+    },
+  },
+  detailHeaderCompactDesktop: {
+    "@media (min-width: 768px)": {
+      paddingBottom: tokens.spacingVerticalS,
     },
   },
   detailArtworkCircle: {
@@ -271,6 +285,91 @@ const useStyles = makeStyles({
     width: "88%",
     borderRadius: tokens.borderRadiusMedium,
   },
+  trackTable: {
+    display: "none",
+    flexDirection: "column",
+    width: "100%",
+    borderRadius: tokens.borderRadiusLarge,
+    overflow: "hidden",
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorSubtleBackground,
+    "@media (min-width: 768px)": {
+      display: "flex",
+    },
+  },
+  trackTableHeader: {
+    display: "grid",
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  trackTableRow: {
+    display: "grid",
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    alignItems: "center",
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  trackTableCell: {
+    height: "14px",
+    width: "78%",
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  trackTableCover: {
+    width: "40px",
+    height: "40px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  trackTableTitleCell: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+  },
+  trackTableTitle: {
+    height: "16px",
+    width: "min(260px, 92%)",
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  trackTableMeta: {
+    height: "14px",
+    width: "min(180px, 74%)",
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  trackTableActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: tokens.spacingHorizontalXS,
+  },
+  trackTableMobileList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    "@media (min-width: 768px)": {
+      display: "none",
+    },
+  },
+  trackTableMobileCard: {
+    display: "flex",
+    gap: tokens.spacingHorizontalS,
+    padding: tokens.spacingVerticalS,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorSubtleBackground,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  trackTableMobileInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    flex: 1,
+    minWidth: 0,
+  },
+  trackTableMobileActions: {
+    display: "flex",
+    gap: tokens.spacingHorizontalXS,
+    paddingTop: tokens.spacingVerticalXS,
+  },
   settingsRoot: {
     display: "flex",
     flexDirection: "column",
@@ -309,6 +408,7 @@ function range(count: number) {
 export function TrackListSkeleton({
   rows = 8,
   showCover = false,
+  showNumber = true,
   className,
 }: TrackListSkeletonProps) {
   const styles = useStyles();
@@ -318,13 +418,14 @@ export function TrackListSkeleton({
       <Skeleton animation="wave">
         {range(rows).map((row) => (
           <div key={row} className={styles.trackRow}>
-            <SkeletonItem className={styles.trackNumber} />
+            {showNumber ? <SkeletonItem className={styles.trackNumber} /> : null}
             {showCover ? <SkeletonItem className={styles.trackCover} /> : null}
             <div className={styles.trackBody}>
               <SkeletonItem className={styles.trackTitle} />
               <SkeletonItem className={styles.trackMeta} />
             </div>
             <div className={styles.trackActions}>
+              <SkeletonItem className={styles.actionDot} />
               <SkeletonItem className={styles.actionDot} />
               <SkeletonItem className={styles.actionDot} />
               <SkeletonItem className={styles.actionDot} />
@@ -394,6 +495,78 @@ export function ListRowsSkeleton({
   return <TrackListSkeleton rows={rows} className={className} />;
 }
 
+export function TrackTableSkeleton({
+  rows = 8,
+  showCover = true,
+  showArtist = true,
+  showAlbum = true,
+  className,
+}: TrackTableSkeletonProps) {
+  const styles = useStyles();
+  const columnTemplate = [
+    ...(showCover ? ["40px"] : []),
+    "minmax(240px, 1.75fr)",
+    ...(showArtist ? ["minmax(140px, 1fr)"] : []),
+    ...(showAlbum ? ["minmax(160px, 1fr)"] : []),
+    "180px",
+  ].join(" ");
+
+  return (
+    <div className={className} aria-busy="true" aria-label="Loading track table">
+      <div className={styles.trackTableMobileList}>
+        <Skeleton animation="wave">
+          {range(rows).map((row) => (
+            <div key={`mobile-${row}`} className={styles.trackTableMobileCard}>
+              {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
+              <div className={styles.trackTableMobileInfo}>
+                <SkeletonItem className={styles.trackTableTitle} />
+                <SkeletonItem className={styles.trackTableMeta} />
+                {showArtist || showAlbum ? <SkeletonItem className={styles.trackTableMeta} /> : null}
+                <div className={styles.trackTableMobileActions}>
+                  <SkeletonItem className={styles.actionDot} />
+                  <SkeletonItem className={styles.actionDot} />
+                  <SkeletonItem className={styles.actionDot} />
+                  <SkeletonItem className={styles.actionDot} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </Skeleton>
+      </div>
+
+      <div className={styles.trackTable}>
+        <Skeleton animation="wave">
+          <div className={styles.trackTableHeader} style={{ gridTemplateColumns: columnTemplate }}>
+            {showCover ? <SkeletonItem className={styles.trackTableCell} /> : null}
+            <SkeletonItem className={styles.trackTableCell} />
+            {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
+            {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
+            <SkeletonItem className={styles.trackTableCell} />
+          </div>
+
+          {range(rows).map((row) => (
+            <div key={row} className={styles.trackTableRow} style={{ gridTemplateColumns: columnTemplate }}>
+              {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
+              <div className={styles.trackTableTitleCell}>
+                <SkeletonItem className={styles.trackTableTitle} />
+                <SkeletonItem className={styles.trackTableMeta} />
+              </div>
+              {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
+              {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
+              <div className={styles.trackTableActions}>
+                <SkeletonItem className={styles.actionDot} />
+                <SkeletonItem className={styles.actionDot} />
+                <SkeletonItem className={styles.actionDot} />
+                <SkeletonItem className={styles.actionDot} />
+              </div>
+            </div>
+          ))}
+        </Skeleton>
+      </div>
+    </div>
+  );
+}
+
 export function MediaDetailSkeleton({
   variant,
   className,
@@ -424,11 +597,15 @@ export function MediaDetailSkeleton({
   }
 
   const artworkClassName = variant === "artist" ? styles.detailArtworkCircle : styles.detailArtworkRect;
+  const detailHeaderClassName = mergeClasses(
+    styles.detailHeader,
+    variant === "artist" ? styles.detailHeaderCompactDesktop : undefined,
+  );
 
   return (
     <div className={mergeClasses(styles.mediaRoot, className)} aria-busy="true" aria-label={`Loading ${variant} details`}>
       <Skeleton animation="wave">
-        <div className={styles.detailHeader}>
+        <div className={detailHeaderClassName}>
           <SkeletonItem className={artworkClassName} />
           <div className={styles.detailInfo}>
             <SkeletonItem className={styles.titleLine} />
@@ -451,7 +628,10 @@ export function MediaDetailSkeleton({
         <Skeleton animation="wave">
           <SkeletonItem className={mergeClasses(styles.sectionTitle, styles.sectionTitleWide)} />
         </Skeleton>
-        <TrackListSkeleton rows={variant === "album" ? 9 : 5} showCover={variant === "artist"} />
+        <TrackListSkeleton
+          rows={variant === "album" ? 9 : 5}
+          showCover={false}
+        />
       </div>
 
       <div className={styles.section}>

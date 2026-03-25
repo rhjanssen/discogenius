@@ -7,6 +7,7 @@ import {
     getArtistDownloadStatsMap,
     getMediaDownloadStateMap,
 } from "./download-state.js";
+import { hydrateTrackRows } from "./track-query-service.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
@@ -448,7 +449,6 @@ export class ArtistQueryService {
     `).all(artistId) as any[];
 
         const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
-        const topTrackDownloadStates = getMediaDownloadStateMap(topTracks.map((track) => track.id), "track");
         const videoDownloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
         const artistDownloadStats = getArtistDownloadStats(artistId);
 
@@ -527,26 +527,18 @@ export class ArtistQueryService {
             }
         });
 
-        const topTrackIds = topTracks.map((track) => String(track.id));
-        const filesByTrack = new Map<string, any[]>();
-        if (topTrackIds.length > 0) {
-            const placeholders = topTrackIds.map(() => "?").join(",");
-            const trackFiles = db.prepare(`
-        SELECT id, media_id, file_type, file_path, relative_path, filename, extension,
-               quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
-        FROM library_files
-        WHERE media_id IN (${placeholders})
-          AND file_type IN ('track', 'lyrics')
-        ORDER BY file_type ASC, id ASC
-      `).all(...topTrackIds) as any[];
+        const hydratedTopTracks = hydrateTrackRows(topTracks).map((track, index) => {
+            const sourceTrack = topTracks[index];
 
-            for (const file of trackFiles) {
-                const key = String(file.media_id);
-                const list = filesByTrack.get(key) ?? [];
-                list.push(file);
-                filesByTrack.set(key, list);
-            }
-        }
+            return {
+                ...track,
+                album: {
+                    id: track.album_id == null ? null : String(track.album_id),
+                    title: sourceTrack?.album_title || null,
+                    cover_id: sourceTrack?.album_cover || null,
+                },
+            };
+        });
 
         const rows: any[] = [];
 
@@ -560,36 +552,7 @@ export class ArtistQueryService {
                 modules: [{
                     type: "TRACK_LIST",
                     title: "Top Tracks",
-                    items: topTracks.map((track) => {
-                        const trackId = String(track.id);
-                        return {
-                            id: trackId,
-                            artist_id: track.artist_id == null ? null : String(track.artist_id),
-                            artist_name: track.artist_name || null,
-                            title: track.title,
-                            version: track.version || null,
-                            duration: track.duration || 0,
-                            track_number: track.track_number || 0,
-                            volume_number: track.volume_number || 1,
-                            explicit: Boolean(track.explicit),
-                            quality: track.quality,
-                            album_id: track.album_id == null ? null : String(track.album_id),
-                            album_title: track.album_title || null,
-                            album_cover: track.album_cover || null,
-                            is_monitored: Boolean(track.monitor),
-                            monitor: Boolean(track.monitor),
-                            monitor_locked: Boolean(track.monitor_lock),
-                            monitor_lock: Boolean(track.monitor_lock),
-                            downloaded: topTrackDownloadStates.get(trackId) ? 1 : 0,
-                            is_downloaded: topTrackDownloadStates.get(trackId) ?? false,
-                            files: filesByTrack.get(trackId) ?? [],
-                            album: {
-                                id: String(track.album_id),
-                                title: track.album_title,
-                                cover_id: track.album_cover || null,
-                            },
-                        };
-                    }),
+                    items: hydratedTopTracks,
                 }],
             });
         }

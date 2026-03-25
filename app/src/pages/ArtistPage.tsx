@@ -75,7 +75,7 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
@@ -90,7 +90,7 @@ const useStyles = makeStyles({
     alignItems: "flex-start",
     padding: tokens.spacingHorizontalL,
     paddingTop: tokens.spacingVerticalL,
-    paddingBottom: tokens.spacingVerticalXL,
+    paddingBottom: tokens.spacingVerticalL,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
@@ -98,9 +98,14 @@ const useStyles = makeStyles({
       minHeight: "300px",
       padding: tokens.spacingHorizontalXL,
       paddingTop: tokens.spacingVerticalXXL,
-      paddingBottom: tokens.spacingVerticalM,
+      paddingBottom: tokens.spacingVerticalS,
       gap: tokens.spacingHorizontalXXL,
     },
+  },
+  modules: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalL,
   },
   headerContent: {
     position: "relative",
@@ -251,13 +256,12 @@ const useStyles = makeStyles({
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
   },
   sectionHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: tokens.spacingVerticalS,
   },
   grid: {
     display: "grid",
@@ -1387,7 +1391,9 @@ const ArtistPage = () => {
         </div>
 
         {/* Dynamic Modules */}
-        {modules.map((mod, i) => renderModule(mod, i))}
+        <div className={styles.modules}>
+          {modules.map((mod, i) => renderModule(mod, i))}
+        </div>
 
         {modules.length === 0 && !pageLoading && (
           <EmptyState

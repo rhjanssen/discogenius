@@ -1,27 +1,15 @@
 import { useState, type MouseEvent } from "react";
 import {
-  Button,
   Text,
-  Tooltip,
   makeStyles,
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
-import {
-  ArrowDownload24Regular,
-  Checkmark24Filled,
-  Eye24Regular,
-  EyeOff24Regular,
-  Info24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
-  Play24Regular,
-  Stop24Filled,
-} from "@fluentui/react-icons";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
+import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { getAlbumCover } from "@/utils/tidalImages";
 import { formatDurationSeconds } from "@/utils/format";
@@ -218,6 +206,7 @@ const TrackList = <T extends TrackListItem>({
   const {
     getPlaybackSrc,
     getTrackAudioFile,
+    handleTrackPlaybackError,
     playingTrackId,
     setPlayingTrackId,
     toggleTrackPlayback,
@@ -285,82 +274,38 @@ const TrackList = <T extends TrackListItem>({
                 </div>
 
                 <div className={styles.trailing}>
-                  <div className={styles.actions}>
-                    <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
-                      <Button
-                        appearance="subtle"
-                        icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
-                        size="small"
-                        onClick={(event) => toggleTrackPlayback(track, event)}
-                      />
-                    </Tooltip>
-
-                    {onToggleMonitor ? (
-                      <Tooltip content={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")} relationship="label">
-                        <Button
-                          appearance="subtle"
-                          icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                          size="small"
-                          disabled={isLocked}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onToggleMonitor(track, event);
-                          }}
-                        />
-                      </Tooltip>
-                    ) : null}
-
-                    {onToggleLock ? (
-                      <Tooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
-                        <Button
-                          appearance="subtle"
-                          icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onToggleLock(track, event);
-                          }}
-                        />
-                      </Tooltip>
-                    ) : null}
-
-                    {audioFile ? (
-                      <Tooltip content="Track info" relationship="label">
-                        <Button
-                          appearance="subtle"
-                          icon={<Info24Regular />}
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setInfoTrack(track);
-                          }}
-                        />
-                      </Tooltip>
-                    ) : onDownloadTrack ? (
-                      isDownloaded ? (
-                        <Button
-                          appearance="subtle"
-                          icon={<Checkmark24Filled />}
-                          size="small"
-                          disabled
-                          title="Downloaded"
-                        />
-                      ) : (
-                        <Tooltip content="Download track" relationship="label">
-                          <Button
-                            appearance="subtle"
-                            icon={<ArrowDownload24Regular />}
-                            size="small"
-                            disabled={isDownloading}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onDownloadTrack(track, event);
-                            }}
-                          />
-                        </Tooltip>
-                      )
-                    ) : null}
-                  </div>
+                  <TrackRowActions
+                    className={styles.actions}
+                    isPlaying={isPlaying}
+                    isMonitored={isMonitored}
+                    isLocked={isLocked}
+                    isDownloaded={isDownloaded}
+                    isDownloading={isDownloading}
+                    canShowInfo={Boolean(audioFile)}
+                    onPlay={(event) => toggleTrackPlayback(track, event)}
+                    onToggleMonitor={onToggleMonitor
+                      ? (event) => {
+                        event.stopPropagation();
+                        onToggleMonitor(track, event);
+                      }
+                      : undefined}
+                    onToggleLock={onToggleLock
+                      ? (event) => {
+                        event.stopPropagation();
+                        onToggleLock(track, event);
+                      }
+                      : undefined}
+                    onShowInfo={(event) => {
+                      event.stopPropagation();
+                      setInfoTrack(track);
+                    }}
+                    onDownload={onDownloadTrack
+                      ? (event) => {
+                        event.stopPropagation();
+                        onDownloadTrack(track, event);
+                      }
+                      : undefined}
+                  />
                 </div>
               </div>
 
@@ -370,6 +315,9 @@ const TrackList = <T extends TrackListItem>({
                     src={getPlaybackSrc(track)}
                     knownDuration={track.duration}
                     onEnded={() => setPlayingTrackId(null)}
+                    onPlaybackError={() => {
+                      void handleTrackPlaybackError(track);
+                    }}
                   />
                 </div>
               ) : null}

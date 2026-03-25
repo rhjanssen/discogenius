@@ -67,7 +67,7 @@ import {
 } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
-import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
+import { CardGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
   searchBox: {
@@ -973,7 +973,7 @@ const Library = () => {
   const renderLoadingContent = () => {
     switch (selectedTab) {
       case "tracks":
-        return <TrackListSkeleton rows={10} />;
+        return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
       case "videos":
         return <CardGridSkeleton cards={10} thumbnailAspect="video" />;
       case "albums":
@@ -1071,6 +1071,8 @@ const Library = () => {
     </div>
   );
 
+  const canToggleView = selectedTab !== "tracks";
+
   return (
     <div className={styles.container}>
       <div className={styles.pageBody}>
@@ -1127,18 +1129,20 @@ const Library = () => {
               />
 
               {/* View Mode Toggle */}
-              <Button
-                appearance="subtle"
-                icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                className={styles.menuButtonIconOnly}
-                title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-              >
-                <span className={styles.mobileHiddenLabel}>
-                  {viewMode === 'grid' ? 'Grid' : 'List'}
-                </span>
-              </Button>
+              {canToggleView ? (
+                <Button
+                  appearance="subtle"
+                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
+                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  className={styles.menuButtonIconOnly}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                >
+                  <span className={styles.mobileHiddenLabel}>
+                    {viewMode === 'grid' ? 'Grid' : 'List'}
+                  </span>
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -1164,18 +1168,20 @@ const Library = () => {
               />
 
               {/* View Mode Toggle */}
-              <Button
-                appearance="subtle"
-                icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                className={styles.menuButtonIconOnly}
-                title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-              >
-                <span className={styles.mobileHiddenLabel}>
-                  {viewMode === 'grid' ? 'Grid' : 'List'}
-                </span>
-              </Button>
+              {canToggleView ? (
+                <Button
+                  appearance="subtle"
+                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
+                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  className={styles.menuButtonIconOnly}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                >
+                  <span className={styles.mobileHiddenLabel}>
+                    {viewMode === 'grid' ? 'Grid' : 'List'}
+                  </span>
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1191,7 +1197,12 @@ const Library = () => {
 
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
-            {loading ? renderLoadingContent() : filteredArtists.length === 0 ? (
+            {loading ? renderPane({
+              scrollRef: artistScrollRef,
+              sentinelRef: artistSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredArtists.length === 0 ? (
               renderNoResultsContent("artists")
             ) : (
               renderPane({
@@ -1217,7 +1228,12 @@ const Library = () => {
 
         {selectedTab === "albums" && (
           <div className={styles.virtuosoContainer}>
-            {loading ? renderLoadingContent() : filteredAlbums.length === 0 ? (
+            {loading ? renderPane({
+              scrollRef: albumScrollRef,
+              sentinelRef: albumSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredAlbums.length === 0 ? (
               renderNoResultsContent("albums")
             ) : (
               renderPane({
@@ -1243,7 +1259,12 @@ const Library = () => {
 
         {selectedTab === "tracks" && (
           <div className={styles.virtuosoContainer}>
-            {tracksLoading ? renderLoadingContent() : filteredTracks.length === 0 ? (
+            {tracksLoading ? renderPane({
+              scrollRef: trackScrollRef,
+              sentinelRef: trackSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredTracks.length === 0 ? (
               renderNoResultsContent("tracks")
             ) : (
               renderPane({
@@ -1258,7 +1279,12 @@ const Library = () => {
 
         {selectedTab === "videos" && (
           <div className={styles.virtuosoContainer}>
-            {videosLoading ? renderLoadingContent() : filteredVideos.length === 0 ? (
+            {videosLoading ? renderPane({
+              scrollRef: videoScrollRef,
+              sentinelRef: videoSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredVideos.length === 0 ? (
               renderNoResultsContent("videos")
             ) : (
               renderPane({
