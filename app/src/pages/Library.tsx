@@ -67,7 +67,7 @@ import {
 } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
   searchBox: {
@@ -970,9 +970,19 @@ const Library = () => {
   }
 
   // Helper to render loading state in content area
-  const renderLoadingContent = () => (
-    <LoadingState className={styles.loadMoreSpinner} label="Loading..." />
-  );
+  const renderLoadingContent = () => {
+    switch (selectedTab) {
+      case "tracks":
+        return <TrackListSkeleton rows={10} />;
+      case "videos":
+        return <CardGridSkeleton cards={10} thumbnailAspect="video" />;
+      case "albums":
+        return <CardGridSkeleton cards={12} />;
+      case "artists":
+      default:
+        return <CardGridSkeleton cards={12} />;
+    }
+  };
 
   const renderNoResultsContent = (mediaLabel: "artists" | "albums" | "tracks" | "videos") => (
     <EmptyState

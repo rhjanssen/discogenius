@@ -27,8 +27,8 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -484,7 +484,7 @@ const AlbumPage = () => {
   if (loading) {
     return (
       <div className={styles.stateShell}>
-        <LoadingState size="huge" label="Loading album details..." minHeight="320px" />
+        <MediaDetailSkeleton variant="album" />
       </div>
     );
   }

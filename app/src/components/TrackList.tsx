@@ -137,7 +137,7 @@ const useStyles = makeStyles({
   trailing: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalM,
+    gap: tokens.spacingHorizontalS,
     marginLeft: "auto",
     flexShrink: 0,
     "@media (max-width: 639px)": {
@@ -146,13 +146,6 @@ const useStyles = makeStyles({
       justifyContent: "space-between",
       paddingLeft: `calc(28px + ${tokens.spacingHorizontalS})`,
     },
-  },
-  duration: {
-    color: tokens.colorNeutralForeground3,
-    fontFamily: tokens.fontFamilyMonospace,
-    fontSize: tokens.fontSizeBase200,
-    textAlign: "right",
-    minWidth: "48px",
   },
   actions: {
     display: "flex",
@@ -245,6 +238,7 @@ const TrackList = <T extends TrackListItem>({
           const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
             ? getAlbumTitle(track, contextAlbumTitle)
             : null;
+          const durationText = formatDurationSeconds(track.duration);
           const coverUrl = showCover
             ? getAlbumCover(getAlbumCoverId(track), "tiny")
             : null;
@@ -283,13 +277,14 @@ const TrackList = <T extends TrackListItem>({
                     {displayArtist ? <Text className={styles.metaText}>{displayArtist}</Text> : null}
                     {displayArtist && displayAlbum ? <Text className={styles.separator}>•</Text> : null}
                     {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
+                    {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
+                    <Text className={styles.metaText}>{durationText}</Text>
+                    {track.quality ? <Text className={styles.separator}>•</Text> : null}
                     {track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
                   </div>
                 </div>
 
                 <div className={styles.trailing}>
-                  <Text className={styles.duration}>{formatDurationSeconds(track.duration)}</Text>
-
                   <div className={styles.actions}>
                     <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
                       <Button

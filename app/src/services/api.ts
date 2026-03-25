@@ -85,7 +85,10 @@ import {
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
-const REQUEST_TIMEOUT_MS = 20_000;
+
+type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number | null;
+};
 
 class ApiClient {
   private baseUrl: string;
@@ -105,7 +108,7 @@ class ApiClient {
 
   public async request<T>(
     endpoint: string,
-    options: RequestInit = {},
+    options: ApiRequestOptions = {},
     parser?: (value: unknown) => T,
   ): Promise<T> {
     // All backend routes are namespaced under /api to avoid collisions with SPA routes.
@@ -119,9 +122,11 @@ class ApiClient {
 
     const url = `${this.baseUrl}${normalizedEndpoint}`;
 
+    const { timeoutMs = null, ...requestOptions } = options;
+
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
-      ...options.headers,
+      ...requestOptions.headers,
     };
 
     // Add auth token if available
@@ -129,13 +134,16 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
 
-    const callerSignal = options.signal;
+    const callerSignal = requestOptions.signal;
     const controller = new AbortController();
     let didTimeout = false;
-    const timeoutId = setTimeout(() => {
-      didTimeout = true;
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+    const hasRequestTimeout = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0;
+    const timeoutId = hasRequestTimeout
+      ? setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+      }, timeoutMs)
+      : null;
 
     const abortFromCaller = () => controller.abort();
     if (callerSignal) {
@@ -149,20 +157,22 @@ class ApiClient {
     let response: Response;
     try {
       response = await fetch(url, {
-        ...options,
+        ...requestOptions,
         headers,
         signal: controller.signal,
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (didTimeout) {
-          throw new Error(`Request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+          throw new Error(`Request timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s`);
         }
         throw error;
       }
       throw error;
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       if (callerSignal) {
         callerSignal.removeEventListener('abort', abortFromCaller);
       }

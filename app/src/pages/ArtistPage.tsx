@@ -42,8 +42,8 @@ import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalida
 import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -1174,11 +1174,7 @@ const ArtistPage = () => {
   if (pageLoading) {
     return (
       <div className={styles.stateShell}>
-        <LoadingState
-          size="huge"
-          label="Loading artist details..."
-          minHeight="320px"
-        />
+        <MediaDetailSkeleton variant="artist" />
       </div>
     );
   }

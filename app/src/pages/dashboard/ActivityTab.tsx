@@ -16,7 +16,8 @@ import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { usePendingTasks } from "@/hooks/usePendingTasks";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import type { HistoryEventItemContract } from "@contracts/history";
-import { EmptyState, LoadingState } from "@/components/ui/ContentState";
+import { EmptyState } from "@/components/ui/ContentState";
+import { ListRowsSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useDashboardStyles } from "./dashboardStyles";
 import {
     formatJobType,
@@ -472,7 +473,7 @@ const ActivityTab = ({
     if ((isInitialLoading || isPendingTasksInitialLoading) && !hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
-                <LoadingState label="Loading activity..." />
+                <ListRowsSkeleton rows={7} />
             </div>
         );
     }

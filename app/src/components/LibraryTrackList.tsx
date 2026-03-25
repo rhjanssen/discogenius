@@ -22,7 +22,8 @@ import { useNavigate } from "react-router-dom";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
-import { LoadingState, EmptyState } from "@/components/ui/ContentState";
+import { EmptyState } from "@/components/ui/ContentState";
+import { TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { MonitorButton } from "@/components/MonitorButton";
 import { LockToggle } from "@/components/LockToggle";
 import { getTidalImage } from "@/utils/tidalImages";
@@ -187,7 +188,7 @@ const LibraryTrackList = ({
 
   if (loading) {
     return (
-      <LoadingState className={styles.loadingState} size="small" label="Loading tracks..." />
+      <TrackListSkeleton rows={10} showCover={showCover} />
     );
   }
 
