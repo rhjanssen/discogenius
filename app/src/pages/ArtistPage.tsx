@@ -35,6 +35,9 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
+import { useMonitoring } from "@/hooks/useMonitoring";
+import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
+import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
@@ -517,11 +520,16 @@ const useStyles = makeStyles({
   },
 });
 
+const COLLAPSED_TOP_TRACK_COUNT = 5;
+const EXPANDED_TOP_TRACK_COUNT = 50;
+
 const ArtistPage = () => {
   const styles = useStyles();
   const { artistId } = useParams<{ artistId: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { toggleMonitor, toggleLock } = useMonitoring();
+  const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
   // State
   const [syncing, setSyncing] = useState(false);
@@ -994,7 +1002,7 @@ const ArtistPage = () => {
     return null;
   };
 
-  const filterTopTracks = useCallback((tracks: any[]) => {
+  const filterTopTracks = useCallback((tracks: TrackListItem[]) => {
     return tracks.filter((track) => {
       const quality = (track.quality || '').toString().toUpperCase();
 
@@ -1037,21 +1045,25 @@ const ArtistPage = () => {
       if (libraryFilter === 'video') return null;
       const filteredTracks = filterTopTracks(items);
       if (filteredTracks.length === 0) return null;
-      const visibleTracks = topTracksExpanded ? filteredTracks : filteredTracks.slice(0, 5);
       const filteredCount = filteredTracks.length;
+      const expandedTrackCount = Math.min(filteredCount, EXPANDED_TOP_TRACK_COUNT);
+      const visibleTracks = filteredTracks.slice(
+        0,
+        topTracksExpanded ? expandedTrackCount : COLLAPSED_TOP_TRACK_COUNT,
+      );
 
       return (
         <div key={index} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
-            {filteredCount > 5 && (
+            {filteredCount > COLLAPSED_TOP_TRACK_COUNT && (
               <Button
                 appearance="subtle"
                 size="small"
                 className={styles.sectionAction}
                 onClick={() => setTopTracksExpanded((previous) => !previous)}
               >
-                {topTracksExpanded ? "Show less" : `Show all (${filteredCount})`}
+                {topTracksExpanded ? "Show less" : `Show more (${expandedTrackCount})`}
               </Button>
             )}
           </div>
@@ -1059,10 +1071,28 @@ const ArtistPage = () => {
             tracks={visibleTracks}
             numbering="index"
             showAlbum
-            showCover
+            contextArtistName={artistName}
+            onDownloadTrack={handleDownloadTrack}
+            onToggleMonitor={(track) => {
+              toggleMonitor({
+                id: track.id,
+                type: "track",
+                currentStatus: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            onToggleLock={(track) => {
+              toggleLock({
+                id: track.id,
+                type: "track",
+                isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
+                isMonitored: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            isTrackDownloading={(track) => downloadingTracks.has(track.id)}
             onTrackClick={(track) => {
-              if ((track as any).album?.id) {
-                navigate(`/album/${(track as any).album.id}`);
+              const albumId = track.album_id ?? track.album?.id ?? null;
+              if (albumId) {
+                navigate(`/album/${albumId}`);
               }
             }}
           />
@@ -1075,8 +1105,8 @@ const ArtistPage = () => {
       if (libraryFilter !== 'all' && libraryFilter !== 'video') return null;
       const rendered = items.map(renderVideoCard).filter(Boolean);
       if (rendered.length === 0) return null;
-      return (
-        <div key={index} className={styles.section}>
+          return (
+            <div key={index} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
           </div>

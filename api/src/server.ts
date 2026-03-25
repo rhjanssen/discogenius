@@ -191,7 +191,7 @@ app.use("/api/stats", authMiddleware, statsRouter);
 app.use("/api", downloadQueueRouter);
 app.use("/api/tasks", authMiddleware, taskQueueRouter);
 app.use("/api/command", authMiddleware, commandRouter);
-app.use("/api/system/task", authMiddleware, systemTaskRouter);
+app.use("/api/system-task", authMiddleware, systemTaskRouter);
 app.use("/api/library-files", authMiddleware, libraryFilesRouter);
 app.use("/api/monitoring", authMiddleware, monitoringRouter);
 app.use("/api/status", authMiddleware, statusRouter);

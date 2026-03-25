@@ -1,22 +1,7 @@
 import { db } from "../database.js";
 import { getArtistWorkflowLabel } from "./artist-workflow.js";
 import { compareJobsByExecutionOrder, Job, JobTypes, TaskQueueService } from "./queue.js";
-
-const PENDING_ACTIVITY_JOB_TYPES = [
-    JobTypes.RefreshArtist,
-    JobTypes.ScanAlbum,
-    JobTypes.ScanPlaylist,
-    JobTypes.RefreshMetadata,
-    JobTypes.ApplyCuration,
-    JobTypes.DownloadMissing,
-    JobTypes.CheckUpgrades,
-    JobTypes.CurateArtist,
-    JobTypes.RescanFolders,
-    JobTypes.Housekeeping,
-    JobTypes.ConfigPrune,
-    JobTypes.ApplyRenames,
-    JobTypes.ApplyRetags,
-] as const;
+import { PENDING_ACTIVITY_JOB_TYPES } from "./command-registry.js";
 
 export const formatAlbumTitle = (title: string, version?: string | null) => {
     const base = title || "Unknown Album";

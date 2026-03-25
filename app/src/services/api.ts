@@ -72,6 +72,16 @@ import type {
 import {
   parseHistoryEventsResponseContract,
 } from '@contracts/history';
+import type {
+  RunSystemTaskResponseContract,
+  SystemTaskContract,
+  UpdateSystemTaskRequestContract,
+} from '@contracts/system-task';
+import {
+  parseRunSystemTaskResponseContract,
+  parseSystemTaskContract,
+  parseSystemTaskListContract,
+} from '@contracts/system-task';
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
@@ -821,6 +831,23 @@ class ApiClient {
 
   async getStatusOverview(): Promise<StatusOverviewContract> {
     return this.request('/status', {}, parseStatusOverviewContract);
+  }
+
+  async getSystemTasks(): Promise<SystemTaskContract[]> {
+    return this.request('/system-task', {}, parseSystemTaskListContract);
+  }
+
+  async updateSystemTask(id: string, updates: UpdateSystemTaskRequestContract): Promise<SystemTaskContract> {
+    return this.request(`/system-task/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    }, parseSystemTaskContract);
+  }
+
+  async runSystemTask(id: string): Promise<RunSystemTaskResponseContract> {
+    return this.request(`/system-task/${id}/run`, {
+      method: 'POST',
+    }, parseRunSystemTaskResponseContract);
   }
 
   async getPendingTasks(params?: { limit?: number; offset?: number }): Promise<ActivityListResponseContract> {

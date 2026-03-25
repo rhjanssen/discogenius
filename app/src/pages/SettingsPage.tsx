@@ -36,6 +36,7 @@ import {
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { SystemTasksSection } from "@/components/settings/SystemTasksSection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useTheme } from "@/providers/themeContext";
@@ -52,6 +53,7 @@ import type {
     MonitoringStatusResponseContract,
     NamingConfigContract,
 } from "@contracts/config";
+import type { SystemTaskContract, UpdateSystemTaskRequestContract } from "@contracts/system-task";
 import type { AppReleaseInfoContract } from "@contracts/release";
 
 type NamingFieldKey =
@@ -924,6 +926,11 @@ const SettingsPage = () => {
         running: false,
         checking: false,
     });
+    const [systemTasks, setSystemTasks] = useState<SystemTaskContract[]>([]);
+    const [systemTasksLoading, setSystemTasksLoading] = useState(true);
+    const [systemTasksError, setSystemTasksError] = useState<string | null>(null);
+    const [updatingSystemTaskId, setUpdatingSystemTaskId] = useState<string | null>(null);
+    const [runningSystemTaskId, setRunningSystemTaskId] = useState<string | null>(null);
     const [curationConfig, setCurationConfig] = useState<FilteringConfigContract | null>(null);
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
@@ -1035,9 +1042,29 @@ const SettingsPage = () => {
         }
     };
 
+    const refreshSystemTasks = useCallback(async () => {
+        setSystemTasksLoading(true);
+        setSystemTasksError(null);
+
+        try {
+            const tasks = await api.getSystemTasks();
+            setSystemTasks(tasks);
+        } catch (error: any) {
+            console.error("Error fetching system tasks:", error);
+            setSystemTasks([]);
+            setSystemTasksError(error.message || "Failed to load system tasks.");
+        } finally {
+            setSystemTasksLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
         fetchConfigs();
     }, []);
+
+    useEffect(() => {
+        refreshSystemTasks().catch(() => undefined);
+    }, [refreshSystemTasks]);
 
     useEffect(() => {
         if (!namingSettings || renameStatus || renameStatusLoading || renameStatusInitialized) {
@@ -1136,6 +1163,55 @@ const SettingsPage = () => {
                 description: "Failed to update monitoring configuration.",
                 variant: "destructive"
             });
+        }
+    };
+
+    const updateSystemTask = async (task: SystemTaskContract, updates: UpdateSystemTaskRequestContract) => {
+        setUpdatingSystemTaskId(task.id);
+
+        try {
+            const updatedTask = await api.updateSystemTask(task.id, updates);
+            setSystemTasks((current) => current.map((item) => (item.id === task.id ? updatedTask : item)));
+
+            toast({
+                title: updates.enabled !== undefined
+                    ? (updates.enabled ? "Task enabled" : "Task disabled")
+                    : "Task updated",
+                description: task.name,
+            });
+        } catch (error: any) {
+            console.error("Error updating system task:", error);
+            toast({
+                title: "Failed to update task",
+                description: error.message || "Could not update the task configuration.",
+                variant: "destructive",
+            });
+        } finally {
+            setUpdatingSystemTaskId(null);
+        }
+    };
+
+    const runSystemTask = async (task: SystemTaskContract) => {
+        setRunningSystemTaskId(task.id);
+
+        try {
+            const result = await api.runSystemTask(task.id);
+            dispatchActivityRefresh();
+            await refreshSystemTasks();
+
+            toast({
+                title: "Task queued",
+                description: `${task.name} was queued as job #${result.id}.`,
+            });
+        } catch (error: any) {
+            console.error("Error running system task:", error);
+            toast({
+                title: "Failed to queue task",
+                description: error.message || "Could not queue the task.",
+                variant: "destructive",
+            });
+        } finally {
+            setRunningSystemTaskId(null);
         }
     };
 
@@ -1878,6 +1954,35 @@ const SettingsPage = () => {
                                 {isScanInProgress ? "Running Task..." : "Run Now"}
                             </Button>
                         </div>
+                    </div>
+                </SettingsSection>
+
+                <SettingsSection
+                    id="system-tasks"
+                    title="System Tasks"
+                    description="Inspect scheduled jobs and trigger maintenance commands on demand."
+                    className={styles.section}
+                >
+                    <div className={styles.card}>
+                        <SystemTasksSection
+                            tasks={systemTasks}
+                            loading={systemTasksLoading}
+                            error={systemTasksError}
+                            updatingTaskId={updatingSystemTaskId}
+                            runningTaskId={runningSystemTaskId}
+                            onRetry={() => {
+                                void refreshSystemTasks();
+                            }}
+                            onToggleEnabled={async (task, enabled) => {
+                                await updateSystemTask(task, { enabled });
+                            }}
+                            onUpdateInterval={async (task, intervalMinutes) => {
+                                await updateSystemTask(task, { intervalMinutes });
+                            }}
+                            onRunNow={async (task) => {
+                                await runSystemTask(task);
+                            }}
+                        />
                     </div>
                 </SettingsSection>
 

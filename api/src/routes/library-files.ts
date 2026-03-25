@@ -3,14 +3,13 @@ import fs from "fs";
 import path from "path";
 import { db } from "../database.js";
 import { LibraryFilesService } from "../services/library-files.js";
+import { listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/library-files-query-service.js";
 import { DiskScanService } from "../services/library-scan.js";
 import { resolveStoredLibraryPath } from "../services/library-paths.js";
 import { queueArtistWorkflow } from "../services/artist-workflow.js";
 import { queueRescanFoldersPass } from "../services/monitoring-scheduler.js";
 import { getConfigSection } from "../services/config.js";
-import { UpgradableSpecification } from "../services/upgradable-specification.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
-import type { LibraryFileContract, LibraryFilesListResponseContract } from "../contracts/media.js";
 
 const router = Router();
 let immediateRootScanInProgress = false;
@@ -31,85 +30,15 @@ function parseFileTypes(value: unknown): string[] | undefined {
 
 router.get("/", (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 100;
-    const offset = parseInt(req.query.offset as string) || 0;
-    const artistId = req.query.artistId as string | undefined;
-    const albumId = req.query.albumId as string | undefined;
-    const mediaId = req.query.mediaId as string | undefined;
-    const libraryRoot = req.query.libraryRoot as string | undefined;
-    const fileType = req.query.fileType as string | undefined;
-
-    const where: string[] = [];
-    const params: any[] = [];
-
-    if (artistId) {
-      where.push("lf.artist_id = ?");
-      params.push(artistId);
-    }
-    if (albumId) {
-      where.push("lf.album_id = ?");
-      params.push(albumId);
-    }
-    if (mediaId) {
-      where.push("lf.media_id = ?");
-      params.push(mediaId);
-    }
-    if (libraryRoot) {
-      where.push("lf.library_root = ?");
-      params.push(libraryRoot);
-    }
-    if (fileType) {
-      where.push("lf.file_type = ?");
-      params.push(fileType);
-    }
-
-    const sql = `
-      SELECT
-        lf.*,
-        m.type AS media_type,
-        m.quality AS source_quality,
-        a.quality AS album_quality
-      FROM library_files lf
-      LEFT JOIN media m ON m.id = lf.media_id
-      LEFT JOIN albums a ON a.id = lf.album_id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY lf.created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    params.push(limit, offset);
-
-    const profile = UpgradableSpecification.buildEffectiveProfile();
-    const rawItems = db.prepare(sql).all(...params) as any[];
-    const items: LibraryFileContract[] = rawItems.map((item) => {
-      const evaluation = item.file_type === "video" || item.media_type === "Music Video"
-        ? UpgradableSpecification.evaluateVideoChange({
-          profile,
-          currentQuality: item.quality,
-          extension: item.extension,
-        })
-        : item.file_type === "track"
-          ? UpgradableSpecification.evaluateAudioChange({
-            profile,
-            currentQuality: item.quality,
-            sourceQuality: item.source_quality || item.album_quality,
-            codec: item.codec,
-            extension: item.extension,
-          })
-          : null;
-
-      return {
-        ...item,
-        artist_id: item.artist_id == null ? null : String(item.artist_id),
-        album_id: item.album_id == null ? null : String(item.album_id),
-        media_id: item.media_id == null ? null : String(item.media_id),
-        qualityTarget: evaluation?.targetQuality ?? null,
-        qualityChangeWanted: evaluation?.needsChange ?? false,
-        qualityChangeDirection: evaluation?.direction ?? "none",
-        qualityCutoffNotMet: evaluation?.qualityCutoffNotMet ?? false,
-        qualityChangeReason: evaluation?.needsChange ? evaluation.reason : null,
-      };
+    const response = listLibraryFiles({
+      limit: parseLibraryFilesQueryLimit(req.query.limit),
+      offset: parseLibraryFilesQueryOffset(req.query.offset),
+      artistId: req.query.artistId as string | undefined,
+      albumId: req.query.albumId as string | undefined,
+      mediaId: req.query.mediaId as string | undefined,
+      libraryRoot: req.query.libraryRoot as string | undefined,
+      fileType: req.query.fileType as string | undefined,
     });
-    const response: LibraryFilesListResponseContract = { items, limit, offset };
     res.json(response);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

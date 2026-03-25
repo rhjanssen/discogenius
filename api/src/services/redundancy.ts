@@ -204,8 +204,9 @@ export class RedundancyService {
             };
 
             // 6. UNIFIED ISRC DEDUPLICATION
-            // Group releases by identical ISRC sets, pick best in each group
-            // Skip for Atmos - all Atmos albums have same quality, no need to dedup by quality
+            // Group releases by identical ISRC sets, pick best in each group.
+            // This must also run for Atmos so explicit-vs-clean variants still resolve
+            // to one canonical release and the redundant badge/path stays consistent.
             const resolveEqualTrackSets = async (albums: Album[]): Promise<Album[]> => {
                 const uniqueAlbums: Album[] = [];
                 const albumsByIsrcSet = new Map<string, Album[]>();
@@ -247,9 +248,8 @@ export class RedundancyService {
                 return uniqueAlbums;
             };
 
-            const applyIsrcDedup = libraryType !== 'atmos' || !redundancyEnabled;
-            const deduped = applyIsrcDedup ? await resolveEqualTrackSets(candidatesForDedup) : candidatesForDedup;
-            console.log(`   After ISRC dedup: ${deduped.length} releases (from ${candidatesForDedup.length}) [${applyIsrcDedup ? 'quality/explicit dedup applied' : 'skipped for Atmos'}]`);
+            const deduped = await resolveEqualTrackSets(candidatesForDedup);
+            console.log(`   After ISRC dedup: ${deduped.length} releases (from ${candidatesForDedup.length}) [quality/explicit dedup applied]`);
 
             // 7. UNIFIED SUBSET FILTERING
             // Drop any release whose tracks are a subset of another release

@@ -1,9 +1,8 @@
 import { Router } from "express";
 import { db } from "../database.js";
-import { getMediaDownloadStateMap, updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
+import { updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
 import { seedVideo } from "../services/scanner.js";
-import type { VideoContract } from "../contracts/catalog.js";
-import type { VideoDetailContract } from "../contracts/media.js";
+import { getVideoDetail, listVideos } from "../services/video-query-service.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -13,15 +12,6 @@ import {
 } from "../utils/request-validation.js";
 
 const router = Router();
-
-const videoDownloadedPredicate = `
-  EXISTS (
-    SELECT 1
-    FROM library_files lf
-    WHERE lf.media_id = media.id
-      AND lf.file_type = 'video'
-  )
-`;
 
 function refreshVideoState(videoId: string) {
   if (!videoId) return;
@@ -57,100 +47,15 @@ router.get("/", (req, res) => {
     const sortParam = (req.query.sort as string | undefined) || 'releaseDate';
     const dirParam = (req.query.dir as string | undefined) || 'desc';
     const sortDir = dirParam.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
-
-    let query = `
-      SELECT 
-        media.*,
-        COALESCE((
-          SELECT lf.quality
-          FROM library_files lf
-          WHERE lf.media_id = media.id
-            AND lf.file_type = 'video'
-          ORDER BY lf.verified_at DESC, lf.id DESC
-          LIMIT 1
-        ), media.quality) as current_quality,
-        artists.name as artist_name
-      FROM media 
-      LEFT JOIN artists ON media.artist_id = artists.id
-    `;
-
-    let countQuery = `
-      SELECT COUNT(*) as total
-      FROM media
-    `;
-    const params: any[] = [];
-    const countParams: any[] = [];
-    const where: string[] = ["media.type = 'Music Video'"];
-
-    if (search) {
-      countQuery += ` LEFT JOIN artists ON media.artist_id = artists.id`;
-      where.push("(media.title LIKE ? OR artists.name LIKE ?)");
-      const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam);
-      countParams.push(searchParam, searchParam);
-    }
-
-    if (monitoredFilter !== undefined) {
-      where.push("media.monitor = ?");
-      params.push(monitoredFilter ? 1 : 0);
-      countParams.push(monitoredFilter ? 1 : 0);
-    }
-
-    if (downloadedFilter !== undefined) {
-      where.push(downloadedFilter ? videoDownloadedPredicate : `NOT (${videoDownloadedPredicate})`);
-    }
-
-    if (where.length) {
-      const whereClause = ` WHERE ${where.join(' AND ')}`;
-      query += whereClause;
-      countQuery += whereClause;
-    }
-
-    const orderBy = (() => {
-      switch (sortParam) {
-        case 'name':
-          return ` ORDER BY media.title ${sortDir}, media.id ASC`;
-        case 'popularity':
-          return ` ORDER BY media.popularity ${sortDir}, media.id ASC`;
-        case 'scannedAt':
-          return ` ORDER BY media.last_scanned ${sortDir}, media.id ASC`;
-        case 'releaseDate':
-        default:
-          return ` ORDER BY media.release_date ${sortDir}, media.id ASC`;
-      }
-    })();
-
-    query += `${orderBy} LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    const videos = db.prepare(query).all(...params) as any[];
-    const totalResult = db.prepare(countQuery).get(...countParams) as any;
-    const downloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
-
-    const transformed = videos.map((video): VideoContract => {
-      const { current_quality, ...rest } = video;
-      const isDownloaded = downloadStates.get(String(video.id)) ?? false;
-      return {
-        ...rest,
-        id: String(rest.id),
-        artist_id: String(rest.artist_id),
-        explicit: rest.explicit === undefined ? undefined : Boolean(rest.explicit),
-        quality: current_quality || video.quality,
-        cover_id: video.cover || null,
-        is_monitored: Boolean(video.monitor),
-        monitor_locked: Boolean(video.monitor_lock),
-        downloaded: isDownloaded,
-        is_downloaded: isDownloaded,
-      };
-    });
-
-    res.json({
-      items: transformed,
-      total: totalResult.total,
+    res.json(listVideos({
       limit,
       offset,
-      hasMore: offset + videos.length < totalResult.total
-    });
+      search,
+      monitored: monitoredFilter,
+      downloaded: downloadedFilter,
+      sort: sortParam,
+      direction: sortDir,
+    }));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -158,24 +63,7 @@ router.get("/", (req, res) => {
 
 router.get("/:videoId", async (req, res) => {
   try {
-    const queryVideo = () => db.prepare(`
-      SELECT 
-        media.*,
-        COALESCE((
-          SELECT lf.quality
-          FROM library_files lf
-          WHERE lf.media_id = media.id
-            AND lf.file_type = 'video'
-          ORDER BY lf.verified_at DESC, lf.id DESC
-          LIMIT 1
-        ), media.quality) as current_quality,
-        artists.name as artist_name
-      FROM media 
-      LEFT JOIN artists ON media.artist_id = artists.id
-      WHERE media.id = ? AND media.type = 'Music Video'
-    `).get(req.params.videoId) as any;
-
-    let video = queryVideo();
+    let video = getVideoDetail(req.params.videoId);
 
     if (!video) {
       try {
@@ -183,29 +71,14 @@ router.get("/:videoId", async (req, res) => {
       } catch {
         // Keep response behavior unchanged; return 404 below if still missing.
       }
-      video = queryVideo();
+      video = getVideoDetail(req.params.videoId);
     }
 
     if (!video) {
       return res.status(404).json({ detail: "Video not found" });
     }
 
-    const { current_quality, ...rest } = video;
-    const downloadState = getMediaDownloadStateMap([video.id], "video").get(String(video.id)) ?? false;
-    const transformed: VideoDetailContract = {
-      ...rest,
-      id: String(rest.id),
-      artist_id: String(rest.artist_id),
-      explicit: rest.explicit === undefined ? undefined : Boolean(rest.explicit),
-      quality: current_quality || video.quality,
-      cover_id: video.cover || null,
-      is_monitored: Boolean(video.monitor),
-      monitor_locked: Boolean(video.monitor_lock),
-      downloaded: downloadState,
-      is_downloaded: downloadState,
-    };
-
-    res.json(transformed);
+    res.json(video);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

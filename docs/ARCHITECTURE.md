@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-03-16
+Last updated: 2026-03-25
 
 ## Purpose
 
@@ -45,13 +45,14 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 - [api/src/services/queue.ts](api/src/services/queue.ts): SQLite-backed persistent job queue and payload typing
 - [api/src/services/command.ts](api/src/services/command.ts): command exclusivity and dedup gating
+- [api/src/services/system-task-service.ts](api/src/services/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
 - [api/src/services/download-processor.ts](api/src/services/download-processor.ts): exact media download jobs
 - [api/src/services/scheduler.ts](api/src/services/scheduler.ts): non-download jobs (scan/import/curation/maintenance)
 - [api/src/services/command-history.ts](api/src/services/command-history.ts) + [api/src/routes/status.ts](api/src/routes/status.ts): activity/status projection
 
 #### Command Summary
 
-**Phase 1 Manually-Triggerable Commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive):
+**Manual operator commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive, and exposed in Settings through `/api/system-task`):
 
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
@@ -64,7 +65,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 | `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
 | `ConfigPrune` | Prune disabled metadata sources, backfill enabled ones | Globally exclusive |
 
-**Legacy Orchestration Commands** (used by monitoring scheduler; remain queryable):
+**Legacy orchestration commands** (used by monitoring scheduler, remain queryable, and are now resolved through the shared system-task catalog rather than a route-local switch):
 
 | Command | Purpose |
 | --- | --- |
@@ -167,7 +168,9 @@ Operationally important semantics:
 
 - Monitoring scheduler drives periodic metadata/root-scan passes.
 - Follow-up pass chaining is explicit (refresh -> root scan -> curation -> download missing).
-- System task state is exposed through scheduled task snapshots and status APIs.
+- System task state is exposed through scheduled task snapshots, the `/api/system-task` operator surface, and status APIs.
+- `/api/system-task` now projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, run-now capability, and editable schedule settings where supported.
+- The frontend Settings page consumes that typed surface as the canonical operator control plane instead of hard-coding command lists.
 
 ## Auth and Connection Model
 

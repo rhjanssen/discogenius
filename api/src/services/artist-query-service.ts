@@ -420,19 +420,31 @@ export class ArtistQueryService {
 
         const topTracks = db.prepare(`
       SELECT
-        t.*, 
+        t.id,
+        t.artist_id,
+        t.title,
+        t.version,
+        t.duration,
+        t.track_number,
+        t.volume_number,
+        t.explicit,
+        t.quality,
+        t.monitor,
+        t.monitor_lock,
+        t.popularity,
         a.title as album_title,
         a.cover as album_cover,
-        a.id as album_id
+        a.id as album_id,
+        ta.name as artist_name
       FROM media t
       JOIN albums a ON t.album_id = a.id
       JOIN media_artists ma ON t.id = ma.media_id
+      LEFT JOIN artists ta ON ta.id = t.artist_id
       WHERE t.album_id IS NOT NULL
         AND t.type <> 'Music Video'
         AND ma.artist_id = ?
         AND ma.type = 'MAIN'
       ORDER BY COALESCE(t.popularity, 0) DESC, t.id ASC
-      LIMIT 50
     `).all(artistId) as any[];
 
         const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
@@ -552,14 +564,22 @@ export class ArtistQueryService {
                         const trackId = String(track.id);
                         return {
                             id: trackId,
+                            artist_id: track.artist_id == null ? null : String(track.artist_id),
+                            artist_name: track.artist_name || null,
                             title: track.title,
                             version: track.version || null,
                             duration: track.duration || 0,
                             track_number: track.track_number || 0,
                             volume_number: track.volume_number || 1,
+                            explicit: Boolean(track.explicit),
                             quality: track.quality,
+                            album_id: track.album_id == null ? null : String(track.album_id),
+                            album_title: track.album_title || null,
+                            album_cover: track.album_cover || null,
                             is_monitored: Boolean(track.monitor),
+                            monitor: Boolean(track.monitor),
                             monitor_locked: Boolean(track.monitor_lock),
+                            monitor_lock: Boolean(track.monitor_lock),
                             downloaded: topTrackDownloadStates.get(trackId) ? 1 : 0,
                             is_downloaded: topTrackDownloadStates.get(trackId) ?? false,
                             files: filesByTrack.get(trackId) ?? [],
