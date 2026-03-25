@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState, type MouseEvent } from "react";
 import {
   Avatar,
+  Checkbox,
   Table,
   TableBody,
   TableCell,
@@ -33,6 +34,11 @@ interface LibraryTrackListProps {
   showArtist?: boolean;
   showAlbum?: boolean;
   showCover?: boolean;
+  selection?: {
+    selectedRowIds: Array<string | number>;
+    onSelectionChange: (selectedRowIds: Array<string | number>) => void;
+    getSelectionLabel?: (track: Track) => string;
+  };
 }
 
 const useStyles = makeStyles({
@@ -142,6 +148,9 @@ const useStyles = makeStyles({
   mobileActions: {
     paddingTop: tokens.spacingVerticalXS,
   },
+  selectionCell: {
+    width: "44px",
+  },
   actionCell: {
     width: "180px",
   },
@@ -167,6 +176,7 @@ const LibraryTrackList = ({
   showArtist = true,
   showAlbum = true,
   showCover = true,
+  selection,
 }: LibraryTrackListProps) => {
   const navigate = useNavigate();
   const styles = useStyles();
@@ -182,10 +192,24 @@ const LibraryTrackList = ({
   const [infoTrack, setInfoTrack] = useState<Track | null>(null);
   const [trackFilesById, setTrackFilesById] = useState<Record<string, TrackFiles>>({});
   const [loadingTrackFileIds, setLoadingTrackFileIds] = useState<Set<string>>(new Set());
+  const selectedRowIdSet = useMemo(
+    () => new Set(selection?.selectedRowIds ?? []),
+    [selection?.selectedRowIds]
+  );
+  const selectableTrackIds = useMemo(
+    () => tracks.map((track) => track.id),
+    [tracks]
+  );
+  const allSelectableSelected = selection
+    ? selectableTrackIds.length > 0 && selectableTrackIds.every((trackId) => selectedRowIdSet.has(trackId))
+    : false;
+  const someSelectableSelected = selection
+    ? !allSelectableSelected && selectableTrackIds.some((trackId) => selectedRowIdSet.has(trackId))
+    : false;
 
   const columnCount = useMemo(() => {
-    return (showCover ? 1 : 0) + 1 + (showArtist ? 1 : 0) + (showAlbum ? 1 : 0) + 1;
-  }, [showAlbum, showArtist, showCover]);
+    return (selection ? 1 : 0) + (showCover ? 1 : 0) + 1 + (showArtist ? 1 : 0) + (showAlbum ? 1 : 0) + 1;
+  }, [selection, showAlbum, showArtist, showCover]);
 
   const getTrackFiles = useCallback((track: Track): TrackFiles => {
     if (Array.isArray(track.files) && track.files.length > 0) {
@@ -256,6 +280,26 @@ const LibraryTrackList = ({
       navigate(`/artist/${track.artist_id}`);
     }
   }, [navigate]);
+
+  const toggleAllSelected = useCallback((checked: boolean) => {
+    if (!selection) {
+      return;
+    }
+
+    selection.onSelectionChange(checked ? selectableTrackIds : []);
+  }, [selectableTrackIds, selection]);
+
+  const toggleSelectedTrack = useCallback((trackId: string, checked: boolean) => {
+    if (!selection) {
+      return;
+    }
+
+    const nextSelection = checked
+      ? Array.from(new Set([...(selection.selectedRowIds ?? []), trackId]))
+      : (selection.selectedRowIds ?? []).filter((currentTrackId) => currentTrackId !== trackId);
+
+    selection.onSelectionChange(nextSelection);
+  }, [selection]);
 
   const renderTitleMeta = (track: Track) => {
     const metaItems = joinTrackMeta([
@@ -387,6 +431,15 @@ const LibraryTrackList = ({
         <Table aria-label="Track list" className={styles.desktopTable}>
           <TableHeader>
             <TableRow>
+              {selection ? (
+                <TableHeaderCell className={styles.selectionCell}>
+                  <Checkbox
+                    checked={allSelectableSelected ? true : someSelectableSelected ? "mixed" : false}
+                    aria-label="Select all visible tracks"
+                    onChange={(_, data) => toggleAllSelected(Boolean(data.checked))}
+                  />
+                </TableHeaderCell>
+              ) : null}
               {showCover ? <TableHeaderCell className={styles.coverCell} /> : null}
               <TableHeaderCell className={styles.titleCell}>Title</TableHeaderCell>
               {showArtist ? <TableHeaderCell>Artist</TableHeaderCell> : null}
@@ -407,6 +460,16 @@ const LibraryTrackList = ({
                     className={styles.row}
                     onClick={() => handleRowClick(track)}
                   >
+                    {selection ? (
+                      <TableCell className={styles.selectionCell} onClick={(event) => event.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedRowIdSet.has(track.id)}
+                          aria-label={selection.getSelectionLabel?.(track) || `Select ${track.title}`}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(_, data) => toggleSelectedTrack(track.id, Boolean(data.checked))}
+                        />
+                      </TableCell>
+                    ) : null}
                     {showCover ? (
                       <TableCell className={styles.coverCell}>
                         <Avatar

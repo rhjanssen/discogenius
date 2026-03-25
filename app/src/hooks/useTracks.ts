@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import type { TrackListItem as Track } from "@/types/track-list";
+import {
+  LIBRARY_UPDATED_EVENT,
+  MONITOR_STATE_CHANGED_EVENT,
+  type MonitorStateChangedDetail,
+} from "@/utils/appEvents";
 
 export const useTracks = (options?: {
   monitored?: boolean;
@@ -102,6 +107,37 @@ export const useTracks = (options?: {
   useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
+
+  useEffect(() => {
+    const handleLibraryUpdate = () => {
+      if (!enabled) {
+        return;
+      }
+
+      fetchRef.current(0, false);
+    };
+
+    const handleMonitorStateChanged = (event: Event) => {
+      const detail = (event as CustomEvent<MonitorStateChangedDetail>).detail;
+      if (!detail || detail.type !== "track") {
+        return;
+      }
+
+      setTracks((prev) => prev.map((track) => (
+        track.id === detail.tidalId
+          ? { ...track, is_monitored: detail.monitored, monitor: detail.monitored }
+          : track
+      )));
+    };
+
+    window.addEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
+    window.addEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
+
+    return () => {
+      window.removeEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
+      window.removeEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) {

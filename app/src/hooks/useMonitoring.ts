@@ -14,10 +14,13 @@ export const useMonitoring = () => {
             currentStatus,
         }: {
             id: string;
-            type: "artist" | "album" | "track";
+            type: "artist" | "album" | "track" | "video";
             currentStatus: boolean;
         }) => {
-            // Endpoint logic based on type
+            if (type === "video") {
+                return api.updateVideo(id, { monitored: !currentStatus });
+            }
+
             const endpoint =
                 type === "artist"
                     ? `/artists/${id}/monitor`
@@ -61,7 +64,7 @@ export const useMonitoring = () => {
         isMonitored,
     }: {
         id: string;
-        type: "artist" | "album" | "track";
+        type: "artist" | "album" | "track" | "video";
         isLocked: boolean;
         isMonitored: boolean;
     }) => {
@@ -71,9 +74,15 @@ export const useMonitoring = () => {
 
         if (isLocked) {
             // Unlock
+            if (type === "video") {
+                return api.updateVideo(id, { monitor_lock: false });
+            }
             return api.request(`/${type}s/${id}/reset-override`, { method: "POST" });
         } else {
             // Lock
+            if (type === "video") {
+                return api.updateVideo(id, { monitor_lock: true });
+            }
             const endpoint = isMonitored
                 ? `/${type}s/${id}/lock-wanted`
                 : `/${type}s/${id}/lock-unwanted`;

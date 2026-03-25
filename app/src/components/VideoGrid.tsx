@@ -10,6 +10,7 @@ import {
   Play24Regular,
   Eye24Regular,
   EyeOff24Regular,
+  ArrowDownload24Regular,
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
 import { getTidalImage } from "@/utils/tidalImages";
@@ -142,6 +143,32 @@ const useStyles = makeStyles({
       transform: "scale(1.05)",
     },
   },
+  downloadIndicator: {
+    position: "absolute",
+    top: tokens.spacingVerticalS,
+    left: tokens.spacingHorizontalS,
+    zIndex: 2,
+    width: "24px",
+    height: "24px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: tokens.borderRadiusCircular,
+    backdropFilter: "blur(20px)",
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    cursor: "pointer",
+    border: "none",
+    padding: 0,
+    transition: `transform ${tokens.durationFast} ${tokens.curveEasyEase}`,
+    "&:hover": {
+      transform: "scale(1.05)",
+    },
+  },
+  downloadIcon: {
+    width: "16px",
+    height: "16px",
+    color: tokens.colorNeutralForeground2,
+  },
   durationBadge: {
     position: "absolute",
     bottom: tokens.spacingVerticalS,
@@ -228,10 +255,11 @@ interface VideoGridProps {
   videos: Video[];
   loading?: boolean;
   onToggleMonitor?: (video: Video) => void;
+  onDownload?: (video: Video) => void;
   onOpenVideo?: (video: Video) => void;
 }
 
-const VideoGrid = ({ videos, loading, onToggleMonitor, onOpenVideo }: VideoGridProps) => {
+const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }: VideoGridProps) => {
   const styles = useStyles();
   const navigate = useNavigate();
 
@@ -308,6 +336,21 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onOpenVideo }: VideoGridP
               {video.is_downloaded && (
                 <DownloadedBadge className={styles.statusBadge} />
               )}
+
+              {!video.is_downloaded && onDownload ? (
+                <button
+                  type="button"
+                  className={styles.downloadIndicator}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDownload(video);
+                  }}
+                  title="Download video"
+                  aria-label="Download video"
+                >
+                  <ArrowDownload24Regular className={styles.downloadIcon} />
+                </button>
+              ) : null}
 
               {/* Duration badge (bottom left) */}
               <Badge appearance="filled" className={styles.durationBadge}>
