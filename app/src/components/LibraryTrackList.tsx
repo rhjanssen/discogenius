@@ -145,6 +145,10 @@ const useStyles = makeStyles({
   actionCell: {
     width: "180px",
   },
+  actionCellContent: {
+    width: "100%",
+    justifyContent: "flex-end",
+  },
 });
 
 const getTrackDisplayTitle = (track: Track) =>
@@ -448,7 +452,7 @@ const LibraryTrackList = ({
 
                     <TableCell onClick={(event) => event.stopPropagation()} className={styles.actionCell}>
                       <TrackRowActions
-                        className="track-actions"
+                        className={`${styles.actionCellContent} track-actions`}
                         isPlaying={isPlaying}
                         isMonitored={isMonitoredTrack(track)}
                         isLocked={isLockedTrack(track)}

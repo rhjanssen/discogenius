@@ -4,18 +4,18 @@
  * GET /stream/sign/:trackId   → returns { url } with a time-limited HMAC-signed URL
  * GET /stream/play/:trackId   → validates signature, fetches from TIDAL CDN, pipes to client
  *
- * Supports two manifest types:
- *   - BTS:  single CDN URL — proxied directly with Range header support
- *   - DASH: segmented MP4 — all segments fetched and concatenated into one stream
+ * Browser preview intentionally stays on a Tidarr-style safe path:
+ *   - BTS/progressive only
+ *   - byte range support preserved for scrubbing/seeking
+ *   - Atmos/Hi-Res requests fall back to browser-friendly stereo ladders
  */
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { Readable } from "stream";
-import { getPlaybackInfo, getVideoPlaybackInfo } from "../services/playback.js";
+import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "../services/playback.js";
 import type { PlaybackInfo, VideoPlaybackInfo } from "../services/playback.js";
-import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worker.js";
 import { authMiddleware } from "../middleware/auth.js";
 
 const streamPipeline = promisify(pipeline);
@@ -64,9 +64,8 @@ router.get("/stream/sign/:trackId", authMiddleware, (req: Request, res: Response
 
 /**
  * GET /stream/play/:trackId
- * Validates HMAC signature, fetches CDN URL(s) from TIDAL, pipes bytes to the browser.
- * - BTS manifests: single URL, proxied with Range header support for seeking.
- * - DASH manifests: all segments fetched sequentially, concatenated into one audio/mp4 stream.
+ * Validates HMAC signature, fetches a browser-compatible TIDAL preview URL,
+ * and preserves byte range support so the HTML audio element can seek correctly.
  */
 router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     const trackId = req.params.trackId as string;
@@ -85,95 +84,40 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
 
     try {
-        console.log(`[Playback] Fetching playback info for track ${trackId} (preferred=${quality || "auto"})...`);
-        const info: PlaybackInfo | null = await getPlaybackInfo(trackId, quality || undefined);
-        if (!info) {
-            console.error(`[Playback] No playable quality for track ${trackId}`);
+        console.log(`[Playback] Fetching browser playback info for track ${trackId} (preferred=${quality || "auto"})...`);
+        const info: PlaybackInfo | null = await getBrowserPlaybackInfo(trackId, quality || undefined);
+        if (!info || info.type !== "bts") {
+            console.error(`[Playback] No browser-safe playback source for track ${trackId}`);
             return res.status(502).json({ error: "No playable quality available" });
         }
 
-        // ── BTS: single CDN URL — proxy with Range support ──
-        if (info.type === "bts") {
-            console.log(`[Playback] BTS stream for track ${trackId}`);
-            const range = req.headers["range"];
-            const upstream = await fetch(info.url, {
-                headers: range ? { Range: range } : {},
-            });
+        console.log(`[Playback] BTS stream for track ${trackId}`);
+        const range = typeof req.headers["range"] === "string" ? req.headers["range"] : undefined;
+        const upstream = await fetch(info.url, {
+            headers: range ? { Range: range } : {},
+        });
 
-            if (!upstream.ok || !upstream.body) {
-                return res.status(upstream.status).json({ error: "Upstream fetch failed" });
-            }
-
-            res.status(upstream.status);
-            for (const h of [
-                "content-type", "content-length", "accept-ranges",
-                "content-range", "cache-control", "last-modified", "etag",
-            ]) {
-                const v = upstream.headers.get(h);
-                if (v) res.setHeader(h, v);
-            }
-
-            const nodeStream = Readable.fromWeb(upstream.body as any);
-            await streamPipeline(nodeStream, res);
-            return;
+        if (!upstream.ok || !upstream.body) {
+            return res.status(upstream.status).json({ error: "Upstream fetch failed" });
         }
 
-        // ── DASH: segmented MP4 — offload sequential streaming to a worker ──
-        console.log(`[Playback] DASH stream for track ${trackId}: ${info.segments.length} segments`);
-
-        res.setHeader("Content-Type", info.contentType);
-        res.setHeader("Cache-Control", "no-cache");
-        // No Content-Length (chunked transfer) — we don't know total size upfront
-        res.status(200);
-
-        const worker = spawnSegmentedPlaybackWorker({
-            segments: info.segments,
-            contentType: info.contentType,
-        });
-
-        const stopWorker = () => {
-            if (!worker.killed) {
-                worker.kill("SIGTERM");
+        res.status(upstream.status);
+        for (const h of [
+            "content-type", "content-length", "accept-ranges",
+            "content-range", "cache-control", "expires", "last-modified", "etag",
+        ]) {
+            const v = upstream.headers.get(h);
+            if (v) {
+                res.setHeader(h, v);
             }
-        };
+        }
 
-        worker.stderr.on("data", (chunk) => {
-            const message = Buffer.from(chunk).toString("utf8").trim();
-            if (message) {
-                console.warn(`[Playback] DASH worker: ${message}`);
-            }
-        });
+        if (!res.getHeader("accept-ranges")) {
+            res.setHeader("accept-ranges", "bytes");
+        }
 
-        worker.once("error", (error) => {
-            console.error(`[Playback] DASH worker failed for track ${trackId}:`, error);
-            stopWorker();
-            if (!res.headersSent) {
-                res.status(502).json({ error: "Playback worker failed" });
-            } else if (!res.writableEnded) {
-                res.end();
-            }
-        });
-
-        worker.once("close", (code, signal) => {
-            if (code === 0 || signal === "SIGTERM") {
-                if (!res.writableEnded) {
-                    res.end();
-                }
-                console.log(`[Playback] DASH stream complete for track ${trackId}`);
-                return;
-            }
-
-            console.error(`[Playback] DASH worker exited with code ${code} for track ${trackId}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: "Playback worker exited unexpectedly" });
-            } else if (!res.writableEnded) {
-                res.end();
-            }
-        });
-
-        req.once("close", stopWorker);
-        res.once("close", stopWorker);
-        worker.stdout.pipe(res);
+        const nodeStream = Readable.fromWeb(upstream.body as any);
+        await streamPipeline(nodeStream, res);
         return;
     } catch (err: any) {
         // Ignore premature close (client stopped playback)
