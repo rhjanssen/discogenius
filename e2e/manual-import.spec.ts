@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 test.describe('Manual import flow', () => {
   test('lets the user choose a release and assign tracks in the manual import modal', async ({ page }) => {
@@ -56,10 +56,21 @@ test.describe('Manual import flow', () => {
       await route.fulfill({
         json: {
           activeJobs: [],
-          queuedJobs: [],
           jobHistory: [],
           taskQueueStats: [],
           commandStats: {},
+        },
+      });
+    });
+
+    await page.route('**/api/status/tasks**', async (route) => {
+      await route.fulfill({
+        json: {
+          items: [],
+          total: 0,
+          limit: 100,
+          offset: 0,
+          hasMore: false,
         },
       });
     });

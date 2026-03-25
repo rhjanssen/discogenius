@@ -22,6 +22,26 @@ export type VideoPlaybackInfo = {
     contentType?: string | null;
 };
 
+const PLAYBACK_QUALITY_ORDER = ["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const;
+type PlaybackQuality = typeof PLAYBACK_QUALITY_ORDER[number];
+
+function normalizePlaybackQuality(value: string | undefined | null): PlaybackQuality | null {
+    const normalized = String(value ?? "").trim().toUpperCase();
+    return (PLAYBACK_QUALITY_ORDER as readonly string[]).includes(normalized)
+        ? normalized as PlaybackQuality
+        : null;
+}
+
+export function buildPlaybackQualityOrder(preferredQuality?: string | null): string[] {
+    const preferred = normalizePlaybackQuality(preferredQuality);
+    if (!preferred) {
+        return ["HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"];
+    }
+
+    const preferredIndex = PLAYBACK_QUALITY_ORDER.indexOf(preferred);
+    return PLAYBACK_QUALITY_ORDER.slice(preferredIndex);
+}
+
 // ── BTS manifest parser ─────────────────────────────────────────────────────
 function parseBtsManifest(decoded: string): string[] {
     try {
@@ -49,9 +69,14 @@ function parseBtsManifest(decoded: string): string[] {
  */
 function parseDashManifest(mpd: string): { segments: string[]; contentType: string } | null {
     try {
-        // Extract mimeType from AdaptationSet (e.g. "audio/mp4")
+        // Extract mimeType and codecs from the manifest so the proxy response preserves
+        // the actual audio format instead of collapsing everything to a generic MP4 type.
         const mimeMatch = mpd.match(/AdaptationSet[^>]+mimeType="([^"]+)"/);
-        const contentType = mimeMatch?.[1] || "audio/mp4";
+        const codecsMatch =
+            mpd.match(/Representation[^>]+codecs="([^"]+)"/)
+            || mpd.match(/AdaptationSet[^>]+codecs="([^"]+)"/);
+        const mimeType = mimeMatch?.[1] || "audio/mp4";
+        const contentType = codecsMatch ? `${mimeType}; codecs="${codecsMatch[1]}"` : mimeType;
 
         // Extract SegmentTemplate attributes
         const initMatch = mpd.match(/initialization="([^"]+)"/);
@@ -154,15 +179,15 @@ async function fetchPlaybackInfo(
 // ── Public API ──────────────────────────────────────────────────────────────
 /**
  * Resolve the best-available playback info for a TIDAL track.
- * Tries qualities LOSSLESS → HIGH → LOW.
+ * Tries a quality ladder based on the requested track quality.
  * Automatically refreshes the TIDAL token on failure.
  */
-export async function getPlaybackInfo(trackId: string): Promise<PlaybackInfo | null> {
+export async function getPlaybackInfo(trackId: string, preferredQuality?: string): Promise<PlaybackInfo | null> {
     let token = loadToken();
     if (!token) return null;
 
     const cc = getCountryCode();
-    const qualities = ["LOSSLESS", "HIGH", "LOW"];
+    const qualities = buildPlaybackQualityOrder(preferredQuality);
 
     // First pass with current token
     for (const q of qualities) {

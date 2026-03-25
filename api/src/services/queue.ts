@@ -81,7 +81,6 @@ export const ARTIST_WORKFLOW_JOB_TYPES = [
  * Used for global priority selection (Lidarr-style CommandQueue).
  */
 export const NON_DOWNLOAD_JOB_TYPES = [
-    JobTypes.ImportDownload,
     JobTypes.RefreshArtist,
     JobTypes.ScanAlbum,
     JobTypes.ScanPlaylist,
@@ -152,6 +151,7 @@ interface JobRecordBase<T extends JobType> {
     progress: number;
     priority: number;
     trigger?: number;
+    queue_order?: number | null;
     attempts: number;
     error?: string;
     ref_id?: string;
@@ -233,6 +233,41 @@ function buildTypeInClause(types: readonly string[]): string {
     return types.map(() => '?').join(',');
 }
 
+function parseSqliteDate(value: unknown): number {
+    if (!value) {
+        return 0;
+    }
+
+    if (typeof value === "string") {
+        const normalized = value.includes("T") || value.includes("Z")
+            ? value
+            : value.replace(" ", "T") + "Z";
+        return new Date(normalized).getTime() || 0;
+    }
+
+    return new Date(value as string | number | Date).getTime() || 0;
+}
+
+function buildColumnName(column: string, alias?: string): string {
+    return alias ? `${alias}.${column}` : column;
+}
+
+function buildExecutionOrderClause(alias?: string): string {
+    const priority = buildColumnName("priority", alias);
+    const trigger = buildColumnName("trigger", alias);
+    const queueOrder = buildColumnName("queue_order", alias);
+    const createdAt = buildColumnName("created_at", alias);
+    const id = buildColumnName("id", alias);
+
+    return `
+                ${priority} DESC,
+                ${trigger} DESC,
+                COALESCE(${queueOrder}, 2147483647) ASC,
+                ${createdAt} ASC,
+                ${id} ASC
+            `;
+}
+
 function hydrateJobRow(row: { type: string; payload: unknown; id: number } & Record<string, unknown>): Job | null {
     if (!isJobType(row.type)) {
         console.warn(`[TaskQueue] Encountered unknown job type ${String(row.type)} for job ${row.id}; skipping typed hydration`);
@@ -244,6 +279,36 @@ function hydrateJobRow(row: { type: string; payload: unknown; id: number } & Rec
         type: row.type,
         payload: safeParsePayload(row.payload, row.id) as AnyJobPayload,
     } as Job;
+}
+
+export function compareJobsByExecutionOrder(left: Job, right: Job): number {
+    if (left.priority !== right.priority) {
+        return right.priority - left.priority;
+    }
+
+    const leftTrigger = left.trigger ?? 0;
+    const rightTrigger = right.trigger ?? 0;
+    if (leftTrigger !== rightTrigger) {
+        return rightTrigger - leftTrigger;
+    }
+
+    const leftQueueOrder = left.queue_order ?? Number.MAX_SAFE_INTEGER;
+    const rightQueueOrder = right.queue_order ?? Number.MAX_SAFE_INTEGER;
+    if (leftQueueOrder !== rightQueueOrder) {
+        return leftQueueOrder - rightQueueOrder;
+    }
+
+    const leftCreatedAt = parseSqliteDate(left.created_at);
+    const rightCreatedAt = parseSqliteDate(right.created_at);
+    if (leftCreatedAt !== rightCreatedAt) {
+        return leftCreatedAt - rightCreatedAt;
+    }
+
+    return left.id - right.id;
+}
+
+export function sortJobsByExecutionOrder<T extends Job>(jobs: T[]): T[] {
+    return jobs.sort(compareJobsByExecutionOrder);
 }
 
 export class TaskQueueService {
@@ -294,21 +359,36 @@ export class TaskQueueService {
         }
 
         const insert = db.prepare(`
-               INSERT INTO job_queue(type, ref_id, payload, priority, trigger, status, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               INSERT INTO job_queue(type, ref_id, payload, priority, trigger, queue_order, status, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `);
 
-        const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger);
+        const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger, null);
         const newId = info.lastInsertRowid as number;
+        db.prepare(`
+            UPDATE job_queue
+            SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND queue_order IS NULL
+        `).run(newId, newId);
         appEvents.emit(AppEvent.JOB_ADDED, { id: newId, type, status: 'pending', progress: 0, payload } as JobEventPayload);
         return newId;
     }
 
-    static listJobs(typePattern: string = '%', statusPattern: string = '%', limit: number = 50, offset: number = 0): Job[] {
+    static listJobs(
+        typePattern: string = '%',
+        statusPattern: string = '%',
+        limit: number = 50,
+        offset: number = 0,
+        options: { orderBy?: 'created_desc' | 'execution' } = {},
+    ): Job[] {
+        const orderBy = options.orderBy === 'execution'
+            ? buildExecutionOrderClause()
+            : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
 SELECT * FROM job_queue 
             WHERE type LIKE ? AND status LIKE ?
-    ORDER BY created_at DESC
+            ORDER BY ${orderBy}
 LIMIT ? OFFSET ?
     `).all(typePattern, statusPattern, limit, offset) as any[];
 
@@ -322,6 +402,7 @@ LIMIT ? OFFSET ?
         statuses: readonly JobStatus[],
         limit: number = 200,
         offset: number = 0,
+        options: { orderBy?: 'created_desc' | 'execution' } = {},
     ): Job[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
@@ -329,17 +410,40 @@ LIMIT ? OFFSET ?
 
         const typePlaceholders = buildTypeInClause(types);
         const statusPlaceholders = statuses.map(() => '?').join(',');
+        const orderBy = options.orderBy === 'execution'
+            ? buildExecutionOrderClause()
+            : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
             SELECT * FROM job_queue
             WHERE type IN (${typePlaceholders})
               AND status IN (${statusPlaceholders})
-            ORDER BY created_at DESC
+            ORDER BY ${orderBy}
             LIMIT ? OFFSET ?
         `).all(...types, ...statuses, limit, offset) as any[];
 
         return jobs
             .map((job) => hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>))
             .filter((job): job is Job => job !== null);
+    }
+
+    static countJobsByTypesAndStatuses(
+        types: readonly JobType[],
+        statuses: readonly JobStatus[],
+    ): number {
+        if (types.length === 0 || statuses.length === 0) {
+            return 0;
+        }
+
+        const typePlaceholders = buildTypeInClause(types);
+        const statusPlaceholders = statuses.map(() => '?').join(',');
+        const row = db.prepare(`
+            SELECT COUNT(*) as count
+            FROM job_queue
+            WHERE type IN (${typePlaceholders})
+              AND status IN (${statusPlaceholders})
+        `).get(...types, ...statuses) as { count?: number } | undefined;
+
+        return Number(row?.count || 0);
     }
 
     static countJobs(typePattern: string = '%', statusPattern: string = '%'): number {
@@ -378,9 +482,7 @@ LIMIT ? OFFSET ?
             SELECT * FROM job_queue 
             WHERE status = 'pending' AND type LIKE ?
             ORDER BY 
-                priority DESC,
-                trigger DESC,
-                created_at ASC 
+${buildExecutionOrderClause()}
             LIMIT 1
         `).get(typePattern) as any;
 
@@ -399,9 +501,7 @@ LIMIT ? OFFSET ?
             SELECT * FROM job_queue
             WHERE status = 'pending' AND type IN (${placeholders})
             ORDER BY
-                priority DESC,
-                trigger DESC,
-                created_at ASC
+${buildExecutionOrderClause()}
             LIMIT 1
         `).get(...types) as any;
 
@@ -423,9 +523,7 @@ LIMIT ? OFFSET ?
             SELECT * FROM job_queue
             WHERE status = 'pending' AND type IN (${placeholders})
             ORDER BY
-                priority DESC,
-                trigger DESC,
-                created_at ASC
+${buildExecutionOrderClause()}
             LIMIT ?
         `).all(...types, limit) as any[];
 
@@ -709,6 +807,81 @@ status = 'pending',
         return result.changes;
     }
 
+    static reorderPendingJobs(
+        jobIds: number[],
+        options: {
+            beforeJobId?: number;
+            afterJobId?: number;
+            types?: readonly JobType[];
+        } = {},
+    ): number {
+        const distinctJobIds = Array.from(new Set(jobIds.filter((jobId) => Number.isInteger(jobId) && jobId > 0)));
+        if (distinctJobIds.length === 0) {
+            return 0;
+        }
+
+        const { beforeJobId, afterJobId } = options;
+        if ((beforeJobId == null && afterJobId == null) || (beforeJobId != null && afterJobId != null)) {
+            throw new Error("Queue reorder requires exactly one anchor: beforeJobId or afterJobId.");
+        }
+
+        const types = options.types ?? DOWNLOAD_JOB_TYPES;
+        const pendingJobs = this.listJobsByTypesAndStatuses(
+            types,
+            ['pending'],
+            this.countJobsByTypesAndStatuses(types, ['pending']),
+            0,
+            { orderBy: 'execution' },
+        );
+
+        const pendingById = new Map(pendingJobs.map((job) => [job.id, job]));
+        const movingSet = new Set(distinctJobIds);
+        const movingJobs = pendingJobs.filter((job) => movingSet.has(job.id));
+
+        if (movingJobs.length !== distinctJobIds.length) {
+            throw new Error("Only pending download queue items can be reordered.");
+        }
+
+        const anchorJobId = beforeJobId ?? afterJobId;
+        if (anchorJobId == null || movingSet.has(anchorJobId)) {
+            throw new Error("Queue reorder anchor must be a different pending queue item.");
+        }
+
+        if (!pendingById.has(anchorJobId)) {
+            throw new Error("Queue reorder anchor is not in the pending download queue.");
+        }
+
+        const remainingJobs = pendingJobs.filter((job) => !movingSet.has(job.id));
+        const anchorIndex = remainingJobs.findIndex((job) => job.id === anchorJobId);
+        if (anchorIndex === -1) {
+            throw new Error("Queue reorder anchor could not be resolved.");
+        }
+
+        const insertIndex = beforeJobId != null ? anchorIndex : anchorIndex + 1;
+        const reorderedJobs = [
+            ...remainingJobs.slice(0, insertIndex),
+            ...movingJobs,
+            ...remainingJobs.slice(insertIndex),
+        ];
+
+        const updateQueueOrder = db.prepare(`
+            UPDATE job_queue
+            SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND (queue_order IS NULL OR queue_order != ?)
+        `);
+
+        const tx = db.transaction(() => {
+            reorderedJobs.forEach((job, index) => {
+                const queueOrder = index + 1;
+                updateQueueOrder.run(queueOrder, job.id, queueOrder);
+            });
+        });
+
+        tx();
+        return reorderedJobs.length;
+    }
+
     /**
      * Get job by ref_id (e.g., Tidal ID)
      */
@@ -740,8 +913,8 @@ status = 'pending',
      * Clear all download jobs (pending/failed)
      */
     static clearDownloadJobs() {
-        const placeholders = buildTypeInClause(DOWNLOAD_JOB_TYPES);
-        db.prepare(`DELETE FROM job_queue WHERE type IN (${placeholders}) AND status IN ('pending', 'failed')`).run(...DOWNLOAD_JOB_TYPES);
+        const placeholders = buildTypeInClause(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+        db.prepare(`DELETE FROM job_queue WHERE type IN (${placeholders}) AND status IN ('pending', 'failed')`).run(...DOWNLOAD_OR_IMPORT_JOB_TYPES);
     }
 
     /**

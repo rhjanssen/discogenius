@@ -367,6 +367,50 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       `);
     },
   },
+  {
+    version: 3,
+    description: "add explicit queue ordering column for persisted job execution order",
+    up: () => {
+      if (!tableExists("job_queue")) {
+        return;
+      }
+
+      if (!columnExists("job_queue", "queue_order")) {
+        db.exec("ALTER TABLE job_queue ADD COLUMN queue_order INT");
+      }
+
+      const jobs = db.prepare(`
+        SELECT id
+        FROM job_queue
+        ORDER BY priority DESC, trigger DESC, created_at ASC, id ASC
+      `).all() as Array<{ id: number }>;
+
+      if (jobs.length > 0) {
+        const updateQueueOrder = db.prepare(`
+          UPDATE job_queue
+          SET queue_order = ?
+          WHERE id = ?
+            AND (queue_order IS NULL OR queue_order != ?)
+        `);
+
+        const tx = db.transaction(() => {
+          jobs.forEach((job, index) => {
+            const queueOrder = index + 1;
+            updateQueueOrder.run(queueOrder, job.id, queueOrder);
+          });
+        });
+
+        tx();
+      }
+
+      db.exec("DROP INDEX IF EXISTS idx_jobs_poll");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_jobs_poll
+        ON job_queue(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON job_queue(queue_order)");
+    },
+  },
 ];
 
 type MigrationRunSummary = {
@@ -768,6 +812,7 @@ export function initDatabase() {
       progress INT DEFAULT 0,           -- 0-100
       priority INT DEFAULT 0,           -- higher = processed first
       trigger INT DEFAULT 0,            -- 0=Unspecified, 1=Manual, 2=Scheduled
+      queue_order INT,
       attempts INT DEFAULT 0,
       error TEXT,
       
@@ -991,11 +1036,12 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_type ON job_queue(type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_ref_id ON job_queue(ref_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON job_queue(priority)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON job_queue(queue_order)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON job_queue(status, priority)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_type_status_ref_id ON job_queue(type, status, ref_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_type_created ON job_queue(status, type, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_type_started ON job_queue(status, type, started_at)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_poll ON job_queue(status, priority DESC, trigger DESC, created_at ASC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_poll ON job_queue(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);
 
   // Library file indexes

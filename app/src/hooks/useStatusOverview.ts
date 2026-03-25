@@ -47,7 +47,6 @@ export function useStatusOverview() {
         ...query,
         status: data,
         activeJobs: data?.activeJobs ?? [],
-        queuedJobs: data?.queuedJobs ?? [],
         jobHistory: data?.jobHistory ?? [],
         taskQueueStats: data?.taskQueueStats ?? [],
         commandStats: data?.commandStats ?? {},

@@ -1,5 +1,5 @@
 import { db } from '../database.js';
-import { DOWNLOAD_JOB_TYPES, JobTypes, TaskQueueService } from './queue.js';
+import { DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobOfType, JobTypes, TaskQueueService } from './queue.js';
 import { spawn, ChildProcess } from 'child_process';
 import { Config } from './config.js';
 import {
@@ -11,7 +11,6 @@ import {
     syncDiscogeniusSettings,
 } from './tidal-dl-ng.js';
 import { downloadEvents } from './download-events.js';
-import { OrganizerService, OrganizeResult } from './organizer.js';
 import { updateAlbumDownloadStatus } from './download-state.js';
 import { readIntEnv } from '../utils/env.js';
 import fs from 'fs';
@@ -33,14 +32,17 @@ import { loadStoredTidalToken } from './tidal-auth.js';
 import type {
     DownloadAlbumJobPayload,
     DownloadMediaType,
+    ImportDownloadJobPayload,
     DownloadPlaylistJobPayload,
     DownloadTrackJobPayload,
     DownloadVideoJobPayload,
     ResolvedDownloadMetadata,
 } from './job-payloads.js';
+import { processImportDownloadJob } from './import-download-service.js';
 
 type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload | DownloadPlaylistJobPayload;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album' | 'playlist'>;
+type DownloadOrImportJobPayload = DownloadJobPayload | ImportDownloadJobPayload;
 
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_DOWNLOAD_POLL_MS', 2000, 1); // 2 seconds default
 const MAX_RETRY_ATTEMPTS = readIntEnv('DISCOGENIUS_DOWNLOAD_MAX_RETRY_ATTEMPTS', 3, 1);
@@ -98,7 +100,7 @@ export class DownloadProcessor {
         this.lastStuckCleanupAt = now;
 
         const recovered = TaskQueueService.requeueStaleProcessingJobsByTypes({
-            types: DOWNLOAD_JOB_TYPES,
+            types: DOWNLOAD_OR_IMPORT_JOB_TYPES,
             olderThanMs: STUCK_JOB_MS,
             excludeIds: this.currentJobId ? [this.currentJobId] : [],
         });
@@ -304,38 +306,45 @@ export class DownloadProcessor {
 
     private persistDownloadState(jobId: number, state: {
         progress?: number;
+        description?: string;
         currentFileNum?: number;
         totalFiles?: number;
         currentTrack?: string;
         trackProgress?: number;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
         statusMessage?: string;
-        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused';
+        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
         speed?: string;
         eta?: string;
         size?: number;
         sizeleft?: number;
         tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
     }) {
+        const payloadPatch: Record<string, unknown> = {
+            downloadState: {
+                progress: state.progress,
+                currentFileNum: state.currentFileNum,
+                totalFiles: state.totalFiles,
+                currentTrack: state.currentTrack,
+                trackProgress: state.trackProgress,
+                trackStatus: state.trackStatus,
+                statusMessage: state.statusMessage,
+                state: state.state,
+                speed: state.speed,
+                eta: state.eta,
+                size: state.size,
+                sizeleft: state.sizeleft,
+                tracks: state.tracks,
+            },
+        };
+
+        if (state.description) {
+            payloadPatch.description = state.description;
+        }
+
         TaskQueueService.updateState(jobId, {
             progress: state.progress,
-            payloadPatch: {
-                downloadState: {
-                    progress: state.progress,
-                    currentFileNum: state.currentFileNum,
-                    totalFiles: state.totalFiles,
-                    currentTrack: state.currentTrack,
-                    trackProgress: state.trackProgress,
-                    trackStatus: state.trackStatus,
-                    statusMessage: state.statusMessage,
-                    state: state.state,
-                    speed: state.speed,
-                    eta: state.eta,
-                    size: state.size,
-                    sizeleft: state.sizeleft,
-                    tracks: state.tracks,
-                },
-            },
+            payloadPatch,
         });
     }
 
@@ -364,9 +373,9 @@ export class DownloadProcessor {
             const stuckJobs = db.prepare(`
                 SELECT id, type, ref_id, payload, created_at, started_at 
                 FROM job_queue 
-                WHERE status = 'processing' AND type IN (${DOWNLOAD_JOB_TYPES.map(() => '?').join(',')})
+                WHERE status = 'processing' AND type IN (${DOWNLOAD_OR_IMPORT_JOB_TYPES.map(() => '?').join(',')})
                 ORDER BY started_at ASC
-            `).all(...DOWNLOAD_JOB_TYPES) as any[];
+            `).all(...DOWNLOAD_OR_IMPORT_JOB_TYPES) as any[];
 
             if (stuckJobs.length > 0) {
                 // Log details of what we're recovering (for diagnostic purposes)
@@ -376,8 +385,8 @@ export class DownloadProcessor {
                 });
 
                 // Reset to pending state - will be picked up by next processQueue() call
-                const recovered = TaskQueueService.resetProcessingJobsByTypes(DOWNLOAD_JOB_TYPES);
-                console.log(`[DOWNLOAD-PROCESSOR] Successfully re-queued ${recovered} interrupted download(s) to pending state`);
+                const recovered = TaskQueueService.resetProcessingJobsByTypes(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+                console.log(`[DOWNLOAD-PROCESSOR] Successfully re-queued ${recovered} interrupted download/import job(s) to pending state`);
             }
         } catch (error) {
             console.error('[DOWNLOAD-PROCESSOR] Error during restart recovery:', error);
@@ -405,7 +414,7 @@ export class DownloadProcessor {
 
         this.maybeCleanupStuckJobs();
 
-        const job = TaskQueueService.getNextJobByTypes(DOWNLOAD_JOB_TYPES);
+        const job = TaskQueueService.getNextJobByTypes(DOWNLOAD_OR_IMPORT_JOB_TYPES);
 
         if (!job) {
             return;
@@ -423,20 +432,32 @@ export class DownloadProcessor {
         this.processing = true;
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
+        const isImportJob = job.type === JobTypes.ImportDownload;
+        const importPayload = isImportJob ? job.payload as ImportDownloadJobPayload : null;
+        const tidalId = String(importPayload?.tidalId || job.ref_id || job.payload?.tidalId || '');
+        const type: DownloadJobType = isImportJob
+            ? importPayload?.type as DownloadJobType
+            : job.type === JobTypes.DownloadVideo
+                ? 'video'
+                : job.type === JobTypes.DownloadAlbum
+                    ? 'album'
+                    : job.type === JobTypes.DownloadPlaylist
+                        ? 'playlist'
+                        : 'track';
 
-        const tidalId = job.ref_id || job.payload?.tidalId;
-        const type: DownloadJobType = job.type === JobTypes.DownloadVideo
-            ? 'video'
-            : job.type === JobTypes.DownloadAlbum
-                ? 'album'
-                : job.type === JobTypes.DownloadPlaylist
-                    ? 'playlist'
-                    : 'track';
+        if (!type) {
+            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.type}`);
+            TaskQueueService.fail(job.id, `Invalid job type - cannot ${isImportJob ? 'import' : 'download'}`);
+            this.processing = false;
+            this.currentJobId = undefined;
+            this.scheduleNext();
+            return;
+        }
 
         // Validate tidalId before processing
         if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid tidalId: ${tidalId}`);
-            TaskQueueService.fail(job.id, 'Invalid tidalId - cannot download');
+            TaskQueueService.fail(job.id, `Invalid tidalId - cannot ${isImportJob ? 'import' : 'download'}`);
             this.processing = false;
             this.currentJobId = undefined;
             // Process next item
@@ -446,16 +467,81 @@ export class DownloadProcessor {
         this.currentTidalId = tidalId;
         this.currentType = type;
         this.currentDownloadPath = undefined;
-        let payload = job.payload as DownloadJobPayload;
+        let payload = job.payload as DownloadOrImportJobPayload;
 
         console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${tidalId})`);
 
         TaskQueueService.markProcessing(job.id);
         let resolved = {
-            title: payload?.title || 'Unknown',
-            artist: payload?.artist || 'Unknown',
-            cover: payload?.cover ?? null,
+            title: importPayload?.resolved?.title || payload?.title || 'Unknown',
+            artist: importPayload?.resolved?.artist || payload?.artist || 'Unknown',
+            cover: importPayload?.resolved?.cover ?? payload?.cover ?? null,
         };
+
+        if (isImportJob) {
+            const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
+                this.persistDownloadState(job.id, state);
+                downloadEvents.emitProgress(job.id, {
+                    tidalId,
+                    type,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    cover: resolved.cover,
+                    progress: state.progress ?? job.progress ?? 0,
+                    currentFileNum: state.currentFileNum,
+                    totalFiles: state.totalFiles,
+                    currentTrack: state.currentTrack,
+                    trackProgress: state.trackProgress,
+                    trackStatus: state.trackStatus,
+                    statusMessage: state.statusMessage,
+                    state: state.state,
+                });
+            };
+
+            try {
+                await processImportDownloadJob(job as JobOfType<typeof JobTypes.ImportDownload>, {
+                    updateState: emitImportProgress,
+                });
+
+                TaskQueueService.complete(job.id);
+                downloadEvents.emitCompleted(job.id, {
+                    tidalId,
+                    type,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    cover: resolved.cover,
+                });
+                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${tidalId}`);
+            } catch (error: any) {
+                console.error(`[DOWNLOAD-PROCESSOR] Failed to import job #${job.id}:`, error);
+                this.persistDownloadState(job.id, {
+                    progress: job.progress,
+                    description: `ImportDownload: ${error?.message || 'Import failed'}`,
+                    statusMessage: error?.message || 'Import failed',
+                    state: 'importFailed',
+                });
+                TaskQueueService.fail(job.id, error?.message || 'Unknown import error');
+                downloadEvents.emitFailed(job.id, {
+                    tidalId,
+                    type,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    cover: resolved.cover,
+                    error: error?.message || 'Unknown import error',
+                    state: 'importFailed',
+                });
+            } finally {
+                this.processing = false;
+                this.currentProcess = undefined;
+                this.currentJobId = undefined;
+                this.currentTidalId = undefined;
+                this.currentType = undefined;
+                this.cancelCurrentDownload = false;
+                this.scheduleNext();
+            }
+
+            return;
+        }
 
         try {
             this.persistDownloadState(job.id, {
@@ -467,8 +553,8 @@ export class DownloadProcessor {
             await this.ensureMetadataReady(tidalId, type);
 
             resolved = this.resolveDownloadMetadata(tidalId, type, payload);
-            payload = { ...(payload || {}), title: resolved.title, artist: resolved.artist, cover: resolved.cover };
-            job.payload = payload;
+            payload = { ...((payload as DownloadJobPayload) || {}), title: resolved.title, artist: resolved.artist, cover: resolved.cover };
+            job.payload = payload as DownloadJobPayload;
 
             this.persistDownloadState(job.id, {
                 progress: 0,
@@ -565,7 +651,7 @@ export class DownloadProcessor {
                 path: this.currentDownloadPath,
                 resolved,
                 originalJobId: job.id
-            }, tidalId, job.priority, job.trigger);
+            }, tidalId, Math.max(job.priority, 100), job.trigger);
 
             TaskQueueService.complete(job.id);
 
@@ -826,7 +912,7 @@ export class DownloadProcessor {
                         trackProgress?: number;
                         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
                         statusMessage?: string;
-                        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused';
+                        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
                         speed?: string;
                         eta?: string;
                         size?: number;

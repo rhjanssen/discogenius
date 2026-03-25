@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 const mockConnectedStatus = {
   connected: true,

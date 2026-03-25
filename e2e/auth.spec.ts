@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 test.describe('Auth flow', () => {
   test('initial TIDAL connect button opens the verification URL on first click', async ({ page }) => {

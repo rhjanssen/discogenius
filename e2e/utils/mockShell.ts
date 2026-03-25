@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-export const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+export const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 export const mockConnectedAuthStatus = {
   connected: true,
@@ -23,10 +23,17 @@ export const mockConnectedAuthStatus = {
 
 export const mockStatusOverview = {
   activeJobs: [],
-  queuedJobs: [],
   jobHistory: [],
   taskQueueStats: [],
   commandStats: {},
+};
+
+export const mockPendingTasksResponse = {
+  items: [],
+  total: 0,
+  limit: 100,
+  offset: 0,
+  hasMore: false,
 };
 
 export const mockQueueResponse = {
@@ -55,6 +62,7 @@ export async function stubShellApis(
   options?: {
     authStatus?: Record<string, unknown>;
     statusOverview?: Record<string, unknown>;
+    pendingTasksResponse?: Record<string, unknown>;
     queueResponse?: Record<string, unknown>;
     monitoringStatus?: Record<string, unknown>;
     libraryStats?: Record<string, unknown>;
@@ -86,6 +94,17 @@ export async function stubShellApis(
       body: JSON.stringify({
         ...mockStatusOverview,
         ...(options?.statusOverview || {}),
+      }),
+    });
+  });
+
+  await page.route('**/api/status/tasks**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...mockPendingTasksResponse,
+        ...(options?.pendingTasksResponse || {}),
       }),
     });
   });

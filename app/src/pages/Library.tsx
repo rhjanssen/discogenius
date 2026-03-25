@@ -20,7 +20,6 @@ import {
   SearchBox,
 } from "@fluentui/react-components";
 import {
-  ArrowSync16Regular,
   ArrowSync24Regular,
   Search24Regular,
   ArrowDownload24Regular,
@@ -38,14 +37,14 @@ import {
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { WarningBadge } from "@/components/ui/WarningBadge";
+import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useCardStyles } from "@/components/cards/cardStyles";
 import { QueueContext } from "@/providers/QueueProvider";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
-import TrackList from "@/components/TrackList";
+import LibraryTrackList from "@/components/LibraryTrackList";
 import VideoGrid from "@/components/VideoGrid";
 import { useLibrary } from "@/hooks/useLibrary";
 import { useTidalSearch } from "@/hooks/useTidalSearch";
@@ -621,11 +620,7 @@ const Library = () => {
     );
   };
 
-  const renderNotScannedBadge = useCallback(() => (
-    <WarningBadge icon={<ArrowSync16Regular />}>
-      Not Scanned
-    </WarningBadge>
-  ), []);
+  const renderNotScannedBadge = useCallback(() => <NotScannedBadge />, []);
 
   // Render artist as datagrid row
   const formatLastScanned = useCallback((date: string | null) => {
@@ -933,9 +928,7 @@ const Library = () => {
       header: "Status",
       width: "90px",
       align: "center",
-      render: (video: any) => video.is_downloaded
-        ? <Badge appearance="filled" color="success" size="small">Downloaded</Badge>
-        : <Badge appearance="outline" size="small">Missing</Badge>,
+      render: (video: any) => video.is_downloaded ? <DownloadedBadge /> : null,
     },
     {
       key: "actions",
@@ -1247,7 +1240,7 @@ const Library = () => {
                 scrollRef: trackScrollRef,
                 sentinelRef: trackSentinelRef,
                 isFetching: isFetchingMore.tracks,
-                children: <TrackList tracks={filteredTracks} />,
+                children: <LibraryTrackList tracks={filteredTracks} />,
               })
             )}
           </div>

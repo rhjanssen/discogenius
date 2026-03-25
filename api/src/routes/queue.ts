@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { TaskQueueService, type AnyJobPayload, JobType, JobTypes } from "../services/queue.js";
+import { NON_DOWNLOAD_JOB_TYPES, TaskQueueService, type AnyJobPayload, type JobStatus, JobType } from "../services/queue.js";
 import { RedundancyService } from "../services/redundancy.js";
 import {
   getObjectBody,
@@ -10,17 +10,26 @@ import {
 } from "../utils/request-validation.js";
 
 const router = Router();
-const allowedJobTypes = new Set<string>(Object.values(JobTypes));
+const allowedJobTypes = new Set<string>(NON_DOWNLOAD_JOB_TYPES);
+const taskStatuses: readonly JobStatus[] = ["pending", "processing", "completed", "failed", "cancelled"];
 
 // Get task queue items
 router.get("/", (req, res) => {
-  const status = req.query.status as string || '%';
-  const type = req.query.type as string || '%';
+  const requestedStatus = req.query.status as string | undefined;
+  const requestedType = req.query.type as string | undefined;
   const limit = parseInt(req.query.limit as string) || 50;
   const offset = parseInt(req.query.offset as string) || 0;
+  const types: readonly JobType[] = requestedType && allowedJobTypes.has(requestedType)
+    ? [requestedType as JobType]
+    : NON_DOWNLOAD_JOB_TYPES;
+  const statuses: readonly JobStatus[] = requestedStatus && taskStatuses.includes(requestedStatus as JobStatus)
+    ? [requestedStatus as JobStatus]
+    : taskStatuses;
 
-  const items = TaskQueueService.listJobs(type, status, limit, offset);
-  const total = TaskQueueService.countJobs(type, status);
+  const items = TaskQueueService.listJobsByTypesAndStatuses(types, statuses, limit, offset, {
+    orderBy: statuses.length === 1 && statuses[0] === "pending" ? "execution" : "created_desc",
+  });
+  const total = TaskQueueService.countJobsByTypesAndStatuses(types, statuses);
 
   res.json({
     items,
@@ -57,7 +66,7 @@ router.post("/add", (req, res) => {
 
 // Clear completed tasks
 router.post("/clear-completed", (req, res) => {
-  TaskQueueService.clearCompleted();
+  TaskQueueService.clearFinishedByTypes([...NON_DOWNLOAD_JOB_TYPES]);
   res.json({ message: "Completed tasks cleared" });
 });
 
@@ -71,6 +80,9 @@ router.post("/:id/retry", (req, res) => {
 
   const job = TaskQueueService.getById(jobId);
   if (!job) {
+    return res.status(404).json({ error: "Task not found" });
+  }
+  if (!allowedJobTypes.has(job.type)) {
     return res.status(404).json({ error: "Task not found" });
   }
 
@@ -92,6 +104,9 @@ router.delete("/:id", (req, res) => {
 
   const job = TaskQueueService.getById(jobId);
   if (!job) {
+    return res.status(404).json({ error: "Task not found" });
+  }
+  if (!allowedJobTypes.has(job.type)) {
     return res.status(404).json({ error: "Task not found" });
   }
 

@@ -20,13 +20,23 @@ import { authMiddleware } from "../middleware/auth.js";
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
+const PLAYBACK_QUALITIES = new Set(["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"]);
 
 // Use JWT_SECRET (same as auth) for HMAC signing
 const getSecret = () => process.env.JWT_SECRET || "discogenius-stream-secret";
 
-function signUrl(id: string, expires: number): string {
+function normalizePlaybackQuality(value: unknown): string | null {
+    const normalized = String(value ?? "").trim().toUpperCase();
+    if (!normalized) {
+        return null;
+    }
+
+    return PLAYBACK_QUALITIES.has(normalized) ? normalized : null;
+}
+
+function signUrl(id: string, expires: number, quality?: string | null): string {
     const hmac = crypto.createHmac("sha256", getSecret());
-    hmac.update(`${id}:${expires}`);
+    hmac.update(`${id}:${quality || ""}:${expires}`);
     return hmac.digest("hex");
 }
 
@@ -37,10 +47,17 @@ function signUrl(id: string, expires: number): string {
 router.get("/stream/sign/:trackId", authMiddleware, (req: Request, res: Response) => {
     const trackId = req.params.trackId as string;
     if (!trackId) return res.status(400).json({ error: "Missing trackId" });
+    const requestedQuality = req.query.quality;
+    const quality = normalizePlaybackQuality(requestedQuality);
+
+    if (requestedQuality !== undefined && !quality) {
+        return res.status(400).json({ error: "Unsupported playback quality" });
+    }
 
     const expires = Math.floor(Date.now() / 1000) + 300; // 5 min
-    const sig = signUrl(trackId, expires);
-    const url = `/api/playback/stream/play/${trackId}?exp=${expires}&sig=${sig}`;
+    const sig = signUrl(trackId, expires, quality);
+    const qualityQuery = quality ? `&quality=${encodeURIComponent(quality)}` : "";
+    const url = `/api/playback/stream/play/${trackId}?exp=${expires}&sig=${sig}${qualityQuery}`;
 
     res.json({ url });
 });
@@ -55,18 +72,21 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     const trackId = req.params.trackId as string;
     const exp = String(req.query.exp ?? "") || undefined;
     const sig = String(req.query.sig ?? "") || undefined;
+    const requestedQuality = req.query.quality;
+    const quality = normalizePlaybackQuality(requestedQuality);
 
     if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
+    if (requestedQuality !== undefined && !quality) return res.status(400).json({ error: "Unsupported playback quality" });
 
     const expires = parseInt(exp, 10);
     if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
 
-    const expected = signUrl(trackId, expires);
+    const expected = signUrl(trackId, expires, quality);
     if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
 
     try {
-        console.log(`[Playback] Fetching playback info for track ${trackId}...`);
-        const info: PlaybackInfo | null = await getPlaybackInfo(trackId);
+        console.log(`[Playback] Fetching playback info for track ${trackId} (preferred=${quality || "auto"})...`);
+        const info: PlaybackInfo | null = await getPlaybackInfo(trackId, quality || undefined);
         if (!info) {
             console.error(`[Playback] No playable quality for track ${trackId}`);
             return res.status(502).json({ error: "No playable quality available" });

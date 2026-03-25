@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useMemo, Fragment, useContext } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import React, { useState, useEffect, useMemo, useContext, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { formatDurationSeconds } from "@/utils/format";
 import {
   Button,
   Text,
@@ -12,18 +11,14 @@ import {
   Badge,
   makeStyles,
   tokens,
-  Tab,
-  TabList,
   Menu,
   MenuTrigger,
   MenuList,
   MenuItem,
   MenuPopover,
-  Image,
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Checkmark24Regular,
   ArrowSync24Regular,
   Eye24Regular,
   EyeOff24Regular,
@@ -31,38 +26,37 @@ import {
   ArrowDownload24Regular,
   MoreHorizontal24Regular,
   LockClosed24Regular,
-  LockOpen24Regular,
   Grid24Regular,
   AppsListDetail24Regular,
   Play24Regular,
-  Stop24Filled,
   Info24Regular,
   ArrowSortDownLines24Regular,
   FolderSync24Regular,
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
-import { Artist, Album } from "@/hooks/useLibrary";
 import { useArtistPage } from "@/hooks/useArtistPage";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
-import { QualityBadge } from "@/components/ui/QualityBadge";
-import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { WarningBadge } from "@/components/ui/WarningBadge";
-import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
+import TrackList from "@/components/TrackList";
 import { MediaCard } from "@/components/cards/MediaCard";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
-import { useUltraBlurContext } from "@/providers/UltraBlurContext";
-import { DynamicBrandProvider, dominantUltraBlurColor } from "@/providers/DynamicBrandProvider";
+import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { QueueContext } from "@/providers/QueueProvider";
+import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import {
+  compactDetailActionButtonStyles,
+  detailActionButtonRadiusStyles,
+} from "@/components/media/detailActionStyles";
 import {
   ACTIVITY_REFRESH_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
@@ -220,56 +214,14 @@ const useStyles = makeStyles({
   },
   // Transparent button base style
   transparentButton: {
-    borderRadius: tokens.borderRadiusXLarge,
+    ...detailActionButtonRadiusStyles,
   },
   // Primary action button (Monitor when not monitored, Scan when not scanned)
   primaryButton: {
-    borderRadius: tokens.borderRadiusXLarge,
+    ...detailActionButtonRadiusStyles,
   },
   actionButton: {
-    // Mobile: compact vertical layout, equal-width (like Dashboard)
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    flex: "1 1 0",
-    minWidth: 0,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
-    gap: tokens.spacingVerticalXXS,
-    "& .fui-Button__content": {
-      fontSize: tokens.fontSizeBase100,
-      marginLeft: "0 !important",
-    },
-    "& .fui-Button__icon": {
-      marginRight: "0",
-      fontSize: tokens.fontSizeBase400,
-    },
-    // Tablet: slightly larger
-    "@media (min-width: 480px)": {
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-      "& .fui-Button__content": {
-        fontSize: tokens.fontSizeBase100,
-      },
-      "& .fui-Button__icon": {
-        fontSize: tokens.fontSizeBase500,
-      },
-    },
-    // Desktop: normal horizontal layout, auto width
-    "@media (min-width: 768px)": {
-      flexDirection: "row",
-      flex: "0 0 auto",
-      minWidth: "auto",
-      gap: tokens.spacingHorizontalNone,
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-      "& .fui-Button__content": {
-        fontSize: tokens.fontSizeBase300,
-        marginTop: "0",
-        marginLeft: tokens.spacingHorizontalS,
-      },
-      "& .fui-Button__icon": {
-        marginRight: tokens.spacingHorizontalSNudge,
-        fontSize: tokens.fontSizeBase600,
-      },
-    },
+    ...compactDetailActionButtonStyles,
   },
   actionsSpacer: {
     display: "none",
@@ -367,55 +319,8 @@ const useStyles = makeStyles({
       },
     },
   },
-  // Track list for Top Tracks
-  trackList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-  },
-  trackItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingVerticalS,
-    borderRadius: tokens.borderRadiusMedium,
-    cursor: "pointer",
-    "&:hover": {
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    },
-  },
-  trackNumber: {
-    width: "24px",
-    textAlign: "center",
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase300,
-  },
-  trackCover: {
-    width: "48px",
-    height: "48px",
-    borderRadius: tokens.borderRadiusSmall,
-    objectFit: "cover",
-  },
-  trackInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  trackTitle: {
-    fontWeight: tokens.fontWeightSemibold,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  trackAlbum: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  trackDuration: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
+  sectionAction: {
+    flexShrink: 0,
   },
   card: {
     minWidth: "0",
@@ -589,18 +494,6 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
   },
-  trackCoverPlaceholder: {
-    backgroundColor: tokens.colorNeutralBackground3,
-  },
-  trackActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXXS,
-    flexShrink: 0,
-  },
-  trackPlayerRow: {
-    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
-  },
   avatarPlaceholder: {
     backgroundColor: tokens.colorNeutralBackground3,
     display: "flex",
@@ -628,7 +521,6 @@ const ArtistPage = () => {
   const styles = useStyles();
   const { artistId } = useParams<{ artistId: string }>();
   const navigate = useNavigate();
-  const { setArtwork, colors: ultraBlurColors } = useUltraBlurContext();
   const { toast } = useToast();
 
   // State
@@ -677,12 +569,15 @@ const ArtistPage = () => {
     localStorage.setItem('discogenius_artist_view_mode', viewMode);
   }, [viewMode]);
 
+  useEffect(() => {
+    setTopTracksExpanded(false);
+  }, [artistId]);
+
   // Filters - start with onlyMonitored, but will be updated based on data
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>('all');
   const [statusFilters, setStatusFilters] = useState<StatusFilters>({ ...defaultStatusFilters, onlyMonitored: true });
   const [filterInitialized, setFilterInitialized] = useState(false);
-  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
-  const [infoTrack, setInfoTrack] = useState<any>(null);
+  const [topTracksExpanded, setTopTracksExpanded] = useState(false);
   const [artistInfoOpen, setArtistInfoOpen] = useState(false);
 
   // Unified Artist Info - prefer pageData.artist since that's the canonical DB-backed artist payload
@@ -694,6 +589,11 @@ const ArtistPage = () => {
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   // Get artist picture UUID for utility function (DB stores as picture, Tidal API returns as picture)
   const artistPictureId = artistInfo?.picture || pageData?.artistInfo?.picture;
+  const artistPictureUrl = getArtistPicture(artistPictureId, 'large');
+  const artistBrandColor = useArtworkBrandColor({
+    artworkUrl: artistPictureUrl,
+    deriveBrandFromArtwork: true,
+  });
   const isMonitored = monitorOverride ?? Boolean(artistInfo?.is_monitored);
 
   useEffect(() => {
@@ -739,14 +639,6 @@ const ArtistPage = () => {
     }
     setFilterInitialized(true);
   }, [pageData, filterInitialized]);
-
-  // Update ultrablur context when artist data changes
-  useEffect(() => {
-    const pictureUrl = getArtistPicture(artistPictureId, 'large');
-    if (pictureUrl) {
-      setArtwork(pictureUrl);
-    }
-  }, [artistPictureId, setArtwork]);
 
   useEffect(() => {
     const handleMonitorChange = (event: Event) => {
@@ -1102,13 +994,10 @@ const ArtistPage = () => {
     return null;
   };
 
-
-  // Render top tracks as a list
-  const renderTrackList = (tracks: any[]) => {
-    const filteredTracks = tracks.filter((track) => {
+  const filterTopTracks = useCallback((tracks: any[]) => {
+    return tracks.filter((track) => {
       const quality = (track.quality || '').toString().toUpperCase();
 
-      // Library filter
       if (libraryFilter === 'atmos' && quality !== 'DOLBY_ATMOS') return false;
       if (libraryFilter === 'stereo' && quality === 'DOLBY_ATMOS') return false;
 
@@ -1137,96 +1026,46 @@ const ArtistPage = () => {
       }
 
       return true;
-    }).slice(0, 5);
-
-    if (filteredTracks.length === 0) return null;
-
-    return (
-      <div className={styles.trackList}>
-        {filteredTracks.map((track, index) => {
-          const coverUrl = getAlbumCover(track.album?.cover_id, 'tiny');
-          const audioFile = (track.files || []).find((f: any) => f.file_type === 'track');
-          const isPlaying = playingTrackId === track.id;
-          return (
-            <React.Fragment key={track.id || index}>
-              <div
-                className={styles.trackItem}
-                onClick={() => track.album?.id && navigate(`/album/${track.album.id}`)}
-              >
-                <Text className={styles.trackNumber}>{index + 1}</Text>
-                {coverUrl ? (
-                  <img src={coverUrl} alt={track.title} className={styles.trackCover} />
-                ) : (
-                  <div className={mergeClasses(styles.trackCover, styles.trackCoverPlaceholder)} />
-                )}
-                <div className={styles.trackInfo}>
-                  <Text block className={styles.trackTitle}>
-                    {track.version ? `${track.title} (${track.version})` : track.title}
-                  </Text>
-                  <Text block className={styles.trackAlbum}>{track.album?.title}</Text>
-                </div>
-                {audioFile && (
-                  <div className={styles.trackActions}>
-                    <Button
-                      appearance="subtle"
-                      icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
-                      size="small"
-                      title={isPlaying ? "Stop" : "Play"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPlayingTrackId(isPlaying ? null : track.id);
-                      }}
-                    />
-                    <Button
-                      appearance="subtle"
-                      icon={<Info24Regular />}
-                      size="small"
-                      title="Track info"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setInfoTrack(track);
-                      }}
-                    />
-                  </div>
-                )}
-                {track.quality && (
-                  <QualityBadge quality={track.quality} />
-                )}
-                {track.duration && (
-                  <Text className={styles.trackDuration}>{formatDurationSeconds(track.duration)}</Text>
-                )}
-              </div>
-              {isPlaying && audioFile && (
-                <div className={styles.trackPlayerRow}>
-                  <AudioPlayer
-                    src={api.getStreamUrl(audioFile.id)}
-                    knownDuration={track.duration}
-                    onEnded={() => setPlayingTrackId(null)}
-                  />
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-    );
-  };
+    });
+  }, [libraryFilter, statusFilters]);
 
   const renderModule = (module: any, index: number) => {
     const items = module.pagedList?.items || module.items || [];
     if (!items || items.length === 0) return null;
 
-    // Handle TRACK_LIST (Top Tracks) differently - render as a list
     if (module.type === 'TRACK_LIST') {
       if (libraryFilter === 'video') return null;
-      const trackList = renderTrackList(items);
-      if (!trackList) return null;
+      const filteredTracks = filterTopTracks(items);
+      if (filteredTracks.length === 0) return null;
+      const visibleTracks = topTracksExpanded ? filteredTracks : filteredTracks.slice(0, 5);
+      const filteredCount = filteredTracks.length;
+
       return (
         <div key={index} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
+            {filteredCount > 5 && (
+              <Button
+                appearance="subtle"
+                size="small"
+                className={styles.sectionAction}
+                onClick={() => setTopTracksExpanded((previous) => !previous)}
+              >
+                {topTracksExpanded ? "Show less" : `Show all (${filteredCount})`}
+              </Button>
+            )}
           </div>
-          {trackList}
+          <TrackList
+            tracks={visibleTracks}
+            numbering="index"
+            showAlbum
+            showCover
+            onTrackClick={(track) => {
+              if ((track as any).album?.id) {
+                navigate(`/album/${(track as any).album.id}`);
+              }
+            }}
+          />
         </div>
       );
     }
@@ -1299,51 +1138,8 @@ const ArtistPage = () => {
       });
     });
 
-    // Define module order: Top Tracks first, then Album, Single, EP, Compilation, Live, Remixes, Appears On, Videos, then Artists
-    const moduleOrder: Record<string, number> = {
-      'TRACK_LIST': 0,
-      'ALBUM': 1,
-      'SINGLE': 2,
-      'EP': 3,
-      'COMPILATION': 4,
-      'LIVE': 5,
-      'REMIX': 6,
-      'APPEARS_ON': 7,
-      'VIDEO_LIST': 8,
-      'ARTIST_LIST': 9,
-    };
-
-    // Helper to get order for a module
-    const getModuleOrder = (mod: any): number => {
-      // Try to determine order from type or title
-      const type = mod.type?.toUpperCase?.() || '';
-      const title = mod.title?.toUpperCase?.() || '';
-
-      if (type === 'TRACK_LIST') return moduleOrder['TRACK_LIST'];
-      if (type === 'VIDEO_LIST') return moduleOrder['VIDEO_LIST'];
-      if (type === 'ARTIST_LIST') return moduleOrder['ARTIST_LIST'];
-
-      // For album modules, check title for type hints
-      if (title.includes('ALBUM') && !title.includes('SINGLE') && !title.includes('EP') && !title.includes('COMPIL') && !title.includes('LIVE') && !title.includes('REMIX') && !title.includes('APPEARS')) return moduleOrder['ALBUM'];
-      if (title.includes('SINGLE')) return moduleOrder['SINGLE'];
-      if (title.includes('EP') || title === 'EPS') return moduleOrder['EP'];
-      if (title.includes('COMPIL') || title.includes('BEST OF') || title.includes('GREATEST')) return moduleOrder['COMPILATION'];
-      if (title.includes('LIVE') || title.includes('CONCERT')) return moduleOrder['LIVE'];
-      if (title.includes('REMIX')) return moduleOrder['REMIX'];
-      if (title.includes('APPEARS')) return moduleOrder['APPEARS_ON'];
-
-      return 50; // Default for unknown modules - put at end
-    };
-
-    return mods.sort((a, b) => getModuleOrder(a) - getModuleOrder(b));
+    return mods;
   }, [pageData]);
-
-
-  // Derive brand key color from UltraBlur extracted colors
-  const artistBrandColor = useMemo(
-    () => dominantUltraBlurColor(ultraBlurColors),
-    [ultraBlurColors]
-  );
 
   if (pageLoading) {
     return (
@@ -1369,19 +1165,13 @@ const ArtistPage = () => {
       </div>
     );
   }
-
-
-
-  // Get artist picture URL using the already-computed artistPictureId
-  const artistPictureUrl = getArtistPicture(artistPictureId, 'large');
-
   // Button state logic based on actual data rather than scan timestamp
   const albumCount = pageData?.album_count ?? 0;
   const monitoredAlbumCount = pageData?.monitored_album_count ?? 0;
   const hasAlbums = albumCount > 0;
   const hasMonitoredAlbums = monitoredAlbumCount > 0;
-  // Use hasAlbums instead of last_scanned for more accurate state
-  const hasBeenScanned = hasAlbums;
+  const needsScan = Boolean(pageData?.needs_scan ?? !pageData?.last_scanned);
+  const hasBeenScanned = !needsScan;
   const downloadActionDisabled = !hasBeenScanned || isScanBusy;
   const downloadActionTitle = !hasBeenScanned
     ? 'Get metadata first to enable downloads'
@@ -1579,21 +1369,6 @@ const ArtistPage = () => {
             description={!hasBeenScanned ? "Try getting metadata first." : "This artist does not have any surfaced modules yet."}
             icon={<FolderSync24Regular />}
             minHeight="220px"
-          />
-        )}
-
-        {/* Track Info Dialog */}
-        {infoTrack && (
-          <TrackInfoDialog
-            open={!!infoTrack}
-            onClose={() => setInfoTrack(null)}
-            trackTitle={infoTrack.version ? `${infoTrack.title} (${infoTrack.version})` : infoTrack.title}
-            artistName={artistName}
-            albumTitle={infoTrack.album?.title}
-            trackNumber={infoTrack.track_number}
-            duration={infoTrack.duration}
-            audioQuality={infoTrack.quality}
-            files={infoTrack.files}
           />
         )}
 

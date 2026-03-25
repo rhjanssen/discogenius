@@ -6,26 +6,17 @@ import { LibraryFilesService } from "./library-files.js";
 import { DiskScanService } from "./library-scan.js";
 import { readIntEnv } from "../utils/env.js";
 import { OrganizerService } from "./organizer.js";
-import {
-    updateAlbumDownloadStatus,
-    updateArtistDownloadStatusFromMedia,
-} from "./download-state.js";
-import { downloadEvents } from "./download-events.js";
-import { db } from "../database.js";
-import fs from "fs";
 import { Config } from "./config.js";
 import { UpgraderService } from "./upgrader.js";
 import { appEvents, AppEvent } from "./app-events.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
-import { getDownloadWorkspacePath } from "./download-routing.js";
 import { getArtistWorkflowLabel } from "./artist-workflow.js";
 import { runRuntimeMaintenance } from "./runtime-maintenance.js";
 import { queueManagedArtistsWorkflow } from "./artist-workflow.js";
 import { getManagedArtists } from "./managed-artists.js";
 import { queueNextMonitoringPass } from "./monitoring-scheduler.js";
 import { AudioTagMaintenanceService } from "./audio-tag-maintenance.js";
-import { getExistingLibraryMediaIds } from "./download-recovery.js";
-import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
+import { db } from "../database.js";
 
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 2000, 1); // 2 seconds default
 const BLOCKED_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_SCHEDULER_BLOCKED_LOG_THROTTLE_MS', 30_000, 0);
@@ -35,7 +26,7 @@ const SCHEDULER_THREAD_LIMIT = readIntEnv('DISCOGENIUS_SCHEDULER_THREAD_LIMIT', 
 
 
 /**
- * Scheduler - Handles non-download jobs (scans, imports, redundancy checks)
+ * Scheduler - Handles non-download jobs (scans, curation, maintenance)
  *
  * Respects command exclusivity rules:
  * - Per-ref-exclusive commands (e.g. only one RefreshArtist/CurateArtist per artist at a time;
@@ -89,45 +80,6 @@ export class Scheduler {
             progress: options.progress,
             payloadPatch: Object.keys(payloadPatch).length > 0 ? payloadPatch : undefined,
         });
-    }
-
-    private static updateDownloadQueueState(job: Job, options: {
-        progress?: number;
-        description?: string;
-        currentFileNum?: number;
-        totalFiles?: number;
-        currentTrack?: string;
-        trackProgress?: number;
-        trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
-        statusMessage?: string;
-        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
-    }) {
-        const payloadPatch: Record<string, unknown> = {};
-        if (options.description) {
-            payloadPatch.description = options.description;
-        }
-
-        payloadPatch.downloadState = {
-            ...(job.payload?.downloadState && typeof job.payload.downloadState === 'object' ? job.payload.downloadState : {}),
-            progress: options.progress,
-            currentFileNum: options.currentFileNum,
-            totalFiles: options.totalFiles,
-            currentTrack: options.currentTrack,
-            trackProgress: options.trackProgress,
-            trackStatus: options.trackStatus,
-            statusMessage: options.statusMessage,
-            state: options.state,
-        };
-
-        const updated = TaskQueueService.updateState(job.id, {
-            progress: options.progress,
-            payloadPatch,
-        });
-
-        if (updated) {
-            job.payload = updated.payload;
-            job.progress = updated.progress;
-        }
     }
 
     private static resolveArtistLabel(job: Job) {
@@ -542,329 +494,6 @@ export class Scheduler {
                     }
                     break;
                 }
-                case JobTypes.ImportDownload: {
-                    const { type, tidalId, resolved, originalJobId, path: payloadPath } = job.payload;
-                    const downloadPath = payloadPath || getDownloadWorkspacePath(type as 'album' | 'track' | 'video' | 'playlist', tidalId);
-                    let shouldCleanupDownloadPath = false;
-
-                    const resolveImportHistoryContext = () => {
-                        const fallback = {
-                            artistId: null as number | null,
-                            albumId: null as number | null,
-                            mediaId: null as number | null,
-                            quality: null as string | null,
-                        };
-
-                        if (type === 'album') {
-                            const albumRow = db.prepare(`
-                                SELECT id, artist_id, quality
-                                FROM albums
-                                WHERE id = ?
-                            `).get(tidalId) as { id: number; artist_id: number; quality: string | null } | undefined;
-
-                            if (!albumRow) {
-                                return fallback;
-                            }
-
-                            return {
-                                artistId: albumRow.artist_id,
-                                albumId: albumRow.id,
-                                mediaId: null,
-                                quality: albumRow.quality || null,
-                            };
-                        }
-
-                        if (type === 'track' || type === 'video') {
-                            const mediaRow = db.prepare(`
-                                SELECT id, artist_id, album_id, quality
-                                FROM media
-                                WHERE id = ?
-                            `).get(tidalId) as {
-                                id: number;
-                                artist_id: number;
-                                album_id: number | null;
-                                quality: string | null;
-                            } | undefined;
-
-                            if (!mediaRow) {
-                                return fallback;
-                            }
-
-                            return {
-                                artistId: mediaRow.artist_id,
-                                albumId: mediaRow.album_id,
-                                mediaId: mediaRow.id,
-                                quality: mediaRow.quality || null,
-                            };
-                        }
-
-                        return fallback;
-                    };
-
-                    this.updateDownloadQueueState(job, {
-                        progress: 5,
-                        description: 'ImportDownload: preparing import',
-                        statusMessage: 'Preparing import',
-                        state: 'importing',
-                    });
-
-                    try {
-                        let organizeResult;
-                        if (!fs.existsSync(downloadPath)) {
-                            const recoveredMediaIds = getExistingLibraryMediaIds(type, tidalId);
-
-                            if (recoveredMediaIds.length === 0) {
-                                throw new Error(`Import files for ${type} ${tidalId} are no longer available. Re-download the item to retry import.`);
-                            }
-
-                            const expectedTracks = type === 'album'
-                                ? Number((db.prepare(`SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'`).get(tidalId) as any)?.count || recoveredMediaIds.length)
-                                : 1;
-
-                            organizeResult = {
-                                type,
-                                tidalId,
-                                processedTrackIds: recoveredMediaIds,
-                                totalTracksInStaging: recoveredMediaIds.length,
-                                expectedTracks,
-                            };
-                            this.updateDownloadQueueState(job, {
-                                progress: 85,
-                                description: 'ImportDownload: recovering existing library files',
-                                currentFileNum: recoveredMediaIds.length,
-                                totalFiles: expectedTracks,
-                                statusMessage: 'Recovering import from existing library files',
-                                state: 'importing',
-                            });
-                            console.warn(`[Scheduler] Download workspace missing for ${type} ${tidalId}, but imported library file(s) already exist. Recovering ImportDownload job.`);
-                        } else {
-                            this.updateDownloadQueueState(job, {
-                                progress: 15,
-                                description: 'ImportDownload: importing downloaded files',
-                                statusMessage: 'Importing downloaded files',
-                                state: 'importing',
-                            });
-                            organizeResult = await OrganizerService.organizeDownload({
-                                type,
-                                tidalId,
-                                downloadPath,
-                                onProgress: (progress) => {
-                                    const normalizedProgress = progress.phase === 'finalizing'
-                                        ? 90
-                                        : progress.totalFiles && progress.currentFileNum !== undefined
-                                            ? Math.max(15, Math.min(85, 15 + Math.round((progress.currentFileNum / Math.max(progress.totalFiles, 1)) * 70)))
-                                            : 35;
-
-                                    this.updateDownloadQueueState(job, {
-                                        progress: normalizedProgress,
-                                        description: `ImportDownload: ${progress.statusMessage || 'Importing downloaded files'}`,
-                                        currentFileNum: progress.currentFileNum,
-                                        totalFiles: progress.totalFiles,
-                                        currentTrack: progress.currentTrack,
-                                        trackProgress: progress.totalFiles === 1 && progress.currentFileNum === 1 ? 100 : undefined,
-                                        trackStatus: progress.phase === 'finalizing' ? 'completed' : progress.currentTrack ? 'downloading' : undefined,
-                                        statusMessage: progress.statusMessage,
-                                        state: 'importing',
-                                    });
-                                },
-                            });
-                        }
-
-                        this.updateDownloadQueueState(job, {
-                            progress: 92,
-                            description: 'ImportDownload: reconciling library state',
-                            currentFileNum: organizeResult.processedTrackIds.length,
-                            totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                            statusMessage: 'Reconciling imported library state',
-                            state: 'importing',
-                        });
-
-                        if (type === 'album') {
-                            const processedIds = organizeResult.processedTrackIds;
-                            if (processedIds.length === 0) {
-                                throw new Error(`No tracks were successfully organized for album ${tidalId}`);
-                            }
-
-                            const expected = organizeResult.expectedTracks || 0;
-                            if (processedIds.length < expected) {
-                                console.warn(`[Scheduler] Album ${tidalId}: Only ${processedIds.length}/${expected} tracks were downloaded. Partial download.`);
-                            }
-
-                            updateAlbumDownloadStatus(String(tidalId));
-                        } else if (type === 'video') {
-                            updateArtistDownloadStatusFromMedia(String(tidalId));
-                        } else {
-                            try {
-                                const albumRow = db.prepare("SELECT album_id FROM media WHERE id = ?").get(tidalId) as { album_id?: number | null } | undefined;
-                                if (albumRow?.album_id) {
-                                    updateAlbumDownloadStatus(String(albumRow.album_id));
-                                } else {
-                                    updateArtistDownloadStatusFromMedia(String(tidalId));
-                                }
-                            } catch {
-                                // Best-effort: skip album update if lookup fails.
-                            }
-                        }
-
-                        // Clear any pending upgrade_queue entry now that the download succeeded
-                        if (type === 'album') {
-                            db.prepare(`DELETE FROM upgrade_queue WHERE album_id = ?`).run(tidalId);
-                        } else {
-                            db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(tidalId);
-                        }
-
-                        const affectedArtistId = type === 'album'
-                            ? (db.prepare(`SELECT artist_id FROM albums WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id
-                            : (db.prepare(`SELECT artist_id FROM media WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id;
-
-                        // Reconcile library_files against the actual disk state after import/replacement.
-                        // This keeps quality/path metadata correct when a download replaces an existing file.
-                        if (affectedArtistId) {
-                            this.updateDownloadQueueState(job, {
-                                progress: 97,
-                                description: 'ImportDownload: refreshing library file records',
-                                currentFileNum: organizeResult.processedTrackIds.length,
-                                totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                                statusMessage: 'Refreshing library file records',
-                                state: 'importing',
-                            });
-                            await DiskScanService.scan({ artistIds: [String(affectedArtistId)] });
-                        }
-
-                        if ((type === 'album' || type === 'track') && organizeResult.processedTrackIds.length > 0) {
-                            this.updateDownloadQueueState(job, {
-                                progress: 99,
-                                description: 'ImportDownload: applying audio tag rules',
-                                currentFileNum: organizeResult.processedTrackIds.length,
-                                totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                                statusMessage: 'Applying audio tag rules',
-                                state: 'importing',
-                            });
-
-                            try {
-                                await AudioTagMaintenanceService.applyForMediaIds(organizeResult.processedTrackIds);
-                            } catch (error) {
-                                console.warn(`[Scheduler] Failed to apply audio tag rules for ${type} ${tidalId}:`, error);
-                            }
-                        }
-
-                        const historyContext = resolveImportHistoryContext();
-                        try {
-                            recordHistoryEvent({
-                                artistId: historyContext.artistId,
-                                albumId: historyContext.albumId,
-                                mediaId: historyContext.mediaId,
-                                eventType: HISTORY_EVENT_TYPES.DownloadImported,
-                                quality: historyContext.quality,
-                                sourceTitle: String(resolved?.title || tidalId),
-                                data: {
-                                    type,
-                                    tidalId,
-                                    originalJobId: originalJobId ?? null,
-                                    processedTrackIds: {
-                                        count: organizeResult.processedTrackIds.length,
-                                        expected: organizeResult.expectedTracks ?? organizeResult.totalTracksInStaging ?? null,
-                                    },
-                                },
-                            });
-                        } catch (historyError) {
-                            console.warn(`[Scheduler] Failed to write DownloadImported history event for ${type} ${tidalId}:`, historyError);
-                        }
-
-                        const expectedProcessedTracks = organizeResult.expectedTracks ?? 0;
-                        if (
-                            type === 'album'
-                            && expectedProcessedTracks > 0
-                            && organizeResult.processedTrackIds.length < expectedProcessedTracks
-                        ) {
-                            try {
-                                recordHistoryEvent({
-                                    artistId: historyContext.artistId,
-                                    albumId: historyContext.albumId,
-                                    mediaId: historyContext.mediaId,
-                                    eventType: HISTORY_EVENT_TYPES.AlbumImportIncomplete,
-                                    quality: historyContext.quality,
-                                    sourceTitle: String(resolved?.title || tidalId),
-                                    data: {
-                                        type,
-                                        tidalId,
-                                        originalJobId: originalJobId ?? null,
-                                        processedTrackIds: {
-                                            count: organizeResult.processedTrackIds.length,
-                                            expected: expectedProcessedTracks,
-                                        },
-                                    },
-                                });
-                            } catch (historyError) {
-                                console.warn(`[Scheduler] Failed to write AlbumImportIncomplete history event for ${type} ${tidalId}:`, historyError);
-                            }
-                        }
-
-                        this.updateDownloadQueueState(job, {
-                            progress: 100,
-                            description: 'ImportDownload: completed',
-                            currentFileNum: organizeResult.processedTrackIds.length,
-                            totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                            statusMessage: 'Import completed',
-                            state: 'completed',
-                        });
-
-                        // Emit completed event using original download job ID
-                        downloadEvents.emitCompleted(originalJobId || job.id, {
-                            tidalId,
-                            type,
-                            title: resolved?.title,
-                            artist: resolved?.artist,
-                            cover: resolved?.cover,
-                        });
-
-                        // Keep staged files on failed imports so retries can reuse them.
-                        // Cleanup only once the import workflow has fully completed.
-                        shouldCleanupDownloadPath = true;
-
-                        console.log(`[Scheduler] Successfully processed download ${type} ${tidalId}`);
-                    } catch (error) {
-                        // upgrade_queue is a transient worklist. If import/post-processing fails,
-                        // clear the rows so a later retry can be recomputed from actual library state.
-                        try {
-                            if (type === 'album') {
-                                db.prepare(`DELETE FROM upgrade_queue WHERE album_id = ?`).run(tidalId);
-                            } else {
-                                db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(tidalId);
-                            }
-                        } catch (cleanupError) {
-                            console.error(`[Scheduler] Failed to reset upgrade_queue after ImportDownload failure for ${type} ${tidalId}:`, cleanupError);
-                        }
-
-                        const historyContext = resolveImportHistoryContext();
-                        const message = error instanceof Error ? error.message : String(error);
-                        try {
-                            recordHistoryEvent({
-                                artistId: historyContext.artistId,
-                                albumId: historyContext.albumId,
-                                mediaId: historyContext.mediaId,
-                                eventType: HISTORY_EVENT_TYPES.DownloadFailed,
-                                quality: historyContext.quality,
-                                sourceTitle: String(resolved?.title || tidalId),
-                                data: {
-                                    type,
-                                    tidalId,
-                                    originalJobId: originalJobId ?? null,
-                                    error: message,
-                                },
-                            });
-                        } catch (historyError) {
-                            console.warn(`[Scheduler] Failed to write DownloadFailed history event for ${type} ${tidalId}:`, historyError);
-                        }
-
-                        throw error;
-                    } finally {
-                        if (shouldCleanupDownloadPath) {
-                            try { fs.rmSync(downloadPath, { recursive: true, force: true }); } catch { /* ignore */ }
-                        }
-                    }
-                    break;
-                }
                 case JobTypes.RefreshAllMonitored: {
                     const monitored = getManagedArtists({ includeLibraryFiles: false });
                     let queued = 0;
@@ -958,7 +587,8 @@ export class Scheduler {
                         description: 'Library metadata updated',
                     });
                     break;
-                }                case JobTypes.ConfigPrune: {
+                }
+                case JobTypes.ConfigPrune: {
                     // Apply metadata preferences to the existing library:
                     // remove disabled sidecars and restore newly enabled ones.
                     await OrganizerService.pruneDisabledMetadata();
@@ -1016,14 +646,6 @@ export class Scheduler {
 
         } catch (error: any) {
             console.error(`❌ Job #${job.id} failed:`, error);
-            if (job.type === JobTypes.ImportDownload) {
-                this.updateDownloadQueueState(job, {
-                    progress: job.progress,
-                    description: `ImportDownload: ${error?.message || 'Import failed'}`,
-                    statusMessage: error?.message || 'Import failed',
-                    state: 'importFailed',
-                });
-            }
             TaskQueueService.fail(job.id, error?.message || 'Unknown scheduler error');
         }
     }

@@ -1,18 +1,15 @@
-import React, { useState, useEffect, useCallback, useRef, useContext, useMemo } from "react";
+import React, { useState, useCallback, useContext, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
 import {
-  Badge,
   Button,
   Text,
   Title1,
   Title2,
-  Title3,
   Spinner,
   Avatar,
   Tooltip,
-  Card,
   makeStyles,
   tokens,
   mergeClasses,
@@ -20,26 +17,21 @@ import {
 import { MediaCard } from "@/components/cards/MediaCard";
 import {
   ArrowDownload24Regular,
-  Checkmark24Filled,
   Eye24Regular,
   EyeOff24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
-  Play24Regular,
-  Stop24Filled,
   Info24Regular,
   MusicNote224Regular,
 } from "@fluentui/react-icons";
-import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
-import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
+import TrackList from "@/components/TrackList";
 import {
   albumPageQueryKey,
   useAlbumPage,
@@ -56,6 +48,11 @@ import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { QueueContext } from "@/providers/QueueProvider";
+import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import {
+  detailActionButtonRadiusStyles,
+  standardDetailActionButtonStyles,
+} from "@/components/media/detailActionStyles";
 
 const useStyles = makeStyles({
   container: {
@@ -195,48 +192,14 @@ const useStyles = makeStyles({
   },
   // Transparent button base style
   transparentButton: {
-    borderRadius: tokens.borderRadiusXLarge,
+    ...detailActionButtonRadiusStyles,
   },
   // Primary action button
   primaryButton: {
-    borderRadius: tokens.borderRadiusXLarge,
+    ...detailActionButtonRadiusStyles,
   },
   actionButton: {
-    // Mobile: vertical layout, equal-width (like Dashboard)
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    flex: "1 1 0",
-    minWidth: 0,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-    gap: tokens.spacingVerticalXXS,
-    "& .fui-Button__content": {
-      fontSize: tokens.fontSizeBase100,
-      marginLeft: "0 !important",
-    },
-    "& .fui-Button__icon": {
-      marginRight: "0",
-    },
-    // Tablet: slightly larger
-    "@media (min-width: 480px)": {
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-    },
-    // Desktop: normal horizontal layout, auto width
-    "@media (min-width: 768px)": {
-      flexDirection: "row",
-      flex: "0 0 auto",
-      minWidth: "auto",
-      gap: tokens.spacingHorizontalNone,
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-      "& .fui-Button__content": {
-        fontSize: tokens.fontSizeBase300,
-        marginTop: "0",
-        marginLeft: tokens.spacingHorizontalS,
-      },
-      "& .fui-Button__icon": {
-        marginRight: tokens.spacingHorizontalSNudge,
-      },
-    },
+    ...standardDetailActionButtonStyles,
   },
   metaAttribution: {
     marginTop: tokens.spacingVerticalXS,
@@ -247,126 +210,6 @@ const useStyles = makeStyles({
   explicitBadge: {
     marginLeft: "auto",
     flexShrink: 0,
-  },
-  trackExplicitBadge: {
-    marginLeft: tokens.spacingHorizontalXS,
-  },
-  // Volume header for multi-disc albums
-  volumeHeader: {
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXS}`,
-    backgroundColor: tokens.colorTransparentBackground,
-    borderRadius: tokens.borderRadiusMedium,
-    marginTop: tokens.spacingVerticalM,
-    marginBottom: tokens.spacingVerticalS,
-    "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
-    },
-  },
-  trackList: {
-    display: "flex",
-    flexDirection: "column",
-  },
-  trackTable: {
-    width: "100%",
-    borderCollapse: "separate",
-    borderSpacing: 0,
-    tableLayout: "fixed",
-    display: "none",
-    "@media (min-width: 640px)": {
-      display: "table",
-    },
-  },
-  mobileTrackList: {
-    display: "flex",
-    flexDirection: "column",
-    "@media (min-width: 640px)": {
-      display: "none",
-    },
-  },
-  mobileTrackItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXS}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-  },
-  mobileTrackNumber: {
-    width: "24px",
-    textAlign: "center",
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-    flexShrink: 0,
-  },
-  mobileTrackInfo: {
-    flex: 1,
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  mobileTrackActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXXS,
-    flexShrink: 0,
-  },
-  trackHeader: {
-    textAlign: "left",
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXS}`,
-    borderBottom: `${tokens.strokeWidthThick} solid ${tokens.colorNeutralStroke2}`,
-    color: tokens.colorNeutralForeground1,
-    fontWeight: tokens.fontWeightSemibold,
-    fontSize: tokens.fontSizeBase100,
-    textTransform: "uppercase",
-    "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
-      fontSize: tokens.fontSizeBase200,
-    },
-  },
-  trackRow: {
-    cursor: "pointer",
-    transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
-    "&:hover": {
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    },
-  },
-  trackCell: {
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXS}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    verticalAlign: "middle",
-    overflow: "hidden",
-    "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
-    },
-  },
-  trackIndex: {
-    width: "36px",
-    textAlign: "center",
-    color: tokens.colorNeutralForeground2,
-    "@media (min-width: 640px)": {
-      width: "60px",
-    },
-  },
-  trackTitle: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  trackFiles: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
-    color: tokens.colorNeutralForeground3,
-  },
-  trackFileItem: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXXS,
-  },
-  actionButtons: {
-    display: "flex",
-    gap: tokens.spacingHorizontalXS,
-    justifyContent: "flex-end",
   },
   // Similar Albums Section
   sectionHeader: {
@@ -493,19 +336,6 @@ const useStyles = makeStyles({
   lockColorRed: {
     color: tokens.colorPaletteRedForeground1,
   },
-  // Audio player row below a track
-  audioPlayerRow: {
-    padding: `0 ${tokens.spacingHorizontalXS}`,
-    paddingBottom: tokens.spacingVerticalS,
-    "@media (min-width: 640px)": {
-      padding: `0 ${tokens.spacingHorizontalS}`,
-      paddingBottom: tokens.spacingVerticalS,
-    },
-  },
-  audioPlayerCell: {
-    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-  },
   // Cover overlay for hover info
   coverContainer: {
     position: "relative",
@@ -542,11 +372,12 @@ const useStyles = makeStyles({
   },
 });
 
+const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
+
 const AlbumPage = () => {
   const styles = useStyles();
   const { albumId } = useParams<{ albumId: string }>();
   const navigate = useNavigate();
-  const { setArtwork } = useUltraBlurContext();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
@@ -556,25 +387,15 @@ const AlbumPage = () => {
   const [downloadingTracks, setDownloadingTracks] = useState<Set<string>>(new Set());
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
-  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
-  const [tidalStreamUrls, setTidalStreamUrls] = useState<Map<string, string>>(new Map());
-  const [infoTrack, setInfoTrack] = useState<AlbumTrack | null>(null);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
-  /** JS breakpoint — true when viewport >= 640px (matches CSS trackTable / mobileTrackList). */
-  const [isWideViewport, setIsWideViewport] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia('(min-width: 640px)').matches : false
-  );
-
-  useEffect(() => {
-    const mql = window.matchMedia('(min-width: 640px)');
-    const handler = (e: MediaQueryListEvent) => setIsWideViewport(e.matches);
-    mql.addEventListener('change', handler);
-    return () => mql.removeEventListener('change', handler);
-  }, []);
 
   const { data: pageData, isLoading: loading, error } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
-  const tracks = pageData?.tracks ?? [];
+  const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
+  const showTrackArtists = useMemo(
+    () => tracks.some((track) => Boolean(track.artist_name) && track.artist_name !== album?.artist_name),
+    [tracks, album?.artist_name],
+  );
   const similarAlbums = useMemo(() => {
     const items = pageData?.similarAlbums ?? [];
 
@@ -592,6 +413,11 @@ const AlbumPage = () => {
   }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
   const artistImage = pageData?.artistImage ?? undefined;
+  const albumArtworkUrl = album?.cover_id ? getAlbumCover(album.cover_id, 'large') : null;
+  const albumBrandColor = useArtworkBrandColor({
+    artworkUrl: albumArtworkUrl,
+    brandKeyColor: album?.vibrant_color ?? null,
+  });
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!((album as any)?.monitor_locked ?? (album as any)?.monitor_lock);
@@ -684,57 +510,7 @@ const AlbumPage = () => {
     }
   };
 
-  /** Get the first streamable audio file for a track */
-  const getTrackAudioFile = useCallback((track: AlbumTrack) => {
-    return (track.files || []).find(f => f.file_type === 'track');
-  }, []);
-
-  /** Toggle play/stop for a track.
-   *  If the track has a local audio file we play that;
-   *  otherwise we sign a TIDAL stream URL on the fly.
-   */
-  const signingRef = useRef(false);
-  const handleTogglePlay = useCallback(async (track: AlbumTrack, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (playingTrackId === track.id) {
-      setPlayingTrackId(null);
-      return;
-    }
-    // Prevent double-clicks while a signing request is in flight
-    if (signingRef.current) return;
-
-    const audioFile = getTrackAudioFile(track);
-
-    if (!audioFile && !tidalStreamUrls.has(track.id)) {
-      // Need to sign a TIDAL stream URL first
-      signingRef.current = true;
-      try {
-        const url = await api.signTidalStream(track.id);
-        setTidalStreamUrls(prev => new Map(prev).set(track.id, url));
-      } catch (err) {
-        console.error('Failed to get TIDAL stream URL:', err);
-        toast({ title: 'Playback failed', description: 'Could not get stream URL from TIDAL', variant: 'destructive' });
-        return;
-      } finally {
-        signingRef.current = false;
-      }
-    }
-    setPlayingTrackId(track.id);
-  }, [getTrackAudioFile, playingTrackId, tidalStreamUrls, toast]);
-
   /** Open track info dialog */
-  const handleOpenInfo = useCallback((track: AlbumTrack, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setInfoTrack(track);
-  }, []);
-
-  useEffect(() => {
-    const artworkUrl = album?.cover_id ? getAlbumCover(album.cover_id, 'large') : null;
-    if (artworkUrl) {
-      setArtwork(artworkUrl);
-    }
-  }, [album?.cover_id, setArtwork]);
-
   if (loading) {
     return (
       <div className={styles.stateShell}>
@@ -796,7 +572,7 @@ const AlbumPage = () => {
     );
   };
   return (
-    <DynamicBrandProvider keyColor={album.vibrant_color}>
+    <DynamicBrandProvider keyColor={albumBrandColor}>
       <div className={styles.container}>
         {/* Header Section */}
         <div className={styles.header}>
@@ -810,7 +586,7 @@ const AlbumPage = () => {
               return (
                 <div className={styles.coverContainer}>
                   <img
-                    src={getAlbumCover(album.cover_id, 'large') || "/placeholder-album.png"}
+                    src={albumArtworkUrl || "/placeholder-album.png"}
                     alt={album.title}
                     className={styles.coverArt}
                   />
@@ -927,277 +703,30 @@ const AlbumPage = () => {
             icon={<MusicNote224Regular />}
             minHeight="220px"
           />
-        ) : (() => {
-          // Check if multi-volume
-          const volumes = [...new Set(tracks.map(t => t.volume_number || 1))].sort((a, b) => a - b);
-          const isMultiVolume = volumes.length > 1;
-
-          return (
-            <>
-              {/* Mobile Track List */}
-              <div className={styles.mobileTrackList}>
-                {tracks.map((track, index) => {
-                  const showArtist = track.artist_name && track.artist_name !== album.artist_name;
-                  const isDownloading = downloadingTracks.has(track.id);
-                  const isTrackMonitored = Boolean(track.is_monitored ?? track.monitor);
-                  const isTrackLocked = Boolean((track as any).monitor_locked ?? track.monitor_lock);
-                  const isDownloaded = Boolean(track.downloaded);
-                  const audioFile = getTrackAudioFile(track);
-                  const isPlaying = playingTrackId === track.id;
-                  const currentVolume = track.volume_number || 1;
-                  const prevTrack = index > 0 ? tracks[index - 1] : null;
-                  const prevVolume = prevTrack ? (prevTrack.volume_number || 1) : 0;
-                  const showVolumeHeader = isMultiVolume && currentVolume !== prevVolume;
-
-                  return (
-                    <React.Fragment key={track.id}>
-                      {showVolumeHeader && (
-                        <div className={styles.volumeHeader}>
-                          <Title3>Volume {currentVolume}</Title3>
-                        </div>
-                      )}
-                      <div className={styles.mobileTrackItem}>
-                        <Text className={styles.mobileTrackNumber}>{track.track_number}</Text>
-                        <div className={styles.mobileTrackInfo}>
-                          <Text weight="medium" size={300} truncate wrap={false}>
-                            {track.version ? `${track.title} (${track.version})` : track.title}
-                            {track.explicit ? <ExplicitBadge className={styles.trackExplicitBadge} /> : null}
-                          </Text>
-                          <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
-                            {[showArtist ? track.artist_name : null, formatDurationSeconds(track.duration)].filter(Boolean).join(' · ')}
-                          </Text>
-                        </div>
-                        <div className={styles.mobileTrackActions}>
-                          {/* Play/Stop — always available (local file or TIDAL stream) */}
-                          <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
-                            <Button
-                              appearance="subtle"
-                              icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
-                              size="small"
-                              onClick={(e) => handleTogglePlay(track, e)}
-                            />
-                          </Tooltip>
-                          <Button
-                            appearance="subtle"
-                            icon={isTrackMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                            size="small"
-                            disabled={isTrackLocked}
-                            onClick={() => toggleMonitor({ id: track.id, type: 'track', currentStatus: isTrackMonitored })}
-                            title={isTrackLocked ? "Unlock to change monitoring" : (isTrackMonitored ? "Stop monitoring" : "Start monitoring")}
-                          />
-                          <Button
-                            appearance="subtle"
-                            icon={isTrackLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
-                            size="small"
-                            onClick={() => toggleLock({ id: track.id, type: 'track', isLocked: isTrackLocked, isMonitored: isTrackMonitored })}
-                            style={isTrackLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
-                            title={isTrackLocked ? "Unlock" : "Lock"}
-                          />
-                          {/* Info replaces download when downloaded; download when not */}
-                          {audioFile ? (
-                            <Tooltip content="Track info" relationship="label">
-                              <Button
-                                appearance="subtle"
-                                icon={<Info24Regular />}
-                                size="small"
-                                onClick={(e) => handleOpenInfo(track, e)}
-                              />
-                            </Tooltip>
-                          ) : (
-                            isDownloaded ? (
-                              <Button icon={<Checkmark24Filled />} appearance="subtle" size="small" disabled />
-                            ) : (
-                              <Button
-                                icon={<ArrowDownload24Regular />}
-                                appearance="subtle"
-                                size="small"
-                                onClick={(e) => handleDownloadTrack(track, e)}
-                                disabled={isDownloading}
-                                title="Download track"
-                              />
-                            )
-                          )}
-                        </div>
-                      </div>
-                      {/* Inline audio player — only mount on mobile to avoid duplicate Audio elements */}
-                      {isPlaying && !isWideViewport && (
-                        <div className={styles.audioPlayerRow}>
-                          <AudioPlayer
-                            src={audioFile ? api.getStreamUrl(audioFile.id) : (tidalStreamUrls.get(track.id) || '')}
-                            knownDuration={track.duration}
-                            onEnded={() => setPlayingTrackId(null)}
-                          />
-                        </div>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-              {/* Desktop Track Table */}
-              <table className={styles.trackTable}>
-                <thead>
-                  <tr>
-                    <th className={mergeClasses(styles.trackHeader, styles.trackIndex)}>#</th>
-                    <th className={styles.trackHeader}>TITLE</th>
-                    <th className={styles.trackHeader} style={{ width: '140px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tracks.map((track, index) => {
-                    const showArtist = track.artist_name && track.artist_name !== album.artist_name;
-                    const isDownloading = downloadingTracks.has(track.id);
-                    const isTrackMonitored = Boolean(track.is_monitored ?? track.monitor);
-                    const isTrackLocked = Boolean((track as any).monitor_locked ?? track.monitor_lock);
-                    const isDownloaded = Boolean(track.downloaded);
-                    const audioFile = getTrackAudioFile(track);
-                    const isPlaying = playingTrackId === track.id;
-
-                    // Check if we need a volume header
-                    const currentVolume = track.volume_number || 1;
-                    const prevTrack = index > 0 ? tracks[index - 1] : null;
-                    const prevVolume = prevTrack ? (prevTrack.volume_number || 1) : 0;
-                    const showVolumeHeader = isMultiVolume && currentVolume !== prevVolume;
-
-                    return (
-                      <React.Fragment key={track.id}>
-                        {showVolumeHeader && (
-                          <tr>
-                            <td colSpan={3} className={styles.volumeHeader}>
-                              <Title3>Volume {currentVolume}</Title3>
-                            </td>
-                          </tr>
-                        )}
-                        <tr className={styles.trackRow}>
-                          <td className={mergeClasses(styles.trackCell, styles.trackIndex)}>
-                            {track.track_number}
-                          </td>
-                          <td className={styles.trackCell}>
-                            <div className={styles.trackTitle}>
-                              <Text weight="medium">
-                                {track.version ? `${track.title} (${track.version})` : track.title}
-                                {track.explicit ? <ExplicitBadge className={styles.trackExplicitBadge} /> : null}
-                              </Text>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
-                                {showArtist && (
-                                  <>
-                                    <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
-                                      {track.artist_name}
-                                    </Text>
-                                    <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>•</Text>
-                                  </>
-                                )}
-                                <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
-                                  {formatDurationSeconds(track.duration)}
-                                </Text>
-                              </div>
-                            </div>
-                          </td>
-                          <td className={styles.trackCell}>
-                            <div className={styles.actionButtons}>
-                              {/* Play/Stop — always available (local file or TIDAL stream) */}
-                              <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
-                                <Button
-                                  appearance="subtle"
-                                  icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
-                                  size="small"
-                                  onClick={(e) => handleTogglePlay(track, e)}
-                                />
-                              </Tooltip>
-
-                              {/* Track Monitor Button */}
-                              <Tooltip content={isTrackLocked ? "Unlock to change" : (isTrackMonitored ? "Stop monitoring" : "Start monitoring")} relationship="label">
-                                <Button
-                                  appearance="subtle"
-                                  icon={isTrackMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                                  size="small"
-                                  disabled={isTrackLocked}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleMonitor({ id: track.id, type: 'track', currentStatus: isTrackMonitored });
-                                  }}
-                                />
-                              </Tooltip>
-
-                              {/* Track Lock Button */}
-                              <Tooltip content={isTrackLocked ? "Unlock" : "Lock"} relationship="label">
-                                <Button
-                                  appearance="subtle"
-                                  icon={isTrackLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
-                                  size="small"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleLock({ id: track.id, type: 'track', isLocked: isTrackLocked, isMonitored: isTrackMonitored });
-                                  }}
-                                  style={isTrackLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
-                                />
-                              </Tooltip>
-
-                              {/* Info (downloaded) or Download/Checkmark (not downloaded) */}
-                              {audioFile ? (
-                                <Tooltip content="Track info" relationship="label">
-                                  <Button
-                                    appearance="subtle"
-                                    icon={<Info24Regular />}
-                                    size="small"
-                                    onClick={(e) => handleOpenInfo(track, e)}
-                                  />
-                                </Tooltip>
-                              ) : (
-                                isDownloaded ? (
-                                  <Button
-                                    icon={<Checkmark24Filled />}
-                                    appearance="subtle"
-                                    size="small"
-                                    disabled
-                                    title="Downloaded"
-                                  />
-                                ) : (
-                                  <Button
-                                    icon={<ArrowDownload24Regular />}
-                                    appearance="subtle"
-                                    size="small"
-                                    onClick={(e) => handleDownloadTrack(track, e)}
-                                    disabled={isDownloading}
-                                    title="Download track"
-                                  />
-                                )
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                        {/* Inline audio player row — only mount on desktop to avoid duplicate Audio elements */}
-                        {isPlaying && isWideViewport && (
-                          <tr>
-                            <td colSpan={3} className={styles.audioPlayerCell}>
-                              <AudioPlayer
-                                src={audioFile ? api.getStreamUrl(audioFile.id) : (tidalStreamUrls.get(track.id) || '')}
-                                knownDuration={track.duration}
-                                onEnded={() => setPlayingTrackId(null)}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </>
-          );
-        })()}
-
-        {/* Track Info Dialog */}
-        {infoTrack && (
-          <TrackInfoDialog
-            open={!!infoTrack}
-            onClose={() => setInfoTrack(null)}
-            trackTitle={infoTrack.version ? `${infoTrack.title} (${infoTrack.version})` : infoTrack.title}
-            artistName={infoTrack.artist_name || album.artist_name}
-            albumTitle={album.title}
-            trackNumber={infoTrack.track_number}
-            duration={infoTrack.duration}
-            audioQuality={infoTrack.quality}
-            files={infoTrack.files}
+        ) : (
+          <TrackList
+            tracks={tracks}
+            showArtist={showTrackArtists}
+            showVolumeHeaders
+            contextArtistName={album.artist_name}
+            contextAlbumTitle={album.title}
+            onDownloadTrack={(track, event) => handleDownloadTrack(track as AlbumTrack, event)}
+            onToggleMonitor={(track) => {
+              toggleMonitor({
+                id: track.id,
+                type: "track",
+                currentStatus: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            onToggleLock={(track) => {
+              toggleLock({
+                id: track.id,
+                type: "track",
+                isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
+                isMonitored: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            isTrackDownloading={(track) => downloadingTracks.has(track.id)}
           />
         )}
 

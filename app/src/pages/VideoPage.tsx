@@ -13,17 +13,13 @@ import {
     mergeClasses,
     makeStyles,
     tokens,
-    Tooltip,
 } from "@fluentui/react-components";
 import {
     ArrowDownload24Regular,
-    ArrowLeft24Regular,
-    Checkmark24Filled,
     Eye24Regular,
     EyeOff24Regular,
     LockClosed24Regular,
     LockOpen24Regular,
-    Open24Regular,
     Play24Filled,
     Video24Regular,
 } from "@fluentui/react-icons";
@@ -31,17 +27,21 @@ import { api } from "@/services/api";
 import { getTidalImage, getArtistPicture } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
-import { useUltraBlurContext } from "@/providers/UltraBlurContext";
-import { useTheme } from "@/providers/themeContext";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
+import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { ErrorState } from "@/components/ui/ContentState";
+import {
+    compactDetailActionButtonStyles,
+    detailActionButtonRadiusStyles,
+} from "@/components/media/detailActionStyles";
 import {
     ACTIVITY_REFRESH_EVENT,
     LIBRARY_UPDATED_EVENT,
@@ -127,12 +127,27 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalM,
+        padding: tokens.spacingHorizontalL,
+        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        backdropFilter: "blur(10px)",
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+        borderRadius: tokens.borderRadiusXLarge,
     },
     titleRow: {
         display: "flex",
         alignItems: "flex-start",
-        gap: tokens.spacingHorizontalS,
+        gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
+    },
+    videoTitle: {
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+        fontSize: tokens.fontSizeHero700,
+        lineHeight: tokens.lineHeightHero700,
+        "@media (min-width: 768px)": {
+            fontSize: tokens.fontSizeHero800,
+            lineHeight: tokens.lineHeightHero800,
+        },
     },
     metadataRow: {
         display: "flex",
@@ -189,55 +204,13 @@ const useStyles = makeStyles({
         },
     },
     actionButton: {
-        // Mobile: compact vertical layout, equal-width
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        flex: "1 1 0",
-        minWidth: 0,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
-        gap: tokens.spacingVerticalXXS,
-        "& .fui-Button__content": {
-            fontSize: tokens.fontSizeBase100,
-            marginLeft: "0 !important",
-        },
-        "& .fui-Button__icon": {
-            marginRight: "0",
-            fontSize: tokens.fontSizeBase400,
-        },
-        // Tablet: slightly larger
-        "@media (min-width: 480px)": {
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-            "& .fui-Button__content": {
-                fontSize: tokens.fontSizeBase100,
-            },
-            "& .fui-Button__icon": {
-                fontSize: tokens.fontSizeBase500,
-            },
-        },
-        // Desktop: normal horizontal layout, auto width
-        "@media (min-width: 768px)": {
-            flexDirection: "row",
-            flex: "0 0 auto",
-            minWidth: "auto",
-            gap: tokens.spacingHorizontalNone,
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-            "& .fui-Button__content": {
-                fontSize: tokens.fontSizeBase300,
-                marginTop: "0",
-                marginLeft: tokens.spacingHorizontalS,
-            },
-            "& .fui-Button__icon": {
-                marginRight: tokens.spacingHorizontalSNudge,
-                fontSize: tokens.fontSizeBase600,
-            },
-        },
+        ...compactDetailActionButtonStyles,
     },
     primaryButton: {
-        borderRadius: tokens.borderRadiusXLarge,
+        ...detailActionButtonRadiusStyles,
     },
     transparentButton: {
-        borderRadius: tokens.borderRadiusXLarge,
+        ...detailActionButtonRadiusStyles,
     },
     fileInfo: {
         display: "flex",
@@ -275,7 +248,6 @@ const VideoPage = () => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { toast } = useToast();
-    const { setArtwork } = useUltraBlurContext();
     const { addToQueue } = useDownloadQueue();
 
     const [isPlaying, setIsPlaying] = useState(false);
@@ -320,19 +292,11 @@ const VideoPage = () => {
         const files = filesData?.items ?? [];
         return files.find((file) => file.file_type === "video");
     }, [filesData]);
-
-    const { setBrandKeyColor } = useTheme();
-
-    // Set UltraBlur background from cover
-    useEffect(() => {
-        if (video?.cover_id) {
-            const url = getTidalImage(video.cover_id, "video", "large");
-            if (url) setArtwork(url);
-        }
-        return () => {
-            // Keep persistence global for videos too
-        };
-    }, [video?.cover_id, setArtwork, setBrandKeyColor]);
+    const coverUrl = getTidalImage(video?.cover_id || video?.cover, "video", "large");
+    const videoBrandColor = useArtworkBrandColor({
+        artworkUrl: coverUrl,
+        deriveBrandFromArtwork: true,
+    });
 
     // Toggle monitor mutation
     const toggleMonitor = useMutation({
@@ -396,7 +360,6 @@ const VideoPage = () => {
     const isMonitored = Boolean(video?.is_monitored ?? video?.monitor);
     const isLocked = Boolean(video?.monitor_locked ?? video?.monitor_lock);
     const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
-    const coverUrl = getTidalImage(video?.cover_id || video?.cover, "video", "large");
     const year = video?.release_date ? new Date(video.release_date).getFullYear() : null;
     const videoErrorDescription = error instanceof Error && error.message === "Video not found"
         ? "This video doesn't exist in your library."
@@ -505,123 +468,125 @@ const VideoPage = () => {
     }
 
     return (
-        <div className={styles.container}>
-            {/* Player Wrapper directly at top */}
-            <div className={styles.playerWrapper}>
-                {!isPlaying ? (
-                    <>
-                        {coverUrl ? (
-                            <img src={coverUrl} alt={video.title} className={styles.thumbnailImage} onClick={handlePlayClick} />
-                        ) : (
-                            <div className={styles.thumbnailPlaceholder} onClick={handlePlayClick}>
-                                <Video24Regular style={{ width: 64, height: 64 }} />
+        <DynamicBrandProvider keyColor={videoBrandColor}>
+            <div className={styles.container}>
+                {/* Player Wrapper directly at top */}
+                <div className={styles.playerWrapper}>
+                    {!isPlaying ? (
+                        <>
+                            {coverUrl ? (
+                                <img src={coverUrl} alt={video.title} className={styles.thumbnailImage} onClick={handlePlayClick} />
+                            ) : (
+                                <div className={styles.thumbnailPlaceholder} onClick={handlePlayClick}>
+                                    <Video24Regular style={{ width: 64, height: 64 }} />
+                                </div>
+                            )}
+                            <div className={styles.playOverlay} onClick={handlePlayClick}>
+                                <Play24Filled style={{ width: 64, height: 64, color: "#fff" }} />
                             </div>
-                        )}
-                        <div className={styles.playOverlay} onClick={handlePlayClick}>
-                            <Play24Filled style={{ width: 64, height: 64, color: "#fff" }} />
-                        </div>
-                    </>
-                ) : (
-                    <video
-                        ref={videoRef}
-                        controls
-                        className={styles.videoPlayer}
-                        src={isDownloaded ? streamUrl : undefined}
-                        poster={coverUrl || undefined}
-                        preload="metadata"
-                        autoPlay
-                    >
-                        Your browser does not support the video element.
-                    </video>
-                )}
-            </div>
-
-            <div className={styles.infoSection}>
-                <div className={styles.titleRow}>
-                    <Title1>{video.title}</Title1>
-                    {video.explicit ? <ExplicitBadge /> : null}
+                        </>
+                    ) : (
+                        <video
+                            ref={videoRef}
+                            controls
+                            className={styles.videoPlayer}
+                            src={isDownloaded ? streamUrl : undefined}
+                            poster={coverUrl || undefined}
+                            preload="metadata"
+                            autoPlay
+                        >
+                            Your browser does not support the video element.
+                        </video>
+                    )}
                 </div>
 
-                <div className={styles.metadataRow}>
-                    <div className={styles.leftMeta}>
-                        {video.artist_name && (
-                            <div className={styles.artistProfile} onClick={() => video.artist_id && navigate(`/artist/${video.artist_id}`)}>
-                                {artistPicUrl ? (
-                                    <img src={artistPicUrl} className={styles.artistAvatar} alt={video.artist_name} />
-                                ) : (
-                                    <div className={styles.artistAvatar} style={{ backgroundColor: tokens.colorNeutralBackground4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Text size={200} weight="bold">{video.artist_name.charAt(0)}</Text>
-                                    </div>
-                                )}
-                                <Text weight="semibold" size={400}>{video.artist_name}</Text>
-                            </div>
-                        )}
-
-                        <div className={styles.metaItems}>
-                            {year && (
-                                <>
-                                    <Text>{year}</Text>
-                                    <Text>•</Text>
-                                </>
-                            )}
-                            <Text>{formatDurationSeconds(video.duration)}</Text>
-                            <Text>•</Text>
-                            {video.quality && (
-                                <QualityBadge quality={video.quality} size="small" />
-                            )}
-                            {isDownloaded && videoFile && (
-                                <>
-                                    <Text>•</Text>
-                                    <Badge appearance="outline" size="small">
-                                        {[
-                                            videoFile.codec,
-                                            videoFile.file_size ? formatFileSize(videoFile.file_size) : null,
-                                            videoFile.extension?.toUpperCase(),
-                                            videoFile.bitrate ? `${Math.round(videoFile.bitrate / 1000)}k` : null
-                                        ].filter(Boolean).join(" / ")}
-                                    </Badge>
-                                </>
-                            )}
-                        </div>
+                <div className={styles.infoSection}>
+                    <div className={styles.titleRow}>
+                        <Title1 className={styles.videoTitle}>{video.title}</Title1>
+                        {video.explicit ? <ExplicitBadge /> : null}
                     </div>
 
-                    <div className={styles.rightActions}>
-                        <Button
-                            appearance={isMonitored ? "subtle" : "primary"}
-                            icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                            disabled={isLocked}
-                            onClick={() => toggleMonitor.mutate(!isMonitored)}
-                            className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
-                            title={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
-                        >
-                            {isMonitored ? "Unmonitor" : "Monitor"}
-                        </Button>
+                    <div className={styles.metadataRow}>
+                        <div className={styles.leftMeta}>
+                            {video.artist_name && (
+                                <div className={styles.artistProfile} onClick={() => video.artist_id && navigate(`/artist/${video.artist_id}`)}>
+                                    {artistPicUrl ? (
+                                        <img src={artistPicUrl} className={styles.artistAvatar} alt={video.artist_name} />
+                                    ) : (
+                                        <div className={styles.artistAvatar} style={{ backgroundColor: tokens.colorNeutralBackground4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <Text size={200} weight="bold">{video.artist_name.charAt(0)}</Text>
+                                        </div>
+                                    )}
+                                    <Text weight="semibold" size={400}>{video.artist_name}</Text>
+                                </div>
+                            )}
 
-                        <Button
-                            appearance="subtle"
-                            icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
-                            onClick={() => toggleLock.mutate(!isLocked)}
-                            style={isLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
-                            className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                            title={isLocked ? "Unlock" : "Lock"}
-                        >
-                            {isLocked ? "Unlock" : "Lock"}
-                        </Button>
+                            <div className={styles.metaItems}>
+                                {year && (
+                                    <>
+                                        <Text>{year}</Text>
+                                        <Text>•</Text>
+                                    </>
+                                )}
+                                <Text>{formatDurationSeconds(video.duration)}</Text>
+                                <Text>•</Text>
+                                {video.quality && (
+                                    <QualityBadge quality={video.quality} size="small" />
+                                )}
+                                {isDownloaded && videoFile && (
+                                    <>
+                                        <Text>•</Text>
+                                        <Badge appearance="outline" size="small">
+                                            {[
+                                                videoFile.codec,
+                                                videoFile.file_size ? formatFileSize(videoFile.file_size) : null,
+                                                videoFile.extension?.toUpperCase(),
+                                                videoFile.bitrate ? `${Math.round(videoFile.bitrate / 1000)}k` : null
+                                            ].filter(Boolean).join(" / ")}
+                                        </Badge>
+                                    </>
+                                )}
+                            </div>
+                        </div>
 
-                        {!isDownloaded && (
+                        <div className={styles.rightActions}>
+                            <Button
+                                appearance={isMonitored ? "subtle" : "primary"}
+                                icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                                disabled={isLocked}
+                                onClick={() => toggleMonitor.mutate(!isMonitored)}
+                                className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
+                                title={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                            >
+                                {isMonitored ? "Unmonitor" : "Monitor"}
+                            </Button>
+
                             <Button
                                 appearance="subtle"
-                                icon={<ArrowDownload24Regular />}
-                                onClick={handleDownload}
+                                icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+                                onClick={() => toggleLock.mutate(!isLocked)}
+                                style={isLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
                                 className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                title={isLocked ? "Unlock" : "Lock"}
                             >
-                                Download
+                                {isLocked ? "Unlock" : "Lock"}
                             </Button>
-                        )}
+
+                            {!isDownloaded && (
+                                <Button
+                                    appearance="subtle"
+                                    icon={<ArrowDownload24Regular />}
+                                    onClick={handleDownload}
+                                    className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                >
+                                    Download
+                                </Button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </DynamicBrandProvider>
     );
 };
 

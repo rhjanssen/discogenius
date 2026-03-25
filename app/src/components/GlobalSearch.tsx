@@ -159,6 +159,7 @@ const useStyles = makeStyles({
         flex: 1,
         minHeight: 0,
         overflowY: "auto",
+        overscrollBehavior: "contain",
         padding: tokens.spacingVerticalS,
         "@media (min-width: 640px)": {
             padding: tokens.spacingVerticalM,
@@ -408,6 +409,7 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
     const { searchResults, isSearching, search, addItem, removeItem } = useSearch();
     const [processingItems, setProcessingItems] = useState<Set<string>>(new Set());
     const [downloadingItems, setDownloadingItems] = useState<Set<string>>(new Set());
+    const [resultsMaxHeight, setResultsMaxHeight] = useState<number | null>(null);
     const searchRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const { toast } = useToast();
@@ -434,6 +436,43 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setResultsMaxHeight(null);
+            return;
+        }
+
+        const updateResultsMaxHeight = () => {
+            const host = searchRef.current;
+            if (!host) {
+                return;
+            }
+
+            const rect = host.getBoundingClientRect();
+            const visualViewport = window.visualViewport;
+            const viewportHeight = visualViewport?.height ?? window.innerHeight;
+            const viewportTop = visualViewport?.offsetTop ?? 0;
+            const availableBottom = viewportTop + viewportHeight;
+            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - 12));
+            setResultsMaxHeight(nextMaxHeight);
+        };
+
+        updateResultsMaxHeight();
+
+        const visualViewport = window.visualViewport;
+        window.addEventListener("resize", updateResultsMaxHeight);
+        window.addEventListener("scroll", updateResultsMaxHeight, true);
+        visualViewport?.addEventListener("resize", updateResultsMaxHeight);
+        visualViewport?.addEventListener("scroll", updateResultsMaxHeight);
+
+        return () => {
+            window.removeEventListener("resize", updateResultsMaxHeight);
+            window.removeEventListener("scroll", updateResultsMaxHeight, true);
+            visualViewport?.removeEventListener("resize", updateResultsMaxHeight);
+            visualViewport?.removeEventListener("scroll", updateResultsMaxHeight);
+        };
+    }, [isOpen]);
 
     const handleItemClick = (item: SearchResultItem) => {
         if (item.type === 'artist') navigate(`/artist/${item.tidalId}`);
@@ -742,7 +781,12 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
             />
 
             {isOpen && (
-                <Card className={styles.resultsContainer} role="dialog" aria-label="Search results">
+                <Card
+                    className={styles.resultsContainer}
+                    role="dialog"
+                    aria-label="Search results"
+                    style={resultsMaxHeight != null ? { maxHeight: `${resultsMaxHeight}px` } : undefined}
+                >
                     <div className={styles.tabContainer}>
                         <TabList
                             selectedValue={activeTab}

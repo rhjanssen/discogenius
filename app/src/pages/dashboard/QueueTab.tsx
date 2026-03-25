@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState } from "react";
+import { useMemo, useRef, useEffect, useState, type MouseEvent } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import {
     Badge,
@@ -13,9 +13,11 @@ import {
     CheckmarkCircle24Filled,
     ErrorCircle24Filled,
     ArrowClockwise24Regular,
+    ArrowDown24Regular,
     Clock24Regular,
     Delete24Regular,
     MusicNote224Regular,
+    ArrowUp24Regular,
     Video24Regular,
     ArrowDownload24Regular,
 } from "@fluentui/react-icons";
@@ -167,6 +169,14 @@ function renderTrackStatusIndicator(
     return null;
 }
 
+function getMovablePendingJobIds(
+    items: Array<{ id: number; status: string; stage?: string }>,
+): number[] {
+    return items
+        .filter((item) => item.status === 'pending' && item.stage !== 'import')
+        .map((item) => item.id);
+}
+
 const QueueTab = () => {
     const styles = useDashboardStyles();
     const navigate = useNavigate();
@@ -176,7 +186,9 @@ const QueueTab = () => {
         getProgress,
         retryItem,
         deleteItem,
+        reorderItems,
     } = useDownloadQueue();
+    const [reorderingGroupId, setReorderingGroupId] = useState<string | null>(null);
 
     const activeDownloads = downloadQueue.filter(i => i.status === 'downloading' || i.status === 'processing');
     const pendingDownloads = downloadQueue.filter(i => i.status === 'pending');
@@ -274,6 +286,51 @@ const QueueTab = () => {
     }, [activeDownloads, pendingDownloads, failedDownloads]);
 
     const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+    const pendingReorderGroups = useMemo(
+        () => groupedDownloads.filter((group) => getMovablePendingJobIds(group.items).length === group.items.length),
+        [groupedDownloads],
+    );
+    const pendingReorderGroupIndex = useMemo(
+        () => new Map(pendingReorderGroups.map((group, index) => [group.id, index])),
+        [pendingReorderGroups],
+    );
+
+    const handleMoveGroup = async (
+        group: typeof groupedDownloads[number],
+        direction: 'up' | 'down',
+        event: MouseEvent,
+    ) => {
+        event.stopPropagation();
+
+        const currentIndex = pendingReorderGroupIndex.get(group.id);
+        if (currentIndex === undefined) {
+            return;
+        }
+
+        const targetGroup = direction === 'up'
+            ? pendingReorderGroups[currentIndex - 1]
+            : pendingReorderGroups[currentIndex + 1];
+        if (!targetGroup) {
+            return;
+        }
+
+        const jobIds = getMovablePendingJobIds(group.items);
+        const targetJobIds = getMovablePendingJobIds(targetGroup.items);
+        if (jobIds.length === 0 || targetJobIds.length === 0) {
+            return;
+        }
+
+        setReorderingGroupId(group.id);
+        try {
+            if (direction === 'up') {
+                await reorderItems({ jobIds, beforeJobId: targetJobIds[0] });
+            } else {
+                await reorderItems({ jobIds, afterJobId: targetJobIds[targetJobIds.length - 1] });
+            }
+        } finally {
+            setReorderingGroupId((current) => current === group.id ? null : current);
+        }
+    };
 
     const virtualizer = useWindowVirtualizer({
         count: groupedDownloads.length,
@@ -328,6 +385,10 @@ const QueueTab = () => {
                             : firstItem?.album_id
                                 ? `/album/${firstItem.album_id}`
                                 : null;
+                    const reorderIndex = pendingReorderGroupIndex.get(group.id);
+                    const canMoveUp = reorderIndex !== undefined && reorderIndex > 0;
+                    const canMoveDown = reorderIndex !== undefined && reorderIndex < pendingReorderGroups.length - 1;
+                    const isReordering = reorderingGroupId === group.id;
 
                     const handleGroupClick = (e: React.MouseEvent) => {
                         if ((e.target as HTMLElement).closest('button')) return;
@@ -403,6 +464,26 @@ const QueueTab = () => {
                                         )
                                 )}
                                 <div className={styles.downloadActions}>
+                                    {reorderIndex !== undefined && (
+                                        <>
+                                            <Button
+                                                size="small"
+                                                appearance="subtle"
+                                                icon={<ArrowUp24Regular />}
+                                                disabled={!canMoveUp || isReordering}
+                                                title="Move up"
+                                                onClick={(e) => { void handleMoveGroup(group, 'up', e); }}
+                                            />
+                                            <Button
+                                                size="small"
+                                                appearance="subtle"
+                                                icon={<ArrowDown24Regular />}
+                                                disabled={!canMoveDown || isReordering}
+                                                title="Move down"
+                                                onClick={(e) => { void handleMoveGroup(group, 'down', e); }}
+                                            />
+                                        </>
+                                    )}
                                     {isFailed && group.items.length === 1 && (
                                         <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(group.items[0].id)} />
                                     )}

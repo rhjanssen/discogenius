@@ -1,144 +1,85 @@
-import React, { useState } from "react";
-import { formatDurationSeconds } from "@/utils/format";
+import { useState, type MouseEvent } from "react";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHeader,
-  TableHeaderCell,
-  TableRow,
-  Avatar,
   Button,
   Text,
-  Card,
-  tokens,
+  Tooltip,
   makeStyles,
   mergeClasses,
-  TableCellLayout,
+  tokens,
 } from "@fluentui/react-components";
 import {
-  Play24Filled,
-  MusicNote224Regular,
+  ArrowDownload24Regular,
+  Checkmark24Filled,
+  Eye24Regular,
+  EyeOff24Regular,
+  Info24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
+  Play24Regular,
+  Stop24Filled,
 } from "@fluentui/react-icons";
-import { useNavigate } from "react-router-dom";
-import { QualityBadge } from "@/components/ui/QualityBadge";
+import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
-import { DownloadedBadge, MissingBadge } from "@/components/ui/StatusBadges";
-import { LoadingState, EmptyState } from "@/components/ui/ContentState";
-import { MonitorButton } from "@/components/MonitorButton";
-import { LockToggle } from "@/components/LockToggle";
-import { getTidalImage } from "@/utils/tidalImages";
+import { QualityBadge } from "@/components/ui/QualityBadge";
+import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
+import { useTrackPlayback } from "@/hooks/useTrackPlayback";
+import { getAlbumCover } from "@/utils/tidalImages";
+import { formatDurationSeconds } from "@/utils/format";
+import type { TrackListItem } from "@/types/track-list";
 
-export interface Track {
-  id: string;
-  title: string;
-  version?: string | null;
-  duration: number;
-  track_number: number;
-  volume_number?: number;
-  explicit?: boolean;
-  quality?: string;
-  album_id: string;
-  album_title?: string;
-  album_cover?: string;
-  artist_id?: string;
-  artist_name?: string;
-  created_at?: string;
-  downloaded?: boolean;
-  monitored?: boolean;
-  monitor_locked?: boolean;
-  is_monitored?: boolean;
-  monitor?: boolean;
-  monitor_lock?: boolean;
-}
+type TrackNumbering = "track" | "index";
 
-interface TrackListProps {
-  tracks: Track[];
-  loading?: boolean;
+interface TrackListProps<T extends TrackListItem = TrackListItem> {
+  tracks: T[];
+  numbering?: TrackNumbering;
+  showCover?: boolean;
   showArtist?: boolean;
   showAlbum?: boolean;
-  showDate?: boolean;
-  showCover?: boolean;
+  showVolumeHeaders?: boolean;
+  contextArtistName?: string | null;
+  contextAlbumTitle?: string | null;
+  onTrackClick?: (track: T) => void;
+  onDownloadTrack?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
+  onToggleMonitor?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
+  onToggleLock?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
+  isTrackDownloading?: (track: T) => boolean;
 }
 
 const useStyles = makeStyles({
   root: {
-    width: "100%",
     display: "flex",
     flexDirection: "column",
   },
-  // Desktop table
-  desktopTable: {
-    display: "none",
-    "@media (min-width: 768px)": {
-      display: "table",
-    },
+  volumeHeader: {
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+    color: tokens.colorNeutralForeground2,
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase300,
   },
   row: {
-    cursor: "pointer",
-    ":hover": {
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    },
-    "& .actions": {
-      opacity: 0,
-      transition: `opacity ${tokens.durationNormal} ${tokens.curveEasyEase}`,
-    },
-    ":hover .actions": {
-      opacity: 1,
-    },
-    "& .play-icon": {
-      display: "none",
-    },
-    ":hover .play-icon": {
-      display: "block",
-    },
-    ":hover .track-num": {
-      display: "none",
-    },
-  },
-  actions: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: tokens.spacingHorizontalXS,
-  },
-  linkText: {
-    color: tokens.colorNeutralForeground3,
-    cursor: "pointer",
-    ":hover": {
-      color: tokens.colorNeutralForeground1,
-    },
-  },
-  qualityBadge: {
-    transform: "scale(0.9)",
-    transformOrigin: "left center",
-    display: "inline-flex",
-  },
-  explicitBadge: {
-    marginLeft: tokens.spacingHorizontalS,
-  },
-  // Mobile card list
-  mobileList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-    "@media (min-width: 768px)": {
-      display: "none",
-    },
-  },
-  mobileCard: {
-    display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
-    padding: tokens.spacingVerticalS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
+  },
+  rowClickable: {
     cursor: "pointer",
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorSubtleBackground,
     ":hover": {
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
     },
   },
-  mobileCover: {
+  number: {
+    width: "28px",
+    flexShrink: 0,
+    textAlign: "center",
+    color: tokens.colorNeutralForeground3,
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+  },
+  cover: {
     width: "44px",
     height: "44px",
     borderRadius: tokens.borderRadiusSmall,
@@ -146,303 +87,316 @@ const useStyles = makeStyles({
     flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
   },
-  mobileInfo: {
+  coverPlaceholder: {
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  main: {
     flex: 1,
     minWidth: 0,
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXXS,
   },
-  mobileTitle: {
+  titleRow: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
+    minWidth: 0,
   },
-  mobileMeta: {
+  title: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: tokens.fontWeightSemibold,
+    "@media (max-width: 639px)": {
+      whiteSpace: "normal",
+      wordBreak: "break-word",
+    },
+  },
+  metaRow: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
     flexWrap: "wrap",
+    minWidth: 0,
   },
-  mobileDuration: {
+  metaText: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+  },
+  separator: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+  },
+  qualityBadge: {
+    transform: "scale(0.9)",
+    transformOrigin: "left center",
+  },
+  trailing: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalM,
+    marginLeft: "auto",
+    flexShrink: 0,
+    "@media (max-width: 639px)": {
+      width: "100%",
+      marginLeft: 0,
+      justifyContent: "space-between",
+      paddingLeft: `calc(28px + ${tokens.spacingHorizontalS})`,
+    },
+  },
+  duration: {
+    color: tokens.colorNeutralForeground3,
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+    textAlign: "right",
+    minWidth: "48px",
+  },
+  actions: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
     flexShrink: 0,
   },
-  emptyState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: tokens.spacingVerticalXXXL,
-    gap: tokens.spacingVerticalM,
-    color: tokens.colorNeutralForeground3,
-    textAlign: "center",
-  },
-  loadingState: {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: tokens.spacingVerticalXXXL,
-    gap: tokens.spacingHorizontalS,
+  playerRow: {
+    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
   },
 });
 
-const TrackList = ({
+const isTruthy = (value: unknown) => Boolean(value);
+
+const getAlbumTitle = (track: TrackListItem, fallback?: string | null) =>
+  track.album?.title ?? track.album_title ?? fallback ?? null;
+const getAlbumCoverId = (track: TrackListItem) => track.album?.cover_id ?? null;
+const getDisplayTitle = (track: TrackListItem) =>
+  track.version ? `${track.title} (${track.version})` : track.title;
+
+const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
+  if (numbering === "index") {
+    return index + 1;
+  }
+
+  return track.track_number || index + 1;
+};
+
+const shouldShowArtist = (
+  track: TrackListItem,
+  showArtist: boolean,
+  contextArtistName?: string | null,
+) => {
+  if (!showArtist || !track.artist_name) {
+    return false;
+  }
+
+  return !contextArtistName || track.artist_name !== contextArtistName;
+};
+
+const shouldShowAlbum = (
+  track: TrackListItem,
+  showAlbum: boolean,
+  contextAlbumTitle?: string | null,
+) => {
+  const albumTitle = getAlbumTitle(track);
+  if (!showAlbum || !albumTitle) {
+    return false;
+  }
+
+  return !contextAlbumTitle || albumTitle !== contextAlbumTitle;
+};
+
+const TrackList = <T extends TrackListItem>({
   tracks,
-  loading,
-  showArtist = true,
-  showAlbum = true,
-  showDate = true,
-  showCover = true,
-}: TrackListProps) => {
-  const navigate = useNavigate();
+  numbering = "track",
+  showCover = false,
+  showArtist = false,
+  showAlbum = false,
+  showVolumeHeaders = false,
+  contextArtistName,
+  contextAlbumTitle,
+  onTrackClick,
+  onDownloadTrack,
+  onToggleMonitor,
+  onToggleLock,
+  isTrackDownloading,
+}: TrackListProps<T>) => {
   const styles = useStyles();
-  const [hoveredRow, setHoveredRow] = useState<string | null>(null);
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  };
-
-  const handleRowClick = (track: Track) => {
-    if (track.album_id) {
-      navigate(`/album/${track.album_id}`);
-    }
-  };
-
-  const handleArtistClick = (e: React.MouseEvent, track: Track) => {
-    e.stopPropagation();
-    if (track.artist_id) {
-      navigate(`/artist/${track.artist_id}`);
-    }
-  };
-
-  if (loading) {
-    return (
-      <LoadingState className={styles.loadingState} size="small" label="Loading tracks..." />
-    );
-  }
-
-  if (!tracks || tracks.length === 0) {
-    return (
-      <EmptyState
-        title="No tracks found"
-        description="Try adjusting your filters or add artists to your library."
-        icon={<MusicNote224Regular />}
-      />
-    );
-  }
-
-  const getTrackDisplayTitle = (track: Track) =>
-    track.version ? `${track.title} (${track.version})` : track.title;
+  const {
+    getPlaybackSrc,
+    getTrackAudioFile,
+    playingTrackId,
+    setPlayingTrackId,
+    toggleTrackPlayback,
+  } = useTrackPlayback();
+  const [infoTrack, setInfoTrack] = useState<T | null>(null);
 
   return (
-    <div className={styles.root}>
-      {/* Mobile: Card-based list */}
-      <div className={styles.mobileList}>
-        {tracks.map((track) => (
-          <div
-            key={track.id}
-            className={styles.mobileCard}
-            onClick={() => handleRowClick(track)}
-          >
-            {showCover && (
-              track.album_cover ? (
-                <img
-                  src={getTidalImage(track.album_cover, "square", "small") || undefined}
-                  alt={track.album_title || "Album"}
-                  className={styles.mobileCover}
-                />
-              ) : (
-                <div className={styles.mobileCover} />
-              )
-            )}
-            <div className={styles.mobileInfo}>
-              <div className={styles.mobileTitle}>
-                <Text
-                  weight="semibold"
-                  size={300}
-                  truncate
-                  wrap={false}
-                  style={{ flex: 1, minWidth: 0 }}
-                >
-                  {getTrackDisplayTitle(track)}
-                </Text>
-                {track.explicit ? <ExplicitBadge /> : null}
-              </div>
-              <div className={styles.mobileMeta}>
-                {showArtist && (
-                  <Text
-                    size={200}
-                    style={{ color: tokens.colorNeutralForeground3 }}
-                    truncate
-                    wrap={false}
-                  >
-                    {track.artist_name || "Unknown Artist"}
-                  </Text>
-                )}
-                {showArtist && showAlbum && (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>•</Text>
-                )}
-                {showAlbum && (
-                  <Text
-                    size={200}
-                    style={{ color: tokens.colorNeutralForeground3 }}
-                    truncate
-                    wrap={false}
-                  >
-                    {track.album_title || "Unknown Album"}
-                  </Text>
-                )}
-              </div>
-              <div className={styles.mobileMeta}>
-                <Text className={styles.mobileDuration}>{formatDurationSeconds(track.duration)}</Text>
-                {track.quality && (
-                  <QualityBadge quality={track.quality} className={styles.qualityBadge} />
-                )}
-                {track.downloaded ? <DownloadedBadge /> : <MissingBadge />}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+    <>
+      <div className={styles.root}>
+        {tracks.map((track, index) => {
+          const displayNumber = getDisplayNumber(track, index, numbering);
+          const isPlaying = playingTrackId === track.id;
+          const audioFile = getTrackAudioFile(track);
+          const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
+          const isMonitored = isTruthy(track.is_monitored ?? track.monitor);
+          const isLocked = isTruthy(track.monitor_locked ?? track.monitor_lock);
+          const displayArtist = shouldShowArtist(track, showArtist, contextArtistName) ? track.artist_name : null;
+          const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
+            ? getAlbumTitle(track, contextAlbumTitle)
+            : null;
+          const coverUrl = showCover
+            ? getAlbumCover(getAlbumCoverId(track), "tiny")
+            : null;
+          const isDownloading = Boolean(isTrackDownloading?.(track));
+          const currentVolume = track.volume_number || 1;
+          const previousVolume = index > 0 ? (tracks[index - 1]?.volume_number || 1) : currentVolume;
+          const showVolumeHeader = showVolumeHeaders && (index === 0 || currentVolume !== previousVolume);
 
-      {/* Desktop: Table */}
-      <Table aria-label="Track list" className={styles.desktopTable}>
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell style={{ width: '48px', textAlign: 'center' }}>#</TableHeaderCell>
-            {showCover && <TableHeaderCell style={{ width: '60px' }} />}
-            <TableHeaderCell style={{ minWidth: '200px' }}>Title</TableHeaderCell>
-            {showArtist && <TableHeaderCell>Artist</TableHeaderCell>}
-            {showAlbum && <TableHeaderCell>Album</TableHeaderCell>}
-            {showDate && <TableHeaderCell style={{ width: '120px' }}>Date Added</TableHeaderCell>}
-            <TableHeaderCell style={{ width: '80px', textAlign: 'right' }}>Time</TableHeaderCell>
-            <TableHeaderCell style={{ width: '120px' }} />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {tracks.map((track) => (
-            <TableRow
-              key={track.id}
-              className={styles.row}
-              onClick={() => handleRowClick(track)}
-              onMouseEnter={() => setHoveredRow(track.id)}
-              onMouseLeave={() => setHoveredRow(null)}
-            >
-              <TableCell style={{ textAlign: 'center', color: tokens.colorNeutralForeground3, fontFamily: tokens.fontFamilyMonospace }}>
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' }}>
-                  <span className="track-num">{track.track_number}</span>
-                  <Play24Filled className="play-icon" style={{ width: 16, height: 16 }} />
+          return (
+            <div key={track.id}>
+              {showVolumeHeader ? (
+                <div className={styles.volumeHeader}>Volume {currentVolume}</div>
+              ) : null}
+
+              <div
+                className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
+                onClick={onTrackClick ? () => onTrackClick(track) : undefined}
+              >
+                <Text className={styles.number}>{displayNumber}</Text>
+
+                {showCover ? (
+                  coverUrl ? (
+                    <img src={coverUrl} alt={displayAlbum || track.title} className={styles.cover} />
+                  ) : (
+                    <div className={mergeClasses(styles.cover, styles.coverPlaceholder)} />
+                  )
+                ) : null}
+
+                <div className={styles.main}>
+                  <div className={styles.titleRow}>
+                    <Text className={styles.title}>{getDisplayTitle(track)}</Text>
+                    {track.explicit ? <ExplicitBadge /> : null}
+                  </div>
+
+                  <div className={styles.metaRow}>
+                    {displayArtist ? <Text className={styles.metaText}>{displayArtist}</Text> : null}
+                    {displayArtist && displayAlbum ? <Text className={styles.separator}>•</Text> : null}
+                    {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
+                    {track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
+                  </div>
                 </div>
-              </TableCell>
 
-              {showCover && (
-                <TableCell style={{ padding: tokens.spacingVerticalS }}>
-                  <TableCellLayout
-                    media={
-                      <Avatar
-                        image={{
-                          src: track.album_cover
-                            ? getTidalImage(track.album_cover, "square", "small") || undefined
-                            : undefined
-                        }}
-                        name={track.album_title || "Album"}
-                        shape="square"
-                        size={40}
+                <div className={styles.trailing}>
+                  <Text className={styles.duration}>{formatDurationSeconds(track.duration)}</Text>
+
+                  <div className={styles.actions}>
+                    <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
+                        size="small"
+                        onClick={(event) => toggleTrackPlayback(track, event)}
                       />
-                    }
-                  />
-                </TableCell>
-              )}
+                    </Tooltip>
 
-              <TableCell>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <Text weight="semibold" truncate wrap={false} style={{ maxWidth: '300px' }}>
-                      {getTrackDisplayTitle(track)}
-                    </Text>
-                    {track.explicit ? (
-                      <ExplicitBadge className={styles.explicitBadge} />
+                    {onToggleMonitor ? (
+                      <Tooltip content={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")} relationship="label">
+                        <Button
+                          appearance="subtle"
+                          icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                          size="small"
+                          disabled={isLocked}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleMonitor(track, event);
+                          }}
+                        />
+                      </Tooltip>
+                    ) : null}
+
+                    {onToggleLock ? (
+                      <Tooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
+                        <Button
+                          appearance="subtle"
+                          icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+                          size="small"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleLock(track, event);
+                          }}
+                        />
+                      </Tooltip>
+                    ) : null}
+
+                    {audioFile ? (
+                      <Tooltip content="Track info" relationship="label">
+                        <Button
+                          appearance="subtle"
+                          icon={<Info24Regular />}
+                          size="small"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setInfoTrack(track);
+                          }}
+                        />
+                      </Tooltip>
+                    ) : onDownloadTrack ? (
+                      isDownloaded ? (
+                        <Button
+                          appearance="subtle"
+                          icon={<Checkmark24Filled />}
+                          size="small"
+                          disabled
+                          title="Downloaded"
+                        />
+                      ) : (
+                        <Tooltip content="Download track" relationship="label">
+                          <Button
+                            appearance="subtle"
+                            icon={<ArrowDownload24Regular />}
+                            size="small"
+                            disabled={isDownloading}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDownloadTrack(track, event);
+                            }}
+                          />
+                        </Tooltip>
+                      )
                     ) : null}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, marginTop: tokens.spacingVerticalXS }}>
-                    {track.quality && (
-                      <QualityBadge quality={track.quality} className={styles.qualityBadge} />
-                    )}
-                    {track.downloaded ? <DownloadedBadge /> : <MissingBadge />}
-                  </div>
                 </div>
-              </TableCell>
+              </div>
 
-              {showArtist && (
-                <TableCell>
-                  <Text
-                    className={styles.linkText}
-                    onClick={(e) => handleArtistClick(e, track)}
-                  >
-                    {track.artist_name || "Unknown Artist"}
-                  </Text>
-                </TableCell>
-              )}
-
-              {showAlbum && (
-                <TableCell>
-                  <Text
-                    className={styles.linkText}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/album/${track.album_id}`);
-                    }}
-                  >
-                    {track.album_title || "Unknown Album"}
-                  </Text>
-                </TableCell>
-              )}
-
-              {showDate && (
-                <TableCell>
-                  <Text style={{ color: tokens.colorNeutralForeground3 }}>
-                    {track.created_at ? formatDate(track.created_at) : "-"}
-                  </Text>
-                </TableCell>
-              )}
-
-              <TableCell style={{ textAlign: 'right' }}>
-                <Text style={{ color: tokens.colorNeutralForeground3, fontFamily: tokens.fontFamilyMonospace }}>
-                  {formatDurationSeconds(track.duration)}
-                </Text>
-              </TableCell>
-
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                <div className={mergeClasses(styles.actions, "actions")}>
-                  <MonitorButton
-                    id={track.id}
-                    type="track"
-                    isMonitored={Boolean(track.is_monitored ?? track.monitor ?? track.monitored)}
-                    isLocked={Boolean(track.monitor_locked ?? track.monitor_lock)}
-                    size="icon"
-                    showLabel={false}
-                    variant="ghost"
-                  />
-                  <LockToggle
-                    id={track.id}
-                    type="track"
-                    isMonitored={Boolean(track.is_monitored ?? track.monitor ?? track.monitored)}
-                    isLocked={Boolean(track.monitor_locked ?? track.monitor_lock)}
+              {isPlaying ? (
+                <div className={styles.playerRow}>
+                  <AudioPlayer
+                    src={getPlaybackSrc(track)}
+                    knownDuration={track.duration}
+                    onEnded={() => setPlayingTrackId(null)}
                   />
                 </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {infoTrack ? (
+        <TrackInfoDialog
+          open={Boolean(infoTrack)}
+          onClose={() => setInfoTrack(null)}
+          trackTitle={getDisplayTitle(infoTrack)}
+          artistName={infoTrack.artist_name || contextArtistName}
+          albumTitle={getAlbumTitle(infoTrack, contextAlbumTitle) || undefined}
+          trackNumber={infoTrack.track_number || undefined}
+          duration={infoTrack.duration}
+          audioQuality={infoTrack.quality}
+          files={infoTrack.files || []}
+        />
+      ) : null}
+    </>
   );
 };
 

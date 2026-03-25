@@ -56,10 +56,12 @@ import {
   parseVideoDetailContract,
 } from '@contracts/media';
 import type {
+  ActivityListResponseContract,
   QueueListResponseContract,
   StatusOverviewContract,
 } from '@contracts/status';
 import {
+  parseActivityListResponseContract,
   parseQueueListResponseContract,
   parseStatusOverviewContract,
 } from '@contracts/status';
@@ -673,8 +675,9 @@ class ApiClient {
    * Get a signed TIDAL stream URL for preview playback.
    * The backend proxies the actual CDN bytes so no TIDAL token leaks to the client.
    */
-  async signTidalStream(trackId: string): Promise<string> {
-    const data = await this.request(`/playback/stream/sign/${trackId}`);
+  async signTidalStream(trackId: string, preferredQuality?: string | null): Promise<string> {
+    const query = preferredQuality ? `?quality=${encodeURIComponent(preferredQuality)}` : '';
+    const data = await this.request(`/playback/stream/sign/${trackId}${query}`);
     // The returned url is relative (/api/playback/stream/play/...), make it absolute
     return `${this.baseUrl}${(data as any).url}`;
   }
@@ -820,6 +823,14 @@ class ApiClient {
     return this.request('/status', {}, parseStatusOverviewContract);
   }
 
+  async getPendingTasks(params?: { limit?: number; offset?: number }): Promise<ActivityListResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
+    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    const query = queryParams.toString();
+    return this.request(`/status/tasks${query ? `?${query}` : ''}`, {}, parseActivityListResponseContract);
+  }
+
   async getHistoryEvents(params?: {
     limit?: number;
     offset?: number;
@@ -863,6 +874,13 @@ class ApiClient {
 
   async deleteQueueItem(id: number) {
     return this.request(`/queue/${id}`, { method: 'DELETE' });
+  }
+
+  async reorderQueueItems(params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) {
+    return this.request('/queue/reorder', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
   }
 
   async clearCompleted() {

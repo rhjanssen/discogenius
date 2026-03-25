@@ -87,19 +87,36 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
     const [audioDuration, setAudioDuration] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
 
-    // Use the audio element's duration once available; fall back to the prop
-    const duration = (audioDuration && isFinite(audioDuration)) ? audioDuration : (knownDuration ?? 0);
+    const duration = (() => {
+        const hasKnownDuration = Boolean(knownDuration && Number.isFinite(knownDuration) && knownDuration > 0);
+        const hasReportedDuration = Boolean(audioDuration && Number.isFinite(audioDuration) && audioDuration > 0);
+
+        if (!hasKnownDuration) {
+            return hasReportedDuration ? audioDuration : 0;
+        }
+
+        if (!hasReportedDuration) {
+            return knownDuration ?? 0;
+        }
+
+        const drift = Math.abs(audioDuration - (knownDuration ?? 0));
+        const acceptableDrift = Math.max(2, (knownDuration ?? 0) * 0.05);
+
+        return drift <= acceptableDrift ? audioDuration : (knownDuration ?? 0);
+    })();
 
     const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
     useEffect(() => {
         const audio = new Audio(src);
         audioRef.current = audio;
+        audio.preload = "metadata";
 
         const onTimeUpdate = () => {
             if (!isDragging) setCurrentTime(audio.currentTime);
         };
         const onLoadedMetadata = () => setAudioDuration(audio.duration);
+        const onDurationChange = () => setAudioDuration(audio.duration);
         const onEndedHandler = () => {
             setCurrentTime(0);
             onEnded?.();
@@ -108,7 +125,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
         audio.addEventListener("timeupdate", onTimeUpdate);
         audio.addEventListener("loadedmetadata", onLoadedMetadata);
         audio.addEventListener("ended", onEndedHandler);
-        audio.addEventListener("durationchange", () => setAudioDuration(audio.duration));
+        audio.addEventListener("durationchange", onDurationChange);
 
         if (autoPlay) {
             audio.play().catch(() => { });
@@ -119,6 +136,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
             audio.removeEventListener("timeupdate", onTimeUpdate);
             audio.removeEventListener("loadedmetadata", onLoadedMetadata);
             audio.removeEventListener("ended", onEndedHandler);
+            audio.removeEventListener("durationchange", onDurationChange);
             audio.src = "";
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps

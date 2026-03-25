@@ -359,11 +359,18 @@ export class RedundancyService {
                     continue;
                 }
 
+                const nextMonitor = shouldMonitor ? 1 : 0;
+                const nextRedundant = redundantOf ?? null;
+                const currentRedundant = album.redundant ?? null;
+                if (Number(album.monitor || 0) === nextMonitor && currentRedundant === nextRedundant) {
+                    continue;
+                }
+
                 // Prepare update
                 updates.push({
                     id: album.id,
-                    monitor: shouldMonitor ? 1 : 0,
-                    redundant: redundantOf
+                    monitor: nextMonitor,
+                    redundant: nextRedundant,
                 });
 
                 if (shouldMonitor && !album.monitor) newAlbums++;
@@ -379,22 +386,17 @@ export class RedundancyService {
                   AND (monitor_lock = 0 OR monitor_lock IS NULL)
             `);
 
-            db.transaction(() => {
-                for (const update of updates) {
-                    updateStmt.run(
-                        update.monitor,
-                        update.redundant,
-                        update.id
-                    );
-
-                    if (update.monitor) {
-                        // Cascade monitoring to tracks
-                        db.prepare("UPDATE media SET monitor = 1 WHERE album_id = ? AND monitor_lock = 0").run(update.id);
-                    } else {
-                        db.prepare("UPDATE media SET monitor = 0 WHERE album_id = ? AND monitor_lock = 0").run(update.id);
+            if (updates.length > 0) {
+                db.transaction(() => {
+                    for (const update of updates) {
+                        updateStmt.run(
+                            update.monitor,
+                            update.redundant,
+                            update.id
+                        );
                     }
-                }
-            })();
+                })();
+            }
 
             console.log(`   Updated ${updates.length} albums.`);
 
@@ -412,17 +414,21 @@ export class RedundancyService {
                 // Only update if not locked
                 const v: any = video;
                 if (v.monitor_lock === 1) continue;
+                const nextMonitor = shouldMonitorVideos ? 1 : 0;
+                if (Number(v.monitor || 0) === nextMonitor) continue;
 
-                videoUpdates.push({ id: video.id, monitor: shouldMonitorVideos ? 1 : 0 });
+                videoUpdates.push({ id: video.id, monitor: nextMonitor });
             }
 
             // Re-check monitor_lock at write time to avoid races with lock toggles while yielded processing is in flight.
             const vidUpdateStmt = db.prepare("UPDATE media SET monitor = ? WHERE id = ? AND type = 'Music Video' AND (monitor_lock = 0 OR monitor_lock IS NULL)");
-            db.transaction(() => {
-                for (const update of videoUpdates) {
-                    vidUpdateStmt.run(update.monitor, update.id);
-                }
-            })();
+            if (videoUpdates.length > 0) {
+                db.transaction(() => {
+                    for (const update of videoUpdates) {
+                        vidUpdateStmt.run(update.monitor, update.id);
+                    }
+                })();
+            }
             console.log(`   Updated ${videoUpdates.length} videos.`);
 
             console.log(`✅ [Redundancy] Artist ${artistId} filtering complete.`);
@@ -918,7 +924,7 @@ export class RedundancyService {
                     SELECT a.id FROM albums a
                     JOIN album_artists aa ON a.id = aa.album_id
                     WHERE aa.artist_id = ? AND UPPER(a.quality) = 'DOLBY_ATMOS'
-                ) AND monitor = 1 AND monitor_lock = 0
+                ) AND type != 'Music Video' AND monitor = 1 AND monitor_lock = 0
             `).run(artistId);
         }
 
@@ -967,25 +973,28 @@ export class RedundancyService {
     static async cascadeToTracks(artistId: string): Promise<void> {
         console.log(`[Redundancy] Cascading monitor status to tracks for artist ${artistId}...`);
 
-        // Get all albums for this artist
-        const albums = db.prepare(`
-            SELECT DISTINCT a.id, a.monitor
-            FROM albums a
-            JOIN album_artists aa ON a.id = aa.album_id
-            WHERE aa.artist_id = ?
-        `).all(artistId) as any[];
+        const result = db.prepare(`
+            UPDATE media
+            SET monitor = (
+                SELECT a.monitor
+                FROM albums a
+                WHERE a.id = media.album_id
+            )
+            WHERE type != 'Music Video'
+              AND album_id IN (
+                SELECT aa.album_id
+                FROM album_artists aa
+                WHERE aa.artist_id = ?
+              )
+              AND (monitor_lock = 0 OR monitor_lock IS NULL)
+              AND monitor != (
+                SELECT a.monitor
+                FROM albums a
+                WHERE a.id = media.album_id
+              )
+        `).run(artistId);
 
-        let updatedTracks = 0;
-        for (const album of albums) {
-            // Update unlocked tracks to match album monitor status
-            const result = db.prepare(`
-                UPDATE media 
-                SET monitor = ? 
-                WHERE album_id = ? AND (monitor_lock = 0 OR monitor_lock IS NULL) AND monitor != ?
-            `).run(album.monitor, album.id, album.monitor);
-
-            updatedTracks += (result as any).changes || 0;
-        }
+        const updatedTracks = (result as any).changes || 0;
 
         if (updatedTracks > 0) {
             console.log(`[Redundancy] Updated ${updatedTracks} tracks to match album monitor status`);

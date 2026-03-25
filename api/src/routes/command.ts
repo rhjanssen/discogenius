@@ -67,7 +67,7 @@ router.get("/", (req, res) => {
   try {
     const active = TaskQueueService.listJobs("%", "%", 200)
       .filter((job) => job.status === "pending" || job.status === "processing")
-      .map(mapJob);
+      .map((job) => mapJob(job));
     const historyLimit = Math.max(0, parseInt(String(req.query.limit || "50"), 10) || 50);
     const historyOffset = Math.max(0, parseInt(String(req.query.offset || "0"), 10) || 0);
     const history = getCommandHistory(historyLimit, historyOffset);

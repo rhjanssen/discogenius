@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 test.describe('API health & key endpoints', () => {
   test('/health returns healthy', async ({ request }) => {
@@ -166,8 +166,9 @@ test.describe('API health & key endpoints', () => {
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     expect(data).toHaveProperty('activeJobs');
-    expect(data).toHaveProperty('queuedJobs');
     expect(data).toHaveProperty('jobHistory');
+    expect(data).toHaveProperty('taskQueueStats');
+    expect(data).toHaveProperty('commandStats');
   });
 
   test('no secrets leaked in status endpoint', async ({ request }) => {

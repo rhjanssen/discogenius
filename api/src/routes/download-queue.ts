@@ -1,6 +1,6 @@
 import express, { Request, Response, Router } from 'express';
 import { db } from '../database.js';
-import { DOWNLOAD_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
+import { compareJobsByExecutionOrder, DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
 import { downloadProcessor } from '../services/download-processor.js';
 import { downloadEvents } from '../services/download-events.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -131,7 +131,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
     };
 }
 
-function mapDownloadQueueJob(j: any): QueueItemContract {
+function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemContract {
     const downloadState = j.payload?.downloadState ?? {};
     const contentType = j.type === JobTypes.DownloadVideo
         ? 'video'
@@ -234,6 +234,7 @@ function mapDownloadQueueJob(j: any): QueueItemContract {
         size: downloadState.size,
         sizeleft: downloadState.sizeleft,
         tracks: downloadState.tracks,
+        queuePosition,
     };
 }
 
@@ -363,36 +364,55 @@ router.get('/queue', async (req: Request, res: Response) => {
         const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '100'), 10) || 100));
         const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
 
+        const pendingDownloadJobs = TaskQueueService.listJobsByTypesAndStatuses(
+            DOWNLOAD_JOB_TYPES,
+            ['pending'],
+            TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_JOB_TYPES, ['pending']),
+            0,
+            { orderBy: 'execution' },
+        ).sort(compareJobsByExecutionOrder);
+
+        const queuePositionById = new Map<number, number>(
+            pendingDownloadJobs.map((job, index) => [job.id, index + 1]),
+        );
+
         // Lidarr-style queue surfaces only live work.
         // Completed/failed jobs belong in activity/history, not the live queue.
         // Include ImportDownload so items remain visible while import/finalization is still running.
         const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-            [...DOWNLOAD_JOB_TYPES, JobTypes.ImportDownload],
+            DOWNLOAD_OR_IMPORT_JOB_TYPES,
             ['pending', 'processing'],
-            1000,
+            5000,
             0,
-        )
-            .sort((a, b) => {
-                // First by status (processing first)
-                if (a.status === 'processing' && b.status !== 'processing') return -1;
-                if (a.status !== 'processing' && b.status === 'processing') return 1;
+            { orderBy: 'execution' },
+        ).sort((left, right) => {
+            const leftProcessing = left.status === 'processing';
+            const rightProcessing = right.status === 'processing';
+            if (leftProcessing !== rightProcessing) {
+                return leftProcessing ? -1 : 1;
+            }
 
-                // Then by priority (higher first)
-                if (a.priority !== b.priority) return b.priority - a.priority;
+            const leftImportPending = !leftProcessing && left.type === JobTypes.ImportDownload;
+            const rightImportPending = !rightProcessing && right.type === JobTypes.ImportDownload;
+            if (leftImportPending !== rightImportPending) {
+                return leftImportPending ? -1 : 1;
+            }
 
-                // Then by trigger (manual first)
-                const aTrigger = a.trigger || 0;
-                const bTrigger = b.trigger || 0;
-                if (aTrigger !== bTrigger) return bTrigger - aTrigger;
+            if (!leftProcessing && !rightProcessing) {
+                const leftQueuePosition = queuePositionById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+                const rightQueuePosition = queuePositionById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+                if (leftQueuePosition !== rightQueuePosition) {
+                    return leftQueuePosition - rightQueuePosition;
+                }
+            }
 
-                // Finally by creation time (oldest first)
-                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-            });
+            return compareJobsByExecutionOrder(left, right);
+        });
 
         const total = jobs.length;
         const mapped = jobs
             .slice(offset, offset + limit)
-            .map(mapDownloadQueueJob);
+            .map((job) => mapDownloadQueueJob(job, queuePositionById.get(job.id)));
 
         const payload: QueueListResponseContract = {
             items: mapped,
@@ -405,6 +425,36 @@ router.get('/queue', async (req: Request, res: Response) => {
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue:', error);
         res.status(500).json({ error: 'Failed to get queue', message: error.message });
+    }
+});
+
+router.post('/queue/reorder', async (req: Request, res: Response) => {
+    try {
+        const rawJobIds: unknown[] = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
+        const jobIds = rawJobIds
+            .map((value: unknown) => parseInt(String(value), 10))
+            .filter((value: number) => Number.isInteger(value) && value > 0);
+        const beforeJobId = req.body?.beforeJobId == null ? undefined : parseInt(String(req.body.beforeJobId), 10);
+        const afterJobId = req.body?.afterJobId == null ? undefined : parseInt(String(req.body.afterJobId), 10);
+
+        if (jobIds.length === 0) {
+            return res.status(400).json({ error: 'Missing queue items', message: 'jobIds must contain one or more pending queue item ids' });
+        }
+
+        if ((beforeJobId == null && afterJobId == null) || (beforeJobId != null && afterJobId != null)) {
+            return res.status(400).json({ error: 'Invalid reorder request', message: 'Provide exactly one of beforeJobId or afterJobId' });
+        }
+
+        TaskQueueService.reorderPendingJobs(jobIds, {
+            beforeJobId,
+            afterJobId,
+            types: DOWNLOAD_JOB_TYPES,
+        });
+
+        res.json({ message: 'Queue reordered' });
+    } catch (error: any) {
+        console.error('[QUEUE-API] Error reordering queue:', error);
+        res.status(409).json({ error: 'Failed to reorder queue', message: error.message });
     }
 });
 

@@ -27,6 +27,7 @@ interface QueueContextType {
   processItem: (id: number) => Promise<void>;
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
+  reorderItems: (params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) => Promise<void>;
   clearCompleted: () => Promise<void>;
   pauseQueue: () => Promise<void>;
   resumeQueue: () => Promise<void>;
@@ -128,6 +129,11 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const queueRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuePageSize = 100;
 
+  const isDownloadQueueJobType = useCallback((value: unknown) => {
+    const type = String(value || "");
+    return type.startsWith("Download") || type === "ImportDownload";
+  }, []);
+
   useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
@@ -196,10 +202,19 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const lastGlobalEvent = useGlobalEvents(['job.added', 'job.deleted', 'queue.cleared']);
 
   useEffect(() => {
-    if (lastGlobalEvent) {
+    if (!lastGlobalEvent) {
+      return;
+    }
+
+    if (lastGlobalEvent.type === "queue.cleared") {
+      scheduleQueueRefresh();
+      return;
+    }
+
+    if (isDownloadQueueJobType(lastGlobalEvent.data?.type)) {
       scheduleQueueRefresh();
     }
-  }, [lastGlobalEvent, scheduleQueueRefresh]);
+  }, [isDownloadQueueJobType, lastGlobalEvent, scheduleQueueRefresh]);
 
   // Set up SSE for real-time progress
   useEffect(() => {
@@ -298,7 +313,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     status: 'failed' as const,
                     error: data.error,
                     statusMessage: data.error || item.statusMessage,
-                    state: 'failed',
+                    state: data.state || 'failed',
                     tracks: data.tracks ?? item.tracks,
                   }
                   : item
@@ -442,6 +457,21 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const reorderItems = async (params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) => {
+    try {
+      await api.reorderQueueItems(params);
+      await fetchQueue();
+      dispatchActivityRefresh();
+    } catch (error: any) {
+      console.error('Error reordering queue:', error);
+      toastRef.current({
+        title: "Failed to reorder queue",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   const clearCompleted = async () => {
     try {
       await api.clearCompleted();
@@ -533,6 +563,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         processItem,
         retryItem,
         deleteItem,
+        reorderItems,
         clearCompleted,
         pauseQueue,
         resumeQueue,

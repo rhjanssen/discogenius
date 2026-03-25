@@ -304,7 +304,6 @@ const Dashboard = () => {
 
     const {
         activeJobs,
-        queuedJobs,
         jobHistory: baseJobHistory,
         taskQueueStats,
         isLoading: isStatusInitialLoading,
@@ -628,7 +627,6 @@ const Dashboard = () => {
                     <div className={styles.tabContentPanel}>
                         <ActivityTab
                             activeJobs={activeJobs}
-                            queuedJobs={queuedJobs}
                             jobHistory={jobHistory}
                             libraryAuditEvents={libraryAuditEvents}
                             activityFilter={activityFilter}

@@ -1,23 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-
-export interface Track {
-  id: string;
-  title: string;
-  duration: number;
-  track_number: number;
-  volume_number?: number;
-  explicit?: boolean;
-  quality?: string;
-  album_id: string;
-  album_title?: string;
-  album_cover?: string;
-  artist_name?: string;
-  artist_id?: string;
-  created_at?: string;
-  downloaded?: boolean;
-}
+import type { TrackListItem as Track } from "@/types/track-list";
 
 export const useTracks = (options?: {
   monitored?: boolean;

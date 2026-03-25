@@ -1,6 +1,6 @@
 import { db } from "../database.js";
 import { getArtistWorkflowLabel } from "./artist-workflow.js";
-import { Job, JobTypes, TaskQueueService } from "./queue.js";
+import { compareJobsByExecutionOrder, Job, JobTypes, TaskQueueService } from "./queue.js";
 
 const PENDING_ACTIVITY_JOB_TYPES = [
     JobTypes.RefreshArtist,
@@ -246,7 +246,7 @@ const parseSqliteDate = (value: unknown) => {
     return undefined;
 };
 
-export const mapJob = (job: Job) => {
+export const mapJob = (job: Job, options: { queuePosition?: number } = {}) => {
     const payload = job.payload && typeof job.payload === "object"
         ? {
             tidalId: job.ref_id || job.payload.tidalId,
@@ -279,6 +279,7 @@ export const mapJob = (job: Job) => {
         status: job.status === "processing" ? "running" : job.status,
         error: job.error,
         trigger: job.trigger ?? 0,
+        queuePosition: options.queuePosition,
         payload,
     };
 };
@@ -299,16 +300,27 @@ export function getActiveCommands(limit: number = 100) {
     const activeJobs = TaskQueueService.listJobs("%", "processing", limit);
     return sortJobsByTriggerThenTimeDesc(activeJobs)
         .slice(0, limit)
-        .map(mapJob);
+        .map((job) => mapJob(job));
 }
 
-export function getQueuedCommands(limit: number = 100) {
-    const pendingJobs = TaskQueueService.listJobsByTypesAndStatuses(PENDING_ACTIVITY_JOB_TYPES, ["pending"], limit, 0);
-    return sortJobsByTriggerThenTimeDesc(pendingJobs)
-        .slice(0, limit)
-        .map(mapJob);
+export function countPendingTasks() {
+    return TaskQueueService.countJobsByTypesAndStatuses(PENDING_ACTIVITY_JOB_TYPES, ["pending"]);
+}
+
+export function getPendingTasks(limit: number = 100, offset: number = 0) {
+    const pendingJobs = TaskQueueService.listJobsByTypesAndStatuses(
+        PENDING_ACTIVITY_JOB_TYPES,
+        ["pending"],
+        limit,
+        offset,
+        { orderBy: "execution" },
+    );
+
+    return pendingJobs
+        .sort(compareJobsByExecutionOrder)
+        .map((job, index) => mapJob(job, { queuePosition: offset + index + 1 }));
 }
 
 export function getCommandHistory(limit: number = 50, offset: number = 0) {
-    return TaskQueueService.getHistory(limit, offset).map(mapJob);
+    return TaskQueueService.getHistory(limit, offset).map((job) => mapJob(job));
 }

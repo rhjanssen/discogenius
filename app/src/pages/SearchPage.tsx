@@ -10,7 +10,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingVerticalL,
     padding: tokens.spacingHorizontalM,
-    minHeight: "100%",
+    minHeight: "100dvh",
   },
   content: {
     display: "flex",

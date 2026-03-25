@@ -9,26 +9,23 @@ import React from "react";
 /**
  * Downloaded badge - indicates media is available in library
  */
-export const DownloadedBadge: React.FC = () => (
-    <Badge appearance="filled" color="success" size="small">
+export const DownloadedBadge: React.FC<{ className?: string }> = ({ className }) => (
+    <Badge appearance="filled" color="success" size="small" className={className}>
         Downloaded
     </Badge>
 );
 
-/**
- * Missing badge - indicates media is monitored but not downloaded
- */
-export const MissingBadge: React.FC = () => (
-    <Badge appearance="outline" size="small">
-        Missing
+export const NotScannedBadge: React.FC<{ className?: string }> = ({ className }) => (
+    <Badge appearance="outline" color="warning" size="small" className={className}>
+        Not Scanned
     </Badge>
 );
 
 /**
  * Failed badge - indicates a download or operation failed
  */
-export const FailedBadge: React.FC<{ label?: string }> = ({ label = "Failed" }) => (
-    <Badge appearance="filled" color="danger" size="small">
+export const FailedBadge: React.FC<{ label?: string; className?: string }> = ({ label = "Failed", className }) => (
+    <Badge appearance="filled" color="danger" size="small" className={className}>
         {label}
     </Badge>
 );
@@ -36,8 +33,8 @@ export const FailedBadge: React.FC<{ label?: string }> = ({ label = "Failed" }) 
 /**
  * Processing badge - indicates an operation is in progress
  */
-export const ProcessingBadge: React.FC<{ label?: string }> = ({ label = "Processing" }) => (
-    <Badge appearance="tint" color="informative" size="small">
+export const ProcessingBadge: React.FC<{ label?: string; className?: string }> = ({ label = "Processing", className }) => (
+    <Badge appearance="tint" color="informative" size="small" className={className}>
         {label}
     </Badge>
 );

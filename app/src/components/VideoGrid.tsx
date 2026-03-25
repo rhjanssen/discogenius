@@ -1,17 +1,13 @@
-import { useState } from "react";
 import {
   makeStyles,
   tokens,
   Card,
-  Button,
   Badge,
-  Text,
   Title3,
   Body1,
 } from "@fluentui/react-components";
 import {
   Play24Regular,
-  Checkmark24Filled,
   Eye24Regular,
   EyeOff24Regular,
 } from "@fluentui/react-icons";
@@ -20,6 +16,7 @@ import { getTidalImage } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { DownloadedBadge } from "@/components/ui/StatusBadges";
 
 const useStyles = makeStyles({
   container: {
@@ -237,7 +234,6 @@ interface VideoGridProps {
 const VideoGrid = ({ videos, loading, onToggleMonitor, onOpenVideo }: VideoGridProps) => {
   const styles = useStyles();
   const navigate = useNavigate();
-  const [hoveredVideo, setHoveredVideo] = useState<string | null>(null);
 
   const formatDuration = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
@@ -292,8 +288,6 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onOpenVideo }: VideoGridP
           <Card
             key={video.id}
             className={styles.card}
-            onMouseEnter={() => setHoveredVideo(video.id)}
-            onMouseLeave={() => setHoveredVideo(null)}
             onClick={() => handleVideoClick(video)}
           >
             <div className={styles.videoPreview}>
@@ -312,15 +306,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onOpenVideo }: VideoGridP
 
               {/* Status badge (top right) - downloaded indicator */}
               {video.is_downloaded && (
-                <Badge
-                  appearance="filled"
-                  color="success"
-                  icon={<Checkmark24Filled />}
-                  className={styles.statusBadge}
-                  size="small"
-                >
-                  Downloaded
-                </Badge>
+                <DownloadedBadge className={styles.statusBadge} />
               )}
 
               {/* Duration badge (bottom left) */}

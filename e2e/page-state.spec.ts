@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL || 'http://127.0.0.1:3737';
+const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 const connectedAuthStatus = {
   connected: true,
@@ -44,10 +44,23 @@ async function stubShellApis(page: Page) {
       contentType: 'application/json',
       body: JSON.stringify({
         activeJobs: [],
-        queuedJobs: [],
         jobHistory: [],
         taskQueueStats: [],
         commandStats: {},
+      }),
+    });
+  });
+
+  await page.route('**/api/status/tasks**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [],
+        total: 0,
+        limit: 100,
+        offset: 0,
+        hasMore: false,
       }),
     });
   });

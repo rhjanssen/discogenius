@@ -13,6 +13,7 @@ import {
     Clock24Regular,
 } from "@fluentui/react-icons";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { usePendingTasks } from "@/hooks/usePendingTasks";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import type { HistoryEventItemContract } from "@contracts/history";
 import { EmptyState, LoadingState } from "@/components/ui/ContentState";
@@ -37,7 +38,7 @@ const WORKFLOW_CHILD_JOB_TYPES = new Set([
     'RescanFolders',
 ]);
 
-type ActivitySource = 'active' | 'queued' | 'history';
+type ActivitySource = 'active' | 'pending' | 'history';
 
 type ActivityEntry = {
     job: ActivityJob;
@@ -60,6 +61,15 @@ function getActivitySequencePriority(job: ActivityJob) {
 }
 
 function compareActivityEntries(left: ActivityEntry, right: ActivityEntry) {
+    if (left.source === 'pending' && right.source === 'pending') {
+        const leftQueuePosition = Number(left.job?.queuePosition || 0);
+        const rightQueuePosition = Number(right.job?.queuePosition || 0);
+
+        if (leftQueuePosition > 0 && rightQueuePosition > 0 && leftQueuePosition !== rightQueuePosition) {
+            return leftQueuePosition - rightQueuePosition;
+        }
+    }
+
     const leftTrigger = Number(left.job?.trigger || 0);
     const rightTrigger = Number(right.job?.trigger || 0);
 
@@ -79,7 +89,6 @@ function compareActivityEntries(left: ActivityEntry, right: ActivityEntry) {
 
 interface ActivityTabProps {
     activeJobs: ActivityJob[];
-    queuedJobs: ActivityJob[];
     jobHistory: ActivityJob[];
     libraryAuditEvents: HistoryEventItemContract[];
     activityFilter: string;
@@ -356,7 +365,6 @@ function buildAuditEntries(events: HistoryEventItemContract[], activityFilter: s
 
 const ActivityTab = ({
     activeJobs,
-    queuedJobs,
     jobHistory,
     libraryAuditEvents,
     activityFilter,
@@ -368,6 +376,14 @@ const ActivityTab = ({
 }: ActivityTabProps) => {
     const styles = useDashboardStyles();
     const { retryItem } = useDownloadQueue();
+    const {
+        pendingTasks,
+        pendingTaskTotal,
+        hasMorePendingTasks,
+        isLoadingMorePendingTasks,
+        loadMorePendingTasks,
+        isLoading: isPendingTasksInitialLoading,
+    } = usePendingTasks();
     const loadMoreRef = useRef<HTMLDivElement | null>(null);
     const loadingRef = useRef(false);
 
@@ -427,7 +443,7 @@ const ActivityTab = ({
             return true;
         }
 
-        return [...activeJobs, ...queuedJobs].some((candidate) => {
+        return [...activeJobs, ...pendingTasks].some((candidate) => {
             if (!candidate || (candidate.status !== 'running' && candidate.status !== 'processing' && candidate.status !== 'pending')) {
                 return false;
             }
@@ -446,14 +462,14 @@ const ActivityTab = ({
     };
 
     const activeEntries = buildSectionEntries(activeJobs, 'active', activityFilter);
-    const queuedEntries = buildSectionEntries(queuedJobs, 'queued', activityFilter);
+    const pendingEntries = buildSectionEntries(pendingTasks, 'pending', activityFilter);
     const historyEntries = buildSectionEntries(jobHistory, 'history', activityFilter);
     const auditEntries = buildAuditEntries(libraryAuditEvents, activityFilter);
     const hasVisibleHistory = historyEntries.length > 0 || hasMoreHistory;
     const hasVisibleAudit = auditEntries.length > 0 || isLibraryAuditLoading;
-    const hasAnyEntries = activeEntries.length > 0 || queuedEntries.length > 0 || historyEntries.length > 0 || auditEntries.length > 0;
+    const hasAnyEntries = activeEntries.length > 0 || pendingEntries.length > 0 || historyEntries.length > 0 || auditEntries.length > 0;
 
-    if (isInitialLoading && !hasAnyEntries) {
+    if ((isInitialLoading || isPendingTasksInitialLoading) && !hasAnyEntries) {
         return (
             <div className={styles.tabSection}>
                 <LoadingState label="Loading activity..." />
@@ -473,7 +489,7 @@ const ActivityTab = ({
         );
     }
 
-    const renderActiveOrQueuedEntry = ({ job, source }: ActivityEntry) => {
+    const renderActiveOrPendingEntry = ({ job, source }: ActivityEntry) => {
         const payload = getJobPayload(job);
         const isUpgrade = payload?.reason === 'upgrade';
         const lifecycleBadges = formatActivityLifecycleBadges(job, source);
@@ -481,7 +497,7 @@ const ActivityTab = ({
             <div key={`${source}-${job.id}`} className={mergeClasses(styles.activityItem, isUpgrade ? styles.activityItemUpgrade : styles.activityItemDefault)}>
                 <div className={styles.activityLeading}>
                     <div className={styles.activityLeadingContentCompact}>
-                        {source === 'queued' || job.status === 'pending'
+                        {source === 'pending' || job.status === 'pending'
                             ? <Clock24Regular className={styles.statusIconNeutral} />
                             : <Spinner size="tiny" />}
                         <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
@@ -628,7 +644,36 @@ const ActivityTab = ({
                 <div className={styles.activitySectionItems}>
                     {source === 'history'
                         ? entries.map(renderHistoryEntry)
-                        : entries.map(renderActiveOrQueuedEntry)}
+                        : entries.map(renderActiveOrPendingEntry)}
+                </div>
+            </section>
+        );
+    };
+
+    const renderPendingSection = () => {
+        if (pendingEntries.length === 0) {
+            return null;
+        }
+
+        return (
+            <section className={styles.activitySection} aria-label="Pending tasks">
+                <div className={styles.activitySectionHeader}>
+                    <Text size={200} weight="semibold" className={styles.activitySectionLabel}>
+                        Pending tasks
+                    </Text>
+                    <Text size={100} className={styles.activitySectionCount}>
+                        {pendingTaskTotal || pendingEntries.length}
+                    </Text>
+                </div>
+                <div className={styles.activitySectionItems}>
+                    {pendingEntries.map(renderActiveOrPendingEntry)}
+                    {hasMorePendingTasks && (
+                        <div className={styles.loadMoreRow}>
+                            <Button appearance="subtle" onClick={() => void loadMorePendingTasks()} disabled={isLoadingMorePendingTasks}>
+                                {isLoadingMorePendingTasks ? 'Loading…' : 'Load More'}
+                            </Button>
+                        </div>
+                    )}
                 </div>
             </section>
         );
@@ -667,7 +712,7 @@ const ActivityTab = ({
         <div className={styles.tabSection}>
             <div className={styles.activityList}>
                 {renderSection("Running", activeEntries, 'active')}
-                {renderSection("Queued", queuedEntries, 'queued')}
+                {renderPendingSection()}
                 {hasVisibleHistory && (
                     <section className={styles.activitySection} aria-label="Recent">
                         <div className={styles.activitySectionHeader}>

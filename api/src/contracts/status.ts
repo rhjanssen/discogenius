@@ -35,6 +35,7 @@ export interface QueueItemContract {
   id: number;
   url: string | null;
   type: DownloadContentTypeContract;
+  queuePosition?: number;
   quality?: string | null;
   stage?: QueueStageContract;
   tidalId: string | null;
@@ -132,6 +133,7 @@ export interface ActivityJobContract {
   id: number | string;
   type: string;
   description: string;
+  queuePosition?: number;
   progress?: number;
   startTime: number;
   endTime?: number;
@@ -139,6 +141,14 @@ export interface ActivityJobContract {
   error?: string;
   trigger?: number;
   payload?: unknown;
+}
+
+export interface ActivityListResponseContract {
+  items: ActivityJobContract[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
 }
 
 export interface CommandStatsBucketContract {
@@ -171,7 +181,6 @@ export interface RateLimitMetricsContract {
 
 export interface StatusOverviewContract {
   activeJobs: ActivityJobContract[];
-  queuedJobs: ActivityJobContract[];
   jobHistory: ActivityJobContract[];
   taskQueueStats: TaskQueueStatContract[];
   commandStats: CommandStatsContract;
@@ -216,6 +225,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     id: expectNumber(record.id, `${label}.id`),
     url: expectNullableString(record.url, `${label}.url`) ?? null,
     type: type as DownloadContentTypeContract,
+    queuePosition: expectOptionalNumber(record.queuePosition, `${label}.queuePosition`),
     quality: expectNullableString(record.quality, `${label}.quality`),
     stage: stage as QueueStageContract | undefined,
     tidalId: expectNullableString(record.tidalId, `${label}.tidalId`) ?? null,
@@ -256,6 +266,7 @@ function parseActivityJobContract(value: unknown, index: number, label: string):
     id: typeof record.id === "number" ? record.id : expectIdentifierString(record.id, `${label}[${index}].id`),
     type: expectString(record.type, `${label}[${index}].type`),
     description: expectString(record.description, `${label}[${index}].description`),
+    queuePosition: expectOptionalNumber(record.queuePosition, `${label}[${index}].queuePosition`),
     progress: expectOptionalNumber(record.progress, `${label}[${index}].progress`),
     startTime: expectNumber(record.startTime, `${label}[${index}].startTime`),
     endTime: expectOptionalNumber(record.endTime, `${label}[${index}].endTime`),
@@ -318,6 +329,18 @@ export function parseQueueStatusContract(value: unknown): QueueStatusContract {
     currentTidalId: expectOptionalString(record.currentTidalId, "queueStatus.currentTidalId"),
     currentType: expectOptionalString(record.currentType, "queueStatus.currentType"),
     stats: record.stats === undefined ? undefined : expectArray(record.stats, "queueStatus.stats", parseTaskQueueStatContract),
+  };
+}
+
+export function parseActivityListResponseContract(value: unknown): ActivityListResponseContract {
+  const record = expectRecord(value, "activityList");
+  return {
+    items: expectArray(record.items, "activityList.items", (item, index) =>
+      parseActivityJobContract(item, index, "activityList.items")),
+    total: expectNumber(record.total, "activityList.total"),
+    limit: expectNumber(record.limit, "activityList.limit"),
+    offset: expectNumber(record.offset, "activityList.offset"),
+    hasMore: expectBoolean(record.hasMore, "activityList.hasMore"),
   };
 }
 
@@ -394,8 +417,6 @@ export function parseStatusOverviewContract(value: unknown): StatusOverviewContr
   return {
     activeJobs: expectArray(record.activeJobs, "statusOverview.activeJobs", (item, index) =>
       parseActivityJobContract(item, index, "statusOverview.activeJobs")),
-    queuedJobs: expectArray(record.queuedJobs, "statusOverview.queuedJobs", (item, index) =>
-      parseActivityJobContract(item, index, "statusOverview.queuedJobs")),
     jobHistory: expectArray(record.jobHistory, "statusOverview.jobHistory", (item, index) =>
       parseActivityJobContract(item, index, "statusOverview.jobHistory")),
     taskQueueStats: expectArray(record.taskQueueStats, "statusOverview.taskQueueStats", parseTaskQueueStatContract),

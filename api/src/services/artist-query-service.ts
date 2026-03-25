@@ -33,6 +33,41 @@ export interface ArtistActivitySnapshot {
     jobs: Array<{ id: number; type: string; status: string }>;
 }
 
+type ArtistCountRow = {
+    artist_id: string;
+    cnt: number;
+    monitored_cnt: number;
+};
+
+function buildArtistCountMap(
+    table: "albums" | "media",
+    artistIds: string[],
+    options: { excludeMusicVideos?: boolean } = {},
+): Map<string, ArtistCountRow> {
+    if (artistIds.length === 0) {
+        return new Map();
+    }
+
+    const placeholders = artistIds.map(() => "?").join(",");
+    const whereClauses = [`artist_id IN (${placeholders})`];
+
+    if (table === "media" && options.excludeMusicVideos) {
+        whereClauses.push(`type != 'Music Video'`);
+    }
+
+    const rows = db.prepare(`
+        SELECT
+            CAST(artist_id AS TEXT) AS artist_id,
+            COUNT(*) as cnt,
+            SUM(CASE WHEN monitor = 1 THEN 1 ELSE 0 END) as monitored_cnt
+        FROM ${table}
+        WHERE ${whereClauses.join(" AND ")}
+        GROUP BY artist_id
+    `).all(...artistIds) as ArtistCountRow[];
+
+    return new Map(rows.map((row) => [String(row.artist_id), row]));
+}
+
 export class ArtistQueryService {
     static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
@@ -44,25 +79,9 @@ export class ArtistQueryService {
         const includeDownloadStats = input.includeDownloadStats !== false;
 
         let query = `
-      SELECT a.*, 
-        CASE WHEN ${managedArtistPredicate} THEN 1 ELSE 0 END as effective_monitor,
-        COALESCE(ac.cnt, 0) as album_count,
-        COALESCE(ac.monitored_cnt, 0) as monitored_album_count,
-        COALESCE(tc.cnt, 0) as track_count,
-        COALESCE(tc.monitored_cnt, 0) as monitored_track_count
+      SELECT a.*,
+        CASE WHEN ${managedArtistPredicate} THEN 1 ELSE 0 END as effective_monitor
       FROM artists a
-      LEFT JOIN (
-        SELECT artist_id, 
-          COUNT(*) as cnt,
-          SUM(CASE WHEN monitor = 1 THEN 1 ELSE 0 END) as monitored_cnt
-        FROM albums GROUP BY artist_id
-      ) ac ON ac.artist_id = a.id
-      LEFT JOIN (
-        SELECT artist_id,
-          COUNT(*) as cnt,
-          SUM(CASE WHEN monitor = 1 THEN 1 ELSE 0 END) as monitored_cnt
-        FROM media WHERE type != 'Music Video' GROUP BY artist_id
-      ) tc ON tc.artist_id = a.id
     `;
         let countQuery = "SELECT COUNT(*) as total FROM artists a";
         const params: Array<string | number> = [];
@@ -106,21 +125,34 @@ export class ArtistQueryService {
 
         const artists = db.prepare(query).all(...params) as any[];
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
+        const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
+        const albumCountsByArtistId = buildArtistCountMap("albums", artistIds);
+        const trackCountsByArtistId = buildArtistCountMap("media", artistIds, { excludeMusicVideos: true });
         const artistDownloadStats = includeDownloadStats
-            ? getArtistDownloadStatsMap(artists.map((artist) => artist.id))
+            ? getArtistDownloadStatsMap(artistIds)
             : null;
 
         return {
-            items: artists.map((artist) => ({
-                ...artist,
-                downloaded: includeDownloadStats
-                    ? artistDownloadStats?.get(String(artist.id))?.downloadedPercent ?? 0
-                    : Number(artist.downloaded ?? 0),
-                is_monitored: Boolean(artist.effective_monitor),
-                is_downloaded: includeDownloadStats
-                    ? artistDownloadStats?.get(String(artist.id))?.isDownloaded ?? false
-                    : false,
-            })),
+            items: artists.map((artist) => {
+                const artistId = String(artist.id);
+                const albumCounts = albumCountsByArtistId.get(artistId);
+                const trackCounts = trackCountsByArtistId.get(artistId);
+
+                return {
+                    ...artist,
+                    album_count: Number(albumCounts?.cnt || 0),
+                    monitored_album_count: Number(albumCounts?.monitored_cnt || 0),
+                    track_count: Number(trackCounts?.cnt || 0),
+                    monitored_track_count: Number(trackCounts?.monitored_cnt || 0),
+                    downloaded: includeDownloadStats
+                        ? artistDownloadStats?.get(artistId)?.downloadedPercent ?? 0
+                        : Number(artist.downloaded ?? 0),
+                    is_monitored: Boolean(artist.effective_monitor),
+                    is_downloaded: includeDownloadStats
+                        ? artistDownloadStats?.get(artistId)?.isDownloaded ?? false
+                        : false,
+                };
+            }),
             total: totalResult.total,
             limit,
             offset,
@@ -506,6 +538,11 @@ export class ArtistQueryService {
 
         const rows: any[] = [];
 
+        const pushAlbumModule = (title: string, items: any[], type = "ALBUM") => {
+            if (items.length === 0) return;
+            rows.push({ modules: [{ type, title, items }] });
+        };
+
         if (topTracks.length > 0) {
             rows.push({
                 modules: [{
@@ -537,19 +574,14 @@ export class ArtistQueryService {
             });
         }
 
-        const pushAlbumModule = (title: string, items: any[], type = "ALBUM_LIST") => {
-            if (items.length === 0) return;
-            rows.push({ modules: [{ type, title, items }] });
-        };
-
-        pushAlbumModule("Albums", modules.ARTIST_ALBUMS);
-        pushAlbumModule("Live Albums", modules.ARTIST_LIVE_ALBUMS);
-        pushAlbumModule("EPs", modules.ARTIST_EPS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
-        pushAlbumModule("Singles", modules.ARTIST_SINGLES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
-        pushAlbumModule("Compilations", modules.ARTIST_COMPILATIONS, "COMPILATIONS");
-        pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
-        pushAlbumModule("Soundtracks", modules.ARTIST_SOUNDTRACKS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
-        pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")));
+        pushAlbumModule("Albums", modules.ARTIST_ALBUMS, "ALBUM");
+        pushAlbumModule("Live Albums", modules.ARTIST_LIVE_ALBUMS, "LIVE");
+        pushAlbumModule("EPs", modules.ARTIST_EPS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "EP");
+        pushAlbumModule("Singles", modules.ARTIST_SINGLES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "SINGLE");
+        pushAlbumModule("Compilations", modules.ARTIST_COMPILATIONS, "COMPILATION");
+        pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "REMIX");
+        pushAlbumModule("Soundtracks", modules.ARTIST_SOUNDTRACKS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "SOUNDTRACK");
+        pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "DEMO");
         pushAlbumModule("Appears On", modules.ARTIST_APPEARS_ON, "APPEARS_ON");
 
         if (videos.length > 0) {

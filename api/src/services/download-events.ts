@@ -100,7 +100,7 @@ export interface DownloadProgressData {
     statusMessage?: string;
 
     /** Overall download state */
-    state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused';
+    state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
 
     /** Track list for album/playlist downloads with per-track status */
     tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
@@ -134,6 +134,7 @@ export interface DownloadFailedData {
     artist?: string;
     cover?: string | null;
     error: string;
+    state?: 'failed' | 'importFailed';
 }
 
 export const downloadEvents = DownloadEventEmitter.getInstance();

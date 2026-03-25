@@ -5,6 +5,7 @@ import { baseURL, stubShellApis } from './utils/mockShell';
 type DashboardStubOptions = {
   stats?: Record<string, unknown>;
   status?: Record<string, unknown>;
+  pendingTasks?: unknown[];
   queue?: Record<string, unknown>;
   historyItems?: unknown[];
   statusHistory?: Record<string, unknown>;
@@ -28,11 +29,17 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
     },
     statusOverview: {
       activeJobs: [],
-      queuedJobs: [],
       jobHistory: [],
       taskQueueStats: [],
       commandStats: {},
       ...(options?.status || {}),
+    },
+    pendingTasksResponse: {
+      items: options?.pendingTasks || [],
+      total: Array.isArray(options?.pendingTasks) ? options.pendingTasks.length : 0,
+      limit: 100,
+      offset: 0,
+      hasMore: false,
     },
     queueResponse: {
       items: [],
@@ -70,7 +77,7 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
 
   if (typeof options?.retryJobId === 'number') {
     await page.route(
-      '**/api/queue/${options.retryJobId}/retry',
+      `**/api/queue/${options.retryJobId}/retry`,
       async (route) => {
         await route.fulfill({ json: options?.retryResponse || { message: 'Job queued for retry' } });
       },
@@ -112,16 +119,6 @@ function createActivityFixture() {
           startTime: now,
         },
       ],
-      queuedJobs: [
-        {
-          id: 6,
-          type: 'DownloadAlbum',
-          status: 'pending',
-          description: 'Queued album: Discovery by Daft Punk',
-          startTime: now - 15_000,
-          payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
-        },
-      ],
       jobHistory: [
         {
           id: 4,
@@ -143,6 +140,17 @@ function createActivityFixture() {
         },
       ],
     },
+    pendingTasks: [
+      {
+        id: 6,
+        type: 'DownloadAlbum',
+        status: 'pending',
+        description: 'Queued album: Discovery by Daft Punk',
+        queuePosition: 1,
+        startTime: now - 15_000,
+        payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
+      },
+    ],
     historyItems: [
       {
         id: 90,
@@ -336,14 +344,14 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
     await expect(page.getByLabel('Running')).toContainText('Import Album');
-    await expect(page.getByLabel('Queued')).toContainText('Discovery by Daft Punk');
+    await expect(page.getByLabel('Pending tasks')).toContainText('Discovery by Daft Punk');
     await expect(page.getByLabel('Recent')).toContainText('Download Album');
 
     const sectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
       elements.map((element) => element.getAttribute('aria-label'))
     );
 
-    expect(sectionLabels).toEqual(['Running', 'Queued', 'Recent', 'Library audit']);
+    expect(sectionLabels).toEqual(['Running', 'Pending tasks', 'Recent', 'Library audit']);
   });
 
   test('failed import activity shows context, error, and retry action', async ({ page }) => {

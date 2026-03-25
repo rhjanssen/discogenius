@@ -313,7 +313,6 @@ test("status contract parsers validate queue and status overview payloads", () =
         status: "running",
       },
     ],
-    queuedJobs: [],
     jobHistory: [],
     taskQueueStats: [
       { type: "DownloadAlbum", status: "pending", count: 2 },
