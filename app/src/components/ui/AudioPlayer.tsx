@@ -12,6 +12,7 @@ interface AudioPlayerProps {
      *  Used as display fallback until the audio element reports its own duration. */
     knownDuration?: number;
     onEnded?: () => void;
+    onPlaybackError?: () => void;
     autoPlay?: boolean;
 }
 
@@ -79,13 +80,20 @@ const useStyles = makeStyles({
     },
 });
 
-export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, onEnded, autoPlay = true }) => {
+export const AudioPlayer: React.FC<AudioPlayerProps> = ({
+    src,
+    knownDuration,
+    onEnded,
+    onPlaybackError,
+    autoPlay = true,
+}) => {
     const styles = useStyles();
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const scrubberRef = useRef<HTMLDivElement>(null);
     const [currentTime, setCurrentTime] = useState(0);
     const [audioDuration, setAudioDuration] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
+    const playbackErrorHandledRef = useRef(false);
 
     const duration = (() => {
         const hasKnownDuration = Boolean(knownDuration && Number.isFinite(knownDuration) && knownDuration > 0);
@@ -111,12 +119,21 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
         const audio = new Audio(src);
         audioRef.current = audio;
         audio.preload = "metadata";
+        playbackErrorHandledRef.current = false;
 
         const onTimeUpdate = () => {
             if (!isDragging) setCurrentTime(audio.currentTime);
         };
         const onLoadedMetadata = () => setAudioDuration(audio.duration);
         const onDurationChange = () => setAudioDuration(audio.duration);
+        const onError = () => {
+            if (playbackErrorHandledRef.current) {
+                return;
+            }
+
+            playbackErrorHandledRef.current = true;
+            onPlaybackError?.();
+        };
         const onEndedHandler = () => {
             setCurrentTime(0);
             onEnded?.();
@@ -126,6 +143,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
         audio.addEventListener("loadedmetadata", onLoadedMetadata);
         audio.addEventListener("ended", onEndedHandler);
         audio.addEventListener("durationchange", onDurationChange);
+        audio.addEventListener("error", onError);
 
         if (autoPlay) {
             audio.play().catch(() => { });
@@ -137,10 +155,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, knownDuration, on
             audio.removeEventListener("loadedmetadata", onLoadedMetadata);
             audio.removeEventListener("ended", onEndedHandler);
             audio.removeEventListener("durationchange", onDurationChange);
+            audio.removeEventListener("error", onError);
             audio.src = "";
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [src]);
+    }, [onEnded, onPlaybackError, src]);
 
     const seekToPosition = useCallback(
         (clientX: number) => {

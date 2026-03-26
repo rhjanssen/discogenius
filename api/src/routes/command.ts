@@ -1,67 +1,10 @@
 import { Router } from "express";
 import { getCommandHistory, mapJob } from "../services/command-history.js";
 import { TaskQueueService } from "../services/queue.js";
-import {
-  queueCheckUpgradesPass,
-  queueCurationPass,
-  queueDownloadMissingPass,
-  queueMonitoringCyclePass,
-  queueHousekeepingPass,
-  queueMetadataRefreshPass,
-  queueRescanFoldersPass,
-
-  queueRefreshAllMonitored,
-  queueDownloadMissingForce,
-  queueRescanAllRoots,
-  queueHealthCheck,
-  queueCompactDatabase,
-  queueCleanupTempFiles,
-  queueUpdateLibraryMetadata,
-  queueConfigPrune,
-} from "../services/monitoring-scheduler.js";
+import { runCommandByName } from "../services/system-task-service.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../utils/request-validation.js";
 
 const router = Router();
-
-function normalizeCommandName(name: unknown): string {
-  return String(name || "").trim().toLowerCase();
-}
-
-function startCommand(name: string): number {
-  switch (normalizeCommandName(name)) {
-    case "refreshmetadata":
-      return queueMetadataRefreshPass({ trigger: 1 });
-    case "monitoringcycle":
-      return queueMonitoringCyclePass({ trigger: 1, includeRootScan: true });
-    case "applycuration":
-      return queueCurationPass({ trigger: 1 });
-    case "downloadmissing":
-      return queueDownloadMissingPass({ trigger: 1 });
-    case "checkupgrades":
-      return queueCheckUpgradesPass({ trigger: 1 });
-    case "housekeeping":
-      return queueHousekeepingPass({ trigger: 1 });
-    case "rescanfolders":
-      return queueRescanFoldersPass({ trigger: 1, fullProcessing: false });
-    case "refreshallmonitored":
-      return queueRefreshAllMonitored({ trigger: 1 });
-    case "downloadmissingforce":
-      return queueDownloadMissingForce({ trigger: 1 });
-    case "rescanallroots":
-      return queueRescanAllRoots({ trigger: 1 });
-    case "healthcheck":
-      return queueHealthCheck({ trigger: 1 });
-    case "compactdatabase":
-      return queueCompactDatabase({ trigger: 1 });
-    case "cleanuptempfiles":
-      return queueCleanupTempFiles({ trigger: 1 });
-    case "updatelibrarymetadata":
-      return queueUpdateLibraryMetadata({ trigger: 1 });
-        case "configprune":
-      return queueConfigPrune({ trigger: 1 });    default:
-      return -1;
-  }
-}
 
 router.get("/", (req, res) => {
   try {
@@ -99,7 +42,7 @@ router.get("/:id", (req, res) => {
 router.post("/", (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const jobId = startCommand(getRequiredString(body, "name"));
+    const jobId = runCommandByName(getRequiredString(body, "name"));
     if (jobId === -1) {
       return res.status(400).json({ detail: "Unsupported command name" });
     }

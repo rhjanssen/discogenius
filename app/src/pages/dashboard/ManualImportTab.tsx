@@ -17,7 +17,8 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DataGrid, type DataGridColumn } from '@/components/DataGrid';
 import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
-import { EmptyState, LoadingState } from '@/components/ui/ContentState';
+import { EmptyState } from '@/components/ui/ContentState';
+import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
@@ -939,7 +940,9 @@ const ManualImportTab = () => {
 
     if (isLoading) {
         return (
-            <LoadingState label="Loading unmapped files..." className={styles.emptyState} />
+            <div className={styles.emptyState}>
+                <DataGridSkeleton rows={8} columns={5} columnTemplate="minmax(180px, 1.6fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(80px, 0.8fr) 132px" compact />
+            </div>
         );
     }
 
@@ -1047,3 +1050,6 @@ const ManualImportTab = () => {
 };
 
 export default ManualImportTab;
+
+
+

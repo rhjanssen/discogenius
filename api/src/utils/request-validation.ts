@@ -169,6 +169,30 @@ export function getRequiredIntegerArray(body: JsonObject, key: string): number[]
     });
 }
 
+export function getRequiredIdentifierArray(body: JsonObject, key: string): string[] {
+    const value = body[key];
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new RequestValidationError(`${key} must be a non-empty array`);
+    }
+
+    return value.map((entry) => {
+        if (typeof entry === "string") {
+            const trimmed = entry.trim();
+            if (!trimmed) {
+                throw new RequestValidationError(`${key} must not contain empty values`);
+            }
+
+            return trimmed;
+        }
+
+        if (typeof entry === "number" && Number.isFinite(entry)) {
+            return String(entry);
+        }
+
+        throw new RequestValidationError(`${key} must contain only strings or numbers`);
+    });
+}
+
 export function isRequestValidationError(error: unknown): error is RequestValidationError {
     return error instanceof RequestValidationError;
 }

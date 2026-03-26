@@ -21,6 +21,11 @@ import {
   parseVideoDetailContract,
 } from "./media.js";
 import {
+  parseRunSystemTaskResponseContract,
+  parseSystemTaskListContract,
+} from "./system-task.js";
+import {
+  parseActivityListResponseContract,
   parseQueueListResponseContract,
   parseStatusOverviewContract,
 } from "./status.js";
@@ -304,16 +309,11 @@ test("status contract parsers validate queue and status overview payloads", () =
   assert.equal(queue.items[0].tracks?.[0].status, "downloading");
 
   const overview = parseStatusOverviewContract({
-    activeJobs: [
-      {
-        id: 1,
-        type: "RefreshArtist",
-        description: "Refresh Artist: Bastille",
-        startTime: Date.now(),
-        status: "running",
-      },
-    ],
-    jobHistory: [],
+    activity: {
+      pending: 2,
+      processing: 1,
+      history: 9,
+    },
     taskQueueStats: [
       { type: "DownloadAlbum", status: "pending", count: 2 },
     ],
@@ -337,8 +337,82 @@ test("status contract parsers validate queue and status overview payloads", () =
       rateLimitUntil: null,
     },
   });
+  assert.equal(overview.activity.history, 9);
   assert.equal(overview.commandStats.downloads?.processing, 1);
   assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
+
+  const activity = parseActivityListResponseContract({
+    items: [
+      {
+        id: 3,
+        type: "RefreshArtist",
+        description: "Refresh Artist: Bastille",
+        queuePosition: 1,
+        startTime: Date.now(),
+        status: "pending",
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(activity.items[0].queuePosition, 1);
+});
+
+test("system task contract parsers validate scheduled and manual task payloads", () => {
+  const tasks = parseSystemTaskListContract([
+    {
+      id: "monitoring-cycle",
+      kind: "scheduled",
+      name: "Monitoring Cycle",
+      description: "Refresh due monitored artists during the active window.",
+      taskName: "RefreshMetadata",
+      commandName: "MonitoringCycle",
+      category: "monitoring",
+      riskLevel: "medium",
+      canRunNow: true,
+      requiresDiskAccess: false,
+      isExclusive: true,
+      isTypeExclusive: true,
+      isLongRunning: true,
+      intervalMinutes: 240,
+      enabled: true,
+      active: false,
+      lastExecution: "2026-03-24T12:00:00.000Z",
+      lastStartTime: "2026-03-24T11:30:00.000Z",
+      nextExecution: "2026-03-24T16:00:00.000Z",
+    },
+    {
+      id: "health-check",
+      kind: "manual",
+      name: "Health Check",
+      description: "Run health diagnostics across runtime dependencies.",
+      taskName: "HealthCheck",
+      commandName: "HealthCheck",
+      category: "maintenance",
+      riskLevel: "low",
+      canRunNow: true,
+      requiresDiskAccess: false,
+      isExclusive: true,
+      isTypeExclusive: false,
+      isLongRunning: false,
+      intervalMinutes: null,
+      enabled: null,
+      active: true,
+      lastExecution: null,
+      lastStartTime: null,
+      nextExecution: null,
+    },
+  ]);
+
+  assert.equal(tasks[0].kind, "scheduled");
+  assert.equal(tasks[0].enabled, true);
+  assert.equal(tasks[1].kind, "manual");
+  assert.equal(tasks[1].intervalMinutes, null);
+
+  const runResponse = parseRunSystemTaskResponseContract({ id: 42 });
+  assert.equal(runResponse.id, 42);
 });
 
 test("release contract parser validates current and latest release metadata", () => {
@@ -387,5 +461,6 @@ test("history contract parser validates audit event payloads", () => {
   assert.equal(history.items[0].eventType, "TrackFileImported");
   assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });
+
 
 

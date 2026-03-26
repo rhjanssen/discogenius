@@ -40,7 +40,7 @@ const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
 const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 25, 1);
 
-type ScheduledTaskKey = "monitoring-cycle" | "housekeeping" | "health-check" | "compact-database" | "cleanup-temp-files" | "update-library-metadata";
+export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
@@ -107,6 +107,24 @@ function getScheduledTaskQueueStampStmt() {
     return scheduledTaskQueueStampStmt;
 }
 
+function getScheduledTaskInsertStmt() {
+    return db.prepare(`
+      INSERT OR IGNORE INTO scheduled_tasks (task_key, name, interval_minutes, enabled, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+}
+
+function getScheduledTaskUpdateStmt() {
+    return db.prepare(`
+      UPDATE scheduled_tasks
+      SET name = ?,
+          interval_minutes = ?,
+          enabled = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE task_key = ?
+    `);
+}
+
 export function getMonitoringStatus(): { running: boolean; checking: boolean; config: import("./monitoring-state.js").MonitoringConfig } {
     const configFromFile = getConfigSection("monitoring");
     const runtimeState = getEffectiveMonitoringRuntimeState(configFromFile, { isChecking });
@@ -126,13 +144,18 @@ export function getMonitoringStatus(): { running: boolean; checking: boolean; co
 
 export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>): import("./monitoring-state.js").MonitoringConfig {
     updateConfig("monitoring", updates);
-    syncScheduledTasks();
+    const config = getMonitoringStatus().config;
+
+    updateScheduledTask("monitoring-cycle", {
+        enabled: config.enable_active_monitoring,
+        intervalMinutes: Math.max(1, config.scan_interval_hours * 60),
+    });
 
     if (!isMonitoring) {
         startMonitoring();
     }
 
-    return getMonitoringStatus().config;
+    return config;
 }
 
 function selectMetadataRefreshArtists(options: {
@@ -460,7 +483,7 @@ function syncScheduledTasks() {
     const definitions = getScheduledTaskDefinitions();
 
     for (const definition of definitions) {
-        getScheduledTaskUpsertStmt().run(
+        getScheduledTaskInsertStmt().run(
             definition.key,
             definition.name,
             definition.intervalMinutes,
@@ -482,19 +505,91 @@ function markScheduledTaskQueued(taskKey: ScheduledTaskKey) {
     getScheduledTaskQueueStampStmt().run(taskKey);
 }
 
+function getScheduledTaskDefinitionByKey(taskKey: ScheduledTaskKey): ScheduledTaskDefinition | null {
+    return getScheduledTaskDefinitions().find((definition) => definition.key === taskKey) ?? null;
+}
+
+function getEffectiveScheduledTaskDefinition(definition: ScheduledTaskDefinition) {
+    const task = getScheduledTask(definition.key);
+    return {
+        ...definition,
+        name: task?.name ?? definition.name,
+        intervalMinutes: task?.interval_minutes ?? definition.intervalMinutes,
+        enabled: task ? Boolean(task.enabled) : definition.enabled,
+        lastQueuedAt: task?.last_queued_at ?? null,
+    };
+}
+
+function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boolean {
+    switch (definition.key) {
+        case "monitoring-cycle":
+            return hasActiveArtistWorkflow();
+        case "housekeeping":
+            return hasActiveHousekeepingTask();
+        default:
+            return hasActiveTask(definition.taskName);
+    }
+}
+
+export function updateScheduledTask(taskKey: ScheduledTaskKey, updates: { enabled?: boolean; intervalMinutes?: number }) {
+    syncScheduledTasks();
+
+    const definition = getScheduledTaskDefinitionByKey(taskKey);
+    if (!definition) {
+        throw new Error(`Unknown scheduled task: ${taskKey}`);
+    }
+
+    const current = getScheduledTask(taskKey);
+    const nextEnabled = updates.enabled ?? (current ? Boolean(current.enabled) : definition.enabled);
+    const nextIntervalMinutes = updates.intervalMinutes ?? (current ? current.interval_minutes : definition.intervalMinutes);
+
+    getScheduledTaskUpdateStmt().run(
+        definition.name,
+        nextIntervalMinutes,
+        nextEnabled ? 1 : 0,
+        taskKey,
+    );
+
+    const updated = getScheduledTask(taskKey);
+    if (!updated) {
+        throw new Error(`Failed to update scheduled task: ${taskKey}`);
+    }
+
+    const effective = getEffectiveScheduledTaskDefinition(definition);
+    return {
+        key: definition.key,
+        name: definition.name,
+        taskName: definition.taskName,
+        intervalMinutes: updated.interval_minutes,
+        enabled: Boolean(updated.enabled),
+        lastQueuedAt: updated.last_queued_at ?? null,
+        nextRunAt: effective.enabled
+            ? (definition.key === "monitoring-cycle"
+                ? getNextMonitoringWindowAtOrAfter(
+                    (parseScheduledTaskTime(updated.last_queued_at ?? null) ?? Date.now()) + updated.interval_minutes * 60_000,
+                    getMonitoringStatus().config.start_hour,
+                    getMonitoringStatus().config.duration_hours,
+                )
+                : new Date((parseScheduledTaskTime(updated.last_queued_at ?? null) ?? Date.now()) + updated.interval_minutes * 60_000).toISOString())
+            : null,
+        active: getScheduledTaskActiveState(definition),
+    };
+}
+
 export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
     syncScheduledTasks();
 
     return getScheduledTaskDefinitions().map((definition) => {
+        const effective = getEffectiveScheduledTaskDefinition(definition);
         const task = getScheduledTask(definition.key);
-        const lastQueuedAt = task?.last_queued_at ?? null;
+        const lastQueuedAt = effective.lastQueuedAt;
         const parsedLastQueued = parseScheduledTaskTime(lastQueuedAt);
         const nextDueAt = parsedLastQueued !== null
-            ? parsedLastQueued + definition.intervalMinutes * 60_000
+            ? parsedLastQueued + effective.intervalMinutes * 60_000
             : Date.now();
 
         const monitoringConfig = getMonitoringStatus().config;
-        const nextRunAt = definition.enabled
+        const nextRunAt = effective.enabled
             ? (definition.key === "monitoring-cycle"
                 ? getNextMonitoringWindowAtOrAfter(nextDueAt, monitoringConfig.start_hour, monitoringConfig.duration_hours)
                 : new Date(nextDueAt).toISOString())
@@ -504,11 +599,11 @@ export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
             key: definition.key,
             name: definition.name,
             taskName: definition.taskName,
-            intervalMinutes: definition.intervalMinutes,
-            enabled: definition.enabled,
+            intervalMinutes: effective.intervalMinutes,
+            enabled: effective.enabled,
             lastQueuedAt,
             nextRunAt,
-            active: hasActiveTask(definition.taskName),
+            active: getScheduledTaskActiveState(definition),
         };
     });
 }
@@ -517,12 +612,13 @@ function queueDueScheduledTasks() {
     syncScheduledTasks();
 
     for (const definition of getScheduledTaskDefinitions()) {
-        if (!definition.enabled) {
+        const effective = getEffectiveScheduledTaskDefinition(definition);
+
+        if (!effective.enabled) {
             continue;
         }
 
-        const task = getScheduledTask(definition.key);
-        if (!isScheduledTaskDue(definition.intervalMinutes, task?.last_queued_at ?? null)) {
+        if (!isScheduledTaskDue(effective.intervalMinutes, effective.lastQueuedAt ?? null)) {
             continue;
         }
 

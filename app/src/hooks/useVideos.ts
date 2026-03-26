@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-import { dispatchLibraryUpdated, dispatchMonitorStateChanged } from "@/utils/appEvents";
+import {
+  LIBRARY_UPDATED_EVENT,
+  MONITOR_STATE_CHANGED_EVENT,
+  dispatchLibraryUpdated,
+  dispatchMonitorStateChanged,
+  type MonitorStateChangedDetail,
+} from "@/utils/appEvents";
 import type { VideoContract as Video } from "@contracts/catalog";
 
 export type { Video };
@@ -120,12 +126,62 @@ export const useVideos = (options?: {
     }
   }, []);
 
+  const toggleLock = useCallback(async (videoId: string, nextState: boolean) => {
+    try {
+      await api.updateVideo(videoId, { monitor_lock: nextState });
+      setVideos(prev =>
+        prev.map(video =>
+          video.id === videoId ? { ...video, monitor_lock: nextState, monitor_locked: nextState } : video
+        )
+      );
+      dispatchLibraryUpdated();
+    } catch (error: any) {
+      console.error('Error updating video lock:', error);
+      toastRef.current({
+        title: "Failed to update video lock",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  }, []);
+
   const fetchRef = useRef(fetchVideosPage);
   fetchRef.current = fetchVideosPage;
 
   useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
+
+  useEffect(() => {
+    const handleLibraryUpdate = () => {
+      if (!enabled) {
+        return;
+      }
+
+      fetchRef.current(0, false);
+    };
+
+    const handleMonitorStateChanged = (event: Event) => {
+      const detail = (event as CustomEvent<MonitorStateChangedDetail>).detail;
+      if (!detail || detail.type !== "video") {
+        return;
+      }
+
+      setVideos((prev) => prev.map((video) => (
+        video.id === detail.tidalId
+          ? { ...video, is_monitored: detail.monitored, monitor: detail.monitored }
+          : video
+      )));
+    };
+
+    window.addEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
+    window.addEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
+
+    return () => {
+      window.removeEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
+      window.removeEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) {
@@ -148,5 +204,6 @@ export const useVideos = (options?: {
     loadMore,
     refetch: () => fetchVideosPage(0, false),
     toggleMonitor,
+    toggleLock,
   };
 };

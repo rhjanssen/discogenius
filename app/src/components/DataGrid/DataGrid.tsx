@@ -10,7 +10,7 @@ import {
     Text,
     tokens,
 } from "@fluentui/react-components";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
 
 export interface DataGridColumn<T = any> {
     key: string;
@@ -255,7 +255,12 @@ function DataGridInner<T>(
     if (loading) {
         return (
             <div className={mergeClasses(styles.root, className)}>
-                <LoadingState className={styles.loading} size="medium" />
+                <DataGridSkeleton
+                    columns={Math.max(visibleColumns.length + (selection ? 1 : 0), 3)}
+                    rows={8}
+                    columnTemplate={gridTemplate}
+                    compact={Boolean(compact)}
+                />
             </div>
         );
     }
@@ -369,3 +374,4 @@ export const DataGrid = React.forwardRef(DataGridInner) as <T>(
 ) => React.ReactElement | null;
 
 export default DataGrid;
+

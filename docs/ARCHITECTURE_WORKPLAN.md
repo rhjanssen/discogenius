@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-03-19
+Last updated: 2026-03-26
 
 ## Purpose
 
@@ -31,13 +31,14 @@ Measured 2026-03-13:
 
 1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 1.0.x schema baseline now uses an independent integer `PRAGMA user_version` starting at `1`, with app/api/schema provenance tracked in `database_version_history`.
 2. ~~Add a persistent history table and write path for key file lifecycle events.~~ **Done** — `history_events` table, backend write path, and `/api/history` endpoint are implemented.
-3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). **Phase 2**: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.
+3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). ~~Phase 2: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.~~ **Done** — the backend now exposes a typed `/api/system-task` catalog for scheduled tasks plus manual operator tasks, and Settings ships a Lidarr-style System Tasks control plane for run-now actions and editable schedule state.
 4. Continue route thinning in high-traffic routes so route files remain adapters.
 5. Finish import decision extraction into import-decision specifications.
 6. Add a minimal typed health surface for auth/runtime/path checks.
 7. Continue scheduler and download-processor handler extraction by job type.
 8. Ensure config and file lifecycle events are emitted consistently where already modeled.
 9. ~~Consolidate quality normalization paths to one authoritative implementation.~~ **Done** — `HIRES_LOSSLESS` is canonical throughout; `HI_RES_LOSSLESS` alias and `QUALITY_ALIASES` map removed from `quality.ts`.
+10. Split the new system-task catalog into a dedicated command registry plus thinner activity/command routes so `/api/command`, `/api/system-task`, and `/api/status` stop sharing definition logic indirectly.
 
 ## Post-1.0 Work Items
 
@@ -46,6 +47,11 @@ Measured 2026-03-13:
 - Additional housekeeping registration and visibility.
 - Deeper upgrade automation and decision integration.
 - Broader repository-pattern adoption in service code.
+
+## Residual Low-Risk Follow-Ups (Optimization Increment)
+
+- Add lightweight endpoint timing counters for `/api/activity`, `/api/activity/events`, and `/api/tasks` in non-debug builds to spot regressions early without adding heavy profiling overhead.
+- If event volume grows substantially, evaluate cursor-style pagination for `/api/activity/events` as a future optimization; current offset pagination is correct and acceptable for present scale.
 
 ## Provider-Agnostic ID Model (Multi-Provider Foundation)
 

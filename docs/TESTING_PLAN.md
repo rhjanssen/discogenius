@@ -158,6 +158,45 @@ Expected:
 - App recovers from restart without auth/chunk-load regressions.
 - Failed downloads do not leave stray files in final library paths.
 
+### G. Control-Plane Endpoint and Dashboard Freshness Validation
+
+1. Call `/api/tasks` with defaults and explicit filters (`status|statuses`, `category|categories`, `type|types`, `limit`, `offset`) and confirm it only returns task-surface rows (non-download command categories).
+2. Call `/api/activity` with defaults and explicit filters and confirm the default response is history-oriented (`completed`, `failed`, `cancelled`) while still allowing explicit status/category/type overrides.
+3. Call `/api/activity/events` and verify merged event-feed semantics: task + history sources, newest-first ordering, stable pagination (`limit`, `offset`, `hasMore`), and source-prefixed IDs (`task:<id>`, `history:<id>`).
+4. Call `/api/status` and confirm response is summary-only (`activity`, `taskQueueStats`, `commandStats`, optional running/rate-limit fields), not a detailed task list.
+5. Verify `/api/status/tasks` is no longer exposed.
+6. Verify `/api/queue` remains the live queue source for queue rows and reordering.
+7. In Dashboard Activity, trigger a background refresh while data is already visible and confirm stale data remains visible with a non-blocking "Updating activity"/"Showing cached activity" notice.
+8. Validate Activity empty/error semantics:
+   - failed initial load with no cached rows -> "Activity unavailable"
+   - successful load with no rows -> "No recent activity"
+
+### H. Optimization Increment Perf Proxies and Targeted Checks
+
+Use these as pragmatic perf/correctness proxies for this increment (not benchmark-grade profiling):
+
+1. Filter parser consistency proxy:
+   - Validate equivalent query inputs (`status` vs `statuses`, `category` vs `categories`, `type` vs `types`) on both `/api/tasks` and `/api/activity`.
+   - Confirm invalid values return 400 with clear unsupported-filter messages.
+2. Activity mapping efficiency proxy:
+   - Seed activity pages with repeated artist/album/track/video references.
+   - Confirm response latency remains stable as repeated references grow on the same page (batched lookup path), and descriptions remain populated.
+3. Events merge pagination proxy:
+   - Page `/api/activity/events` with offsets near start/middle/end while mixed task/history events are present.
+   - Confirm deterministic ordering and consistent `total`/`hasMore` without endpoint timeouts or large response-time jumps between adjacent pages.
+4. Pending queue-position scope proxy:
+   - Query mixed status pages from `/api/activity` (for example pending+completed).
+   - Confirm pending rows return absolute queue positions while non-pending rows omit queue position, and pagination does not require full pending-list enumeration.
+5. Frontend active-tab gating and retry-suppression checks:
+   - Keep Dashboard on Queue/Tasks tabs and verify Activity feed requests are not continuously refreshed until Activity is active.
+   - In Activity tab, verify failed import retry button suppression when matching in-flight `/api/activity` rows exist.
+   - Verify conservative suppression when in-flight feed reports `hasMore=true` even if first-page rows do not include a direct match.
+
+Targeted automated checks to keep in CI/local loops for this increment:
+
+- API/service and route checks in [api/src/services/activity.test.ts](api/src/services/activity.test.ts) and [api/src/routes/tasks-activity-split.test.ts](api/src/routes/tasks-activity-split.test.ts).
+- Dashboard retry/gating checks in [e2e/queue-dialog.spec.ts](e2e/queue-dialog.spec.ts).
+
 ## 4. Optional Deep Inspection
 
 Filesystem check:
@@ -193,3 +232,4 @@ Use this to confirm replacements, pruning, and sidecar toggles match disk state.
 - [ ] Metadata toggle behavior matches disk and DB state
 - [ ] No orphan media or sidecar files remain after prune/replacement flows
 - [ ] Desktop and mobile UI feel consistent and production-ready
+

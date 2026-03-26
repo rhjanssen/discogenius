@@ -25,7 +25,8 @@ import { useNavigate } from "react-router-dom";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { EmptyState, LoadingState } from "@/components/ui/ContentState";
+import { EmptyState } from "@/components/ui/ContentState";
+import { ListRowsSkeleton } from "@/components/ui/LoadingSkeletons";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import { useDashboardStyles } from "./dashboardStyles";
 
@@ -344,7 +345,7 @@ const QueueTab = () => {
     if (loading && !hasQueueRows) {
         return (
             <div className={styles.tabSection}>
-                <LoadingState label="Loading queue..." />
+                <ListRowsSkeleton rows={6} />
             </div>
         );
     }

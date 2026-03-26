@@ -36,8 +36,8 @@ import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { ErrorState } from "@/components/ui/ContentState";
+import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import {
     compactDetailActionButtonStyles,
     detailActionButtonRadiusStyles,
@@ -449,7 +449,7 @@ const VideoPage = () => {
     if (isVideoLoading) {
         return (
             <div className={styles.stateShell}>
-                <LoadingState label="Loading video..." minHeight="280px" />
+                <MediaDetailSkeleton variant="video" />
             </div>
         );
     }

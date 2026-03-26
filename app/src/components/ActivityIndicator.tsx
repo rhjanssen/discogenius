@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import {
     makeStyles,
     tokens,
@@ -11,7 +10,6 @@ import {
     ArrowDownload24Regular,
     ErrorCircle24Regular,
 } from "@fluentui/react-icons";
-import { formatJobDescription, formatJobType } from "@/pages/dashboard/dashboardUtils";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 
 const useStyles = makeStyles({
@@ -43,43 +41,33 @@ const useStyles = makeStyles({
 export const ActivityIndicator = () => {
     const styles = useStyles();
     const {
-        activeJobs: jobs,
+        status,
         taskQueueStats,
         commandStats,
-        isLoading,
-        isError,
+        isStatusInitialLoading,
+        hasStatusRefreshError,
+        hasStatusData,
+        isStatusUpdating,
     } = useStatusOverview();
 
-    const downloadingCount = useMemo(() =>
+    const downloadingCount =
         Number(commandStats.downloads?.processing || 0) ||
         taskQueueStats
-            .filter(s => ((s.type?.startsWith('Download') || s.type === 'ImportDownload')) && s.status === 'processing')
-            .reduce((acc, curr) => acc + curr.count, 0)
-        , [commandStats, taskQueueStats]);
+            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "processing")
+            .reduce((acc, curr) => acc + curr.count, 0);
 
-    const queuedCount = useMemo(() =>
+    const queuedCount =
         Number(commandStats.downloads?.pending || 0) ||
         taskQueueStats
-            .filter(s => ((s.type?.startsWith('Download') || s.type === 'ImportDownload')) && s.status === 'pending')
-            .reduce((acc, curr) => acc + curr.count, 0)
-        , [commandStats, taskQueueStats]);
+            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "pending")
+            .reduce((acc, curr) => acc + curr.count, 0);
 
-    const activityJobTypes = ['CurateArtist', 'RescanFolders', 'Housekeeping', 'ApplyCuration', 'DownloadMissing', 'CheckUpgrades', 'RefreshMetadata', 'ApplyRenames', 'ApplyRetags'];
-    const activeScan = jobs.find(j =>
-        j.status === 'running' && (
-            j.type === 'RefreshArtist' ||
-            j.type.startsWith('Scan') ||
-            activityJobTypes.includes(j.type)
-        )
-    ) || jobs.find(j =>
-        j.type === 'RefreshArtist' ||
-        j.type.startsWith('Scan') ||
-        activityJobTypes.includes(j.type)
-    );
+    const backgroundProcessing = Number(status?.activity?.processing || 0);
+    const backgroundPending = Number(status?.activity?.pending || 0);
 
-    if (isLoading && jobs.length === 0) return null;
+    if (isStatusInitialLoading && !hasStatusData) return null;
 
-    if (isError && jobs.length === 0) {
+    if (hasStatusRefreshError && !hasStatusData) {
         return (
             <Tooltip content="Cannot reach server status endpoint" relationship="label">
                 <div className={styles.container}>
@@ -90,27 +78,44 @@ export const ActivityIndicator = () => {
         );
     }
 
-    if (activeScan) {
-        const label = formatJobType(activeScan);
-        const subtitle = formatJobDescription(activeScan);
+    if (downloadingCount > 0 || queuedCount > 0) {
+        const subtitle = `${downloadingCount} downloading, ${queuedCount} queued${(backgroundProcessing > 0 || backgroundPending > 0) ? `; ${backgroundProcessing} background running, ${backgroundPending} background queued` : ""}`;
         return (
-            <Tooltip content={subtitle || activeScan.description} relationship="label">
+            <Tooltip content={subtitle} relationship="label">
                 <div className={mergeClasses(styles.container, styles.active)}>
-                    <Spinner size="tiny" />
-                    <Text>{label}</Text>
+                    {downloadingCount > 0 ? <Spinner size="tiny" /> : <ArrowDownload24Regular className={styles.icon} />}
+                    <Text>
+                        {downloadingCount > 0
+                            ? `${downloadingCount} downloading${backgroundProcessing > 0 ? ` + ${backgroundProcessing} bg` : ""}`
+                            : `${queuedCount} queued${backgroundPending > 0 ? ` + ${backgroundPending} bg` : ""}`}
+                    </Text>
                 </div>
             </Tooltip>
         );
     }
 
-    if (downloadingCount > 0 || queuedCount > 0) {
+    if (backgroundProcessing > 0 || backgroundPending > 0) {
+        const subtitle = `${backgroundProcessing} running, ${backgroundPending} queued background tasks`;
         return (
-            <Tooltip content={`${downloadingCount} downloading, ${queuedCount} queued`} relationship="label">
+            <Tooltip content={subtitle} relationship="label">
                 <div className={styles.container}>
-                    {downloadingCount > 0 ? <Spinner size="tiny" /> : <ArrowDownload24Regular className={styles.icon} />}
+                    <Spinner size="tiny" />
                     <Text>
-                        {downloadingCount > 0 ? `${downloadingCount} downloading` : `${queuedCount} queued`}
+                        {backgroundProcessing > 0
+                            ? `${backgroundProcessing} background running`
+                            : `${backgroundPending} background queued`}
                     </Text>
+                </div>
+            </Tooltip>
+        );
+    }
+
+    if (isStatusUpdating) {
+        return (
+            <Tooltip content="Refreshing queue summary" relationship="label">
+                <div className={styles.container}>
+                    <Spinner size="tiny" />
+                    <Text>Updating</Text>
                 </div>
             </Tooltip>
         );

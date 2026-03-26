@@ -36,6 +36,8 @@ import {
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { SystemTasksSection } from "@/components/settings/SystemTasksSection";
+import { useSystemTasks } from "@/hooks/useSystemTasks";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useTheme } from "@/providers/themeContext";
@@ -44,7 +46,7 @@ import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { SettingsPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
     FilteringConfigContract,
@@ -464,7 +466,7 @@ const MEDIA = {
 };
 const MODAL_LAYOUT = {
     rowPadding: {
-        base: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        base: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
         mobile: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     },
     qualityPadding: {
@@ -497,8 +499,8 @@ const useStyles = makeStyles({
     container: {
         display: 'flex',
         flexDirection: 'column',
-        gap: tokens.spacingVerticalL,
-        padding: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalM,
+        padding: tokens.spacingVerticalM,
         maxWidth: '1200px',
         margin: '0 auto',
         width: '100%',
@@ -516,11 +518,11 @@ const useStyles = makeStyles({
     },
     sectionsContainer: {
         width: '100%',
-        columnGap: tokens.spacingHorizontalL,
+        columnGap: tokens.spacingHorizontalM,
         columnWidth: '400px',
         columnFill: 'balance',
         [MEDIA.desktop]: {
-            columnGap: tokens.spacingHorizontalXL,
+            columnGap: tokens.spacingHorizontalL,
         },
         [MEDIA.mobile]: {
             columnCount: 1,
@@ -533,15 +535,15 @@ const useStyles = makeStyles({
         breakInside: 'avoid',
         WebkitColumnBreakInside: 'avoid',
         pageBreakInside: 'avoid',
-        marginBottom: tokens.spacingVerticalL,
+        marginBottom: tokens.spacingVerticalM,
         flexDirection: 'column',
-        gap: tokens.spacingVerticalM,
+        gap: tokens.spacingVerticalS,
     },
     sectionFullWidth: {
         display: 'flex',
         flexDirection: 'column',
-        gap: tokens.spacingVerticalM,
-        marginBottom: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalS,
+        marginBottom: tokens.spacingVerticalM,
     },
     card: {
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
@@ -729,7 +731,7 @@ const useStyles = makeStyles({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL}`,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         flexWrap: 'wrap',
         columnGap: tokens.spacingHorizontalM,
         rowGap: tokens.spacingVerticalS,
@@ -919,6 +921,14 @@ const SettingsPage = () => {
     } = useUserSettings();
     const { tidalConnected, loading: tidalLoading } = useTidalAuth();
     const { theme, setTheme } = useTheme();
+    const {
+        tasks: systemTasks,
+        isLoading: systemTasksLoading,
+        errorMessage: systemTasksError,
+        updatingTaskId: updatingSystemTaskId,
+        updateTask: updateSystemTask,
+        refetch: refetchSystemTasks,
+    } = useSystemTasks();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
     const [monitoringStatus, setMonitoringStatus] = useState<Pick<MonitoringStatusResponseContract, "running" | "checking">>({
         running: false,
@@ -1331,7 +1341,7 @@ const SettingsPage = () => {
     if (loading || tidalLoading) {
         return (
             <div className={styles.container}>
-                <LoadingState className={styles.loadingState} label="Loading settings..." />
+                <SettingsPageSkeleton className={styles.loadingState} />
             </div>
         );
     }
@@ -1878,6 +1888,31 @@ const SettingsPage = () => {
                                 {isScanInProgress ? "Running Task..." : "Run Now"}
                             </Button>
                         </div>
+                    </div>
+                </SettingsSection>
+
+                <SettingsSection
+                    id="system-tasks"
+                    title="System Tasks"
+                    description="Manage scheduled task timing and enablement."
+                    className={styles.section}
+                >
+                    <div className={styles.card}>
+                        <SystemTasksSection
+                            tasks={systemTasks}
+                            loading={systemTasksLoading}
+                            error={systemTasksError}
+                            updatingTaskId={updatingSystemTaskId}
+                            onRetry={() => {
+                                void refetchSystemTasks();
+                            }}
+                            onToggleEnabled={async (task, enabled) => {
+                                await updateSystemTask(task.id, { enabled });
+                            }}
+                            onUpdateInterval={async (task, intervalMinutes) => {
+                                await updateSystemTask(task.id, { intervalMinutes });
+                            }}
+                        />
                     </div>
                 </SettingsSection>
 

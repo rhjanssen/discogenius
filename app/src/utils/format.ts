@@ -38,3 +38,23 @@ export function formatDurationMs(startMs: number, endMs: number): string {
   if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
 }
+
+const compactNumberFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  compactDisplay: "short",
+  maximumFractionDigits: 1,
+});
+
+/**
+ * Format large counts using compact notation such as 5K, 396K, or 2.5M.
+ *
+ * Uses en-US compact notation so the dashboard keeps consistent labels
+ * regardless of browser locale.
+ */
+export function formatCompactNumber(value?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return compactNumberFormatter.format(value);
+}

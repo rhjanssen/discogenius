@@ -35,12 +35,15 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
+import { useMonitoring } from "@/hooks/useMonitoring";
+import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
+import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -72,13 +75,23 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
   stateShell: {
     width: "100%",
     alignSelf: "stretch",
+  },
+  loadingStatus: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+  },
+  loadingLabel: {
+    color: tokens.colorNeutralForeground2,
+    textAlign: "center",
   },
   header: {
     position: "relative",
@@ -87,7 +100,7 @@ const useStyles = makeStyles({
     alignItems: "flex-start",
     padding: tokens.spacingHorizontalL,
     paddingTop: tokens.spacingVerticalL,
-    paddingBottom: tokens.spacingVerticalXL,
+    paddingBottom: tokens.spacingVerticalL,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
@@ -95,9 +108,14 @@ const useStyles = makeStyles({
       minHeight: "300px",
       padding: tokens.spacingHorizontalXL,
       paddingTop: tokens.spacingVerticalXXL,
-      paddingBottom: tokens.spacingVerticalM,
+      paddingBottom: tokens.spacingVerticalS,
       gap: tokens.spacingHorizontalXXL,
     },
+  },
+  modules: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalL,
   },
   headerContent: {
     position: "relative",
@@ -248,13 +266,12 @@ const useStyles = makeStyles({
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
   },
   sectionHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: tokens.spacingVerticalS,
   },
   grid: {
     display: "grid",
@@ -517,11 +534,16 @@ const useStyles = makeStyles({
   },
 });
 
+const COLLAPSED_TOP_TRACK_COUNT = 5;
+const EXPANDED_TOP_TRACK_COUNT = 50;
+
 const ArtistPage = () => {
   const styles = useStyles();
   const { artistId } = useParams<{ artistId: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { toggleMonitor, toggleLock } = useMonitoring();
+  const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
   // State
   const [syncing, setSyncing] = useState(false);
@@ -994,7 +1016,7 @@ const ArtistPage = () => {
     return null;
   };
 
-  const filterTopTracks = useCallback((tracks: any[]) => {
+  const filterTopTracks = useCallback((tracks: TrackListItem[]) => {
     return tracks.filter((track) => {
       const quality = (track.quality || '').toString().toUpperCase();
 
@@ -1037,21 +1059,25 @@ const ArtistPage = () => {
       if (libraryFilter === 'video') return null;
       const filteredTracks = filterTopTracks(items);
       if (filteredTracks.length === 0) return null;
-      const visibleTracks = topTracksExpanded ? filteredTracks : filteredTracks.slice(0, 5);
       const filteredCount = filteredTracks.length;
+      const expandedTrackCount = Math.min(filteredCount, EXPANDED_TOP_TRACK_COUNT);
+      const visibleTracks = filteredTracks.slice(
+        0,
+        topTracksExpanded ? expandedTrackCount : COLLAPSED_TOP_TRACK_COUNT,
+      );
 
       return (
         <div key={index} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
-            {filteredCount > 5 && (
+            {filteredCount > COLLAPSED_TOP_TRACK_COUNT && (
               <Button
                 appearance="subtle"
                 size="small"
                 className={styles.sectionAction}
                 onClick={() => setTopTracksExpanded((previous) => !previous)}
               >
-                {topTracksExpanded ? "Show less" : `Show all (${filteredCount})`}
+                {topTracksExpanded ? "Show less" : `Show more (${expandedTrackCount})`}
               </Button>
             )}
           </div>
@@ -1059,10 +1085,28 @@ const ArtistPage = () => {
             tracks={visibleTracks}
             numbering="index"
             showAlbum
-            showCover
+            contextArtistName={artistName}
+            onDownloadTrack={handleDownloadTrack}
+            onToggleMonitor={(track) => {
+              toggleMonitor({
+                id: track.id,
+                type: "track",
+                currentStatus: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            onToggleLock={(track) => {
+              toggleLock({
+                id: track.id,
+                type: "track",
+                isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
+                isMonitored: Boolean(track.is_monitored ?? track.monitor),
+              });
+            }}
+            isTrackDownloading={(track) => downloadingTracks.has(track.id)}
             onTrackClick={(track) => {
-              if ((track as any).album?.id) {
-                navigate(`/album/${(track as any).album.id}`);
+              const albumId = track.album_id ?? track.album?.id ?? null;
+              if (albumId) {
+                navigate(`/album/${albumId}`);
               }
             }}
           />
@@ -1144,11 +1188,10 @@ const ArtistPage = () => {
   if (pageLoading) {
     return (
       <div className={styles.stateShell}>
-        <LoadingState
-          size="huge"
-          label="Loading artist details..."
-          minHeight="320px"
-        />
+        <div className={styles.loadingStatus} role="status" aria-live="polite" aria-label="Loading artist details...">
+          <Text size={200} className={styles.loadingLabel}>Loading artist details...</Text>
+          <MediaDetailSkeleton variant="artist" />
+        </div>
       </div>
     );
   }
@@ -1361,7 +1404,9 @@ const ArtistPage = () => {
         </div>
 
         {/* Dynamic Modules */}
-        {modules.map((mod, i) => renderModule(mod, i))}
+        <div className={styles.modules}>
+          {modules.map((mod, i) => renderModule(mod, i))}
+        </div>
 
         {modules.length === 0 && !pageLoading && (
           <EmptyState

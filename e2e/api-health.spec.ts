@@ -44,6 +44,37 @@ test.describe('API health & key endpoints', () => {
     expect(data.config).toHaveProperty('progressArtistIndex');
   });
 
+  test('/api/system-task returns scheduled and manual operator tasks', async ({ request }) => {
+    const resp = await request.get(`${baseURL}/api/system-task`);
+    expect(resp.status()).toBe(200);
+
+    const data = await resp.json();
+    expect(Array.isArray(data)).toBeTruthy();
+    expect(data.length).toBeGreaterThan(0);
+
+    const scheduledTask = data.find((item: any) => item.kind === 'scheduled');
+    const manualTask = data.find((item: any) => item.kind === 'manual');
+
+    expect(scheduledTask).toBeTruthy();
+    expect(manualTask).toBeTruthy();
+
+    expect(scheduledTask).toHaveProperty('intervalMinutes');
+    expect(scheduledTask).toHaveProperty('enabled');
+    expect(scheduledTask).toHaveProperty('nextExecution');
+    expect(scheduledTask).toHaveProperty('canRunNow');
+
+    expect(manualTask).toHaveProperty('commandName');
+    expect(manualTask).toHaveProperty('category');
+    expect(manualTask).toHaveProperty('riskLevel');
+    expect(manualTask.enabled).toBeNull();
+
+    const detailResp = await request.get(`${baseURL}/api/system-task/${scheduledTask.id}`);
+    expect(detailResp.status()).toBe(200);
+    const detail = await detailResp.json();
+    expect(detail.id).toBe(scheduledTask.id);
+    expect(detail.kind).toBe('scheduled');
+  });
+
   test('/api/artists returns items array', async ({ request }) => {
     const resp = await request.get(`${baseURL}/api/artists`);
     expect(resp.status()).toBe(200);
@@ -165,8 +196,10 @@ test.describe('API health & key endpoints', () => {
     const resp = await request.get(`${baseURL}/api/status`);
     expect(resp.status()).toBe(200);
     const data = await resp.json();
-    expect(data).toHaveProperty('activeJobs');
-    expect(data).toHaveProperty('jobHistory');
+    expect(data).toHaveProperty('activity');
+    expect(data.activity).toHaveProperty('pending');
+    expect(data.activity).toHaveProperty('processing');
+    expect(data.activity).toHaveProperty('history');
     expect(data).toHaveProperty('taskQueueStats');
     expect(data).toHaveProperty('commandStats');
   });

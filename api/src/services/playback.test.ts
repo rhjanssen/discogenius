@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPlaybackQualityOrder } from "./playback.js";
+import { buildBrowserPlaybackQualityOrder, buildPlaybackQualityOrder } from "./playback.js";
 
 test("buildPlaybackQualityOrder prefers the requested quality before falling back", () => {
   assert.deepEqual(buildPlaybackQualityOrder("DOLBY_ATMOS"), [
@@ -31,4 +31,15 @@ test("buildPlaybackQualityOrder uses a deterministic default ladder when quality
   assert.deepEqual(buildPlaybackQualityOrder(), expected);
   assert.deepEqual(buildPlaybackQualityOrder(""), expected);
   assert.deepEqual(buildPlaybackQualityOrder("not-a-quality"), expected);
+});
+
+test("buildBrowserPlaybackQualityOrder keeps browser preview on a stereo-safe ladder", () => {
+  assert.deepEqual(buildBrowserPlaybackQualityOrder(), ["LOSSLESS", "HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder(""), ["LOSSLESS", "HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("LOSSLESS"), ["LOSSLESS", "HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("HIRES_LOSSLESS"), ["LOSSLESS", "HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("DOLBY_ATMOS"), ["LOSSLESS", "HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("HIGH"), ["HIGH", "LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("LOW"), ["LOW"]);
+  assert.deepEqual(buildBrowserPlaybackQualityOrder("not-a-quality"), ["LOSSLESS", "HIGH", "LOW"]);
 });

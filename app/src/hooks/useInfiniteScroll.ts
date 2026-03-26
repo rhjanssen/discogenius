@@ -59,5 +59,6 @@ export const useInfiniteScroll = ({
 
         observer.observe(sentinelRef.current);
         return () => observer.disconnect();
-    }, [enabled, hasMore, containerRef, sentinelRef, onLoadMore, rootMargin]);
+    }, [enabled, hasMore, isLoading, containerRef, sentinelRef, onLoadMore, rootMargin]);
 };
+

@@ -96,7 +96,7 @@ const useStyles = makeStyles({
     backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 85%, transparent)`,
   },
   container: {
-    maxWidth: "1200px",
+    maxWidth: "1320px",
     marginTop: tokens.spacingVerticalNone,
     marginBottom: tokens.spacingVerticalNone,
     marginLeft: "auto",
@@ -110,8 +110,8 @@ const useStyles = makeStyles({
     "@media (min-width: 640px)": {
       flexDirection: "row",
       alignItems: "center",
-      gap: tokens.spacingHorizontalL,
-      padding: tokens.spacingHorizontalM,
+      gap: tokens.spacingHorizontalM,
+      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     },
   },
   headerRow: {
@@ -223,12 +223,12 @@ const useStyles = makeStyles({
     right: `calc(-1 * ${tokens.spacingHorizontalXS})`,
   },
   main: {
-    maxWidth: "1200px",
+    maxWidth: "1320px",
     marginTop: tokens.spacingVerticalNone,
     marginBottom: tokens.spacingVerticalNone,
     marginLeft: "auto",
     marginRight: "auto",
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     // Safe area insets for PWA - left/right for notch devices, bottom for home indicator
     paddingLeft: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-left))`,
     paddingRight: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-right))`,
@@ -239,11 +239,11 @@ const useStyles = makeStyles({
     width: "100%",
     overflowX: "hidden",
     "@media (min-width: 640px)": {
-      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
+      padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
       paddingLeft: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-left))`,
       paddingRight: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-right))`,
-      paddingBottom: `max(${tokens.spacingVerticalL}, env(safe-area-inset-bottom))`,
-      paddingTop: tokens.spacingVerticalL,
+      paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
+      paddingTop: tokens.spacingVerticalM,
     },
   },
   authMain: {
@@ -268,7 +268,7 @@ const useStyles = makeStyles({
     zIndex: 1,
   },
   tidalBannerWrap: {
-    maxWidth: "1200px",
+    maxWidth: "1320px",
     marginTop: tokens.spacingVerticalS,
     marginBottom: tokens.spacingVerticalNone,
     marginLeft: "auto",

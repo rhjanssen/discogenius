@@ -2,8 +2,7 @@ import {
   TabList,
   Tab,
   Button,
-  Badge,
-  Spinner,
+
   Text,
   makeStyles,
   tokens,
@@ -34,6 +33,8 @@ import {
   ArrowSortDownLines24Regular,
   MusicNote224Regular,
   Person24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -41,6 +42,8 @@ import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useCardStyles } from "@/components/cards/cardStyles";
+import { LibraryRowActions } from "@/components/library/LibraryRowActions";
+import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
 import { QueueContext } from "@/providers/QueueProvider";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
@@ -52,6 +55,7 @@ import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { useToast } from "@/hooks/useToast";
+import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
 import React, { useState, useEffect, useCallback, useMemo, useRef, useContext } from "react";
@@ -67,7 +71,7 @@ import {
 } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { CardGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
   searchBox: {
@@ -96,7 +100,7 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     height: "100%",
   },
   toolbar: {
@@ -188,7 +192,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
   },
   scrollContainer: {
     overflow: "auto",
@@ -197,7 +201,7 @@ const useStyles = makeStyles({
   loadMoreSpinner: {
     display: "flex",
     justifyContent: "center",
-    padding: tokens.spacingVerticalL,
+    padding: tokens.spacingVerticalM,
   },
   contentPadding: {
     padding: tokens.spacingHorizontalXXS,
@@ -208,14 +212,14 @@ const useStyles = makeStyles({
   pageBody: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     height: "100%",
   },
   tabPanel: {
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
   },
   tabScroller: {
     overflow: "auto",
@@ -227,7 +231,7 @@ const useStyles = makeStyles({
   fetchMoreRow: {
     display: "flex",
     justifyContent: "center",
-    padding: tokens.spacingVerticalL,
+    padding: tokens.spacingVerticalM,
   },
   placeholderIcon: {
     fontSize: "48px",
@@ -425,6 +429,7 @@ const Library = () => {
     total: totalVideos,
     loadMore: loadMoreVideos,
     toggleMonitor: toggleVideoMonitor,
+    toggleLock: toggleVideoLock,
   } = useVideos({
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
@@ -454,6 +459,296 @@ const Library = () => {
   const filteredAlbums = albums;
   const filteredTracks = tracks;
   const filteredVideos = videos;
+
+  const artistSelection = useSelectableCollection({
+    items: filteredArtists,
+    getItemId: (artist: any) => artist.id,
+  });
+  const clearArtistSelection = artistSelection.clearSelection;
+  const albumSelection = useSelectableCollection({
+    items: filteredAlbums,
+    getItemId: (album: any) => album.id,
+  });
+  const clearAlbumSelection = albumSelection.clearSelection;
+  const trackSelection = useSelectableCollection({
+    items: filteredTracks,
+    getItemId: (track: any) => track.id,
+  });
+  const clearTrackSelection = trackSelection.clearSelection;
+  const videoSelection = useSelectableCollection({
+    items: filteredVideos,
+    getItemId: (video: any) => video.id,
+  });
+  const clearVideoSelection = videoSelection.clearSelection;
+
+  useEffect(() => {
+    if (viewMode !== "list") {
+      clearArtistSelection();
+      clearAlbumSelection();
+      clearTrackSelection();
+      clearVideoSelection();
+    }
+  }, [
+    viewMode,
+    clearArtistSelection,
+    clearAlbumSelection,
+    clearTrackSelection,
+    clearVideoSelection,
+  ]);
+
+  async function runSequentialSelectionAction<T>(
+    items: T[],
+    action: (item: T) => Promise<void>,
+  ) {
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const item of items) {
+      try {
+        await action(item);
+        succeeded += 1;
+      } catch (error) {
+        failed += 1;
+        console.error("Bulk action failed:", error);
+      }
+    }
+
+    return { succeeded, failed };
+  }
+
+  const showBulkResult = useCallback((title: string, succeeded: number, failed: number) => {
+    if (succeeded > 0) {
+      toast({
+        title,
+        description: `${succeeded} item${succeeded === 1 ? "" : "s"} processed${failed > 0 ? `, ${failed} failed` : ""}.`,
+      });
+    }
+
+    if (failed > 0) {
+      toast({
+        title: "Some items failed",
+        description: `${failed} item${failed === 1 ? "" : "s"} could not be processed.`,
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
+  const queueSelectedArtistScan = async () => {
+    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+      await api.scanArtist(artist.id, { forceUpdate: false });
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult("Refresh & scan queued", succeeded, failed);
+    artistSelection.clearSelection();
+  };
+
+  const queueSelectedArtistCurate = async () => {
+    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+      await api.processRedundancy(artist.id);
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult("Curation queued", succeeded, failed);
+    artistSelection.clearSelection();
+  };
+
+  const queueSelectedArtistDownload = async () => {
+    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+      await api.processMonitoredItems(artist.id);
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+    }
+
+    showBulkResult("Download queued", succeeded, failed);
+    artistSelection.clearSelection();
+  };
+
+  const setSelectedArtistMonitoring = async (monitored: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+      await api.toggleArtistMonitored(artist.id, monitored);
+      dispatchMonitorStateChanged({ type: "artist", tidalId: artist.id, monitored });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
+    artistSelection.clearSelection();
+  };
+
+  const queueSelectedAlbumDownload = async () => {
+    const queueableAlbums = albumSelection.selectedItems.filter((album: any) => {
+      const isDownloaded = album.is_downloaded ?? album.downloaded;
+      return !isDownloaded;
+    });
+
+    if (queueableAlbums.length === 0) {
+      toast({
+        title: "No downloadable albums selected",
+        description: "All selected albums are already downloaded.",
+      });
+      albumSelection.clearSelection();
+      return;
+    }
+
+    const { succeeded, failed } = await runSequentialSelectionAction(queueableAlbums, async (album: any) => {
+      await addToQueue(tidalUrl("album", album.id), "album", album.id);
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+    }
+
+    showBulkResult("Album download queued", succeeded, failed);
+    albumSelection.clearSelection();
+  };
+
+  const setSelectedAlbumMonitoring = async (monitored: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(albumSelection.selectedItems, async (album: any) => {
+      await api.updateAlbum(album.id, { monitored });
+      dispatchMonitorStateChanged({ type: "album", tidalId: album.id, monitored });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
+    albumSelection.clearSelection();
+  };
+
+  const setSelectedAlbumLockState = async (locked: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(albumSelection.selectedItems, async (album: any) => {
+      await api.updateAlbum(album.id, { monitor_lock: locked });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(locked ? "Albums locked" : "Albums unlocked", succeeded, failed);
+    albumSelection.clearSelection();
+  };
+
+  const queueSelectedTrackDownload = async () => {
+    const queueableTracks = trackSelection.selectedItems.filter((track: any) => {
+      const isDownloaded = track.is_downloaded ?? track.downloaded;
+      return !isDownloaded;
+    });
+
+    if (queueableTracks.length === 0) {
+      toast({
+        title: "No downloadable tracks selected",
+        description: "All selected tracks are already downloaded.",
+      });
+      trackSelection.clearSelection();
+      return;
+    }
+
+    const { succeeded, failed } = await runSequentialSelectionAction(queueableTracks, async (track: any) => {
+      await addToQueue(tidalUrl("track", track.id), "track", track.id);
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+    }
+
+    showBulkResult("Track download queued", succeeded, failed);
+    trackSelection.clearSelection();
+  };
+
+  const setSelectedTrackMonitoring = async (monitored: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(trackSelection.selectedItems, async (track: any) => {
+      await api.updateTrack(track.id, { monitored });
+      dispatchMonitorStateChanged({ type: "track", tidalId: track.id, monitored });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
+    trackSelection.clearSelection();
+  };
+
+  const setSelectedTrackLockState = async (locked: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(trackSelection.selectedItems, async (track: any) => {
+      await api.updateTrack(track.id, { monitor_lock: locked });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(locked ? "Tracks locked" : "Tracks unlocked", succeeded, failed);
+    trackSelection.clearSelection();
+  };
+
+  const queueSelectedVideoDownload = async () => {
+    const queueableVideos = videoSelection.selectedItems.filter((video: any) => {
+      const isDownloaded = video.is_downloaded ?? video.downloaded;
+      return !isDownloaded;
+    });
+
+    if (queueableVideos.length === 0) {
+      toast({
+        title: "No downloadable videos selected",
+        description: "All selected videos are already downloaded.",
+      });
+      videoSelection.clearSelection();
+      return;
+    }
+
+    const { succeeded, failed } = await runSequentialSelectionAction(queueableVideos, async (video: any) => {
+      await addToQueue(tidalUrl("video", video.id), "video", video.id);
+    });
+
+    if (succeeded > 0) {
+      dispatchActivityRefresh();
+    }
+
+    showBulkResult("Video download queued", succeeded, failed);
+    videoSelection.clearSelection();
+  };
+
+  const setSelectedVideoMonitoring = async (monitored: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(videoSelection.selectedItems, async (video: any) => {
+      await api.updateVideo(video.id, { monitored });
+      dispatchMonitorStateChanged({ type: "video", tidalId: video.id, monitored });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(monitored ? "Monitoring enabled" : "Monitoring disabled", succeeded, failed);
+    videoSelection.clearSelection();
+  };
+
+  const setSelectedVideoLockState = async (locked: boolean) => {
+    const { succeeded, failed } = await runSequentialSelectionAction(videoSelection.selectedItems, async (video: any) => {
+      await api.updateVideo(video.id, { monitor_lock: locked });
+    });
+
+    if (succeeded > 0) {
+      dispatchLibraryUpdated();
+    }
+
+    showBulkResult(locked ? "Videos locked" : "Videos unlocked", succeeded, failed);
+    videoSelection.clearSelection();
+  };
 
   // Helper to check if album is in queue or downloaded
   const getAlbumDownloadStatus = (album: any) => {
@@ -737,21 +1032,37 @@ const Library = () => {
       width: "140px",
       align: "right",
       render: (artist: any) => (
-        <div className={dgCell.actions}>
-          <Button appearance="subtle" size="small" icon={<ArrowSync24Regular />}
-            onClick={(e) => handleArtistScan(e, artist)}
-            title={artist.last_scanned ? "Refresh & scan" : "Refresh & scan"} />
-          <Button appearance="subtle" size="small" icon={<ArrowSortDownLines24Regular />}
-            onClick={(e) => handleArtistCurate(e, artist)}
-            title="Search missing" />
-          <Button appearance="subtle" size="small" icon={<ArrowDownload24Regular />}
-            onClick={(e) => handleArtistDownload(e, artist)}
-            title="Download monitored" />
-          <Button appearance="subtle" size="small"
-            icon={artist.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />}
-            onClick={(e) => { e.stopPropagation(); toggleArtistMonitored(artist.id, !artist.is_monitored); }}
-            title={artist.is_monitored ? "Unmonitor" : "Monitor"} />
-        </div>
+        <LibraryRowActions
+          actions={[
+            {
+              key: "scan",
+              label: "Refresh & scan",
+              icon: <ArrowSync24Regular />,
+              onClick: (event) => handleArtistScan(event, artist),
+            },
+            {
+              key: "curate",
+              label: "Search missing",
+              icon: <ArrowSortDownLines24Regular />,
+              onClick: (event) => handleArtistCurate(event, artist),
+            },
+            {
+              key: "download",
+              label: "Download monitored",
+              icon: <ArrowDownload24Regular />,
+              onClick: (event) => handleArtistDownload(event, artist),
+            },
+            {
+              key: "monitor",
+              label: artist.is_monitored ? "Unmonitor" : "Monitor",
+              icon: artist.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+              onClick: (event) => {
+                event.stopPropagation();
+                toggleArtistMonitored(artist.id, !artist.is_monitored);
+              },
+            },
+          ]}
+        />
       ),
     },
   ], [dgCell, formatLastScanned, handleArtistScan, handleArtistCurate, handleArtistDownload, renderNotScannedBadge, toggleArtistMonitored]);
@@ -772,11 +1083,22 @@ const Library = () => {
     }
   }, []);
 
+  const handleToggleAlbumLock = useCallback(async (e: React.MouseEvent, album: any) => {
+    e.stopPropagation();
+    const nextLocked = !(album.monitor_locked ?? album.monitor_lock);
+    try {
+      await api.updateAlbum(album.id, { monitor_lock: nextLocked });
+      dispatchLibraryUpdated();
+    } catch (error) {
+      console.error('Failed to toggle album lock:', error);
+    }
+  }, []);
+
   // Render a single album card
   const renderAlbumCard = (album: any) => {
     const year = album.release_date ? album.release_date.split('-')[0] : '';
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
-    const isLocked = Boolean(album.monitor_locked ?? album.monitor_lock);
+    const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
     const imageUrl = getAlbumCover(album.cover_id, 'small') || album.cover_art_url || null;
     const itemProgress = progressMap?.get(Number(album.id));
     return (
@@ -866,25 +1188,38 @@ const Library = () => {
     {
       key: "actions",
       header: "",
-      width: "80px",
+      width: "120px",
       align: "right",
       render: (album: any) => {
-        const isLocked = Boolean(album.monitor_locked ?? album.monitor_lock);
+        const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
         return (
-          <div className={dgCell.actions}>
-            <Button appearance="subtle" size="small" icon={<ArrowDownload24Regular />}
-              onClick={(e) => handleDownloadAlbumRow(e, album)}
-              title='Download album' />
-            <Button appearance="subtle" size="small"
-              icon={album.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />}
-              onClick={(e) => handleToggleAlbumMonitored(e, album)}
-              title={isLocked ? 'Monitoring is locked' : (album.is_monitored ? "Unmonitor" : "Monitor")}
-              disabled={isLocked} />
-          </div>
+          <LibraryRowActions
+            actions={[
+              {
+                key: "download",
+                label: "Download album",
+                icon: <ArrowDownload24Regular />,
+                onClick: (event) => handleDownloadAlbumRow(event, album),
+              },
+              {
+                key: "monitor",
+                label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
+                icon: album.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                onClick: (event) => handleToggleAlbumMonitored(event, album),
+                disabled: isLocked,
+              },
+              {
+                key: "lock",
+                label: isLocked ? "Unlock" : "Lock",
+                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                onClick: (event) => handleToggleAlbumLock(event, album),
+              },
+            ]}
+          />
         );
       },
     },
-  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumMonitored]);
+  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumLock, handleToggleAlbumMonitored]);
 
   /** Column definitions for video datagrid — used in library Videos tab */
   const videoColumns = useMemo<DataGridColumn[]>(() => [
@@ -933,18 +1268,48 @@ const Library = () => {
     {
       key: "actions",
       header: "",
-      width: "60px",
+      width: "120px",
       align: "right",
-      render: (video: any) => (
-        <div className={dgCell.actions}>
-          <Button appearance="subtle" size="small"
-            icon={video.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />}
-            onClick={(e) => { e.stopPropagation(); toggleVideoMonitor(video.id, !video.is_monitored); }}
-            title={video.is_monitored ? "Unmonitor" : "Monitor"} />
-        </div>
-      ),
+      render: (video: any) => {
+        const isLocked = (video.monitor_locked ?? video.monitor_lock) ? true : false;
+        return (
+          <LibraryRowActions
+            actions={[
+              {
+                key: "download",
+                label: "Download video",
+                icon: <ArrowDownload24Regular />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  void addToQueue(tidalUrl("video", video.id), "video", video.id);
+                },
+                hidden: (video.is_downloaded ?? video.downloaded) ? true : false,
+              },
+              {
+                key: "monitor",
+                label: isLocked ? "Monitoring is locked" : (video.is_monitored ? "Unmonitor" : "Monitor"),
+                icon: video.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  toggleVideoMonitor(video.id, !video.is_monitored);
+                },
+                disabled: isLocked,
+              },
+              {
+                key: "lock",
+                label: isLocked ? "Unlock" : "Lock",
+                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  toggleVideoLock(video.id, !isLocked);
+                },
+              },
+            ]}
+          />
+        );
+      },
     },
-  ], [dgCell, styles.compactIcon, toggleVideoMonitor]);
+  ], [addToQueue, dgCell, styles.compactIcon, toggleVideoLock, toggleVideoMonitor]);
 
   // Empty state - only show when not loading and truly no artists exist
   if (!loading && artists.length === 0 && stats?.artists?.total === 0) {
@@ -970,9 +1335,19 @@ const Library = () => {
   }
 
   // Helper to render loading state in content area
-  const renderLoadingContent = () => (
-    <LoadingState className={styles.loadMoreSpinner} label="Loading..." />
-  );
+  const renderLoadingContent = () => {
+    switch (selectedTab) {
+      case "tracks":
+        return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
+      case "videos":
+        return <CardGridSkeleton cards={10} thumbnailAspect="videoWide" minCardWidth={240} />;
+      case "albums":
+        return <CardGridSkeleton cards={12} minCardWidth={172} />;
+      case "artists":
+      default:
+        return <CardGridSkeleton cards={12} minCardWidth={172} />;
+    }
+  };
 
   const renderNoResultsContent = (mediaLabel: "artists" | "albums" | "tracks" | "videos") => (
     <EmptyState
@@ -1041,25 +1416,234 @@ const Library = () => {
     </Menu>
   );
 
+  const renderSelectionBar = () => {
+    if (viewMode !== "list") {
+      return null;
+    }
+
+    if (selectedTab === "artists") {
+      return (
+        <LibrarySelectionBar
+          selectedCount={artistSelection.selectedCount}
+          allVisibleSelected={artistSelection.allVisibleSelected}
+          someVisibleSelected={artistSelection.someVisibleSelected}
+          onSelectAllVisible={artistSelection.selectAllVisible}
+          onClearSelection={artistSelection.clearSelection}
+          actions={[
+            {
+              key: "scan",
+              label: "Refresh & scan",
+              icon: <ArrowSync24Regular />,
+              onClick: queueSelectedArtistScan,
+              disabled: artistSelection.selectedCount === 0,
+            },
+            {
+              key: "curate",
+              label: "Search missing",
+              icon: <ArrowSortDownLines24Regular />,
+              onClick: queueSelectedArtistCurate,
+              disabled: artistSelection.selectedCount === 0,
+            },
+            {
+              key: "download",
+              label: "Download monitored",
+              icon: <ArrowDownload24Regular />,
+              onClick: queueSelectedArtistDownload,
+              disabled: artistSelection.selectedCount === 0,
+            },
+            {
+              key: "monitor",
+              label: "Monitor",
+              icon: <Eye24Regular />,
+              onClick: () => void setSelectedArtistMonitoring(true),
+              disabled: artistSelection.selectedCount === 0,
+            },
+            {
+              key: "unmonitor",
+              label: "Unmonitor",
+              icon: <EyeOff24Regular />,
+              onClick: () => void setSelectedArtistMonitoring(false),
+              disabled: artistSelection.selectedCount === 0,
+            },
+          ]}
+        />
+      );
+    }
+
+    if (selectedTab === "albums") {
+      return (
+        <LibrarySelectionBar
+          selectedCount={albumSelection.selectedCount}
+          allVisibleSelected={albumSelection.allVisibleSelected}
+          someVisibleSelected={albumSelection.someVisibleSelected}
+          onSelectAllVisible={albumSelection.selectAllVisible}
+          onClearSelection={albumSelection.clearSelection}
+          actions={[
+            {
+              key: "download",
+              label: "Download selected",
+              icon: <ArrowDownload24Regular />,
+              onClick: queueSelectedAlbumDownload,
+              disabled: albumSelection.selectedCount === 0,
+            },
+            {
+              key: "monitor",
+              label: "Monitor",
+              icon: <Eye24Regular />,
+              onClick: () => void setSelectedAlbumMonitoring(true),
+              disabled: albumSelection.selectedCount === 0,
+            },
+            {
+              key: "unmonitor",
+              label: "Unmonitor",
+              icon: <EyeOff24Regular />,
+              onClick: () => void setSelectedAlbumMonitoring(false),
+              disabled: albumSelection.selectedCount === 0,
+            },
+            {
+              key: "lock",
+              label: "Lock",
+              icon: <LockClosed24Regular />,
+              onClick: () => void setSelectedAlbumLockState(true),
+              disabled: albumSelection.selectedCount === 0,
+            },
+            {
+              key: "unlock",
+              label: "Unlock",
+              icon: <LockOpen24Regular />,
+              onClick: () => void setSelectedAlbumLockState(false),
+              disabled: albumSelection.selectedCount === 0,
+            },
+          ]}
+        />
+      );
+    }
+
+    if (selectedTab === "tracks") {
+      return (
+        <LibrarySelectionBar
+          selectedCount={trackSelection.selectedCount}
+          allVisibleSelected={trackSelection.allVisibleSelected}
+          someVisibleSelected={trackSelection.someVisibleSelected}
+          onSelectAllVisible={trackSelection.selectAllVisible}
+          onClearSelection={trackSelection.clearSelection}
+          actions={[
+            {
+              key: "download",
+              label: "Download selected",
+              icon: <ArrowDownload24Regular />,
+              onClick: queueSelectedTrackDownload,
+              disabled: trackSelection.selectedCount === 0,
+            },
+            {
+              key: "monitor",
+              label: "Monitor",
+              icon: <Eye24Regular />,
+              onClick: () => void setSelectedTrackMonitoring(true),
+              disabled: trackSelection.selectedCount === 0,
+            },
+            {
+              key: "unmonitor",
+              label: "Unmonitor",
+              icon: <EyeOff24Regular />,
+              onClick: () => void setSelectedTrackMonitoring(false),
+              disabled: trackSelection.selectedCount === 0,
+            },
+            {
+              key: "lock",
+              label: "Lock",
+              icon: <LockClosed24Regular />,
+              onClick: () => void setSelectedTrackLockState(true),
+              disabled: trackSelection.selectedCount === 0,
+            },
+            {
+              key: "unlock",
+              label: "Unlock",
+              icon: <LockOpen24Regular />,
+              onClick: () => void setSelectedTrackLockState(false),
+              disabled: trackSelection.selectedCount === 0,
+            },
+          ]}
+        />
+      );
+    }
+
+    if (selectedTab === "videos") {
+      return (
+        <LibrarySelectionBar
+          selectedCount={videoSelection.selectedCount}
+          allVisibleSelected={videoSelection.allVisibleSelected}
+          someVisibleSelected={videoSelection.someVisibleSelected}
+          onSelectAllVisible={videoSelection.selectAllVisible}
+          onClearSelection={videoSelection.clearSelection}
+          actions={[
+            {
+              key: "download",
+              label: "Download selected",
+              icon: <ArrowDownload24Regular />,
+              onClick: queueSelectedVideoDownload,
+              disabled: videoSelection.selectedCount === 0,
+            },
+            {
+              key: "monitor",
+              label: "Monitor",
+              icon: <Eye24Regular />,
+              onClick: () => void setSelectedVideoMonitoring(true),
+              disabled: videoSelection.selectedCount === 0,
+            },
+            {
+              key: "unmonitor",
+              label: "Unmonitor",
+              icon: <EyeOff24Regular />,
+              onClick: () => void setSelectedVideoMonitoring(false),
+              disabled: videoSelection.selectedCount === 0,
+            },
+            {
+              key: "lock",
+              label: "Lock",
+              icon: <LockClosed24Regular />,
+              onClick: () => void setSelectedVideoLockState(true),
+              disabled: videoSelection.selectedCount === 0,
+            },
+            {
+              key: "unlock",
+              label: "Unlock",
+              icon: <LockOpen24Regular />,
+              onClick: () => void setSelectedVideoLockState(false),
+              disabled: videoSelection.selectedCount === 0,
+            },
+          ]}
+        />
+      );
+    }
+
+    return null;
+  };
+
   const renderPane = ({
     scrollRef,
     sentinelRef,
     isFetching,
     children,
+    topContent,
   }: {
     scrollRef: React.RefObject<HTMLDivElement | null>;
     sentinelRef: React.RefObject<HTMLDivElement | null>;
     isFetching: boolean;
     children: React.ReactNode;
+    topContent?: React.ReactNode;
   }) => (
     <div className={styles.tabPanel}>
+      {topContent ? <div>{topContent}</div> : null}
       <div ref={scrollRef} className={mergeClasses(styles.tabScroller, styles.contentPadding)}>
         {children}
         <div ref={sentinelRef} className={styles.sentinel} />
-        {isFetching && <div className={styles.fetchMoreRow}><Spinner size="small" /></div>}
+        {isFetching ? <div className={styles.fetchMoreRow}><Text size={200}>Loading more...</Text></div> : null}
       </div>
     </div>
   );
+
+  const canToggleView = selectedTab !== "tracks";
 
   return (
     <div className={styles.container}>
@@ -1117,18 +1701,20 @@ const Library = () => {
               />
 
               {/* View Mode Toggle */}
-              <Button
-                appearance="subtle"
-                icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                className={styles.menuButtonIconOnly}
-                title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-              >
-                <span className={styles.mobileHiddenLabel}>
-                  {viewMode === 'grid' ? 'Grid' : 'List'}
-                </span>
-              </Button>
+              {canToggleView ? (
+                <Button
+                  appearance="subtle"
+                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
+                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  className={styles.menuButtonIconOnly}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                >
+                  <span className={styles.mobileHiddenLabel}>
+                    {viewMode === 'grid' ? 'Grid' : 'List'}
+                  </span>
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -1154,18 +1740,20 @@ const Library = () => {
               />
 
               {/* View Mode Toggle */}
-              <Button
-                appearance="subtle"
-                icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                className={styles.menuButtonIconOnly}
-                title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-              >
-                <span className={styles.mobileHiddenLabel}>
-                  {viewMode === 'grid' ? 'Grid' : 'List'}
-                </span>
-              </Button>
+              {canToggleView ? (
+                <Button
+                  appearance="subtle"
+                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
+                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  className={styles.menuButtonIconOnly}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                >
+                  <span className={styles.mobileHiddenLabel}>
+                    {viewMode === 'grid' ? 'Grid' : 'List'}
+                  </span>
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1181,13 +1769,19 @@ const Library = () => {
 
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
-            {loading ? renderLoadingContent() : filteredArtists.length === 0 ? (
+            {loading ? renderPane({
+              scrollRef: artistScrollRef,
+              sentinelRef: artistSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredArtists.length === 0 ? (
               renderNoResultsContent("artists")
             ) : (
               renderPane({
                 scrollRef: artistScrollRef,
                 sentinelRef: artistSentinelRef,
                 isFetching: isFetchingMore.artists,
+                topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
                     {filteredArtists.map((artist) => renderArtistCard(artist))}
@@ -1198,6 +1792,10 @@ const Library = () => {
                     items={filteredArtists}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/artist/${a.id}`)}
+                    selection={viewMode === 'list' ? {
+                      ...artistSelection.selection,
+                      getSelectionLabel: (artist: any) => artist.name ? `Select ${artist.name}` : "Select artist",
+                    } : undefined}
                   />
                 ),
               })
@@ -1207,13 +1805,19 @@ const Library = () => {
 
         {selectedTab === "albums" && (
           <div className={styles.virtuosoContainer}>
-            {loading ? renderLoadingContent() : filteredAlbums.length === 0 ? (
+            {loading ? renderPane({
+              scrollRef: albumScrollRef,
+              sentinelRef: albumSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredAlbums.length === 0 ? (
               renderNoResultsContent("albums")
             ) : (
               renderPane({
                 scrollRef: albumScrollRef,
                 sentinelRef: albumSentinelRef,
                 isFetching: isFetchingMore.albums,
+                topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
                     {filteredAlbums.map((album) => renderAlbumCard(album))}
@@ -1224,6 +1828,10 @@ const Library = () => {
                     items={filteredAlbums}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/album/${a.id}`)}
+                    selection={viewMode === 'list' ? {
+                      ...albumSelection.selection,
+                      getSelectionLabel: (album: any) => album.title ? `Select ${album.title}` : "Select album",
+                    } : undefined}
                   />
                 ),
               })
@@ -1233,14 +1841,26 @@ const Library = () => {
 
         {selectedTab === "tracks" && (
           <div className={styles.virtuosoContainer}>
-            {tracksLoading ? renderLoadingContent() : filteredTracks.length === 0 ? (
+            {tracksLoading ? renderPane({
+              scrollRef: trackScrollRef,
+              sentinelRef: trackSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredTracks.length === 0 ? (
               renderNoResultsContent("tracks")
             ) : (
               renderPane({
                 scrollRef: trackScrollRef,
                 sentinelRef: trackSentinelRef,
                 isFetching: isFetchingMore.tracks,
-                children: <LibraryTrackList tracks={filteredTracks} />,
+                topContent: renderSelectionBar(),
+                children: <LibraryTrackList
+                  tracks={filteredTracks}
+                  selection={viewMode === 'list' ? {
+                    ...trackSelection.selection,
+                    getSelectionLabel: (track: any) => track.title ? `Select ${track.title}` : "Select track",
+                  } : undefined}
+                />,
               })
             )}
           </div>
@@ -1248,18 +1868,25 @@ const Library = () => {
 
         {selectedTab === "videos" && (
           <div className={styles.virtuosoContainer}>
-            {videosLoading ? renderLoadingContent() : filteredVideos.length === 0 ? (
+            {videosLoading ? renderPane({
+              scrollRef: videoScrollRef,
+              sentinelRef: videoSentinelRef,
+              isFetching: false,
+              children: renderLoadingContent(),
+            }) : filteredVideos.length === 0 ? (
               renderNoResultsContent("videos")
             ) : (
               renderPane({
                 scrollRef: videoScrollRef,
                 sentinelRef: videoSentinelRef,
                 isFetching: isFetchingMore.videos,
+                topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <VideoGrid
                     videos={filteredVideos}
                     loading={videosLoading}
                     onToggleMonitor={(video) => toggleVideoMonitor(video.id, !video.is_monitored)}
+                    onDownload={(video) => void addToQueue(tidalUrl("video", video.id), "video", video.id)}
                     onOpenVideo={(video) => navigate(`/video/${video.id}`)}
                   />
                 ) : (
@@ -1268,6 +1895,10 @@ const Library = () => {
                     items={filteredVideos}
                     getRowKey={(v: any) => v.id}
                     onRowClick={(v: any) => navigate(`/video/${v.id}`)}
+                    selection={viewMode === 'list' ? {
+                      ...videoSelection.selection,
+                      getSelectionLabel: (video: any) => video.title ? `Select ${video.title}` : "Select video",
+                    } : undefined}
                   />
                 ),
               })
@@ -1280,5 +1911,8 @@ const Library = () => {
 };
 
 export default Library;
+
+
+
 
 

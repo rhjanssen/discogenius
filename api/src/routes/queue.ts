@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { NON_DOWNLOAD_JOB_TYPES, TaskQueueService, type AnyJobPayload, type JobStatus, JobType } from "../services/queue.js";
 import { RedundancyService } from "../services/redundancy.js";
+import { ACTIVITY_FILTERS, getActivityPage } from "../services/command-history.js";
+import { getCommandTypesForQueueCategory, type CommandQueueCategory } from "../services/command-registry.js";
+import { parseActivityFilters, parseListPagination } from "../utils/activity-query.js";
 import {
   getObjectBody,
   getOptionalIdentifier,
@@ -11,32 +14,49 @@ import {
 
 const router = Router();
 const allowedJobTypes = new Set<string>(NON_DOWNLOAD_JOB_TYPES);
-const taskStatuses: readonly JobStatus[] = ["pending", "processing", "completed", "failed", "cancelled"];
+const defaultTaskStatuses: readonly JobStatus[] = ["pending", "processing", "completed", "failed", "cancelled"];
+const taskCategories: readonly CommandQueueCategory[] = ["scans", "other"];
+
+function normalizeStatusFilterValue(status: string): string {
+  return status === "running" ? "processing" : status;
+}
 
 // Get task queue items
 router.get("/", (req, res) => {
-  const requestedStatus = req.query.status as string | undefined;
-  const requestedType = req.query.type as string | undefined;
-  const limit = parseInt(req.query.limit as string) || 50;
-  const offset = parseInt(req.query.offset as string) || 0;
-  const types: readonly JobType[] = requestedType && allowedJobTypes.has(requestedType)
-    ? [requestedType as JobType]
-    : NON_DOWNLOAD_JOB_TYPES;
-  const statuses: readonly JobStatus[] = requestedStatus && taskStatuses.includes(requestedStatus as JobStatus)
-    ? [requestedStatus as JobStatus]
-    : taskStatuses;
+  const { limit, offset } = parseListPagination(req.query as Record<string, unknown>);
 
-  const items = TaskQueueService.listJobsByTypesAndStatuses(types, statuses, limit, offset, {
-    orderBy: statuses.length === 1 && statuses[0] === "pending" ? "execution" : "created_desc",
+  const filtersResult = parseActivityFilters({
+    query: req.query as Record<string, unknown>,
+    defaultStatuses: defaultTaskStatuses,
+    defaultCategories: taskCategories,
+    allowedStatuses: ACTIVITY_FILTERS.statuses,
+    allowedCategories: taskCategories,
+    unsupportedLabel: "task",
+    normalizeStatus: normalizeStatusFilterValue,
+    getSupportedTypes: (categories) => categories.flatMap((category) => getCommandTypesForQueueCategory(category)),
+    isTypeAllowed: (type) => allowedJobTypes.has(type),
   });
-  const total = TaskQueueService.countJobsByTypesAndStatuses(types, statuses);
 
-  res.json({
-    items,
-    total,
+  if ("error" in filtersResult) {
+    return res.status(400).json(filtersResult.error);
+  }
+
+  const { statuses, categories, types } = filtersResult.value;
+
+  const page = getActivityPage({
     limit,
     offset,
-    hasMore: offset + items.length < total,
+    statuses: statuses as Array<(typeof ACTIVITY_FILTERS.statuses)[number]>,
+    categories,
+    types,
+  });
+
+  return res.json({
+    items: page.items,
+    total: page.total,
+    limit: page.limit,
+    offset: page.offset,
+    hasMore: page.hasMore,
   });
 });
 

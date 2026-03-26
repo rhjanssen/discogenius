@@ -4,6 +4,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Increment 1 control-plane split finalized: `/api/activity` is now the canonical paginated/filterable activity feed, while `/api/status` is summary-only.
+- Removed `/api/status/tasks`; `/api/queue` remains the live queue authority (including reorder invariants).
+- Dashboard activity/status refresh now follows stale-data non-blocking behavior, including explicit activity empty/error semantics.
+
 ## [1.1.0] - 2026-03-22
 
 ### Added

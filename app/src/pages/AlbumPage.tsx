@@ -27,8 +27,8 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -41,6 +41,7 @@ import {
   type AlbumVersion,
 } from "@/hooks/useAlbumPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
+import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { getAlbumCover } from "@/utils/tidalImages";
 import { useToast } from "@/hooks/useToast";
 import { parseWimpLinks } from "@/utils/wimpLinks";
@@ -381,10 +382,10 @@ const AlbumPage = () => {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
+  const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
   const queueCtx = useContext(QueueContext);
   const progressMap = queueCtx?.progress;
-  const [downloadingTracks, setDownloadingTracks] = useState<Set<string>>(new Set());
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
@@ -479,42 +480,11 @@ const AlbumPage = () => {
     }
   };
 
-  const handleDownloadTrack = async (track: AlbumTrack, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (track.downloaded) return;
-
-
-    setDownloadingTracks(prev => new Set(prev).add(track.id));
-    try {
-      const fullTitle = track.version ? `${track.title} (${track.version})` : track.title;
-      const url = tidalUrl('track', track.id);
-      await api.addToQueue(url, 'track', track.id);
-      toast({
-        title: "Track added to queue",
-        description: `${fullTitle} will be downloaded shortly`,
-      });
-      dispatchActivityRefresh();
-    } catch (error) {
-      console.error("Error adding track to queue:", error);
-      toast({
-        title: "Failed to add to queue",
-        description: "Please try again",
-        variant: "destructive",
-      });
-    } finally {
-      setDownloadingTracks(prev => {
-        const next = new Set(prev);
-        next.delete(track.id);
-        return next;
-      });
-    }
-  };
-
   /** Open track info dialog */
   if (loading) {
     return (
       <div className={styles.stateShell}>
-        <LoadingState size="huge" label="Loading album details..." minHeight="320px" />
+        <MediaDetailSkeleton variant="album" />
       </div>
     );
   }
@@ -710,7 +680,7 @@ const AlbumPage = () => {
             showVolumeHeaders
             contextArtistName={album.artist_name}
             contextAlbumTitle={album.title}
-            onDownloadTrack={(track, event) => handleDownloadTrack(track as AlbumTrack, event)}
+            onDownloadTrack={handleDownloadTrack}
             onToggleMonitor={(track) => {
               toggleMonitor({
                 id: track.id,

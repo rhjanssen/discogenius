@@ -22,6 +22,7 @@ import {
     ArrowDownload24Regular,
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
+import { CardGridSkeleton, ListRowsSkeleton } from "@/components/ui/LoadingSkeletons";
 import { getTidalImage } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { api } from "@/services/api";
@@ -131,7 +132,7 @@ const useStyles = makeStyles({
         flexDirection: "column",
         overflow: "hidden",
         "@media (max-width: 639px)": {
-            maxHeight: "calc(100dvh - 96px)",
+            maxHeight: "calc(100dvh - 164px)",
         },
     },
     tabContainer: {
@@ -454,7 +455,9 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
             const viewportHeight = visualViewport?.height ?? window.innerHeight;
             const viewportTop = visualViewport?.offsetTop ?? 0;
             const availableBottom = viewportTop + viewportHeight;
-            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - 12));
+            const isMobileViewport = window.matchMedia("(max-width: 639px)").matches;
+            const bottomChromeOffset = isMobileViewport ? 84 : 12;
+            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - bottomChromeOffset));
             setResultsMaxHeight(nextMaxHeight);
         };
 
@@ -682,14 +685,24 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
     const renderContent = () => {
         const hasResults = searchResults.artists.length > 0 || searchResults.albums.length > 0 || searchResults.tracks.length > 0 || searchResults.videos.length > 0;
 
+        const renderLoadingResults = () => {
+            switch (activeTab) {
+                case 'artists':
+                    return <CardGridSkeleton cards={6} />;
+                case 'albums':
+                    return <CardGridSkeleton cards={6} />;
+                case 'tracks':
+                case 'videos':
+                case 'top':
+                default:
+                    return <ListRowsSkeleton rows={5} />;
+            }
+        };
+
         // When searching, keep showing the last results and just show a spinner indicator.
         // This makes the UI feel responsive even if remote (TIDAL) search is slow.
         if (!hasResults && isSearching) {
-            return (
-                <div className={styles.noResults}>
-                    <Spinner size="small" label={searchActivityLabel} />
-                </div>
-            );
+            return renderLoadingResults();
         }
 
         if (!hasResults) return renderEmpty();

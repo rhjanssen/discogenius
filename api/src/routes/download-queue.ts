@@ -431,14 +431,43 @@ router.get('/queue', async (req: Request, res: Response) => {
 router.post('/queue/reorder', async (req: Request, res: Response) => {
     try {
         const rawJobIds: unknown[] = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
-        const jobIds = rawJobIds
-            .map((value: unknown) => parseInt(String(value), 10))
-            .filter((value: number) => Number.isInteger(value) && value > 0);
+        const parsedJobIds = rawJobIds.map((value: unknown) => parseInt(String(value), 10));
+
+        if (parsedJobIds.some((value) => !Number.isInteger(value) || value <= 0)) {
+            return res.status(400).json({
+                error: 'Invalid reorder set',
+                message: 'jobIds must contain only positive integer ids',
+            });
+        }
+
+        const distinctJobIds = Array.from(new Set(parsedJobIds));
+        if (distinctJobIds.length !== parsedJobIds.length) {
+            return res.status(400).json({
+                error: 'Invalid reorder set',
+                message: 'jobIds must not contain duplicate ids',
+            });
+        }
+
+        const jobIds = distinctJobIds;
         const beforeJobId = req.body?.beforeJobId == null ? undefined : parseInt(String(req.body.beforeJobId), 10);
         const afterJobId = req.body?.afterJobId == null ? undefined : parseInt(String(req.body.afterJobId), 10);
 
         if (jobIds.length === 0) {
             return res.status(400).json({ error: 'Missing queue items', message: 'jobIds must contain one or more pending queue item ids' });
+        }
+
+        if (beforeJobId != null && (!Number.isInteger(beforeJobId) || beforeJobId <= 0)) {
+            return res.status(400).json({
+                error: 'Invalid reorder request',
+                message: 'beforeJobId must be a positive integer when provided',
+            });
+        }
+
+        if (afterJobId != null && (!Number.isInteger(afterJobId) || afterJobId <= 0)) {
+            return res.status(400).json({
+                error: 'Invalid reorder request',
+                message: 'afterJobId must be a positive integer when provided',
+            });
         }
 
         if ((beforeJobId == null && afterJobId == null) || (beforeJobId != null && afterJobId != null)) {

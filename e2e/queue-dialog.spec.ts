@@ -5,10 +5,9 @@ import { baseURL, stubShellApis } from './utils/mockShell';
 type DashboardStubOptions = {
   stats?: Record<string, unknown>;
   status?: Record<string, unknown>;
-  pendingTasks?: unknown[];
+  activityItems?: unknown[];
   queue?: Record<string, unknown>;
   historyItems?: unknown[];
-  statusHistory?: Record<string, unknown>;
   unmapped?: unknown[];
   retryJobId?: number;
   retryResponse?: Record<string, unknown>;
@@ -22,21 +21,26 @@ const EMPTY_STATS = {
 };
 
 async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
+  const activityItems = options?.activityItems || [];
+
   await stubShellApis(page, {
     libraryStats: {
       ...EMPTY_STATS,
       ...(options?.stats || {}),
     },
     statusOverview: {
-      activeJobs: [],
-      jobHistory: [],
+      activity: {
+        pending: activityItems.filter((item: any) => item?.status === 'pending').length,
+        processing: activityItems.filter((item: any) => item?.status === 'running' || item?.status === 'processing').length,
+        history: activityItems.filter((item: any) => ['completed', 'failed', 'cancelled'].includes(String(item?.status || ''))).length,
+      },
       taskQueueStats: [],
       commandStats: {},
       ...(options?.status || {}),
     },
-    pendingTasksResponse: {
-      items: options?.pendingTasks || [],
-      total: Array.isArray(options?.pendingTasks) ? options.pendingTasks.length : 0,
+    activityResponse: {
+      items: activityItems,
+      total: activityItems.length,
       limit: 100,
       offset: 0,
       hasMore: false,
@@ -53,10 +57,6 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
       running: false,
       checking: false,
     },
-  });
-
-  await page.route('**/api/status/history?*', async (route) => {
-    await route.fulfill({ json: options?.statusHistory || { jobHistory: [] } });
   });
 
   await page.route('**/api/history?*', async (route) => {
@@ -95,52 +95,46 @@ function createActivityFixture() {
       videos: { total: 0, monitored: 0, downloaded: 0 },
     },
     status: {
-      activeJobs: [
-        {
-          id: 1,
-          type: 'ImportDownload',
-          status: 'running',
-          description: 'Album: Around the World by Daft Punk',
-          startTime: now,
-          payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
-        },
-        {
-          id: 2,
-          type: 'RefreshArtist',
-          status: 'running',
-          description: 'Daft Punk',
-          startTime: now,
-        },
-        {
-          id: 3,
-          type: 'MissingAlbumSearch',
-          status: 'running',
-          description: 'Daft Punk',
-          startTime: now,
-        },
+      activity: {
+        pending: 1,
+        processing: 3,
+        history: 2,
+      },
+      taskQueueStats: [
+        { type: 'ImportDownload', status: 'processing', count: 1 },
+        { type: 'RefreshArtist', status: 'processing', count: 1 },
+        { type: 'MissingAlbumSearch', status: 'running', count: 1 },
+        { type: 'DownloadAlbum', status: 'pending', count: 1 },
       ],
-      jobHistory: [
-        {
-          id: 4,
-          type: 'DownloadAlbum',
-          status: 'completed',
-          description: 'Downloading album: Around the World by Daft Punk',
-          startTime: now - 30_000,
-          endTime: now - 10_000,
-          payload: { title: 'Around the World', artist: 'Daft Punk' },
-        },
-        {
-          id: 5,
-          type: 'ImportDownload',
-          status: 'completed',
-          description: 'Album: Around the World by Daft Punk',
-          startTime: now - 20_000,
-          endTime: now - 5_000,
-          payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
-        },
-      ],
+      commandStats: {
+        downloads: { pending: 1, processing: 1, failed: 0 },
+        scans: { pending: 0, processing: 1, failed: 0 },
+        other: { pending: 0, processing: 1, failed: 0 },
+      },
     },
-    pendingTasks: [
+    activityItems: [
+      {
+        id: 1,
+        type: 'ImportDownload',
+        status: 'running',
+        description: 'Album: Around the World by Daft Punk',
+        startTime: now,
+        payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
+      },
+      {
+        id: 2,
+        type: 'RefreshArtist',
+        status: 'processing',
+        description: 'Daft Punk',
+        startTime: now,
+      },
+      {
+        id: 3,
+        type: 'MissingAlbumSearch',
+        status: 'running',
+        description: 'Daft Punk',
+        startTime: now,
+      },
       {
         id: 6,
         type: 'DownloadAlbum',
@@ -149,6 +143,24 @@ function createActivityFixture() {
         queuePosition: 1,
         startTime: now - 15_000,
         payload: { title: 'Discovery', artist: 'Daft Punk', reason: 'monitoring' },
+      },
+      {
+        id: 4,
+        type: 'DownloadAlbum',
+        status: 'completed',
+        description: 'Downloading album: Around the World by Daft Punk',
+        startTime: now - 30_000,
+        endTime: now - 10_000,
+        payload: { title: 'Around the World', artist: 'Daft Punk' },
+      },
+      {
+        id: 5,
+        type: 'ImportDownload',
+        status: 'completed',
+        description: 'Album: Around the World by Daft Punk',
+        startTime: now - 20_000,
+        endTime: now - 5_000,
+        payload: { type: 'album', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
       },
     ],
     historyItems: [
@@ -195,24 +207,84 @@ function createFailedImportFixture() {
       videos: { total: 0, monitored: 0, downloaded: 0 },
     },
     status: {
-      jobHistory: [
-        {
-          id: 77,
-          type: 'ImportDownload',
-          status: 'failed',
-          description: 'Album: Around the World by Daft Punk',
-          startTime: now - 40_000,
-          endTime: now - 15_000,
-          error: 'Failed to move files into the library',
-          payload: {
-            type: 'album',
-            originalJobId: 12,
-            resolved: { title: 'Around the World', artist: 'Daft Punk' },
-          },
-        },
-      ],
+      activity: {
+        pending: 0,
+        processing: 0,
+        history: 1,
+      },
+      taskQueueStats: [],
+      commandStats: { downloads: { failed: 1 } },
     },
+    activityItems: [
+      {
+        id: 77,
+        type: 'ImportDownload',
+        status: 'failed',
+        description: 'Album: Around the World by Daft Punk',
+        startTime: now - 40_000,
+        endTime: now - 15_000,
+        error: 'Failed to move files into the library',
+        payload: {
+          type: 'album',
+          originalJobId: 12,
+          resolved: { title: 'Around the World', artist: 'Daft Punk' },
+        },
+      },
+    ],
     retryJobId: 77,
+  };
+}
+
+function createFailedImportSuppressedFixture() {
+  const now = Date.now();
+  return {
+    stats: {
+      artists: { total: 1, monitored: 1, downloaded: 0 },
+      albums: { total: 1, monitored: 1, downloaded: 0 },
+      tracks: { total: 10, monitored: 10, downloaded: 0 },
+      videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    status: {
+      activity: {
+        pending: 1,
+        processing: 0,
+        history: 1,
+      },
+      taskQueueStats: [],
+      commandStats: { downloads: { pending: 1, failed: 1 } },
+    },
+    activityHistoryItems: [
+      {
+        id: 177,
+        type: 'ImportDownload',
+        status: 'failed',
+        description: 'Album: Around the World by Daft Punk',
+        startTime: now - 90_000,
+        endTime: now - 60_000,
+        error: 'Failed to move files into the library',
+        payload: {
+          type: 'album',
+          tidalId: 'tidal-album-123',
+          originalJobId: 120,
+          resolved: { title: 'Around the World', artist: 'Daft Punk' },
+        },
+      },
+    ],
+    inFlightItems: [
+      {
+        id: 178,
+        type: 'DownloadAlbum',
+        status: 'pending',
+        description: 'Queued album: Around the World by Daft Punk',
+        startTime: now - 5_000,
+        payload: {
+          type: 'album',
+          tidalId: 'tidal-album-123',
+          title: 'Around the World',
+          artist: 'Daft Punk',
+        },
+      },
+    ],
   };
 }
 
@@ -224,6 +296,15 @@ function createFailedAlbumQueueFixture() {
       albums: { total: 1, monitored: 1, downloaded: 0 },
       tracks: { total: 10, monitored: 10, downloaded: 0 },
       videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    status: {
+      activity: {
+        pending: 0,
+        processing: 0,
+        history: 0,
+      },
+      taskQueueStats: [],
+      commandStats: {},
     },
     queue: {
       items: [
@@ -248,6 +329,21 @@ function createFailedAlbumQueueFixture() {
       hasMore: false,
     },
   };
+}
+
+async function stubDashboardApisWithActivity(page: Page) {
+  const fixture = createActivityFixture();
+  await stubDashboardApis(page, fixture);
+}
+
+async function stubDashboardApisWithFailedImportActivity(page: Page) {
+  const fixture = createFailedImportFixture();
+  await stubDashboardApis(page, fixture);
+}
+
+async function stubDashboardApisWithFailedAlbumQueue(page: Page) {
+  const fixture = createFailedAlbumQueueFixture();
+  await stubDashboardApis(page, fixture);
 }
 
 test.describe('Dashboard queue and activity tabs', () => {
@@ -315,10 +411,8 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
     await expect(page.getByText('Import Album').first()).toBeVisible();
-    await expect(page.getByText('Refresh Artist')).toBeVisible();
-    await expect(page.getByText('Missing Album Search')).toBeVisible();
+    await expect(page.getByText('Download Album').first()).toBeVisible();
     await expect(page.getByText('Around the World by Daft Punk').first()).toBeVisible();
-    await expect(page.getByText('Daft Punk').first()).toBeVisible();
   });
 
   test('activity tab surfaces library audit context for imported and renamed files', async ({ page }) => {
@@ -328,30 +422,42 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
-    const auditSection = page.locator('section[aria-label="Library audit"]');
-    await expect(auditSection).toContainText('File imported');
-    await expect(auditSection).toContainText('Imported to …/Daft Punk/Around the World.flac');
-    await expect(auditSection).toContainText('File renamed');
-    await expect(auditSection).toContainText('…/Daft Punk/Old Name.flac → …/Daft Punk/Around the World.flac');
-    await expect(auditSection).toContainText('FLAC');
+    const eventsSection = page.locator('section[aria-label="Events"]');
+    await expect(eventsSection).toContainText('File imported');
+    await expect(eventsSection).toContainText('Imported to …/Daft Punk/Around the World.flac');
+    await expect(eventsSection).toContainText('File renamed');
+    await expect(eventsSection).toContainText('…/Daft Punk/Old Name.flac → …/Daft Punk/Around the World.flac');
+    await expect(eventsSection).toContainText('FLAC');
   });
 
-  test('activity tab keeps running, queued, and recent work in separate sections', async ({ page }) => {
+  test('tasks tab keeps only scheduled and queue sections while activity stays event-driven', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    await page.getByRole('tab', { name: /^Activity$/i }).click();
+    await page.getByRole('tab', { name: /^Tasks$/i }).click();
+    const queueSection = page.locator('section[aria-label="Queue"]');
 
-    await expect(page.getByLabel('Running')).toContainText('Import Album');
-    await expect(page.getByLabel('Pending tasks')).toContainText('Discovery by Daft Punk');
-    await expect(page.getByLabel('Recent')).toContainText('Download Album');
+    await expect(queueSection).toContainText('Import Album');
+    await expect(queueSection).toContainText('Download Album');
 
-    const sectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
-      elements.map((element) => element.getAttribute('aria-label'))
+    const taskSectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('aria-label')),
     );
 
-    expect(sectionLabels).toEqual(['Running', 'Pending tasks', 'Recent', 'Library audit']);
+    expect(taskSectionLabels).toEqual(['Scheduled tasks', 'Queue']);
+
+    await page.getByRole('tab', { name: /^Activity$/i }).click();
+
+    const eventsSection = page.locator('section[aria-label="Events"]');
+    await expect(eventsSection).toContainText('Download Album');
+    await expect(eventsSection).toContainText('File imported');
+
+    const sectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('aria-label')),
+    );
+
+    expect(sectionLabels).toEqual(['Events']);
   });
 
   test('failed import activity shows context, error, and retry action', async ({ page }) => {
@@ -361,10 +467,110 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
-    await expect(page.getByText('Import Album')).toBeVisible();
+    await expect(page.getByText('Import Album').first()).toBeVisible();
     await expect(page.getByText('Around the World by Daft Punk')).toBeVisible();
     await expect(page.getByText('Error: Failed to move files into the library')).toBeVisible();
     await expect(page.getByRole('button', { name: /Retry Job/i })).toBeVisible();
+  });
+
+  test('failed import activity hides retry when superseding in-flight activity exists', async ({ page }) => {
+    const fixture = createFailedImportSuppressedFixture();
+    await stubDashboardApis(page, {
+      stats: fixture.stats,
+      status: fixture.status,
+      activityItems: fixture.activityHistoryItems,
+    });
+
+    await page.route('**/api/activity**', async (route) => {
+      const url = new URL(route.request().url());
+      const statuses = (url.searchParams.get('statuses') || '').split(',').filter(Boolean);
+
+      const items = statuses.includes('completed') || statuses.includes('failed') || statuses.includes('cancelled')
+        ? fixture.activityHistoryItems
+        : fixture.inFlightItems;
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items,
+          total: items.length,
+          limit: 100,
+          offset: 0,
+          hasMore: false,
+        }),
+      });
+    });
+
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    await page.getByRole('tab', { name: /^Activity$/i }).click();
+
+    await expect(page.getByText('Import Album').first()).toBeVisible();
+    await expect(page.getByText('Error: Failed to move files into the library')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Retry Job/i })).toHaveCount(0);
+  });
+
+  test('failed import activity conservatively hides retry when in-flight feed is paged', async ({ page }) => {
+    const now = Date.now();
+    const historyItems = [
+      {
+        id: 277,
+        type: 'ImportDownload',
+        status: 'failed',
+        description: 'Album: Around the World by Daft Punk',
+        startTime: now - 90_000,
+        endTime: now - 60_000,
+        error: 'Failed to move files into the library',
+        payload: {
+          type: 'album',
+          tidalId: 'tidal-album-456',
+          originalJobId: 220,
+          resolved: { title: 'Around the World', artist: 'Daft Punk' },
+        },
+      },
+    ];
+
+    await stubDashboardApis(page, {
+      activityItems: historyItems,
+      status: {
+        activity: {
+          pending: 1,
+          processing: 0,
+          history: 1,
+        },
+        taskQueueStats: [],
+        commandStats: { downloads: { pending: 1, failed: 1 } },
+      },
+    });
+
+    await page.route('**/api/activity**', async (route) => {
+      const url = new URL(route.request().url());
+      const statuses = (url.searchParams.get('statuses') || '').split(',').filter(Boolean);
+      const isHistoryRequest = statuses.includes('completed') || statuses.includes('failed') || statuses.includes('cancelled');
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: isHistoryRequest ? historyItems : [],
+          total: isHistoryRequest ? historyItems.length : 200,
+          limit: 100,
+          offset: 0,
+          hasMore: !isHistoryRequest,
+        }),
+      });
+    });
+
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    await page.getByRole('tab', { name: /^Activity$/i }).click();
+
+    await expect(page.getByText('Import Album').first()).toBeVisible();
+    await expect(page.getByText('Error: Failed to move files into the library')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Retry Job/i })).toHaveCount(0);
   });
 
   test('failed album queue keeps track rows out of queued state', async ({ page }) => {

@@ -24,6 +24,7 @@ export type VideoPlaybackInfo = {
 
 const PLAYBACK_QUALITY_ORDER = ["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const;
 type PlaybackQuality = typeof PLAYBACK_QUALITY_ORDER[number];
+type PlaybackManifestType = PlaybackInfo["type"];
 
 function normalizePlaybackQuality(value: string | undefined | null): PlaybackQuality | null {
     const normalized = String(value ?? "").trim().toUpperCase();
@@ -40,6 +41,22 @@ export function buildPlaybackQualityOrder(preferredQuality?: string | null): str
 
     const preferredIndex = PLAYBACK_QUALITY_ORDER.indexOf(preferred);
     return PLAYBACK_QUALITY_ORDER.slice(preferredIndex);
+}
+
+export function buildBrowserPlaybackQualityOrder(preferredQuality?: string | null): string[] {
+    const preferred = normalizePlaybackQuality(preferredQuality);
+
+    if (preferred === "LOW") {
+        return ["LOW"];
+    }
+
+    if (preferred === "HIGH") {
+        return ["HIGH", "LOW"];
+    }
+
+    // Match Tidarr's browser-preview approach: prefer progressive stereo-safe playback
+    // instead of trying to force Atmos/Hi-Res manifests through the HTML audio element.
+    return ["LOSSLESS", "HIGH", "LOW"];
 }
 
 // ── BTS manifest parser ─────────────────────────────────────────────────────
@@ -127,6 +144,7 @@ async function fetchPlaybackInfo(
     quality: string,
     accessToken: string,
     countryCode: string,
+    supportedManifestTypes: PlaybackManifestType[] = ["bts", "dash"],
 ): Promise<PlaybackInfo | null> {
     const url =
         `${TIDAL_API_BASE}/tracks/${trackId}/playbackinfo` +
@@ -151,9 +169,11 @@ async function fetchPlaybackInfo(
 
     const decoded = Buffer.from(data.manifest, "base64").toString("utf8");
     const mime: string = data.manifestMimeType || "";
+    const allowBts = supportedManifestTypes.includes("bts");
+    const allowDash = supportedManifestTypes.includes("dash");
 
     // ── BTS manifest (direct CDN URL) ──
-    if (mime === "application/vnd.tidal.bts") {
+    if (mime === "application/vnd.tidal.bts" && allowBts) {
         const urls = parseBtsManifest(decoded);
         if (urls.length > 0) {
             console.log(`[Playback] BTS ${quality}: got ${urls.length} URL(s)`);
@@ -163,7 +183,7 @@ async function fetchPlaybackInfo(
     }
 
     // ── DASH manifest (segmented MP4) ──
-    if (mime === "application/dash+xml") {
+    if (mime === "application/dash+xml" && allowDash) {
         const dash = parseDashManifest(decoded);
         if (dash && dash.segments.length > 0) {
             console.log(`[Playback] DASH ${quality}: ${dash.segments.length} segments, type=${dash.contentType}`);
@@ -172,7 +192,7 @@ async function fetchPlaybackInfo(
         return null;
     }
 
-    console.warn(`[Playback] Unknown manifest type: ${mime}`);
+    console.warn(`[Playback] Unsupported manifest type for ${quality}: ${mime}`);
     return null;
 }
 
@@ -207,6 +227,34 @@ export async function getPlaybackInfo(trackId: string, preferredQuality?: string
         }
     } catch (err) {
         console.error("[Playback] Token refresh failed:", err);
+    }
+
+    return null;
+}
+
+export async function getBrowserPlaybackInfo(trackId: string, preferredQuality?: string): Promise<PlaybackInfo | null> {
+    let token = loadToken();
+    if (!token) return null;
+
+    const cc = getCountryCode();
+    const qualities = buildBrowserPlaybackQualityOrder(preferredQuality);
+
+    for (const q of qualities) {
+        const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, ["bts"]);
+        if (info) return info;
+    }
+
+    try {
+        await refreshTidalToken(true);
+        token = loadToken();
+        if (!token) return null;
+
+        for (const q of qualities) {
+            const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, ["bts"]);
+            if (info) return info;
+        }
+    } catch (err) {
+        console.error("[Playback] Browser preview token refresh failed:", err);
     }
 
     return null;

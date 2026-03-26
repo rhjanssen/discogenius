@@ -179,9 +179,14 @@ export interface RateLimitMetricsContract {
   rateLimitUntil?: string | null;
 }
 
+export interface ActivitySummaryContract {
+  pending: number;
+  processing: number;
+  history: number;
+}
+
 export interface StatusOverviewContract {
-  activeJobs: ActivityJobContract[];
-  jobHistory: ActivityJobContract[];
+  activity: ActivitySummaryContract;
   taskQueueStats: TaskQueueStatContract[];
   commandStats: CommandStatsContract;
   runningCommands?: RunningCommandContract[];
@@ -309,6 +314,15 @@ function parseRateLimitMetricsContract(value: unknown): RateLimitMetricsContract
   };
 }
 
+function parseActivitySummaryContract(value: unknown): ActivitySummaryContract {
+  const record = expectRecord(value, "activity");
+  return {
+    pending: expectNumber(record.pending, "activity.pending"),
+    processing: expectNumber(record.processing, "activity.processing"),
+    history: expectNumber(record.history, "activity.history"),
+  };
+}
+
 export function parseQueueListResponseContract(value: unknown): QueueListResponseContract {
   const record = expectRecord(value, "queue");
   return {
@@ -415,10 +429,7 @@ export function parseDownloadFailedEventContract(value: unknown): DownloadFailed
 export function parseStatusOverviewContract(value: unknown): StatusOverviewContract {
   const record = expectRecord(value, "statusOverview");
   return {
-    activeJobs: expectArray(record.activeJobs, "statusOverview.activeJobs", (item, index) =>
-      parseActivityJobContract(item, index, "statusOverview.activeJobs")),
-    jobHistory: expectArray(record.jobHistory, "statusOverview.jobHistory", (item, index) =>
-      parseActivityJobContract(item, index, "statusOverview.jobHistory")),
+    activity: parseActivitySummaryContract(record.activity),
     taskQueueStats: expectArray(record.taskQueueStats, "statusOverview.taskQueueStats", parseTaskQueueStatContract),
     commandStats: record.commandStats === undefined
       ? {}
