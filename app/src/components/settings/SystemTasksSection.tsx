@@ -1,16 +1,17 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Badge,
     Button,
+    Card,
+    Caption1,
     Input,
-    Spinner,
+    Skeleton,
+    SkeletonItem,
     Switch,
     Text,
-    Caption1,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
-import { ArrowSync24Regular } from "@fluentui/react-icons";
 import type { SystemTaskContract } from "@contracts/system-task";
 
 interface SystemTasksSectionProps {
@@ -18,11 +19,9 @@ interface SystemTasksSectionProps {
     loading: boolean;
     error: string | null;
     updatingTaskId: string | null;
-    runningTaskId: string | null;
     onRetry: () => void;
     onToggleEnabled: (task: SystemTaskContract, enabled: boolean) => Promise<void>;
     onUpdateInterval: (task: SystemTaskContract, intervalMinutes: number) => Promise<void>;
-    onRunNow: (task: SystemTaskContract) => Promise<void>;
 }
 
 const useStyles = makeStyles({
@@ -33,11 +32,55 @@ const useStyles = makeStyles({
     },
     loadingState: {
         display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalL,
+    },
+    loadingCard: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalM,
+        padding: tokens.spacingVerticalM,
+        borderRadius: tokens.borderRadiusLarge,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        backgroundColor: tokens.colorSubtleBackground,
+    },
+    loadingLine: {
+        height: "14px",
+        borderRadius: tokens.borderRadiusSmall,
+    },
+    loadingLineWide: {
+        width: "72%",
+    },
+    loadingLineMedium: {
+        width: "48%",
+    },
+    loadingLineShort: {
+        width: "28%",
+    },
+    loadingBadgeRow: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: tokens.spacingHorizontalXS,
+    },
+    loadingMetaGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gap: tokens.spacingHorizontalM,
+        ["@media (max-width: 768px)"]: {
+            gridTemplateColumns: "1fr",
+        },
+    },
+    loadingFooter: {
+        display: "flex",
+        justifyContent: "space-between",
         alignItems: "center",
-        justifyContent: "center",
-        gap: tokens.spacingHorizontalS,
-        minHeight: "128px",
-        padding: tokens.spacingVerticalXL,
+        gap: tokens.spacingHorizontalM,
+        flexWrap: "wrap",
+    },
+    loadingToggle: {
+        width: "44px",
+        height: "24px",
+        borderRadius: tokens.borderRadiusCircular,
     },
     group: {
         display: "flex",
@@ -168,6 +211,16 @@ const useStyles = makeStyles({
         border: `${tokens.strokeWidthThin} solid ${tokens.colorPaletteRedBorder1}`,
         backgroundColor: tokens.colorPaletteRedBackground1,
     },
+    titleLine: {
+        height: "20px",
+        width: "min(320px, 75%)",
+        borderRadius: tokens.borderRadiusSmall,
+    },
+    subtitleLine: {
+        height: "14px",
+        width: "min(420px, 92%)",
+        borderRadius: tokens.borderRadiusSmall,
+    },
 });
 
 function formatTimestamp(value: string | null): string {
@@ -226,21 +279,17 @@ function formatRiskLabel(riskLevel: SystemTaskContract["riskLevel"]): string {
 function SystemTaskCard({
     task,
     updatingTaskId,
-    runningTaskId,
     onToggleEnabled,
     onUpdateInterval,
-    onRunNow,
 }: {
     task: SystemTaskContract;
     updatingTaskId: string | null;
-    runningTaskId: string | null;
     onToggleEnabled: (task: SystemTaskContract, enabled: boolean) => Promise<void>;
     onUpdateInterval: (task: SystemTaskContract, intervalMinutes: number) => Promise<void>;
-    onRunNow: (task: SystemTaskContract) => Promise<void>;
 }) {
     const styles = useStyles();
     const isScheduled = task.kind === "scheduled";
-    const isBusy = updatingTaskId === task.id || runningTaskId === task.id;
+    const isBusy = updatingTaskId === task.id;
     const [intervalDraft, setIntervalDraft] = useState(task.intervalMinutes === null ? "" : String(task.intervalMinutes));
 
     useEffect(() => {
@@ -353,7 +402,7 @@ function SystemTaskCard({
                     ) : (
                         <div className={styles.toggleLabel}>
                             <Text weight="semibold">Manual task</Text>
-                            <Caption1 className={styles.mutedText}>This command only runs when triggered from the settings page.</Caption1>
+                            <Caption1 className={styles.mutedText}>Run-now controls live on Dashboard &gt; Tasks.</Caption1>
                         </div>
                     )}
                 </div>
@@ -368,45 +417,54 @@ function SystemTaskCard({
                             aria-label={`${task.name} enabled`}
                         />
                     ) : null}
-                    {task.canRunNow ? (
-                        <Button
-                            appearance="outline"
-                            icon={runningTaskId === task.id ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                            onClick={() => {
-                                void onRunNow(task);
-                            }}
-                            disabled={isBusy || task.active}
-                        >
-                            Run now
-                        </Button>
-                    ) : null}
                 </div>
             </div>
         </article>
     );
 }
 
-export function SystemTasksSection({
-    tasks,
-    loading,
-    error,
-    updatingTaskId,
-    runningTaskId,
-    onRetry,
-    onToggleEnabled,
-    onUpdateInterval,
-    onRunNow,
-}: SystemTasksSectionProps) {
+export function SystemTasksSection(props: SystemTasksSectionProps) {
     const styles = useStyles();
+    const {
+        tasks,
+        loading,
+        error,
+        updatingTaskId,
+        onRetry,
+        onToggleEnabled,
+        onUpdateInterval,
+    } = props;
     const scheduledTasks = tasks.filter((task) => task.kind === "scheduled");
-    const manualTasks = tasks.filter((task) => task.kind === "manual");
 
     return (
         <div className={styles.root}>
             {loading ? (
                 <div className={styles.loadingState}>
-                    <Spinner size="medium" />
-                    <Text>Loading system tasks…</Text>
+                    <Skeleton animation="wave">
+                        <SkeletonItem className={styles.titleLine} />
+                        <SkeletonItem className={styles.subtitleLine} />
+                        <div className={styles.list}>
+                            {Array.from({ length: 3 }, (_, index) => (
+                                <div key={index} className={styles.loadingCard}>
+                                    <SkeletonItem className={styles.loadingLineWide} />
+                                    <div className={styles.loadingBadgeRow}>
+                                        <SkeletonItem className={styles.loadingLineShort} />
+                                        <SkeletonItem className={styles.loadingLineMedium} />
+                                        <SkeletonItem className={styles.loadingLineShort} />
+                                    </div>
+                                    <div className={styles.loadingMetaGrid}>
+                                        <SkeletonItem className={styles.loadingLine} />
+                                        <SkeletonItem className={styles.loadingLine} />
+                                        <SkeletonItem className={styles.loadingLine} />
+                                    </div>
+                                    <div className={styles.loadingFooter}>
+                                        <SkeletonItem className={styles.loadingLineMedium} />
+                                        <SkeletonItem className={styles.loadingToggle} />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </Skeleton>
                 </div>
             ) : error ? (
                 <div className={styles.errorState}>
@@ -437,47 +495,14 @@ export function SystemTasksSection({
                                         key={task.id}
                                         task={task}
                                         updatingTaskId={updatingTaskId}
-                                        runningTaskId={runningTaskId}
                                         onToggleEnabled={onToggleEnabled}
                                         onUpdateInterval={onUpdateInterval}
-                                        onRunNow={onRunNow}
                                     />
                                 ))}
                             </div>
                         ) : (
                             <div className={styles.emptyState}>
                                 <Text className={styles.mutedText}>No scheduled tasks are configured.</Text>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className={styles.group}>
-                        <div className={styles.groupHeader}>
-                            <div className={styles.groupHeading}>
-                                <Text weight="semibold" className={styles.groupTitle}>Manual Tasks</Text>
-                                <Caption1 className={styles.mutedText}>Run these commands only when you need them.</Caption1>
-                            </div>
-                            <Badge appearance="outline" color="informative">
-                                {manualTasks.length}
-                            </Badge>
-                        </div>
-                        {manualTasks.length > 0 ? (
-                            <div className={styles.list}>
-                                {manualTasks.map((task) => (
-                                    <SystemTaskCard
-                                        key={task.id}
-                                        task={task}
-                                        updatingTaskId={updatingTaskId}
-                                        runningTaskId={runningTaskId}
-                                        onToggleEnabled={onToggleEnabled}
-                                        onUpdateInterval={onUpdateInterval}
-                                        onRunNow={onRunNow}
-                                    />
-                                ))}
-                            </div>
-                        ) : (
-                            <div className={styles.emptyState}>
-                                <Text className={styles.mutedText}>No manual tasks are available.</Text>
                             </div>
                         )}
                     </div>

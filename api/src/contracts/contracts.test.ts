@@ -25,6 +25,7 @@ import {
   parseSystemTaskListContract,
 } from "./system-task.js";
 import {
+  parseActivityListResponseContract,
   parseQueueListResponseContract,
   parseStatusOverviewContract,
 } from "./status.js";
@@ -308,16 +309,11 @@ test("status contract parsers validate queue and status overview payloads", () =
   assert.equal(queue.items[0].tracks?.[0].status, "downloading");
 
   const overview = parseStatusOverviewContract({
-    activeJobs: [
-      {
-        id: 1,
-        type: "RefreshArtist",
-        description: "Refresh Artist: Bastille",
-        startTime: Date.now(),
-        status: "running",
-      },
-    ],
-    jobHistory: [],
+    activity: {
+      pending: 2,
+      processing: 1,
+      history: 9,
+    },
     taskQueueStats: [
       { type: "DownloadAlbum", status: "pending", count: 2 },
     ],
@@ -341,8 +337,27 @@ test("status contract parsers validate queue and status overview payloads", () =
       rateLimitUntil: null,
     },
   });
+  assert.equal(overview.activity.history, 9);
   assert.equal(overview.commandStats.downloads?.processing, 1);
   assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
+
+  const activity = parseActivityListResponseContract({
+    items: [
+      {
+        id: 3,
+        type: "RefreshArtist",
+        description: "Refresh Artist: Bastille",
+        queuePosition: 1,
+        startTime: Date.now(),
+        status: "pending",
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(activity.items[0].queuePosition, 1);
 });
 
 test("system task contract parsers validate scheduled and manual task payloads", () => {

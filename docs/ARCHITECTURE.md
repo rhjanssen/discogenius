@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 ## Purpose
 
@@ -48,7 +48,28 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - [api/src/services/system-task-service.ts](api/src/services/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
 - [api/src/services/download-processor.ts](api/src/services/download-processor.ts): exact media download jobs
 - [api/src/services/scheduler.ts](api/src/services/scheduler.ts): non-download jobs (scan/import/curation/maintenance)
-- [api/src/services/command-history.ts](api/src/services/command-history.ts) + [api/src/routes/status.ts](api/src/routes/status.ts): activity/status projection
+- [api/src/services/command-history.ts](api/src/services/command-history.ts): activity history projection and summary derivation
+- [api/src/routes/queue.ts](api/src/routes/queue.ts): non-download task API (`/api/tasks`) for list/filter plus add/retry/cancel/clear operations
+- [api/src/routes/activity.ts](api/src/routes/activity.ts): activity/history read APIs (`/api/activity`, `/api/activity/events`) for filtered command activity and merged event feed pagination
+- [api/src/routes/status.ts](api/src/routes/status.ts): summary-only control-plane snapshot (`/api/status`) for queue stats, activity summary, command stats, running commands, and rate-limit metrics
+- [api/src/routes/download-queue.ts](api/src/routes/download-queue.ts): live queue authority (`/api/queue`) and reorder operations
+
+#### Control-Plane Endpoint Boundaries (Increment 1)
+
+- `/api/tasks` is the canonical non-download task surface (scans/other categories) and supports detailed rows, filtering (`statuses`, `categories`, `types`), pagination (`limit`, `offset`), and task actions (add/retry/cancel/clear completed).
+- `/api/activity` is the canonical read-only activity surface for command activity snapshots. Defaults are history-oriented (`completed`, `failed`, `cancelled`) across downloads/scans/other, with explicit filter overrides for status/category/type.
+- `/api/activity/events` returns a merged paginated event feed from task-queue events and persisted history events, sorted newest-first with deterministic tie-breaking, and item IDs prefixed by source (`task:<id>`, `history:<id>`).
+- `/api/status` is intentionally summary-only and should not be treated as a paginated task list surface.
+- `/api/status/tasks` has been removed.
+- `/api/queue` remains authoritative for live queue state and ordering/reorder behavior.
+- Queue reorder requests must target pending download jobs and provide exactly one anchor (`beforeJobId` xor `afterJobId`) with deduplicated positive integer `jobIds`.
+
+#### Control-Plane Optimization Increment (Completed)
+
+- Shared filter/pagination parsing is centralized in [api/src/utils/activity-query.ts](api/src/utils/activity-query.ts) and reused by [api/src/routes/activity.ts](api/src/routes/activity.ts) and [api/src/routes/queue.ts](api/src/routes/queue.ts) to keep validation behavior consistent across tasks/activity surfaces.
+- Activity row mapping in [api/src/services/command-history.ts](api/src/services/command-history.ts) now batches artist/album/track/video lookups and reuses a per-page description context, reducing repeated DB lookups during page mapping.
+- `/api/activity/events` pagination in [api/src/services/command-history.ts](api/src/services/command-history.ts) now merges task/history streams incrementally in bounded chunks instead of materializing large merged sets for each page request.
+- `queuePosition` derivation for pending activity rows is page-bounded: only pending IDs present on the current page are ranked, instead of scanning/numbering the full pending set first.
 
 #### Command Summary
 
@@ -172,6 +193,17 @@ Operationally important semantics:
 - `/api/system-task` now projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, run-now capability, and editable schedule settings where supported.
 - The frontend Settings page consumes that typed surface as the canonical operator control plane instead of hard-coding command lists.
 
+### Frontend Activity/Status Refresh Semantics
+
+- Shared dashboard infinite-feed behavior is centralized in [app/src/hooks/useDashboardInfiniteFeed.ts](app/src/hooks/useDashboardInfiniteFeed.ts) and reused by activity/tasks feeds for dedupe, cached refresh semantics, fallback polling, and event-driven invalidation.
+- Dashboard tab data fetching is active-tab gated (`enabled`) so non-visible tabs do not continuously query or paginate in the background.
+- Dashboard activity and status reads keep previous data during refresh (`placeholderData`) and use short staleness windows so polling updates are non-blocking.
+- Refresh failures with cached data are presented as "showing cached" notices instead of blocking the view.
+- Activity retry suppression in [app/src/pages/dashboard/ActivityTab.tsx](app/src/pages/dashboard/ActivityTab.tsx) now checks in-flight `/api/activity` results first (pending/processing). If that feed reports `hasMore`, retry stays suppressed conservatively to avoid duplicate/redundant retries while newer in-flight work may exist off-page.
+- Activity tab empty/error behavior is explicit:
+  - "Activity unavailable" when initial load fails and there is no cached activity.
+  - "No recent activity" when load succeeds but there are no activity or audit entries.
+
 ## Auth and Connection Model
 
 - Discogenius requires an active TIDAL connection. All protected routes redirect to `/auth` when not connected.
@@ -195,3 +227,6 @@ Operationally important semantics:
 - docs/CURATION_DEDUPLICATION.md: curation/redundancy deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
 - docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance
+
+
+

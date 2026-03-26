@@ -43,15 +43,14 @@ async function stubShellApis(page: Page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        activeJobs: [],
-        jobHistory: [],
+        activity: { pending: 0, processing: 0, history: 0 },
         taskQueueStats: [],
         commandStats: {},
       }),
     });
   });
 
-  await page.route('**/api/status/tasks**', async (route) => {
+  await page.route('**/api/activity**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -144,8 +143,11 @@ test.describe('Content state surfaces', () => {
 
     await page.goto(`${baseURL}/artist/artist-mobile-loading`, { waitUntil: 'domcontentloaded' });
 
+    const loadingStatus = page.getByRole('status');
+    await expect(loadingStatus).toContainText('Loading artist details...');
+
     const mainBox = await page.locator('main').boundingBox();
-    const statusBox = await page.getByRole('status').boundingBox();
+    const statusBox = await loadingStatus.boundingBox();
 
     expect(mainBox).not.toBeNull();
     expect(statusBox).not.toBeNull();
@@ -207,7 +209,7 @@ test.describe('Content state surfaces', () => {
     await page.goto(`${baseURL}/artist/artist-loading`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.locator('main')).toContainText('Loading artist details...');
+    await expect(page.getByRole('status')).toContainText('Loading artist details...');
 
     releaseArtistPage?.();
 
@@ -330,3 +332,4 @@ test.describe('Content state surfaces', () => {
     await expect(page.getByRole('button', { name: /Import Followed Artists/i })).toBeVisible();
   });
 });
+

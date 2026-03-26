@@ -3,15 +3,16 @@ import { api } from "@/services/api";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import type {
-  ActivityJobContract as ActiveJob,
-  CommandStatsContract as CommandStats,
-  StatusOverviewContract as StatusOverviewResponse,
-  TaskQueueStatContract as TaskQueueStat,
+    ActivityJobContract as ActiveJob,
+    CommandStatsContract as CommandStats,
+    StatusOverviewContract as StatusOverviewResponse,
+    TaskQueueStatContract as TaskQueueStat,
 } from "@contracts/status";
 
 export type { ActiveJob, CommandStats, StatusOverviewResponse, TaskQueueStat };
 
 export const statusOverviewQueryKey = ["statusOverview"] as const;
+const STATUS_OVERVIEW_FALLBACK_REFRESH_MS = 45_000;
 
 export function useStatusOverview() {
     useDebouncedQueryInvalidation({
@@ -33,22 +34,33 @@ export function useStatusOverview() {
     const query = useQuery({
         queryKey: statusOverviewQueryKey,
         queryFn: async () => {
-            return api.getStatusOverview();
+            return api.getStatusOverview({ timeoutMs: 8_000 });
         },
         staleTime: 5_000,
+        refetchInterval: STATUS_OVERVIEW_FALLBACK_REFRESH_MS,
+        refetchIntervalInBackground: false,
         refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,
     });
 
     const data = query.data;
+    const hasStatusData = Boolean(data);
 
     return {
         ...query,
         status: data,
-        activeJobs: data?.activeJobs ?? [],
-        jobHistory: data?.jobHistory ?? [],
+        hasStatusData,
+        isStatusInitialLoading: query.isLoading && !hasStatusData,
+        isStatusUpdating: query.isFetching && hasStatusData,
+        hasStatusRefreshError: query.isError,
+        statusRefreshErrorMessage: query.error instanceof Error
+            ? query.error.message
+            : query.error
+                ? "Failed to refresh status."
+                : null,
         taskQueueStats: data?.taskQueueStats ?? [],
         commandStats: data?.commandStats ?? {},
     };
 }
+

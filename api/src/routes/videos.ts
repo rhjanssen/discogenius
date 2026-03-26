@@ -54,7 +54,7 @@ router.get("/", (req, res) => {
       monitored: monitoredFilter,
       downloaded: downloadedFilter,
       sort: sortParam,
-      direction: sortDir,
+      dir: sortDir,
     }));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

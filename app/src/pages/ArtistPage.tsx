@@ -83,6 +83,16 @@ const useStyles = makeStyles({
     width: "100%",
     alignSelf: "stretch",
   },
+  loadingStatus: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+  },
+  loadingLabel: {
+    color: tokens.colorNeutralForeground2,
+    textAlign: "center",
+  },
   header: {
     position: "relative",
     minHeight: "200px",
@@ -1109,8 +1119,8 @@ const ArtistPage = () => {
       if (libraryFilter !== 'all' && libraryFilter !== 'video') return null;
       const rendered = items.map(renderVideoCard).filter(Boolean);
       if (rendered.length === 0) return null;
-          return (
-            <div key={index} className={styles.section}>
+      return (
+        <div key={index} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
           </div>
@@ -1178,7 +1188,10 @@ const ArtistPage = () => {
   if (pageLoading) {
     return (
       <div className={styles.stateShell}>
-        <MediaDetailSkeleton variant="artist" />
+        <div className={styles.loadingStatus} role="status" aria-live="polite" aria-label="Loading artist details...">
+          <Text size={200} className={styles.loadingLabel}>Loading artist details...</Text>
+          <MediaDetailSkeleton variant="artist" />
+        </div>
       </div>
     );
   }

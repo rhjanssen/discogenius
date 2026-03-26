@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 ## Purpose
 
@@ -47,6 +47,11 @@ Measured 2026-03-13:
 - Additional housekeeping registration and visibility.
 - Deeper upgrade automation and decision integration.
 - Broader repository-pattern adoption in service code.
+
+## Residual Low-Risk Follow-Ups (Optimization Increment)
+
+- Add lightweight endpoint timing counters for `/api/activity`, `/api/activity/events`, and `/api/tasks` in non-debug builds to spot regressions early without adding heavy profiling overhead.
+- If event volume grows substantially, evaluate cursor-style pagination for `/api/activity/events` as a future optimization; current offset pagination is correct and acceptable for present scale.
 
 ## Provider-Agnostic ID Model (Multi-Provider Foundation)
 

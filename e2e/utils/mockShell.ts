@@ -22,13 +22,16 @@ export const mockConnectedAuthStatus = {
 };
 
 export const mockStatusOverview = {
-  activeJobs: [],
-  jobHistory: [],
+  activity: {
+    pending: 0,
+    processing: 0,
+    history: 0,
+  },
   taskQueueStats: [],
   commandStats: {},
 };
 
-export const mockPendingTasksResponse = {
+export const mockActivityResponse = {
   items: [],
   total: 0,
   limit: 100,
@@ -62,7 +65,8 @@ export async function stubShellApis(
   options?: {
     authStatus?: Record<string, unknown>;
     statusOverview?: Record<string, unknown>;
-    pendingTasksResponse?: Record<string, unknown>;
+    activityResponse?: Record<string, unknown>;
+    tasksResponse?: Record<string, unknown>;
     queueResponse?: Record<string, unknown>;
     monitoringStatus?: Record<string, unknown>;
     libraryStats?: Record<string, unknown>;
@@ -98,13 +102,24 @@ export async function stubShellApis(
     });
   });
 
-  await page.route('**/api/status/tasks**', async (route) => {
+  await page.route('**/api/activity**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        ...mockPendingTasksResponse,
-        ...(options?.pendingTasksResponse || {}),
+        ...mockActivityResponse,
+        ...(options?.activityResponse || {}),
+      }),
+    });
+  });
+
+  await page.route('**/api/tasks**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...mockActivityResponse,
+        ...(options?.tasksResponse || options?.activityResponse || {}),
       }),
     });
   });
@@ -272,3 +287,4 @@ export async function stubVideoDetail(
     });
   });
 }
+

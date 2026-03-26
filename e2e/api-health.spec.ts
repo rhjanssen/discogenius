@@ -196,8 +196,10 @@ test.describe('API health & key endpoints', () => {
     const resp = await request.get(`${baseURL}/api/status`);
     expect(resp.status()).toBe(200);
     const data = await resp.json();
-    expect(data).toHaveProperty('activeJobs');
-    expect(data).toHaveProperty('jobHistory');
+    expect(data).toHaveProperty('activity');
+    expect(data.activity).toHaveProperty('pending');
+    expect(data.activity).toHaveProperty('processing');
+    expect(data.activity).toHaveProperty('history');
     expect(data).toHaveProperty('taskQueueStats');
     expect(data).toHaveProperty('commandStats');
   });

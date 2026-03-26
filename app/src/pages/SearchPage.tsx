@@ -7,10 +7,9 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
+    alignItems: "stretch",
     gap: tokens.spacingVerticalL,
     padding: tokens.spacingHorizontalM,
-    minHeight: "100dvh",
   },
   content: {
     display: "flex",

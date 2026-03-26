@@ -132,7 +132,7 @@ const useStyles = makeStyles({
         flexDirection: "column",
         overflow: "hidden",
         "@media (max-width: 639px)": {
-            maxHeight: "calc(100dvh - 96px)",
+            maxHeight: "calc(100dvh - 164px)",
         },
     },
     tabContainer: {
@@ -455,7 +455,9 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
             const viewportHeight = visualViewport?.height ?? window.innerHeight;
             const viewportTop = visualViewport?.offsetTop ?? 0;
             const availableBottom = viewportTop + viewportHeight;
-            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - 12));
+            const isMobileViewport = window.matchMedia("(max-width: 639px)").matches;
+            const bottomChromeOffset = isMobileViewport ? 84 : 12;
+            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - bottomChromeOffset));
             setResultsMaxHeight(nextMaxHeight);
         };
 

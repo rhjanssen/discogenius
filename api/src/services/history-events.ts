@@ -59,6 +59,13 @@ export type ListHistoryEventsResult = {
   offset: number;
 };
 
+export type HistoryEventFeedItem = {
+  id: number;
+  eventType: HistoryEventType;
+  sourceTitle: string | null;
+  date: string;
+};
+
 const INTEGER_STRING_PATTERN = /^\d+$/;
 
 function toNullableInt(value: number | string | null | undefined): number | null {
@@ -204,4 +211,33 @@ export function listHistoryEvents(options: ListHistoryEventsOptions = {}): ListH
     limit,
     offset,
   };
+}
+
+export function countHistoryEvents(): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM history_events").get() as { count?: number } | undefined;
+  return Number(row?.count || 0);
+}
+
+export function listHistoryEventFeedItems(limit: number, offset: number): HistoryEventFeedItem[] {
+  const normalizedLimit = Math.max(1, limit);
+  const normalizedOffset = Math.max(0, offset);
+
+  const rows = db.prepare(`
+    SELECT id, event_type, source_title, date
+    FROM history_events
+    ORDER BY date DESC, id DESC
+    LIMIT ? OFFSET ?
+  `).all(normalizedLimit, normalizedOffset) as Array<{
+    id: number;
+    event_type: HistoryEventType;
+    source_title: string | null;
+    date: string;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    eventType: row.event_type,
+    sourceTitle: row.source_title,
+    date: row.date,
+  }));
 }

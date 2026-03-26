@@ -54,20 +54,38 @@ const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 // be lifted to the current schema before the baseline is normalized.
 // Future schema migrations should increment the integer schema version.
 // ====================================================================
-function tableExists(tableName: string): boolean {
+export function hasTable(tableName: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName) as { name: string } | undefined;
   return Boolean(row?.name);
 }
 
-function columnExists(tableName: string, columnName: string): boolean {
-  if (!tableExists(tableName)) {
+export function hasColumn(tableName: string, columnName: string): boolean {
+  if (!hasTable(tableName)) {
     return false;
   }
 
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   return columns.some((column) => column.name === columnName);
+}
+
+export function hasColumns(tableName: string, requiredColumns: string[]): boolean {
+  if (!hasTable(tableName)) {
+    return false;
+  }
+
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  const columnSet = new Set(columns.map((column) => column.name));
+  return requiredColumns.every((columnName) => columnSet.has(columnName));
+}
+
+function tableExists(tableName: string): boolean {
+  return hasTable(tableName);
+}
+
+function columnExists(tableName: string, columnName: string): boolean {
+  return hasColumn(tableName, columnName);
 }
 
 function tableHasRows(tableName: string): boolean {

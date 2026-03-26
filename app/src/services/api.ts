@@ -90,6 +90,10 @@ type ApiRequestOptions = RequestInit & {
   timeoutMs?: number | null;
 };
 
+type RequestControlOptions = {
+  timeoutMs?: number | null;
+};
+
 class ApiClient {
   private baseUrl: string;
   private authToken: string | null = null;
@@ -839,8 +843,44 @@ class ApiClient {
     return this.request(`/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
   }
 
-  async getStatusOverview(): Promise<StatusOverviewContract> {
-    return this.request('/status', {}, parseStatusOverviewContract);
+  async getStatusOverview(options: RequestControlOptions = {}): Promise<StatusOverviewContract> {
+    return this.request('/status', { timeoutMs: options.timeoutMs ?? null }, parseStatusOverviewContract);
+  }
+
+  async getActivity(params?: {
+    limit?: number;
+    offset?: number;
+    statuses?: string[];
+    categories?: string[];
+    types?: string[];
+    timeoutMs?: number | null;
+  }): Promise<ActivityListResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
+    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    if (params?.statuses && params.statuses.length > 0) queryParams.set('statuses', params.statuses.join(','));
+    if (params?.categories && params.categories.length > 0) queryParams.set('categories', params.categories.join(','));
+    if (params?.types && params.types.length > 0) queryParams.set('types', params.types.join(','));
+    const query = queryParams.toString();
+    return this.request(`/activity${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
+  }
+
+  async getTasks(params?: {
+    limit?: number;
+    offset?: number;
+    statuses?: string[];
+    categories?: string[];
+    types?: string[];
+    timeoutMs?: number | null;
+  }): Promise<ActivityListResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
+    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    if (params?.statuses && params.statuses.length > 0) queryParams.set('statuses', params.statuses.join(','));
+    if (params?.categories && params.categories.length > 0) queryParams.set('categories', params.categories.join(','));
+    if (params?.types && params.types.length > 0) queryParams.set('types', params.types.join(','));
+    const query = queryParams.toString();
+    return this.request(`/tasks${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
   }
 
   async getSystemTasks(): Promise<SystemTaskContract[]> {
@@ -858,14 +898,6 @@ class ApiClient {
     return this.request(`/system-task/${id}/run`, {
       method: 'POST',
     }, parseRunSystemTaskResponseContract);
-  }
-
-  async getPendingTasks(params?: { limit?: number; offset?: number }): Promise<ActivityListResponseContract> {
-    const queryParams = new URLSearchParams();
-    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
-    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
-    const query = queryParams.toString();
-    return this.request(`/status/tasks${query ? `?${query}` : ''}`, {}, parseActivityListResponseContract);
   }
 
   async getHistoryEvents(params?: {

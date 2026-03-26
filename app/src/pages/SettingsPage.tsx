@@ -37,6 +37,7 @@ import {
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { SystemTasksSection } from "@/components/settings/SystemTasksSection";
+import { useSystemTasks } from "@/hooks/useSystemTasks";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useTheme } from "@/providers/themeContext";
@@ -45,7 +46,7 @@ import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { SettingsPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
     FilteringConfigContract,
@@ -53,7 +54,6 @@ import type {
     MonitoringStatusResponseContract,
     NamingConfigContract,
 } from "@contracts/config";
-import type { SystemTaskContract, UpdateSystemTaskRequestContract } from "@contracts/system-task";
 import type { AppReleaseInfoContract } from "@contracts/release";
 
 type NamingFieldKey =
@@ -466,7 +466,7 @@ const MEDIA = {
 };
 const MODAL_LAYOUT = {
     rowPadding: {
-        base: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        base: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
         mobile: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     },
     qualityPadding: {
@@ -499,8 +499,8 @@ const useStyles = makeStyles({
     container: {
         display: 'flex',
         flexDirection: 'column',
-        gap: tokens.spacingVerticalL,
-        padding: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalM,
+        padding: tokens.spacingVerticalM,
         maxWidth: '1200px',
         margin: '0 auto',
         width: '100%',
@@ -518,11 +518,11 @@ const useStyles = makeStyles({
     },
     sectionsContainer: {
         width: '100%',
-        columnGap: tokens.spacingHorizontalL,
+        columnGap: tokens.spacingHorizontalM,
         columnWidth: '400px',
         columnFill: 'balance',
         [MEDIA.desktop]: {
-            columnGap: tokens.spacingHorizontalXL,
+            columnGap: tokens.spacingHorizontalL,
         },
         [MEDIA.mobile]: {
             columnCount: 1,
@@ -535,15 +535,15 @@ const useStyles = makeStyles({
         breakInside: 'avoid',
         WebkitColumnBreakInside: 'avoid',
         pageBreakInside: 'avoid',
-        marginBottom: tokens.spacingVerticalL,
+        marginBottom: tokens.spacingVerticalM,
         flexDirection: 'column',
-        gap: tokens.spacingVerticalM,
+        gap: tokens.spacingVerticalS,
     },
     sectionFullWidth: {
         display: 'flex',
         flexDirection: 'column',
-        gap: tokens.spacingVerticalM,
-        marginBottom: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalS,
+        marginBottom: tokens.spacingVerticalM,
     },
     card: {
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
@@ -731,7 +731,7 @@ const useStyles = makeStyles({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL}`,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         flexWrap: 'wrap',
         columnGap: tokens.spacingHorizontalM,
         rowGap: tokens.spacingVerticalS,
@@ -921,16 +921,19 @@ const SettingsPage = () => {
     } = useUserSettings();
     const { tidalConnected, loading: tidalLoading } = useTidalAuth();
     const { theme, setTheme } = useTheme();
+    const {
+        tasks: systemTasks,
+        isLoading: systemTasksLoading,
+        errorMessage: systemTasksError,
+        updatingTaskId: updatingSystemTaskId,
+        updateTask: updateSystemTask,
+        refetch: refetchSystemTasks,
+    } = useSystemTasks();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
     const [monitoringStatus, setMonitoringStatus] = useState<Pick<MonitoringStatusResponseContract, "running" | "checking">>({
         running: false,
         checking: false,
     });
-    const [systemTasks, setSystemTasks] = useState<SystemTaskContract[]>([]);
-    const [systemTasksLoading, setSystemTasksLoading] = useState(true);
-    const [systemTasksError, setSystemTasksError] = useState<string | null>(null);
-    const [updatingSystemTaskId, setUpdatingSystemTaskId] = useState<string | null>(null);
-    const [runningSystemTaskId, setRunningSystemTaskId] = useState<string | null>(null);
     const [curationConfig, setCurationConfig] = useState<FilteringConfigContract | null>(null);
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
@@ -1042,29 +1045,9 @@ const SettingsPage = () => {
         }
     };
 
-    const refreshSystemTasks = useCallback(async () => {
-        setSystemTasksLoading(true);
-        setSystemTasksError(null);
-
-        try {
-            const tasks = await api.getSystemTasks();
-            setSystemTasks(tasks);
-        } catch (error: any) {
-            console.error("Error fetching system tasks:", error);
-            setSystemTasks([]);
-            setSystemTasksError(error.message || "Failed to load system tasks.");
-        } finally {
-            setSystemTasksLoading(false);
-        }
-    }, []);
-
     useEffect(() => {
         fetchConfigs();
     }, []);
-
-    useEffect(() => {
-        refreshSystemTasks().catch(() => undefined);
-    }, [refreshSystemTasks]);
 
     useEffect(() => {
         if (!namingSettings || renameStatus || renameStatusLoading || renameStatusInitialized) {
@@ -1163,55 +1146,6 @@ const SettingsPage = () => {
                 description: "Failed to update monitoring configuration.",
                 variant: "destructive"
             });
-        }
-    };
-
-    const updateSystemTask = async (task: SystemTaskContract, updates: UpdateSystemTaskRequestContract) => {
-        setUpdatingSystemTaskId(task.id);
-
-        try {
-            const updatedTask = await api.updateSystemTask(task.id, updates);
-            setSystemTasks((current) => current.map((item) => (item.id === task.id ? updatedTask : item)));
-
-            toast({
-                title: updates.enabled !== undefined
-                    ? (updates.enabled ? "Task enabled" : "Task disabled")
-                    : "Task updated",
-                description: task.name,
-            });
-        } catch (error: any) {
-            console.error("Error updating system task:", error);
-            toast({
-                title: "Failed to update task",
-                description: error.message || "Could not update the task configuration.",
-                variant: "destructive",
-            });
-        } finally {
-            setUpdatingSystemTaskId(null);
-        }
-    };
-
-    const runSystemTask = async (task: SystemTaskContract) => {
-        setRunningSystemTaskId(task.id);
-
-        try {
-            const result = await api.runSystemTask(task.id);
-            dispatchActivityRefresh();
-            await refreshSystemTasks();
-
-            toast({
-                title: "Task queued",
-                description: `${task.name} was queued as job #${result.id}.`,
-            });
-        } catch (error: any) {
-            console.error("Error running system task:", error);
-            toast({
-                title: "Failed to queue task",
-                description: error.message || "Could not queue the task.",
-                variant: "destructive",
-            });
-        } finally {
-            setRunningSystemTaskId(null);
         }
     };
 
@@ -1407,7 +1341,7 @@ const SettingsPage = () => {
     if (loading || tidalLoading) {
         return (
             <div className={styles.container}>
-                <LoadingState className={styles.loadingState} label="Loading settings..." />
+                <SettingsPageSkeleton className={styles.loadingState} />
             </div>
         );
     }
@@ -1960,7 +1894,7 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="system-tasks"
                     title="System Tasks"
-                    description="Inspect scheduled jobs and trigger maintenance commands on demand."
+                    description="Manage scheduled task timing and enablement."
                     className={styles.section}
                 >
                     <div className={styles.card}>
@@ -1969,18 +1903,14 @@ const SettingsPage = () => {
                             loading={systemTasksLoading}
                             error={systemTasksError}
                             updatingTaskId={updatingSystemTaskId}
-                            runningTaskId={runningSystemTaskId}
                             onRetry={() => {
-                                void refreshSystemTasks();
+                                void refetchSystemTasks();
                             }}
                             onToggleEnabled={async (task, enabled) => {
-                                await updateSystemTask(task, { enabled });
+                                await updateSystemTask(task.id, { enabled });
                             }}
                             onUpdateInterval={async (task, intervalMinutes) => {
-                                await updateSystemTask(task, { intervalMinutes });
-                            }}
-                            onRunNow={async (task) => {
-                                await runSystemTask(task);
+                                await updateSystemTask(task.id, { intervalMinutes });
                             }}
                         />
                     </div>

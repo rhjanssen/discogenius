@@ -48,22 +48,17 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/status/history?*', async (route) => {
-      await route.fulfill({ json: { jobHistory: [] } });
-    });
-
     await page.route('**/api/status', async (route) => {
       await route.fulfill({
         json: {
-          activeJobs: [],
-          jobHistory: [],
+          activity: { pending: 0, processing: 0, history: 0 },
           taskQueueStats: [],
           commandStats: {},
         },
       });
     });
 
-    await page.route('**/api/status/tasks**', async (route) => {
+    await page.route('**/api/activity**', async (route) => {
       await route.fulfill({
         json: {
           items: [],
@@ -73,10 +68,6 @@ test.describe('Manual import flow', () => {
           hasMore: false,
         },
       });
-    });
-
-    await page.route('**/api/monitoring/status', async (route) => {
-      await route.fulfill({ json: { running: false, checking: false } });
     });
 
     await page.route('**/api/unmapped**', async (route, request) => {
@@ -168,3 +159,4 @@ test.describe('Manual import flow', () => {
     await expect(dialog.getByTitle('02 - Second Song.flac')).toBeVisible();
   });
 });
+

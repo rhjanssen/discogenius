@@ -200,7 +200,6 @@ router.get("/:artistId/page-db", async (req, res) => {
   }
 });
 
-
 router.patch("/:artistId", async (req, res) => {
   try {
     const artistId = req.params.artistId;

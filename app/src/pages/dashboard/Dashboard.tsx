@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Button,
     Card,
@@ -42,17 +42,19 @@ import {
 } from "@/utils/appEvents";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import QueueTab from "./QueueTab";
+import TasksTab from "./TasksTab";
 import ActivityTab from "./ActivityTab";
 import ManualImportTab from "./ManualImportTab";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
+import { formatCompactNumber } from "@/utils/format";
 
 const useStyles = makeStyles({
     container: {
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalL,
-        paddingTop: tokens.spacingVerticalL,
-        paddingBottom: tokens.spacingVerticalXXL,
+        gap: tokens.spacingVerticalM,
+        paddingTop: tokens.spacingVerticalM,
+        paddingBottom: tokens.spacingVerticalL,
     },
     brandHeader: {
         display: "flex",
@@ -133,7 +135,7 @@ const useStyles = makeStyles({
         color: "var(--dg-accent-videos)",
     },
     statCard: {
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
@@ -141,7 +143,7 @@ const useStyles = makeStyles({
         backdropFilter: "blur(20px)",
     },
     statValue: {
-        fontSize: tokens.fontSizeHero700,
+        fontSize: tokens.fontSizeBase600,
         fontWeight: tokens.fontWeightBold,
         lineHeight: "1",
     },
@@ -226,7 +228,7 @@ const useStyles = makeStyles({
         minWidth: 0,
         paddingTop: tokens.spacingVerticalXXS,
         paddingBottom: tokens.spacingVerticalXXS,
-        marginBottom: tokens.spacingVerticalS,
+        marginBottom: tokens.spacingVerticalXS,
         gap: tokens.spacingHorizontalM,
         "@media (max-width: 639px)": {
             gap: tokens.spacingHorizontalS,
@@ -235,7 +237,7 @@ const useStyles = makeStyles({
     mainCol: {
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalL,
+        gap: tokens.spacingVerticalM,
     },
     queueActionButton: {
         flexShrink: 0,
@@ -243,7 +245,7 @@ const useStyles = makeStyles({
     },
     tabContentPanel: {
         animationName: {
-            from: { opacity: 0, transform: "translateY(10px)" },
+            from: { opacity: 0, transform: `translateY(${tokens.spacingVerticalS})` },
             to: { opacity: 1, transform: "translateY(0)" },
         },
         animationDuration: "0.4s",
@@ -251,7 +253,6 @@ const useStyles = makeStyles({
     },
 });
 
-const HISTORY_PAGE_SIZE = 50;
 const HISTORY_AUDIT_PAGE_SIZE = 12;
 const dashboardStatsQueryKey = ["dashboardStats"] as const;
 const historyEventsQueryKey = ["historyEvents"] as const;
@@ -259,7 +260,7 @@ const historyEventsQueryKey = ["historyEvents"] as const;
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
 
-function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
+function getInitialDashboardTab(): "queue" | "tasks" | "activity" | "manualImport" {
     if (hasConsumedDashboardReloadState) {
         return "queue";
     }
@@ -272,7 +273,7 @@ function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
     }
 
     const storedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
-    return storedTab === "activity" || storedTab === "manualImport" || storedTab === "queue"
+    return storedTab === "activity" || storedTab === "tasks" || storedTab === "manualImport" || storedTab === "queue"
         ? storedTab
         : "queue";
 }
@@ -291,11 +292,7 @@ const Dashboard = () => {
     const [downloadingMissing, setDownloadingMissing] = useState(false);
     const [scanningRoots, setScanningRoots] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
-    const [historyPages, setHistoryPages] = useState<any[]>([]);
-    const [historyOffset, setHistoryOffset] = useState(HISTORY_PAGE_SIZE);
-    const [hasMoreHistory, setHasMoreHistory] = useState(false);
-    const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
-    const [mobileTab, setMobileTab] = useState<"queue" | "activity" | "manualImport">(getInitialDashboardTab);
+    const [mobileTab, setMobileTab] = useState<"queue" | "tasks" | "activity" | "manualImport">(getInitialDashboardTab);
     const [activityFilter, setActivityFilter] = useState<string>('all');
 
     useEffect(() => {
@@ -303,10 +300,9 @@ const Dashboard = () => {
     }, [mobileTab]);
 
     const {
-        activeJobs,
-        jobHistory: baseJobHistory,
         taskQueueStats,
-        isLoading: isStatusInitialLoading,
+        hasStatusRefreshError,
+        hasStatusData,
     } = useStatusOverview();
     useDebouncedQueryInvalidation({
         queryKeys: [dashboardStatsQueryKey, historyEventsQueryKey],
@@ -336,49 +332,16 @@ const Dashboard = () => {
         placeholderData: (previousData) => previousData,
     });
     const libraryAuditEvents = historyEventsQuery.data?.items ?? [];
-    const jobHistory = useMemo(() => {
-        const seenIds = new Set(baseJobHistory.map((job) => job.id));
-        return [...baseJobHistory, ...historyPages.filter((job) => !seenIds.has(job.id))];
-    }, [baseJobHistory, historyPages]);
-
-    useEffect(() => {
-        if (historyPages.length === 0) {
-            setHasMoreHistory(baseJobHistory.length >= HISTORY_PAGE_SIZE);
-        }
-    }, [baseJobHistory.length, historyPages.length]);
-
-    const loadMoreHistory = useCallback(async () => {
-        if (isLoadingMoreHistory || !hasMoreHistory) {
-            return;
-        }
-
-        setIsLoadingMoreHistory(true);
-        try {
-            const result: any = await api.request(`/status/history?limit=${HISTORY_PAGE_SIZE}&offset=${historyOffset}`);
-            const newJobs = result.jobHistory || [];
-            if (newJobs.length > 0) {
-                setHistoryPages(prev => {
-                    const existingIds = new Set([...baseJobHistory, ...prev].map(j => j.id));
-                    const uniqueNew = newJobs.filter((j: any) => !existingIds.has(j.id));
-                    return [...prev, ...uniqueNew];
-                });
-                setHistoryOffset(prev => prev + HISTORY_PAGE_SIZE);
-            }
-            setHasMoreHistory(newJobs.length === HISTORY_PAGE_SIZE);
-        } catch (e) {
-            console.error("Failed to load more history", e);
-            toast({ title: "Failed to load older activity", variant: "destructive" });
-        } finally {
-            setIsLoadingMoreHistory(false);
-        }
-    }, [baseJobHistory, hasMoreHistory, historyOffset, isLoadingMoreHistory, toast]);
-
     const hasActiveJobs = (types: string[]) =>
         taskQueueStats.some(s =>
             types.includes(s.type) &&
             (s.status === 'pending' || s.status === 'processing') &&
             s.count > 0
         );
+
+    const statusSyncLabel = hasStatusRefreshError
+        ? (hasStatusData ? "Showing cached status" : "Status unavailable")
+        : null;
 
     const refreshBusy = scanningAll || hasActiveJobs(['RefreshMetadata', 'RefreshArtist']);
     const curationBusy = searchingMissingAlbums || hasActiveJobs(['ApplyCuration', 'CurateArtist']);
@@ -482,34 +445,35 @@ const Dashboard = () => {
             key: 'artists',
             label: 'Artists',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconArtists}`}><Person24Regular className={styles.statIcon} /></span>,
-            value: libraryStats?.artists?.downloaded ?? '—',
-            detail: `${libraryStats?.artists?.monitored ?? 0} monitored • ${libraryStats?.artists?.total ?? 0} in database`,
+            value: formatCompactNumber(libraryStats?.artists?.downloaded),
+            detail: `${formatCompactNumber(libraryStats?.artists?.monitored)} monitored • ${formatCompactNumber(libraryStats?.artists?.total)} in database`,
         },
         {
             key: 'albums',
             label: 'Albums',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconAlbums}`}><Album24Regular className={styles.statIcon} /></span>,
-            value: libraryStats?.albums?.downloaded ?? '—',
-            detail: `${libraryStats?.albums?.monitored ?? 0} monitored • ${libraryStats?.albums?.total ?? 0} in database`,
+            value: formatCompactNumber(libraryStats?.albums?.downloaded),
+            detail: `${formatCompactNumber(libraryStats?.albums?.monitored)} monitored • ${formatCompactNumber(libraryStats?.albums?.total)} in database`,
         },
         {
             key: 'tracks',
             label: 'Tracks',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconTracks}`}><MusicNote224Regular className={styles.statIcon} /></span>,
-            value: libraryStats?.tracks?.downloaded ?? '—',
-            detail: `${libraryStats?.tracks?.monitored ?? 0} monitored • ${libraryStats?.tracks?.total ?? 0} in database`,
+            value: formatCompactNumber(libraryStats?.tracks?.downloaded),
+            detail: `${formatCompactNumber(libraryStats?.tracks?.monitored)} monitored • ${formatCompactNumber(libraryStats?.tracks?.total)} in database`,
         },
         {
             key: 'videos',
             label: 'Videos',
             icon: <span className={`${styles.statIconSlot} ${styles.statIconVideos}`}><Video24Regular className={styles.statIcon} /></span>,
-            value: libraryStats?.videos?.downloaded ?? '—',
-            detail: `${libraryStats?.videos?.monitored ?? 0} monitored • ${libraryStats?.videos?.total ?? 0} in database`,
+            value: formatCompactNumber(libraryStats?.videos?.downloaded),
+            detail: `${formatCompactNumber(libraryStats?.videos?.monitored)} monitored • ${formatCompactNumber(libraryStats?.videos?.total)} in database`,
         },
     ];
 
     const dashboardTabs = [
         { key: 'queue', label: 'Queue' },
+        { key: 'tasks', label: 'Tasks' },
         { key: 'activity', label: 'Activity' },
         { key: 'manualImport', label: 'Unmapped Files' },
     ] as const;
@@ -576,7 +540,7 @@ const Dashboard = () => {
                         <div className={responsiveTabsStyles.desktopTabs}>
                             <TabList
                                 selectedValue={mobileTab}
-                                onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "activity" | "manualImport")}
+                                onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "tasks" | "activity" | "manualImport")}
                             >
                                 {dashboardTabs.map((tab) => (
                                     <Tab key={tab.key} value={tab.key} aria-label={tab.label} title={tab.label}>
@@ -615,6 +579,9 @@ const Dashboard = () => {
                             </MenuPopover>
                         </Menu>
                     )}
+                    {statusSyncLabel ? (
+                        <Text className={styles.statDetail}>{statusSyncLabel}</Text>
+                    ) : null}
                 </div>
 
                 {mobileTab === "queue" && (
@@ -626,16 +593,17 @@ const Dashboard = () => {
                 {mobileTab === "activity" && (
                     <div className={styles.tabContentPanel}>
                         <ActivityTab
-                            activeJobs={activeJobs}
-                            jobHistory={jobHistory}
                             libraryAuditEvents={libraryAuditEvents}
                             activityFilter={activityFilter}
-                            isInitialLoading={isStatusInitialLoading}
                             isLibraryAuditLoading={historyEventsQuery.isLoading}
-                            hasMoreHistory={hasMoreHistory}
-                            isLoadingMoreHistory={isLoadingMoreHistory}
-                            onLoadMoreHistory={loadMoreHistory}
+                            isActive={mobileTab === "activity"}
                         />
+                    </div>
+                )}
+
+                {mobileTab === "tasks" && (
+                    <div className={styles.tabContentPanel}>
+                        <TasksTab isActive={mobileTab === "tasks"} />
                     </div>
                 )}
 

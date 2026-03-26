@@ -16,7 +16,7 @@ import { queueManagedArtistsWorkflow } from "./artist-workflow.js";
 import { getManagedArtists } from "./managed-artists.js";
 import { queueNextMonitoringPass } from "./monitoring-scheduler.js";
 import { AudioTagMaintenanceService } from "./audio-tag-maintenance.js";
-import { db } from "../database.js";
+import { db, hasColumns } from "../database.js";
 
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 2000, 1); // 2 seconds default
 const BLOCKED_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_SCHEDULER_BLOCKED_LOG_THROTTLE_MS', 30_000, 0);
@@ -524,7 +524,12 @@ export class Scheduler {
                 }
                 case JobTypes.DownloadMissingForce: {
                     if ((job.payload as any).skipFlags === true) {
-                        db.prepare(`UPDATE media SET skip_download = 0, skip_upgrade = 0 WHERE monitor = 1;`).run();
+                        const canResetSkipFlags = hasColumns('media', ['skip_download', 'skip_upgrade', 'monitor']);
+                        if (canResetSkipFlags) {
+                            db.prepare(`UPDATE media SET skip_download = 0, skip_upgrade = 0 WHERE monitor = 1;`).run();
+                        } else {
+                            console.warn('[Scheduler] DownloadMissingForce skip flag reset skipped: media.skip_download/skip_upgrade not available');
+                        }
                     }
                     TaskQueueService.addJob(
                         JobTypes.DownloadMissing,
@@ -539,6 +544,15 @@ export class Scheduler {
                     break;
                 }
                 case JobTypes.RescanAllRoots: {
+                    const canQueryRoots = hasColumns('root_folders', ['id', 'enabled']);
+                    if (!canQueryRoots) {
+                        this.updateJobDescription(job, {
+                            progress: 100,
+                            description: 'Root folders table unavailable; queued scan for 0 root folder(s)',
+                        });
+                        break;
+                    }
+
                     const roots = db.prepare(`SELECT id FROM root_folders WHERE enabled = 1`).all() as any[];
                     for (const root of roots) {
                         TaskQueueService.addJob(

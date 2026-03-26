@@ -815,9 +815,14 @@ status = 'pending',
             types?: readonly JobType[];
         } = {},
     ): number {
-        const distinctJobIds = Array.from(new Set(jobIds.filter((jobId) => Number.isInteger(jobId) && jobId > 0)));
-        if (distinctJobIds.length === 0) {
-            return 0;
+        const normalizedJobIds = jobIds.filter((jobId) => Number.isInteger(jobId) && jobId > 0);
+        if (normalizedJobIds.length === 0) {
+            throw new Error("Queue reorder requires one or more valid pending queue item ids.");
+        }
+
+        const distinctJobIds = Array.from(new Set(normalizedJobIds));
+        if (distinctJobIds.length !== normalizedJobIds.length) {
+            throw new Error("Queue reorder set contains duplicate queue item ids.");
         }
 
         const { beforeJobId, afterJobId } = options;
@@ -836,7 +841,7 @@ status = 'pending',
 
         const pendingById = new Map(pendingJobs.map((job) => [job.id, job]));
         const movingSet = new Set(distinctJobIds);
-        const movingJobs = pendingJobs.filter((job) => movingSet.has(job.id));
+        const movingJobs = distinctJobIds.map((jobId) => pendingById.get(jobId)).filter((job): job is Job => job != null);
 
         if (movingJobs.length !== distinctJobIds.length) {
             throw new Error("Only pending download queue items can be reordered.");

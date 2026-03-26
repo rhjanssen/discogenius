@@ -100,7 +100,7 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     height: "100%",
   },
   toolbar: {
@@ -192,7 +192,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
   },
   scrollContainer: {
     overflow: "auto",
@@ -201,7 +201,7 @@ const useStyles = makeStyles({
   loadMoreSpinner: {
     display: "flex",
     justifyContent: "center",
-    padding: tokens.spacingVerticalL,
+    padding: tokens.spacingVerticalM,
   },
   contentPadding: {
     padding: tokens.spacingHorizontalXXS,
@@ -212,14 +212,14 @@ const useStyles = makeStyles({
   pageBody: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalM,
     height: "100%",
   },
   tabPanel: {
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
   },
   tabScroller: {
     overflow: "auto",
@@ -231,7 +231,7 @@ const useStyles = makeStyles({
   fetchMoreRow: {
     display: "flex",
     justifyContent: "center",
-    padding: tokens.spacingVerticalL,
+    padding: tokens.spacingVerticalM,
   },
   placeholderIcon: {
     fontSize: "48px",
