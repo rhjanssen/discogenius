@@ -275,7 +275,7 @@ const TasksTab = ({ isActive }: TasksTabProps) => {
                 />
                 {hasMoreTasks && (
                     <div className={styles.loadMoreRow}>
-                        <Button appearance="subtle" onClick={() => void loadMoreTasks()} disabled={isLoadingMoreTasks} icon={isLoadingMoreTasks ? <Spinner size="tiny" /> : undefined}>
+                        <Button appearance="subtle" onClick={() => void loadMoreTasks()} disabled={isLoadingMoreTasks}>
                             {isLoadingMoreTasks ? "Loading..." : "Load More"}
                         </Button>
                     </div>
@@ -286,6 +286,7 @@ const TasksTab = ({ isActive }: TasksTabProps) => {
 };
 
 export default TasksTab;
+
 
 
 

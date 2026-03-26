@@ -255,7 +255,12 @@ function DataGridInner<T>(
     if (loading) {
         return (
             <div className={mergeClasses(styles.root, className)}>
-                <DataGridSkeleton columns={Math.max(visibleColumns.length + (selection ? 1 : 0), 3)} rows={8} />
+                <DataGridSkeleton
+                    columns={Math.max(visibleColumns.length + (selection ? 1 : 0), 3)}
+                    rows={8}
+                    columnTemplate={gridTemplate}
+                    compact={Boolean(compact)}
+                />
             </div>
         );
     }
@@ -369,3 +374,4 @@ export const DataGrid = React.forwardRef(DataGridInner) as <T>(
 ) => React.ReactElement | null;
 
 export default DataGrid;
+

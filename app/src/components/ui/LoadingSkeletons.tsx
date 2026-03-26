@@ -2,7 +2,7 @@ import React from "react";
 import { Skeleton, SkeletonItem, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 
 type MediaDetailSkeletonVariant = "artist" | "album" | "video";
-type ThumbnailAspect = "square" | "video";
+type ThumbnailAspect = "square" | "video" | "videoWide";
 
 interface MediaDetailSkeletonProps {
   variant: MediaDetailSkeletonVariant;
@@ -12,6 +12,7 @@ interface MediaDetailSkeletonProps {
 interface CardGridSkeletonProps {
   cards?: number;
   thumbnailAspect?: ThumbnailAspect;
+  minCardWidth?: number;
   className?: string;
 }
 
@@ -25,6 +26,8 @@ interface TrackListSkeletonProps {
 interface DataGridSkeletonProps {
   columns?: number;
   rows?: number;
+  columnTemplate?: string;
+  compact?: boolean;
   className?: string;
 }
 
@@ -231,6 +234,11 @@ const useStyles = makeStyles({
   videoThumb: {
     width: "100%",
     aspectRatio: "16 / 9",
+    borderRadius: tokens.borderRadiusLarge,
+  },
+  videoWideThumb: {
+    width: "100%",
+    aspectRatio: "3 / 2",
     borderRadius: tokens.borderRadiusLarge,
   },
   cardTitle: {
@@ -440,13 +448,19 @@ export function TrackListSkeleton({
 export function CardGridSkeleton({
   cards = 8,
   thumbnailAspect = "square",
+  minCardWidth,
   className,
 }: CardGridSkeletonProps) {
   const styles = useStyles();
-  const thumbClassName = thumbnailAspect === "video" ? styles.videoThumb : styles.squareThumb;
+  const thumbClassName = thumbnailAspect === "video"
+    ? styles.videoThumb
+    : thumbnailAspect === "videoWide"
+      ? styles.videoWideThumb
+      : styles.squareThumb;
+  const gridStyle = minCardWidth ? { gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))` } : undefined;
 
   return (
-    <div className={mergeClasses(styles.cardGrid, className)} aria-busy="true" aria-label="Loading cards">
+    <div className={mergeClasses(styles.cardGrid, className)} style={gridStyle} aria-busy="true" aria-label="Loading cards">
       <Skeleton animation="wave">
         {range(cards).map((card) => (
           <div key={card} className={styles.card}>
@@ -463,10 +477,18 @@ export function CardGridSkeleton({
 export function DataGridSkeleton({
   columns = 5,
   rows = 8,
+  columnTemplate,
+  compact = false,
   className,
 }: DataGridSkeletonProps) {
   const styles = useStyles();
-  const gridTemplateColumns = `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))`;
+  const gridTemplateColumns = columnTemplate || `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))`;
+  const rowStyle = compact
+    ? {
+      paddingTop: tokens.spacingVerticalXS,
+      paddingBottom: tokens.spacingVerticalXS,
+    }
+    : undefined;
 
   return (
     <div className={mergeClasses(styles.dataGrid, className)} aria-busy="true" aria-label="Loading table">
@@ -477,7 +499,7 @@ export function DataGridSkeleton({
           ))}
         </div>
         {range(rows).map((row) => (
-          <div key={row} className={styles.dataGridRow} style={{ gridTemplateColumns }}>
+          <div key={row} className={styles.dataGridRow} style={{ gridTemplateColumns, ...rowStyle }}>
             {range(columns).map((column) => (
               <SkeletonItem key={`cell-${row}-${column}`} className={styles.gridCell} />
             ))}
@@ -673,3 +695,8 @@ export function SettingsPageSkeleton({
     </div>
   );
 }
+
+
+
+
+

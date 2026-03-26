@@ -16,7 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { getTidalImage } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
 
 const useStyles = makeStyles({
@@ -291,7 +291,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
   if (loading) {
     return (
       <div className={styles.container}>
-        <LoadingState className={styles.noVideos} label="Loading videos..." />
+        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" minCardWidth={240} />
       </div>
     );
   }
@@ -398,3 +398,5 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
 };
 
 export default VideoGrid;
+
+

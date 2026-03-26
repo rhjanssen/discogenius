@@ -2,7 +2,7 @@ import {
   TabList,
   Tab,
   Button,
-  Spinner,
+
   Text,
   makeStyles,
   tokens,
@@ -1340,12 +1340,12 @@ const Library = () => {
       case "tracks":
         return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
       case "videos":
-        return <CardGridSkeleton cards={10} thumbnailAspect="video" />;
+        return <CardGridSkeleton cards={10} thumbnailAspect="videoWide" minCardWidth={240} />;
       case "albums":
-        return <CardGridSkeleton cards={12} />;
+        return <CardGridSkeleton cards={12} minCardWidth={172} />;
       case "artists":
       default:
-        return <CardGridSkeleton cards={12} />;
+        return <CardGridSkeleton cards={12} minCardWidth={172} />;
     }
   };
 
@@ -1638,7 +1638,7 @@ const Library = () => {
       <div ref={scrollRef} className={mergeClasses(styles.tabScroller, styles.contentPadding)}>
         {children}
         <div ref={sentinelRef} className={styles.sentinel} />
-        {isFetching && <div className={styles.fetchMoreRow}><Spinner size="small" /></div>}
+        {isFetching ? <div className={styles.fetchMoreRow}><Text size={200}>Loading more...</Text></div> : null}
       </div>
     </div>
   );
@@ -1911,5 +1911,8 @@ const Library = () => {
 };
 
 export default Library;
+
+
+
 
 
