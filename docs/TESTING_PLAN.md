@@ -165,11 +165,12 @@ Expected:
 3. Call `/api/activity/events` and verify merged event-feed semantics: task + history sources, newest-first ordering, stable pagination (`limit`, `offset`, `hasMore`), and source-prefixed IDs (`task:<id>`, `history:<id>`).
 4. Call `/api/status` and confirm response is summary-only (`activity`, `taskQueueStats`, `commandStats`, optional running/rate-limit fields), not a detailed task list.
 5. Verify `/api/status/tasks` is no longer exposed.
-6. Verify `/api/queue` remains the live queue source for queue rows and reordering.
-7. In Dashboard Activity, trigger a background refresh while data is already visible and confirm stale data remains visible with a non-blocking "Updating activity"/"Showing cached activity" notice.
-8. Validate Activity empty/error semantics:
-   - failed initial load with no cached rows -> "Activity unavailable"
-   - successful load with no rows -> "No recent activity"
+6. Verify `/api/queue` remains the live queue source for active queue rows and reordering, and `GET /api/queue/history` returns completed/failed/cancelled download/import rows in `QueueItemContract` shape.
+7. Verify Dashboard Queue History is populated from `/api/queue/history`, including `quality` badges where present, and does not depend on `/api/activity` row mapping.
+8. Restart or interrupt the queue SSE connection during active download/import work and confirm the Queue tab reconciles correctly once SSE progress, full `/api/queue` refreshes, and global queue/job invalidation events arrive.
+9. During a download-to-import transition, confirm the short grace window prevents an active row from disappearing before the authoritative queue refresh catches up.
+10. In Dashboard Activity, trigger a background refresh while data is already visible and confirm stale data remains visible with a non-blocking "Updating activity"/"Showing cached activity" notice.
+11. Validate Activity empty/error semantics: failed initial load with no cached rows -> "Activity unavailable"; successful load with no rows -> "No recent activity".
 
 ### H. Optimization Increment Perf Proxies and Targeted Checks
 
@@ -195,7 +196,8 @@ Use these as pragmatic perf/correctness proxies for this increment (not benchmar
 Targeted automated checks to keep in CI/local loops for this increment:
 
 - API/service and route checks in [api/src/services/activity.test.ts](api/src/services/activity.test.ts) and [api/src/routes/tasks-activity-split.test.ts](api/src/routes/tasks-activity-split.test.ts).
-- Dashboard retry/gating checks in [e2e/queue-dialog.spec.ts](e2e/queue-dialog.spec.ts).
+- Download queue route/contract checks in [api/src/routes/download-queue.test.ts](api/src/routes/download-queue.test.ts).
+- Dashboard queue history/restoration and retry/gating checks in [e2e/queue-dialog.spec.ts](e2e/queue-dialog.spec.ts).
 
 ## 4. Optional Deep Inspection
 

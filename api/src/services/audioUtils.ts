@@ -1,8 +1,9 @@
 import * as mm from 'music-metadata';
 import path from 'path';
 import axios from 'axios';
+import { type Readable } from 'stream';
 import { Config } from './config.js';
-import { exec, spawn } from 'child_process';
+import { exec, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from './provider-client-config.js';
@@ -11,6 +12,17 @@ const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mkv", ".mov", ".avi", ".ts", ".webm"]);
 const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
+const ATMOS_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
+const ATMOS_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
+
+function isAtmosAudioCodec(codec: string | null | undefined): boolean {
+    const normalizedCodec = String(codec ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "");
+
+    return ATMOS_AUDIO_CODEC_PREFIXES.some((prefix) => normalizedCodec === prefix || normalizedCodec.startsWith(prefix));
+}
 
 function resolveFfmpegBinary(): string {
     const override = process.env.FFMPEG_PATH;
@@ -56,6 +68,13 @@ export interface AudioMetrics {
     width?: number;
     height?: number;
     fingerprint?: string; // Add fingerprint to metrics
+}
+
+export interface BrowserCompatibleAudioSource {
+    fileType?: string | null;
+    quality?: string | null;
+    codec?: string | null;
+    extension?: string | null;
 }
 
 export async function calculateFingerprint(filePath: string): Promise<string | null> {
@@ -127,7 +146,7 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     const codecName = codec?.toLowerCase() || '';
 
     // Dolby Atmos
-    if (codecName === 'e-ac-3' || codecName === 'eac3' || codecName === 'ac-4' || codecName === 'ac4') {
+    if (isAtmosAudioCodec(codecName)) {
         return 'DOLBY_ATMOS';
     }
 
@@ -148,6 +167,26 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     }
 
     return 'LOSSLESS'; // Default fallback
+}
+
+export function requiresBrowserCompatibleAudioStream(source: BrowserCompatibleAudioSource): boolean {
+    const fileType = String(source.fileType ?? '').trim().toLowerCase();
+    if (fileType && fileType !== 'track') {
+        return false;
+    }
+
+    const quality = String(source.quality ?? '').trim().toUpperCase();
+    if (quality === 'DOLBY_ATMOS') {
+        return true;
+    }
+
+    const codec = String(source.codec ?? '').trim().toLowerCase();
+    if (isAtmosAudioCodec(codec)) {
+        return true;
+    }
+
+    const extension = String(source.extension ?? '').trim().toLowerCase();
+    return ATMOS_AUDIO_EXTENSIONS.has(extension);
 }
 
 export function deriveVideoQuality(metrics: AudioMetrics): string | null {
@@ -424,5 +463,29 @@ export async function convertToMp4(inputPath: string, outputPath: string): Promi
             }
             resolve(true);
         });
+    });
+}
+
+export function spawnBrowserCompatibleAudioTranscode(
+    inputPath: string,
+    options: { bitrate?: string } = {},
+): ChildProcessByStdio<null, Readable, Readable> {
+    const ffmpegBin = resolveFfmpegBinary();
+    const args = [
+        '-v', 'error',
+        '-i', inputPath,
+        '-map_metadata', '0',
+        '-vn',
+        '-c:a', 'aac',
+        '-b:a', options.bitrate || '256k',
+        '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov',
+        '-f', 'mp4',
+        'pipe:1',
+    ];
+
+    return spawn(ffmpegBin, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
     });
 }

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { NON_DOWNLOAD_JOB_TYPES, TaskQueueService, type AnyJobPayload, type JobStatus, JobType } from "../services/queue.js";
-import { RedundancyService } from "../services/redundancy.js";
+import { CurationService } from "../services/curation-service.js";
 import { ACTIVITY_FILTERS, getActivityPage } from "../services/command-history.js";
 import { getCommandTypesForQueueCategory, type CommandQueueCategory } from "../services/command-registry.js";
 import { parseActivityFilters, parseListPagination } from "../utils/activity-query.js";
@@ -143,7 +143,7 @@ router.post("/process-monitored", async (req, res) => {
   try {
     const body = getObjectBody(req.body ?? {});
     const artistId = getOptionalIdentifier(body, "artistId");
-    const queued = await RedundancyService.queueMonitoredItems(artistId);
+    const queued = await CurationService.queueMonitoredItems(artistId);
     const count = queued.albums + queued.tracks + queued.videos;
     res.json({
       message: `Added ${count} item(s) to download queue (${queued.albums} albums, ${queued.tracks} tracks, ${queued.videos} videos)`,

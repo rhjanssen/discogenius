@@ -20,7 +20,7 @@ test("existing Discogenius naming tokens continue to render", () => {
   assert.equal(rendered, "Daft Punk - Discovery (2001) - 01 - One More Time");
 });
 
-test("Lidarr-style normalized variants resolve correctly", () => {
+test("normalized filename variants resolve correctly", () => {
   const rendered = renderFileStem(
     [
       "{Artist Name}",

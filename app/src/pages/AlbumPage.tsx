@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useContext, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useState, useCallback, useContext, useMemo, useLayoutEffect, useRef } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
 import {
@@ -52,6 +52,7 @@ import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEven
 import { tidalUrl } from "@/utils/tidalUrl";
 import { QueueContext } from "@/providers/QueueProvider";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
 import {
   detailActionButtonRadiusStyles,
   standardDetailActionButtonStyles,
@@ -381,6 +382,7 @@ const AlbumPage = () => {
   const styles = useStyles();
   const { albumId } = useParams<{ albumId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
@@ -391,6 +393,7 @@ const AlbumPage = () => {
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
+  const handledTrackScrollKeyRef = useRef<string | null>(null);
 
   const { data: pageData, isLoading: loading, error } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
@@ -424,6 +427,67 @@ const AlbumPage = () => {
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!((album as any)?.monitor_locked ?? (album as any)?.monitor_lock);
+
+  useLayoutEffect(() => {
+    if (!albumId) {
+      return;
+    }
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [albumId, location.key]);
+
+  useLayoutEffect(() => {
+    if (!albumId || loading) {
+      return;
+    }
+
+    const focusTrackId = getAlbumRouteTrackTarget(location.state);
+    if (!focusTrackId) {
+      return;
+    }
+
+    const scrollKey = `${location.key}:${albumId}:${focusTrackId}`;
+    if (handledTrackScrollKeyRef.current === scrollKey) {
+      return;
+    }
+
+    let animationFrameId = 0;
+    let cancelled = false;
+    let attempts = 0;
+
+    const findTrackRow = () => {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return document.querySelector<HTMLElement>(`[data-album-track-id="${CSS.escape(focusTrackId)}"]`);
+      }
+
+      return document.querySelector<HTMLElement>(`[data-album-track-id="${focusTrackId.replace(/([\\"])/g, "\\$1")}"]`);
+    };
+
+    const scrollToTrack = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const trackRow = findTrackRow();
+      if (trackRow) {
+        handledTrackScrollKeyRef.current = scrollKey;
+        trackRow.scrollIntoView({ block: "center", behavior: "auto" });
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 12) {
+        animationFrameId = window.requestAnimationFrame(scrollToTrack);
+      }
+    };
+
+    animationFrameId = window.requestAnimationFrame(scrollToTrack);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [albumId, loading, location.key, location.state, tracks.length]);
 
   const updateAlbumPageCache = useCallback((updater: (current: AlbumPageData) => AlbumPageData) => {
     if (!albumId) {
@@ -549,7 +613,7 @@ const AlbumPage = () => {
       <MediaCard
         key={item.id}
         className={mergeClasses(styles.albumCard, isCurrent && styles.albumCard)}
-        to={`/album/${item.id}`}
+        to={getAlbumPath(item.id)}
         imageUrl={item.cover_id ? getAlbumCover(item.cover_id, "small") : (item.cover ? getAlbumCover(item.cover, "small") : null)}
         alt={item.title}
         title={item.title}

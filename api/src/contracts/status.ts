@@ -93,6 +93,7 @@ export interface DownloadProgressContract {
   jobId: number;
   tidalId: string;
   type: DownloadContentTypeContract;
+  quality?: string | null;
   title?: string;
   artist?: string;
   cover?: string | null;
@@ -116,6 +117,7 @@ export interface DownloadStartedEventContract {
   jobId: number;
   tidalId: string;
   type: DownloadContentTypeContract;
+  quality?: string | null;
   title?: string;
   artist?: string;
   cover?: string | null;
@@ -368,6 +370,7 @@ export function parseDownloadProgressContract(value: unknown): DownloadProgressC
     jobId: expectNumber(record.jobId, "downloadProgress.jobId"),
     tidalId: expectIdentifierString(record.tidalId, "downloadProgress.tidalId"),
     type: type as DownloadContentTypeContract,
+    quality: expectNullableString(record.quality, "downloadProgress.quality"),
     title: expectOptionalString(record.title, "downloadProgress.title"),
     artist: expectOptionalString(record.artist, "downloadProgress.artist"),
     cover: expectNullableString(record.cover, "downloadProgress.cover"),
@@ -398,6 +401,7 @@ function parseDownloadStartedBase(value: unknown, label: string): DownloadStarte
     jobId: expectNumber(record.jobId, `${label}.jobId`),
     tidalId: expectIdentifierString(record.tidalId, `${label}.tidalId`),
     type: type as DownloadContentTypeContract,
+    quality: expectNullableString(record.quality, `${label}.quality`),
     title: expectOptionalString(record.title, `${label}.title`),
     artist: expectOptionalString(record.artist, `${label}.artist`),
     cover: expectNullableString(record.cover, `${label}.cover`),

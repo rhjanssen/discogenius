@@ -588,8 +588,8 @@ this.transaction(() => {
 - **library-scan-*.ts**: Root folder scanning and repair
 
 #### Monitoring & Curation
-- **monitoring-state.ts**: Runtime progress tracking
-- **monitoring-policy.ts**: Time-window policies, dedup logic
+- **task-state.ts**: Runtime progress tracking
+- **schedule-policy.ts**: Time-window/staleness policies, include-decision logic
 - **curation.listener.ts**: Listen to curation events, queue downloads
 - **artist-monitoring.ts**: Artist-specific monitoring decisions
 

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import { useGlobalEvents, type GlobalEventPayload, type JobStatusRaw } from "@/hooks/useGlobalEvents";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
   DownloadProgressContract as DownloadProgress,
@@ -11,6 +11,7 @@ import type {
 export type { DownloadProgress, QueueItem };
 
 const QUEUE_FALLBACK_REFRESH_MS = 45_000;
+const QUEUE_MISSING_ITEM_GRACE_MS = 15_000;
 
 type LiveQueueEvent = Partial<DownloadProgress> & {
   jobId?: number;
@@ -19,6 +20,45 @@ type LiveQueueEvent = Partial<DownloadProgress> & {
   title?: string;
   artist?: string;
   cover?: string | null;
+};
+
+type QueueGlobalJobEventData = {
+  type?: unknown;
+  status?: JobStatusRaw;
+};
+
+const STRUCTURAL_QUEUE_UPDATE_STATUSES = new Set<JobStatusRaw>(['pending', 'completed', 'failed', 'cancelled']);
+
+const getQueueGlobalJobEventData = (data: unknown): QueueGlobalJobEventData | null => {
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  return data as QueueGlobalJobEventData;
+};
+
+const shouldRefreshQueueForGlobalEvent = (
+  event: GlobalEventPayload,
+  isDownloadQueueJobType: (value: unknown) => boolean,
+): boolean => {
+  if (event.type === 'queue.cleared' || event.type === 'job.added') {
+    return true;
+  }
+
+  const jobEventData = getQueueGlobalJobEventData(event.data);
+  if (!jobEventData || !isDownloadQueueJobType(jobEventData.type)) {
+    return false;
+  }
+
+  if (event.type === 'job.deleted') {
+    return true;
+  }
+
+  if (event.type !== 'job.updated') {
+    return false;
+  }
+
+  return jobEventData.status !== undefined && STRUCTURAL_QUEUE_UPDATE_STATUSES.has(jobEventData.status);
 };
 
 interface QueueContextType {
@@ -127,6 +167,33 @@ const isImportState = (state?: DownloadProgress['state']): boolean =>
 const isActiveLiveState = (state?: DownloadProgress['state']): boolean =>
   state === 'downloading' || state === 'importing';
 
+const isImportQueueItem = (item?: QueueItem | null): boolean =>
+  item?.stage === 'import' || isImportState(item?.state);
+
+const resolveLiveQueueStage = (
+  state: DownloadProgress['state'] | undefined,
+  existing?: QueueItem,
+): QueueItem['stage'] =>
+  isImportState(state) || isImportQueueItem(existing) ? 'import' : 'download';
+
+const resolveStartedLiveState = (
+  data: LiveQueueEvent,
+  existingItem?: QueueItem,
+  existingProgress?: DownloadProgress,
+): DownloadProgress['state'] => {
+  if (data.state === 'importPending' || data.state === 'importing') {
+    return 'importing';
+  }
+
+  if (data.state === 'downloading') {
+    return 'downloading';
+  }
+
+  return isImportQueueItem(existingItem) || isImportState(existingProgress?.state)
+    ? 'importing'
+    : 'downloading';
+};
+
 const buildLiveProgressSnapshot = (data: LiveQueueEvent, existing?: DownloadProgress): DownloadProgress | null => {
   const jobId = Number(data.jobId ?? existing?.jobId);
   const type = data.type ?? existing?.type;
@@ -167,7 +234,7 @@ const buildLiveQueueItem = (data: LiveQueueEvent, existing?: QueueItem): QueueIt
   }
 
   const timestamp = new Date().toISOString();
-  const stage: QueueItem['stage'] = isImportState(data.state) ? 'import' : (existing?.stage ?? 'download');
+  const stage = resolveLiveQueueStage(data.state, existing);
 
   let status: QueueItem['status'];
   if (data.state === 'failed' || data.state === 'importFailed') {
@@ -187,7 +254,7 @@ const buildLiveQueueItem = (data: LiveQueueEvent, existing?: QueueItem): QueueIt
     url: existing?.url ?? null,
     type,
     queuePosition: existing?.queuePosition,
-    quality: existing?.quality ?? null,
+    quality: data.quality ?? existing?.quality ?? null,
     stage,
     tidalId: data.tidalId ?? existing?.tidalId ?? null,
     path: existing?.path ?? null,
@@ -222,11 +289,13 @@ const mergeMissingLiveQueueItems = (
   serverItems: QueueItem[],
   existingQueue: QueueItem[],
   liveProgress: Map<number, DownloadProgress>,
+  seenAtById: Map<number, number>,
 ): QueueItem[] => {
   if (serverItems.length === 0 && existingQueue.length === 0 && liveProgress.size === 0) {
     return serverItems;
   }
 
+  const now = Date.now();
   const serverIds = new Set(serverItems.map((item) => item.id));
   const optimisticItems = new Map<number, QueueItem>();
 
@@ -235,9 +304,17 @@ const mergeMissingLiveQueueItems = (
       continue;
     }
 
+    if (item.status === 'completed' || item.status === 'cancelled') {
+      continue;
+    }
+
     const live = liveProgress.get(item.id);
-    const hasActiveLiveEvidence = live && isActiveLiveState(live.state);
-    if (!hasActiveLiveEvidence) {
+    const isLiveQueueState = item.status === 'pending' || item.status === 'downloading' || item.status === 'processing';
+    const hasActiveLiveEvidence = Boolean(live && isActiveLiveState(live.state));
+    const seenAt = seenAtById.get(item.id) ?? 0;
+    const wasSeenRecently = seenAt > 0 && now - seenAt <= QUEUE_MISSING_ITEM_GRACE_MS;
+
+    if (!isLiveQueueState || (!hasActiveLiveEvidence && !wasSeenRecently)) {
       continue;
     }
 
@@ -273,11 +350,67 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const isManualCloseRef = useRef(false);
   const queueRef = useRef<QueueItem[]>([]);
   const progressRef = useRef<Map<number, DownloadProgress>>(new Map());
+  const queueSeenAtRef = useRef<Map<number, number>>(new Map());
   const sseReconnectAttempts = useRef(0);
   const queueBackoffRef = useRef(10000);
   const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queueRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuePageSize = 100;
+
+  const updateQueueState = useCallback((updater: (prev: QueueItem[]) => QueueItem[]) => {
+    setQueue(prev => {
+      const next = updater(prev);
+      queueRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const updateProgressState = useCallback((updater: (prev: Map<number, DownloadProgress>) => Map<number, DownloadProgress>) => {
+    setProgress(prev => {
+      const next = updater(prev);
+      progressRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const markQueueItemsSeen = useCallback((items: Array<{ id: number }>) => {
+    if (items.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const next = new Map(queueSeenAtRef.current);
+    for (const item of items) {
+      next.set(item.id, now);
+    }
+    queueSeenAtRef.current = next;
+  }, []);
+
+  const forgetQueueItems = useCallback((jobIds: number[]) => {
+    if (jobIds.length === 0) {
+      return;
+    }
+
+    const next = new Map(queueSeenAtRef.current);
+    for (const jobId of jobIds) {
+      next.delete(jobId);
+    }
+    queueSeenAtRef.current = next;
+  }, []);
+
+  const pruneSeenQueueItems = useCallback((jobIds: number[]) => {
+    const keepIds = new Set(jobIds);
+    const now = Date.now();
+    const next = new Map<number, number>();
+
+    for (const [jobId, seenAt] of queueSeenAtRef.current.entries()) {
+      if (keepIds.has(jobId) || now - seenAt <= QUEUE_MISSING_ITEM_GRACE_MS) {
+        next.set(jobId, seenAt);
+      }
+    }
+
+    queueSeenAtRef.current = next;
+  }, []);
 
   const isDownloadQueueJobType = useCallback((value: unknown) => {
     const type = String(value || "");
@@ -313,7 +446,15 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         offset += pageItems.length;
       }
 
-      const mergedQueueItems = mergeMissingLiveQueueItems(serverItems, queueRef.current, progressRef.current);
+      markQueueItemsSeen(serverItems);
+
+      const mergedQueueItems = mergeMissingLiveQueueItems(
+        serverItems,
+        queueRef.current,
+        progressRef.current,
+        queueSeenAtRef.current,
+      );
+      pruneSeenQueueItems(mergedQueueItems.map((item) => item.id));
       queueRef.current = mergedQueueItems;
       setQueue(mergedQueueItems);
       setProgress(prev => {
@@ -356,7 +497,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [markQueueItemsSeen, pruneSeenQueueItems]);
 
   const scheduleQueueRefresh = useCallback((delay = 250) => {
     if (queueRefreshTimerRef.current) {
@@ -383,13 +524,19 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return false;
     }
 
+    markQueueItemsSeen([{ id: jobId }]);
+
     const wasKnown = Boolean(existing);
     setQueue(prev => {
       const existingIndex = prev.findIndex((item) => item.id === jobId);
-      const next = existingIndex === -1
-        ? [nextItem, ...prev]
-        : prev.map((item, index) => index === existingIndex ? { ...item, ...nextItem } : item);
-
+      if (existingIndex === -1) {
+        // Only insert if no item with same jobId exists
+        const next = [nextItem, ...prev];
+        queueRef.current = next;
+        return next;
+      }
+      // Update existing item in-place
+      const next = prev.map((item, index) => index === existingIndex ? { ...item, ...nextItem } : item);
       queueRef.current = next;
       return next;
     });
@@ -399,24 +546,19 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     return !wasKnown;
-  }, [scheduleQueueRefresh]);
+  }, [markQueueItemsSeen, scheduleQueueRefresh]);
 
   // Use the global event stream to know when to refetch the full queue
   // or apply optimistic updates when jobs are added/removed.
-  const lastGlobalEvent = useGlobalEvents(['job.added', 'job.deleted', 'queue.cleared']);
+  const lastGlobalEvent = useGlobalEvents(['job.added', 'job.updated', 'job.deleted', 'queue.cleared']);
 
   useEffect(() => {
     if (!lastGlobalEvent) {
       return;
     }
 
-    if (lastGlobalEvent.type === "queue.cleared") {
-      scheduleQueueRefresh();
-      return;
-    }
-
-    if (isDownloadQueueJobType(lastGlobalEvent.data?.type)) {
-      scheduleQueueRefresh();
+    if (shouldRefreshQueueForGlobalEvent(lastGlobalEvent, isDownloadQueueJobType)) {
+      scheduleQueueRefresh(0);
     }
   }, [isDownloadQueueJobType, lastGlobalEvent, scheduleQueueRefresh]);
 
@@ -442,108 +584,79 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Successful event = reset reconnect counter
           sseReconnectAttempts.current = 0;
           switch (event) {
-            case 'progress':
+            case 'progress-batch':
               {
-                const insertedUnknownItem = ensureLiveQueueItem(data);
-                if (insertedUnknownItem) {
+                // data is an array of progress updates — process all in one state update
+                const batch: LiveQueueEvent[] = Array.isArray(data) ? data : [data];
+                let needsActivityRefresh = false;
+                for (const item of batch) {
+                  if (ensureLiveQueueItem(item)) {
+                    needsActivityRefresh = true;
+                  }
+                }
+                if (needsActivityRefresh) {
                   dispatchActivityRefresh();
                 }
-              }
-              setProgress(prev => {
-                const next = new Map(prev);
-                const snapshot = buildLiveProgressSnapshot(data, prev.get(data.jobId));
-                if (snapshot) {
-                  next.set(data.jobId, snapshot);
-                }
-                progressRef.current = next;
-                return next;
-              });
-              // Update queue item progress
-              setQueue(prev => {
-                const next = prev.map(item => {
-                  if (item.id !== data.jobId) return item;
-                  const updated = buildLiveQueueItem(data, item);
-                  return updated ? { ...updated, updated_at: new Date().toISOString() } : item;
+
+                // Single progress state update for all jobs
+                updateProgressState(prev => {
+                  const next = new Map(prev);
+                  for (const item of batch) {
+                    const snapshot = buildLiveProgressSnapshot(item, prev.get(item.jobId));
+                    if (snapshot) {
+                      next.set(item.jobId, snapshot);
+                    }
+                  }
+                  return next;
                 });
-                queueRef.current = next;
-                return next;
-              });
+
+                // Single queue state update for all jobs
+                const ts = new Date().toISOString();
+                const batchMap = new Map(batch.map(item => [item.jobId, item]));
+                updateQueueState(prev => prev.map(queueItem => {
+                  const evt = batchMap.get(queueItem.id);
+                  if (!evt) return queueItem;
+                  const updated = buildLiveQueueItem(evt, queueItem);
+                  return updated ? { ...updated, updated_at: ts } : queueItem;
+                }));
+              }
               break;
             case 'started':
-              ensureLiveQueueItem({ ...data, progress: 0, state: 'downloading' });
-              setProgress(prev => {
-                const next = new Map(prev);
-                const snapshot = buildLiveProgressSnapshot({ ...data, progress: 0, state: 'downloading' }, prev.get(data.jobId));
-                if (snapshot) {
-                  next.set(data.jobId, snapshot);
-                }
-                progressRef.current = next;
-                return next;
-              });
-              setQueue(prev => {
-                const next = prev.map(item =>
-                  item.id === data.jobId
-                    ? {
-                      ...item,
-                      status: 'downloading' as const,
-                      stage: 'download' as const,
-                      progress: 0,
-                      state: 'downloading' as const,
-                      title: data.title ?? item.title,
-                      artist: data.artist ?? item.artist,
-                      cover: data.cover ?? item.cover,
-                      updated_at: new Date().toISOString(),
-                    }
-                    : item,
-                );
-                queueRef.current = next;
-                return next;
-              });
+              // Optimistic in-place update + signal re-fetch
+              {
+                const existingItem = queueRef.current.find((item) => item.id === data.jobId);
+                const existingProgress = progressRef.current.get(data.jobId);
+                const startedState = resolveStartedLiveState(data, existingItem, existingProgress);
+                ensureLiveQueueItem({ ...data, progress: 0, state: startedState });
+              }
+              scheduleQueueRefresh();
               dispatchActivityRefresh();
               break;
             case 'completed':
-              setProgress(prev => {
+              // Optimistic remove + signal re-fetch for ground truth
+              updateProgressState(prev => {
                 const next = new Map(prev);
                 next.delete(data.jobId);
-                progressRef.current = next;
                 return next;
               });
-              setQueue(prev => prev.filter(item => item.id !== data.jobId));
+              updateQueueState(prev => prev.filter(item => item.id !== data.jobId));
+              forgetQueueItems([data.jobId]);
               toastRef.current({
                 title: "Download completed",
                 description: data.title || "Track downloaded successfully",
               });
+              scheduleQueueRefresh();
               dispatchActivityRefresh();
               break;
             case 'failed':
-              setProgress(prev => {
-                const next = new Map(prev);
-                const previous = next.get(data.jobId);
-                next.set(data.jobId, {
-                  ...previous,
-                  ...data,
-                  progress: previous?.progress ?? data.progress ?? 0,
-                  state: 'failed',
-                  statusMessage: data.error || previous?.statusMessage,
-                  tracks: previous?.tracks
-                    ? previous.tracks.map(track => ({
-                      ...track,
-                      status: track.status === 'completed' || track.status === 'skipped' ? track.status : 'error',
-                    }))
-                    : data.tracks,
-                });
-                progressRef.current = next;
-                return next;
-              });
-              setQueue(prev => prev.map(item =>
+              // Optimistic status patch + signal re-fetch
+              updateQueueState(prev => prev.map(item =>
                 item.id === data.jobId
                   ? {
                     ...item,
                     status: 'failed' as const,
                     error: data.error,
-                    statusMessage: data.error || item.statusMessage,
                     state: data.state || 'failed',
-                    tracks: data.tracks ?? item.tracks,
                   }
                   : item
               ));
@@ -552,6 +665,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 description: data.error || "An error occurred",
                 variant: "destructive",
               });
+              scheduleQueueRefresh();
               dispatchActivityRefresh();
               break;
             case 'queue-status':
@@ -605,7 +719,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         eventSourceRef.current = null;
       }
     };
-  }, [fetchQueue]);
+  }, [ensureLiveQueueItem, fetchQueue, forgetQueueItems, scheduleQueueRefresh, updateProgressState, updateQueueState]);
 
   const addToQueue = async (url: string, type: string, tidalId?: string) => {
     try {
@@ -630,7 +744,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const processItem = async (id: number) => {
     try {
       await api.processQueueItem(id);
-      setQueue(prev => prev.map(item =>
+      updateQueueState(prev => prev.map(item =>
         item.id === id && item.status === 'pending'
           ? { ...item, status: 'downloading' as const }
           : item
@@ -649,10 +763,9 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const retryItem = async (id: number) => {
     try {
       const response = await api.retryQueueItem(id);
-      setProgress(prev => {
+      updateProgressState(prev => {
         const next = new Map(prev);
         next.delete(id);
-        progressRef.current = next;
         return next;
       });
       toastRef.current({
@@ -674,13 +787,13 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const deleteItem = async (id: number) => {
     try {
       await api.deleteQueueItem(id);
-      setProgress(prev => {
+      updateProgressState(prev => {
         const next = new Map(prev);
         next.delete(id);
-        progressRef.current = next;
         return next;
       });
-      setQueue(prev => prev.filter(item => item.id !== id));
+      updateQueueState(prev => prev.filter(item => item.id !== id));
+      forgetQueueItems([id]);
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error('Error deleting item:', error);
@@ -710,15 +823,14 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const clearCompleted = async () => {
     try {
       await api.clearCompleted();
-      setQueue(prev => prev.filter(item => item.status !== 'failed'));
-      setProgress(prev => {
+      updateQueueState(prev => prev.filter(item => !['completed', 'failed', 'cancelled'].includes(item.status)));
+      updateProgressState(prev => {
         const next = new Map(prev);
         for (const [id, state] of next.entries()) {
           if (state.state === 'failed' || state.state === 'completed') {
             next.delete(id);
           }
         }
-        progressRef.current = next;
         return next;
       });
       toastRef.current({
@@ -776,7 +888,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const stats = {
     pending: Array.isArray(queue) ? queue.filter(item => item.status === 'pending').length : 0,
-    downloading: Array.isArray(queue) ? queue.filter(item => item.status === 'downloading').length : 0,
+    downloading: Array.isArray(queue) ? queue.filter(item => item.status === 'downloading' || item.status === 'processing').length : 0,
     completed: Array.isArray(queue) ? queue.filter(item => item.status === 'completed').length : 0,
     failed: Array.isArray(queue) ? queue.filter(item => item.status === 'failed').length : 0,
     total: Array.isArray(queue) ? queue.length : 0,

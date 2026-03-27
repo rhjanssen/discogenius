@@ -1,18 +1,19 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { pipeline } from "stream";
+import { promisify } from "util";
 import { db } from "../database.js";
 import { LibraryFilesService } from "../services/library-files.js";
 import { listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/library-files-query-service.js";
-import { DiskScanService } from "../services/library-scan.js";
 import { resolveStoredLibraryPath } from "../services/library-paths.js";
 import { queueArtistWorkflow } from "../services/artist-workflow.js";
-import { queueRescanFoldersPass } from "../services/monitoring-scheduler.js";
-import { getConfigSection } from "../services/config.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
+import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/audioUtils.js";
+import { rootScanRouteService, type RootScanSsePayload } from "../services/root-scan-route-service.js";
 
 const router = Router();
-let immediateRootScanInProgress = false;
+const streamPipeline = promisify(pipeline);
 
 function parseFileTypes(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
@@ -159,7 +160,7 @@ router.get("/content", (req, res) => {
 });
 
 // Stream media files (audio, video, images)
-router.get("/stream/:id", (req, res) => {
+router.get("/stream/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -186,6 +187,12 @@ router.get("/stream/:id", (req, res) => {
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const ext = path.extname(filePath).toLowerCase();
+    const useBrowserCompatibleAudioStream = requiresBrowserCompatibleAudioStream({
+      fileType: file.file_type,
+      quality: file.quality,
+      codec: file.codec,
+      extension: ext,
+    });
 
     // Determine content type
     const mimeTypes: Record<string, string> = {
@@ -207,6 +214,53 @@ router.get("/stream/:id", (req, res) => {
       ".gif": "image/gif",
     };
     const contentType = mimeTypes[ext] || "application/octet-stream";
+
+    if (useBrowserCompatibleAudioStream) {
+      const child = spawnBrowserCompatibleAudioTranscode(filePath);
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once("close", (code, signal) => resolve({ code, signal }));
+        child.once("error", reject);
+      });
+      const spawnedPromise = new Promise<void>((resolve, reject) => {
+        child.once("spawn", () => resolve());
+        child.once("error", reject);
+      });
+      const cleanupChild = () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill();
+        }
+      };
+
+      req.once("close", cleanupChild);
+      res.once("close", cleanupChild);
+
+      try {
+        await spawnedPromise;
+
+        res.writeHead(200, {
+          "Content-Type": "audio/mp4",
+          "Cache-Control": "no-store",
+          "Accept-Ranges": "none",
+        });
+
+        await streamPipeline(child.stdout, res);
+
+        const { code, signal } = await exitPromise;
+        if ((code ?? 0) !== 0 && signal == null) {
+          console.error(`[library-files] Browser-compatible audio transcode exited with code ${code}: ${stderr.trim() || "unknown error"}`);
+        }
+        return;
+      } finally {
+        req.off("close", cleanupChild);
+        res.off("close", cleanupChild);
+        cleanupChild();
+      }
+    }
 
     // Handle range requests for audio/video seeking
     const range = req.headers.range;
@@ -235,6 +289,9 @@ router.get("/stream/:id", (req, res) => {
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (error: any) {
+    if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") {
+      return;
+    }
     console.error("[library-files] Stream error:", error);
     res.status(500).json({ detail: error.message });
   }
@@ -267,40 +324,16 @@ router.post("/scan/:artistId", (req, res) => {
 });
 
 /**
- * POST /library-files/scan-now/:artistId
- * Run an immediate (synchronous) disk scan for a specific artist.
- * Does NOT run curation or metadata backfill — just reconciles library_files with disk.
- */
-router.post("/scan-now/:artistId", async (req, res) => {
-  try {
-    const { artistId } = req.params;
-    const artist = db.prepare("SELECT id, name FROM artists WHERE id = ?").get(artistId) as any;
-    if (!artist) {
-      return res.status(404).json({ detail: `Artist ${artistId} not found` });
-    }
-
-    const result = await DiskScanService.scan({ artistIds: [artistId] });
-    res.json({ success: true, ...result });
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-/**
  * POST /library-files/scan-roots
  * Queue a root folder scan that discovers unknown folders in all library roots,
  * runs the shared import decision pipeline, and imports anything it can identify.
  */
 router.post("/scan-roots", (req, res) => {
   try {
-    const monitorArtist = typeof req.body?.monitorArtist === "boolean"
-      ? req.body.monitorArtist
-      : undefined;
-
-    const jobId = queueRescanFoldersPass({
+    const jobId = rootScanRouteService.queueRootScan({
       trigger: 1,
-      fullProcessing: req.body?.fullProcessing === true,
-      monitorArtist,
+      fullProcessing: req.body?.fullProcessing,
+      monitorArtist: req.body?.monitorArtist,
     });
     res.json({ success: true, jobId, message: "Root folder scan queued" });
   } catch (error: any) {
@@ -320,39 +353,16 @@ router.post("/scan-roots-now", async (req, res) => {
     Connection: "keep-alive",
   });
 
-  const sendEvent = (data: any) => {
+  const sendEvent = (data: RootScanSsePayload) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  if (immediateRootScanInProgress) {
-    sendEvent({
-      type: "error",
-      message: "A root folder scan is already running. Wait for it to finish before starting another.",
-    });
-    res.end();
-    return;
-  }
-
-  immediateRootScanInProgress = true;
-
   try {
-    const monitorArtist = typeof req.body?.monitorArtist === "boolean"
-      ? req.body.monitorArtist
-      : getConfigSection("monitoring").monitor_new_artists;
-
-    const result = await DiskScanService.scan({
-      addNewArtists: true,
-      monitorNewArtists: monitorArtist,
-      onProgress: (event) => {
-        sendEvent({ type: "progress", message: event.message });
-      },
+    await rootScanRouteService.runImmediateRootScan({
+      monitorArtist: req.body?.monitorArtist,
+      sendEvent,
     });
-
-    sendEvent({ type: "complete", result });
-  } catch (error: any) {
-    sendEvent({ type: "error", message: error.message });
   } finally {
-    immediateRootScanInProgress = false;
     res.end();
   }
 });

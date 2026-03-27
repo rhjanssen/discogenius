@@ -59,6 +59,14 @@ const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP
  * Emits events for SSE streaming to frontend
  */
 
+/** States that must be flushed to DB immediately (terminal / transition states). */
+const IMMEDIATE_FLUSH_STATES = new Set<string>([
+    'completed', 'failed', 'importFailed', 'importPending', 'importing',
+]);
+
+/** Minimum interval between DB writes for a single job's progress (ms). */
+const PROGRESS_WRITE_INTERVAL_MS = 1_000;
+
 export class DownloadProcessor {
     private processing: boolean = false;
     private isPaused: boolean = false;
@@ -71,6 +79,14 @@ export class DownloadProcessor {
     private cancelCurrentDownload: boolean = false;
     private lastBusyLogAt: number = 0;
     private lastStuckCleanupAt: number = 0;
+
+    // ── Progress write coalescing ───────────────────────────────────
+    // Buffers the latest in-flight progress state per job and flushes
+    // to SQLite at most once per PROGRESS_WRITE_INTERVAL_MS, reducing
+    // DB round-trips from every CLI progress tick to ≤1/s per job.
+    // Terminal states (completed/failed/…) always flush immediately.
+    private progressBuffer = new Map<number, Parameters<DownloadProcessor['writeDownloadState']>[1]>();
+    private progressFlushTimer?: NodeJS.Timeout;
 
     private scheduleNext(): void {
         setImmediate(() => {
@@ -304,7 +320,68 @@ export class DownloadProcessor {
         }
     }
 
+    private resolveDownloadQuality(
+        tidalId: string,
+        type: DownloadJobType,
+        payload: DownloadJobPayload,
+    ): string | null {
+        if (payload?.quality) {
+            return payload.quality;
+        }
+
+        try {
+            if (type === 'album') {
+                const row = db.prepare(`
+                    SELECT quality
+                    FROM albums
+                    WHERE id = ?
+                `).get(tidalId) as { quality?: string | null } | undefined;
+                return row?.quality ?? null;
+            }
+
+            const row = db.prepare(`
+                SELECT quality
+                FROM media
+                WHERE id = ?
+            `).get(tidalId) as { quality?: string | null } | undefined;
+            return row?.quality ?? null;
+        } catch {
+            return null;
+        }
+    }
+
     private persistDownloadState(jobId: number, state: {
+        progress?: number;
+        description?: string;
+        currentFileNum?: number;
+        totalFiles?: number;
+        currentTrack?: string;
+        trackProgress?: number;
+        trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        statusMessage?: string;
+        state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
+        speed?: string;
+        eta?: string;
+        size?: number;
+        sizeleft?: number;
+        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+    }) {
+        // Terminal / transition states bypass the buffer and write immediately.
+        if (state.state && IMMEDIATE_FLUSH_STATES.has(state.state)) {
+            // Flush any pending buffered state for this job first so the
+            // immediate write always represents the latest snapshot.
+            this.progressBuffer.delete(jobId);
+            this.writeDownloadState(jobId, state);
+            return;
+        }
+
+        // Buffer the latest in-flight progress for this job.
+        this.progressBuffer.set(jobId, state);
+        this.ensureProgressFlushTimer();
+    }
+
+    /** Unconditionally write download state to the database. */
+    private writeDownloadState(jobId: number, state: {
         progress?: number;
         description?: string;
         currentFileNum?: number;
@@ -346,6 +423,32 @@ export class DownloadProcessor {
             progress: state.progress,
             payloadPatch,
         });
+    }
+
+    /** Start the periodic flush timer if not already running. */
+    private ensureProgressFlushTimer(): void {
+        if (this.progressFlushTimer) return;
+        this.progressFlushTimer = setInterval(() => {
+            this.flushProgressBuffer();
+        }, PROGRESS_WRITE_INTERVAL_MS);
+        this.progressFlushTimer.unref(); // Don't keep process alive just for this timer
+    }
+
+    /** Flush all buffered progress states to the database. */
+    flushProgressBuffer(): void {
+        if (this.progressBuffer.size === 0) {
+            // Nothing left to flush — stop the timer.
+            if (this.progressFlushTimer) {
+                clearInterval(this.progressFlushTimer);
+                this.progressFlushTimer = undefined;
+            }
+            return;
+        }
+
+        for (const [jobId, state] of this.progressBuffer) {
+            this.writeDownloadState(jobId, state);
+        }
+        this.progressBuffer.clear();
     }
 
     async initialize() {
@@ -484,6 +587,7 @@ export class DownloadProcessor {
                 downloadEvents.emitProgress(job.id, {
                     tidalId,
                     type,
+                    quality: importPayload?.quality ?? null,
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
@@ -507,6 +611,7 @@ export class DownloadProcessor {
                 downloadEvents.emitCompleted(job.id, {
                     tidalId,
                     type,
+                    quality: importPayload?.quality ?? null,
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
@@ -524,6 +629,7 @@ export class DownloadProcessor {
                 downloadEvents.emitFailed(job.id, {
                     tidalId,
                     type,
+                    quality: importPayload?.quality ?? null,
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
@@ -553,7 +659,14 @@ export class DownloadProcessor {
             await this.ensureMetadataReady(tidalId, type);
 
             resolved = this.resolveDownloadMetadata(tidalId, type, payload);
-            payload = { ...((payload as DownloadJobPayload) || {}), title: resolved.title, artist: resolved.artist, cover: resolved.cover };
+            const resolvedQuality = this.resolveDownloadQuality(tidalId, type, payload);
+            payload = {
+                ...((payload as DownloadJobPayload) || {}),
+                title: resolved.title,
+                artist: resolved.artist,
+                cover: resolved.cover,
+                quality: payload.quality ?? resolvedQuality,
+            };
             job.payload = payload as DownloadJobPayload;
 
             this.persistDownloadState(job.id, {
@@ -564,6 +677,7 @@ export class DownloadProcessor {
             downloadEvents.emitStarted(job.id, {
                 tidalId,
                 type,
+                quality: payload.quality ?? null,
                 title: resolved.title,
                 artist: resolved.artist,
                 cover: resolved.cover,
@@ -605,6 +719,7 @@ export class DownloadProcessor {
 
                         downloadEvents.emitCompleted(job.id, {
                             tidalId, type,
+                            quality: payload.quality ?? null,
                             title: resolved.title,
                             artist: resolved.artist,
                             cover: resolved.cover,
@@ -628,6 +743,7 @@ export class DownloadProcessor {
 
                         downloadEvents.emitCompleted(job.id, {
                             tidalId, type,
+                            quality: payload.quality ?? null,
                             title: resolved.title,
                             artist: resolved.artist,
                             cover: resolved.cover,
@@ -649,6 +765,8 @@ export class DownloadProcessor {
                 type,
                 tidalId,
                 path: this.currentDownloadPath,
+                quality: payload.quality ?? null,
+                qualityProfile: payload.qualityProfile,
                 resolved,
                 originalJobId: job.id
             }, tidalId, Math.max(job.priority, 100), job.trigger, job.queue_order);
@@ -683,6 +801,7 @@ export class DownloadProcessor {
                 downloadEvents.emitFailed(job.id, {
                     tidalId,
                     type,
+                    quality: payload.quality ?? null,
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
@@ -930,6 +1049,7 @@ export class DownloadProcessor {
                         downloadEvents.emitProgress(jobId, {
                             tidalId: id,
                             type,
+                            quality: payload.quality ?? null,
                             title: payload.title,
                             artist: payload.artist,
                             cover: payload.cover,
@@ -1283,6 +1403,7 @@ export class DownloadProcessor {
                             downloadEvents.emitProgress(jobId, {
                                 tidalId: id,
                                 type,
+                                quality: payload.quality ?? null,
                                 title: payload.title,
                                 artist: payload.artist,
                                 cover: payload.cover,
@@ -1318,6 +1439,9 @@ export class DownloadProcessor {
     async pause(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Pausing queue...');
         this.isPaused = true;
+
+        // Flush any buffered progress writes before pausing/shutdown.
+        this.flushProgressBuffer();
 
         if (this.processing && this.currentJobId) {
             console.log(`[DOWNLOAD-PROCESSOR] Cancelling current job: ${this.currentJobId}`);

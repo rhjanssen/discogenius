@@ -189,12 +189,12 @@ export function getArtistsWithPendingJobs(): Set<string> {
 }
 
 export function hasActiveArtistWorkflow(): boolean {
+    // Only block new monitoring cycles on the orchestrator jobs (RefreshMetadata, ApplyCuration).
+    // Per-artist downstream work (RescanFolders, CurateArtist) can overlap with new cycles.
+    // This prevents the death spiral where cycles >24h block the next cycle forever.
     return (
         hasActiveTask(JobTypes.RefreshMetadata) ||
-        Boolean(getActiveLibraryRescanStmt().get()) ||
-        hasActiveTask(JobTypes.ApplyCuration) ||
-        hasActiveTask(JobTypes.DownloadMissing) ||
-        getArtistsWithPendingJobs().size > 0
+        hasActiveTask(JobTypes.ApplyCuration)
     );
 }
 

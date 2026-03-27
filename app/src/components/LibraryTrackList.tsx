@@ -24,6 +24,7 @@ import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { api } from "@/services/api";
 import type { TrackListItem as Track } from "@/types/track-list";
+import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
 import { getTidalImage } from "@/utils/tidalImages";
 
@@ -270,7 +271,7 @@ const LibraryTrackList = ({
 
   const handleRowClick = useCallback((track: Track) => {
     if (track.album_id) {
-      navigate(`/album/${track.album_id}`);
+      navigateToAlbumTrack(navigate, track.album_id, track.id);
     }
   }, [navigate]);
 
@@ -504,7 +505,7 @@ const LibraryTrackList = ({
                           onClick={(event) => {
                             event.stopPropagation();
                             if (track.album_id) {
-                              navigate(`/album/${track.album_id}`);
+                              navigateToAlbum(navigate, track.album_id);
                             }
                           }}
                         >

@@ -17,7 +17,7 @@ import {
   updateMonitoringConfig,
   updateScheduledTask,
   type ScheduledTaskKey,
-} from "./monitoring-scheduler.js";
+} from "./task-scheduler.js";
 import { TaskQueueService, type JobType } from "./queue.js";
 
 function normalizeTaskId(value: string): string {

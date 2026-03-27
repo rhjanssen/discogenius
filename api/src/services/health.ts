@@ -2,18 +2,18 @@ import path from "path";
 import { Config, CONFIG_DIR, DB_PATH } from "./config.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
 import {
-    checkCommandAvailability,
-    checkWritablePath,
-    rollupHealthStatus,
-    type BackendCapabilitySnapshot,
-    type HealthCheckResult,
-    type HealthOverallStatus,
+  checkCommandAvailability,
+  checkWritablePath,
+  rollupHealthStatus,
+  type BackendCapabilitySnapshot,
+  type HealthCheckResult,
+  type HealthOverallStatus,
 } from "../utils/health.js";
 import { getOrpheusCapabilitySnapshot, ORPHEUS_RUNTIME_DIR, ORPHEUS_SETTINGS_FILE } from "./orpheus.js";
 import {
-    getTidalDlNgCapabilitySnapshot,
-    TIDAL_DL_NG_CONFIG_DIR,
-    getTidalDlNgCommand,
+  getTidalDlNgCapabilitySnapshot,
+  TIDAL_DL_NG_CONFIG_DIR,
+  getTidalDlNgCommand,
 } from "./tidal-dl-ng.js";
 
 export interface HealthDiagnosticsSnapshot {
@@ -82,10 +82,18 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     kind: "dir",
     displayName: "Video library directory",
   });
-  const orpheusRuntimeCheck = checkWritablePath("paths.runtime.orpheus", ORPHEUS_RUNTIME_DIR, {
-    kind: "dir",
-    displayName: "Orpheus runtime directory",
-  });
+  const IS_DOCKER = process.env.DOCKER === "true";
+  const orpheusRuntimeCheck = IS_DOCKER
+    ? {
+      scope: "paths.runtime.orpheus",
+      status: "ok" as const,
+      message: "Orpheus runtime baked into Docker image",
+      details: { path: ORPHEUS_RUNTIME_DIR },
+    }
+    : checkWritablePath("paths.runtime.orpheus", ORPHEUS_RUNTIME_DIR, {
+      kind: "dir",
+      displayName: "Orpheus runtime directory",
+    });
   const orpheusStateCheck = checkWritablePath("paths.runtime.orpheusState", path.dirname(ORPHEUS_SETTINGS_FILE), {
     kind: "dir",
     displayName: "Orpheus state directory",

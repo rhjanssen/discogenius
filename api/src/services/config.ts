@@ -216,7 +216,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_path: "./library/videos",
   },
   naming: {
-    artist_folder: "{artistName} [{artistMbId}]",
+    artist_folder: "{artistName}",
     album_track_path_single: "{albumFullTitle} ({releaseYear})/{trackNumber00} - {trackFullTitle}",
     album_track_path_multi: "{albumFullTitle} ({releaseYear})/{volumeNumber0}{trackNumber00} - {trackFullTitle}",
     video_file: "{videoTitle} [{trackId}]",

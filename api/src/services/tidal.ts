@@ -192,8 +192,7 @@ const RETRY_MAX_ATTEMPTS = 3;
 let rateLimitUntil = 0;
 
 // Proactive rate limiting — python-tidal uses ThreadPoolExecutor(2) with no
-// explicit throttle; Lidarr uses a RateLimitService with ~100ms intervals.
-// We allow bounded concurrency (3 slots, like Lidarr's THREAD_LIMIT) and a
+// explicit throttle. We allow bounded concurrency (3 slots) and a
 // conservative per-slot interval that still avoids 429s.
 const MIN_REQUEST_INTERVAL_MS = 100;   // Minimum 100ms between requests (per-slot)
 const BASE_REQUEST_INTERVAL_MS = 150;  // Base interval (~50ms effective with 3 slots)
@@ -209,7 +208,7 @@ let lastRequestTime = 0;
 let consecutiveSuccesses = 0;
 const recentRequests: { timestamp: number; was429: boolean }[] = [];
 
-const REQUEST_MAX_CONCURRENT = 3;      // Bounded concurrency (python-tidal: 2, Lidarr: 3)
+const REQUEST_MAX_CONCURRENT = 3;      // Bounded concurrency (python-tidal: 2)
 let activeRequests = 0;
 const requestQueue: Array<() => void> = [];
 

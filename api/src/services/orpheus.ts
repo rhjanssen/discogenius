@@ -20,7 +20,7 @@ function resolveManagedPath(rawPath: string): string {
 }
 
 const DEFAULT_ORPHEUS_RUNTIME_DIR = IS_DOCKER
-    ? path.join(CONFIG_DIR, "runtime", "orpheusdl")
+    ? "/opt/orpheusdl"
     : path.join(REPO_ROOT, ".runtime", "orpheusdl");
 const ORPHEUS_RUNTIME_DIR = process.env.ORPHEUSDL_ROOT?.trim()
     ? resolveManagedPath(process.env.ORPHEUSDL_ROOT)
@@ -36,7 +36,7 @@ const ORPHEUS_ENTRYPOINT = path.join(ORPHEUS_RUNTIME_DIR, "orpheus.py");
 const ORPHEUS_VENV_DIR = path.join(ORPHEUS_RUNTIME_DIR, ".venv");
 const REPO_VENV_PYTHON = path.join(REPO_ROOT, ".venv", IS_WINDOWS ? "Scripts/python.exe" : "bin/python");
 const ORPHEUS_PYTHON_BIN = process.env.ORPHEUSDL_PYTHON_BIN?.trim()
-    || path.join(ORPHEUS_VENV_DIR, IS_WINDOWS ? "Scripts/python.exe" : "bin/python");
+    || (IS_DOCKER ? "python3" : path.join(ORPHEUS_VENV_DIR, IS_WINDOWS ? "Scripts/python.exe" : "bin/python"));
 const ORPHEUS_BOOTSTRAP_PYTHON = process.env.ORPHEUSDL_BOOTSTRAP_PYTHON?.trim()
     || (!IS_DOCKER && fs.existsSync(REPO_VENV_PYTHON) ? REPO_VENV_PYTHON : "python3");
 const ORPHEUS_CORE_REPO = process.env.ORPHEUSDL_CORE_REPO?.trim() || "https://github.com/OrfiTeam/OrpheusDL.git";
@@ -176,20 +176,19 @@ function cleanupLegacyStateRuntimeFiles(): void {
 
 function ensureRuntimeConfigLink(): void {
     try {
-        if (fs.existsSync(ORPHEUS_RUNTIME_CONFIG_DIR)) {
-            const stat = fs.lstatSync(ORPHEUS_RUNTIME_CONFIG_DIR);
-            if (stat.isSymbolicLink()) {
-                const linkedTarget = fs.realpathSync(ORPHEUS_RUNTIME_CONFIG_DIR);
-                const expectedTarget = fs.realpathSync(ORPHEUS_SETTINGS_DIR);
-                if (linkedTarget === expectedTarget) {
-                    return;
-                }
+        const stat = (() => { try { return fs.lstatSync(ORPHEUS_RUNTIME_CONFIG_DIR); } catch { return null; } })();
+        if (stat?.isSymbolicLink()) {
+            const linkTarget = fs.readlinkSync(ORPHEUS_RUNTIME_CONFIG_DIR);
+            if (linkTarget === ORPHEUS_SETTINGS_DIR) {
+                return;
             }
+        }
 
+        if (stat) {
             fs.rmSync(ORPHEUS_RUNTIME_CONFIG_DIR, { recursive: true, force: true });
         }
     } catch {
-        fs.rmSync(ORPHEUS_RUNTIME_CONFIG_DIR, { recursive: true, force: true });
+        try { fs.rmSync(ORPHEUS_RUNTIME_CONFIG_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     fs.symlinkSync(
@@ -203,7 +202,7 @@ function ensureRuntimeDirs(): void {
     if (!fs.existsSync(ORPHEUS_STATE_DIR)) {
         fs.mkdirSync(ORPHEUS_STATE_DIR, { recursive: true });
     }
-    if (!fs.existsSync(ORPHEUS_RUNTIME_DIR)) {
+    if (!IS_DOCKER && !fs.existsSync(ORPHEUS_RUNTIME_DIR)) {
         fs.mkdirSync(ORPHEUS_RUNTIME_DIR, { recursive: true });
     }
     if (!fs.existsSync(ORPHEUS_SETTINGS_DIR)) {
@@ -311,6 +310,12 @@ function buildOrpheusSettings(downloadPath: string) {
 async function bootstrapRuntime(): Promise<void> {
     ensureRuntimeDirs();
 
+    if (IS_DOCKER) {
+        // Toolchain is baked into the image at /opt/orpheusdl.
+        // Only state dirs and the config symlink are needed at runtime.
+        return;
+    }
+
     if (!fs.existsSync(ORPHEUS_ENTRYPOINT)) {
         await cloneRepoIntoRuntime(ORPHEUS_CORE_REPO, ORPHEUS_RUNTIME_DIR, { skip: ["config"] });
     }
@@ -339,20 +344,40 @@ export async function ensureOrpheusRuntime(): Promise<void> {
 }
 
 export function getOrpheusCapabilitySnapshot(): BackendCapabilitySnapshot {
-    const runtimeDirCheck = checkWritablePath("orpheus.runtime", ORPHEUS_RUNTIME_DIR, {
-        kind: "dir",
-        displayName: "Orpheus runtime directory",
-    });
+    const runtimeDirCheck = IS_DOCKER
+        ? {
+            scope: "orpheus.runtime",
+            status: fs.existsSync(ORPHEUS_ENTRYPOINT) ? "ok" as const : "error" as const,
+            message: fs.existsSync(ORPHEUS_ENTRYPOINT)
+                ? "Orpheus runtime is baked into Docker image"
+                : "Orpheus runtime not found in Docker image",
+            details: { path: ORPHEUS_RUNTIME_DIR },
+        }
+        : checkWritablePath("orpheus.runtime", ORPHEUS_RUNTIME_DIR, {
+            kind: "dir",
+            displayName: "Orpheus runtime directory",
+        });
     const stateDirCheck = checkWritablePath("orpheus.state", ORPHEUS_STATE_DIR, {
         kind: "dir",
         displayName: "Orpheus state directory",
     });
-    const entrypointCheck = checkWritablePath("orpheus.entrypoint", ORPHEUS_ENTRYPOINT, {
-        kind: "file",
-        displayName: "Orpheus entrypoint",
-    });
-    const gitCheck = checkCommandAvailability("orpheus.git", "git", "Git");
-    const pythonCheck = checkCommandAvailability("orpheus.python", ORPHEUS_BOOTSTRAP_PYTHON, "Orpheus bootstrap Python");
+    const entrypointCheck = IS_DOCKER
+        ? {
+            scope: "orpheus.entrypoint",
+            status: fs.existsSync(ORPHEUS_ENTRYPOINT) ? "ok" as const : "error" as const,
+            message: fs.existsSync(ORPHEUS_ENTRYPOINT)
+                ? "Orpheus entrypoint present in Docker image"
+                : "Orpheus entrypoint not found in Docker image",
+            details: { path: ORPHEUS_ENTRYPOINT },
+        }
+        : checkWritablePath("orpheus.entrypoint", ORPHEUS_ENTRYPOINT, {
+            kind: "file",
+            displayName: "Orpheus entrypoint",
+        });
+    const gitCheck = IS_DOCKER
+        ? { scope: "orpheus.git", status: "ok" as const, message: "Git not required in Docker (toolchain baked in)", details: {} }
+        : checkCommandAvailability("orpheus.git", "git", "Git");
+    const pythonCheck = checkCommandAvailability("orpheus.python", IS_DOCKER ? "python3" : ORPHEUS_BOOTSTRAP_PYTHON, "Python");
     const sessionExists = fs.existsSync(ORPHEUS_LOGIN_STORAGE_FILE);
     const sessionCheck = sessionExists
         ? {
@@ -385,7 +410,9 @@ export function getOrpheusCapabilitySnapshot(): BackendCapabilitySnapshot {
         notes.push("Authenticate with TIDAL before attempting Orpheus downloads.");
     }
     if (!fs.existsSync(ORPHEUS_ENTRYPOINT)) {
-        notes.push("Orpheus runtime has not been bootstrapped yet.");
+        notes.push(IS_DOCKER
+            ? "Orpheus runtime not found in Docker image — rebuild the image."
+            : "Orpheus runtime has not been bootstrapped yet.");
     }
 
     return {

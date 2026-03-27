@@ -1,6 +1,7 @@
 import { db } from "../database.js";
 import { getFollowedArtists } from "./tidal.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
+import { resolveArtistFolder } from "./naming.js";
 
 export type FollowedArtistsImportEvent =
     | { type: "status"; message: string }
@@ -39,10 +40,12 @@ function ensureMonitoredArtist(artist: FollowedArtistRow): "added" | "updated" |
             UPDATE artists
             SET monitor = 1,
                 monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                path = COALESCE(path, ?),
                 picture = COALESCE(picture, ?),
                 popularity = COALESCE(popularity, ?)
             WHERE id = ?
         `).run(
+            resolveArtistFolder(artist.name),
             artist.picture || null,
             artist.popularity || 0,
             artist.tidal_id,
@@ -52,13 +55,14 @@ function ensureMonitoredArtist(artist: FollowedArtistRow): "added" | "updated" |
     }
 
     db.prepare(`
-        INSERT INTO artists (id, name, picture, popularity, monitor, monitored_at, last_scanned)
-        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, NULL)
+        INSERT INTO artists (id, name, picture, popularity, monitor, monitored_at, last_scanned, path)
+        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, NULL, ?)
     `).run(
         artist.tidal_id,
         artist.name,
         artist.picture || null,
         artist.popularity || 0,
+        resolveArtistFolder(artist.name),
     );
 
     return "added";

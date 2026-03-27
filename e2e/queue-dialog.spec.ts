@@ -22,6 +22,7 @@ const EMPTY_STATS = {
 
 async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
   const activityItems = options?.activityItems || [];
+  const historyItems = options?.historyItems || [];
 
   await stubShellApis(page, {
     libraryStats: {
@@ -32,7 +33,7 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
       activity: {
         pending: activityItems.filter((item: any) => item?.status === 'pending').length,
         processing: activityItems.filter((item: any) => item?.status === 'running' || item?.status === 'processing').length,
-        history: activityItems.filter((item: any) => ['completed', 'failed', 'cancelled'].includes(String(item?.status || ''))).length,
+        history: historyItems.length,
       },
       taskQueueStats: [],
       commandStats: {},
@@ -53,22 +54,17 @@ async function stubDashboardApis(page: Page, options?: DashboardStubOptions) {
       hasMore: false,
       ...(options?.queue || {}),
     },
+    queueHistoryResponse: {
+      items: historyItems,
+      total: historyItems.length,
+      limit: 12,
+      offset: 0,
+      hasMore: false,
+    },
     monitoringStatus: {
       running: false,
       checking: false,
     },
-  });
-
-  await page.route('**/api/history?*', async (route) => {
-    const items = options?.historyItems || [];
-    await route.fulfill({
-      json: {
-        items,
-        total: items.length,
-        limit: 12,
-        offset: 0,
-      },
-    });
   });
 
   await page.route('**/api/unmapped**', async (route) => {
@@ -166,32 +162,38 @@ function createActivityFixture() {
     historyItems: [
       {
         id: 90,
-        artistId: 11,
-        albumId: 22,
-        mediaId: 33,
-        libraryFileId: 44,
-        eventType: 'TrackFileImported',
+        tidalId: 'track-history-90',
+        type: 'track',
+        status: 'completed',
+        progress: 100,
+        title: 'Around the World',
+        artist: 'Daft Punk',
+        cover: null,
+        album_id: 'album-history-22',
+        album_title: 'Homework',
         quality: 'FLAC',
-        sourceTitle: 'Around the World',
-        data: {
-          importedPath: 'E:/music/Daft Punk/Around the World.flac',
-        },
-        date: new Date(now - 3_000).toISOString(),
+        created_at: new Date(now - 20_000).toISOString(),
+        updated_at: new Date(now - 3_000).toISOString(),
+        started_at: new Date(now - 15_000).toISOString(),
+        completed_at: new Date(now - 3_000).toISOString(),
       },
       {
         id: 91,
-        artistId: 11,
-        albumId: 22,
-        mediaId: 33,
-        libraryFileId: 44,
-        eventType: 'TrackFileRenamed',
+        tidalId: 'album-history-91',
+        type: 'album',
+        status: 'failed',
+        progress: 100,
+        title: 'Discovery',
+        artist: 'Daft Punk',
+        cover: null,
+        album_id: 'album-history-91',
+        album_title: 'Discovery',
         quality: 'FLAC',
-        sourceTitle: 'Around the World',
-        data: {
-          fromPath: 'E:/music/Daft Punk/Old Name.flac',
-          toPath: 'E:/music/Daft Punk/Around the World.flac',
-        },
-        date: new Date(now - 60_000).toISOString(),
+        error: 'Failed to move files into the library',
+        created_at: new Date(now - 120_000).toISOString(),
+        updated_at: new Date(now - 60_000).toISOString(),
+        started_at: new Date(now - 90_000).toISOString(),
+        completed_at: new Date(now - 60_000).toISOString(),
       },
     ],
   };
@@ -515,15 +517,19 @@ function createMixedLiveQueueFixture() {
     historyItems: [
       {
         id: 190,
-        type: 'DownloadAlbum',
+        tidalId: 'album-history-190',
+        type: 'album',
         status: 'completed',
-        startTime: now - 60_000,
-        endTime: now - 30_000,
-        payload: {
-          type: 'album',
-          title: 'Around the World',
-          artist: 'Daft Punk',
-        },
+        progress: 100,
+        title: 'Around the World',
+        artist: 'Daft Punk',
+        cover: null,
+        album_id: 'album-history-190',
+        album_title: 'Around the World',
+        created_at: new Date(now - 90_000).toISOString(),
+        updated_at: new Date(now - 30_000).toISOString(),
+        started_at: new Date(now - 60_000).toISOString(),
+        completed_at: new Date(now - 30_000).toISOString(),
       },
     ],
   };
@@ -774,26 +780,22 @@ function createQueueHistoryNavigationFixture() {
       taskQueueStats: [],
       commandStats: {},
     },
-    activityItems: [
+    historyItems: [
       {
         id: 290,
-        type: 'DownloadTrack',
+        tidalId: 'track-history-1',
+        type: 'track',
         status: 'completed',
-        startTime: now - 90_000,
-        endTime: now - 45_000,
-        payload: {
-          type: 'track',
-          tidalId: 'track-history-1',
-          title: 'Digital Love',
-          artist: 'Daft Punk',
-          albumId: 'album-history-1',
-          albumTitle: 'Discovery',
-          resolved: {
-            title: 'Digital Love',
-            artist: 'Daft Punk',
-            albumId: 'album-history-1',
-          },
-        },
+        progress: 100,
+        title: 'Digital Love',
+        artist: 'Daft Punk',
+        cover: null,
+        album_id: 'album-history-1',
+        album_title: 'Discovery',
+        created_at: new Date(now - 120_000).toISOString(),
+        updated_at: new Date(now - 45_000).toISOString(),
+        started_at: new Date(now - 90_000).toISOString(),
+        completed_at: new Date(now - 45_000).toISOString(),
       },
     ],
   };

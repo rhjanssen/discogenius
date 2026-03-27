@@ -1164,7 +1164,7 @@ export class LibraryFilesService {
     const artist = db.prepare(`SELECT monitor FROM artists WHERE id = ?`).get(artistId) as any;
     const artistMonitored = Boolean(artist?.monitor);
 
-    // Discogenius keeps Lidarr's default expectation that unmonitoring an artist does not implicitly wipe the artist folder.
+    // Unmonitoring an artist does not implicitly wipe the artist folder.
     // Automatic cleanup only applies while the artist remains managed and curation explicitly unmonitors child items.
     if (!artistMonitored) {
       return { deleted: 0, missing: 0, errors: 0 };

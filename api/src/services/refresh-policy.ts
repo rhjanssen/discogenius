@@ -3,7 +3,7 @@ import { db } from "../database.js";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-// Lidarr-inspired refresh cadence
+// Refresh staleness policy constants
 export const MIN_RETRY_HOURS = 12;
 export const ARTIST_HARD_REFRESH_DAYS = 30;
 export const ARTIST_ACTIVE_REFRESH_DAYS = 2;
@@ -50,7 +50,7 @@ export function hasInactiveArtistCatalog(artistId: string | number): boolean {
   return Date.now() - latest >= INACTIVE_ARTIST_RELEASE_YEARS * 365 * DAY_MS;
 }
 
-export function shouldRefreshArtistLidarrStyle(options: {
+export function shouldRefreshArtist(options: {
   artistId: string | number;
   lastScanned?: string | null;
 }): boolean {
@@ -65,7 +65,7 @@ export function shouldRefreshArtistLidarrStyle(options: {
   return isOlderThanDays(last, ARTIST_ACTIVE_REFRESH_DAYS);
 }
 
-export function shouldRefreshAlbumLidarrStyle(options: {
+export function shouldRefreshAlbum(options: {
   albumReleaseDate?: string | null;
   lastScanned?: string | null;
 }): boolean {
@@ -80,7 +80,7 @@ export function shouldRefreshAlbumLidarrStyle(options: {
   return false;
 }
 
-export function shouldRefreshTrackSetLidarrStyle(options: {
+export function shouldRefreshTrackSet(options: {
   albumId: string | number;
   fallbackLastScanned?: string | null;
 }): boolean {
@@ -106,13 +106,13 @@ export function shouldRefreshTrackSetLidarrStyle(options: {
 
   if (total === 0 || missing > 0 || !oldest) return true;
 
-  return shouldRefreshAlbumLidarrStyle({
+  return shouldRefreshAlbum({
     albumReleaseDate: row?.album_release_date ?? null,
     lastScanned: oldest,
   });
 }
 
-export function shouldRefreshVideosLidarrStyle(options: {
+export function shouldRefreshVideos(options: {
   artistId: string | number;
   fallbackLastScanned?: string | null;
 }): boolean {
@@ -136,7 +136,7 @@ export function shouldRefreshVideosLidarrStyle(options: {
   if (total === 0 || missing > 0 || !oldest) return true;
 
   // Videos use album-style cadence for now (requested track-like treatment for videos).
-  return shouldRefreshAlbumLidarrStyle({
+  return shouldRefreshAlbum({
     albumReleaseDate: null,
     lastScanned: oldest,
   });

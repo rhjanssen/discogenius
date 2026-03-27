@@ -32,7 +32,7 @@ interface Track {
     title: string;
 }
 
-export class RedundancyService {
+export class CurationService {
     private static readonly REDUNDANCY_YIELD_EVERY = readIntEnv("DISCOGENIUS_REDUNDANCY_YIELD_EVERY", 20, 10);
 
     private static async yieldToEventLoop(): Promise<void> {
@@ -949,18 +949,11 @@ export class RedundancyService {
         // Prune methods already perform targeted parent cleanup, and repeated full-tree scans
         // can block API responsiveness when curation backlogs process many artists.
 
-        // Queue downloads based on the triggering flow.
-        // Full monitoring passes should queue downloads, while standalone curation actions opt out.
-        const shouldQueueDownloads = options.forceDownloadQueue === true || options.skipDownloadQueue !== true;
-        if (!shouldQueueDownloads) {
+        if (options.skipDownloadQueue !== undefined || options.forceDownloadQueue !== undefined) {
             console.log(
-                `[Queue] Skipping auto-download queue for artist ${artistId} ` +
-                `(skipDownloadQueue=${options.skipDownloadQueue}, forceDownloadQueue=${options.forceDownloadQueue}).`
+                `[Queue] Ignoring legacy curation auto-queue flags for artist ${artistId}; ` +
+                `DownloadMissing remains the dedicated queueing path.`
             );
-        } else {
-            const queued = await this.queueMonitoredItems(artistId);
-            const total = queued.albums + queued.tracks + queued.videos;
-            console.log(`[Queue] Auto-download queued ${total} item(s) for artist ${artistId} (${queued.albums} albums, ${queued.tracks} tracks, ${queued.videos} videos).`);
         }
 
         return { newAlbums: totalNew, upgradedAlbums: totalUpgraded };

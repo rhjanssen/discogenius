@@ -39,8 +39,8 @@ Curation can be triggered from:
 - api/src/services/scheduler.ts
   - Executes ApplyCuration (managed artist fanout) and CurateArtist (per artist).
 
-- api/src/services/redundancy.ts
-  - Core curation engine:
+- api/src/services/curation-service.ts
+  - CurationService — core curation engine:
   - category filtering
   - version-group selection
   - equal-track-set dedup
@@ -49,8 +49,8 @@ Curation can be triggered from:
   - monitor cascade and targeted optional cleanup (without a full per-artist empty-directory sweep)
   - monitored-missing queue generation
 
-- api/src/services/monitoring-scheduler.ts
-  - Scheduled orchestration and pass chaining (refresh -> root scan -> curation -> download missing).
+- api/src/services/task-scheduler.ts
+  - Scheduled orchestration: Lidarr-aligned per-artist pipeline (RefreshMetadata inline → per-artist RescanFolders → per-artist CurateArtist → DownloadMissing).
 
 - api/src/services/download-state.ts and api/src/services/managed-artists.ts
   - Completion/count semantics that include monitor_lock rows as intentionally kept state.
@@ -199,7 +199,7 @@ Intentionally omitted from module expansion for now due to inconsistent real-wor
 
 ### Planned/in progress
 
-- Further decomposition of redundancy.ts into smaller focused modules.
+- Further decomposition of curation-service.ts into smaller focused modules.
 - More explicit history/audit persistence for curation decisions.
 - Additional typed lifecycle events around file and curation state transitions.
 

@@ -285,18 +285,19 @@ export class ImportService {
      */
     async importFiles(candidates: ImportCandidate[], isAuto = false, monitorImported = true) {
         const { db } = await import("../database.js");
-        const { getNamingConfig, renderRelativePath } = await import("./naming.js");
+        const { getNamingConfig, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } = await import("./naming.js");
         const { deriveQuality, calculateFingerprint } = await import("./audioUtils.js");
 
         const namingConfig = getNamingConfig();
 
         const upsertArtist = db.prepare(`
-            INSERT INTO artists (id, name, picture, popularity, monitor)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO artists (id, name, picture, popularity, monitor, path)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = COALESCE(excluded.name, name),
                 picture = COALESCE(excluded.picture, picture),
                 popularity = COALESCE(excluded.popularity, popularity),
+                path = COALESCE(artists.path, excluded.path),
                 monitor = CASE
                     WHEN monitor = 0 AND excluded.monitor = 1 THEN 1
                     ELSE monitor
@@ -471,12 +472,20 @@ export class ImportService {
                     || "Unknown Artist";
                 const artistPicture = tidalVideo.artist?.picture || tidalVideo.artists?.[0]?.picture || null;
                 const artistPopularity = videoData.popularity || 0;
+                const resolvedArtistFolder = resolveArtistFolder(artistName);
 
                 try {
-                    upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue);
+                    upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);
                 } catch (e) {
                     console.error(`Failed to upsert artist ${artistId}`, e);
                 }
+
+                const artistRow = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+                const artistFolder = resolveArtistFolderFromRecord({
+                    name: artistRow?.name || artistName,
+                    mbid: artistRow?.mbid || null,
+                    path: artistRow?.path || resolvedArtistFolder,
+                });
 
                 upsertVideo.run(
                     videoId,
@@ -493,9 +502,10 @@ export class ImportService {
                     monitorValue
                 );
 
-                const videoTemplate = path.join(namingConfig.artist_folder, namingConfig.video_file);
+                const videoTemplate = path.join(artistFolder, namingConfig.video_file);
                 const expectedVideoRel = renderRelativePath(videoTemplate, {
                     artistName,
+                    artistMbId: artistRow?.mbid || null,
                     videoTitle: videoData.title || tidalVideo.title || "Unknown Video"
                 });
 
@@ -611,12 +621,20 @@ export class ImportService {
             const artistName = tidalAlbum.artist?.name || tidalAlbum.artists?.[0]?.name || "Unknown Artist";
             const artistPicture = tidalAlbum.artist?.picture || tidalAlbum.artists?.[0]?.picture || null;
             const artistPopularity = tidalAlbum.popularity || 0;
+            const resolvedArtistFolder = resolveArtistFolder(artistName);
 
             try {
-                upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue);
+                upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);
             } catch (e) {
                 console.error(`Failed to upsert artist ${artistId}`, e);
             }
+
+            const artistRow = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+            const artistFolder = resolveArtistFolderFromRecord({
+                name: artistRow?.name || artistName,
+                mbid: artistRow?.mbid || null,
+                path: artistRow?.path || resolvedArtistFolder,
+            });
 
             db.prepare(`
                 UPDATE artists
@@ -650,7 +668,7 @@ export class ImportService {
             const releaseYear = albumRow.release_date ? String(albumRow.release_date).slice(0, 4) : null;
             const isMultiDisc = Number(albumRow.num_volumes || 1) > 1;
             const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
-            const fullPathTemplate = path.join(namingConfig.artist_folder, trackTemplate);
+            const fullPathTemplate = path.join(artistFolder, trackTemplate);
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
 
             for (const file of candidate.group.files) {
@@ -666,6 +684,7 @@ export class ImportService {
 
                     const context = {
                         artistName,
+                        artistMbId: artistRow?.mbid || null,
                         albumTitle: albumRow.title,
                         albumVersion: albumRow.version,
                         releaseYear,

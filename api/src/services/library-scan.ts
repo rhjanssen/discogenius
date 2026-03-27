@@ -3,7 +3,7 @@ import path from "path";
 import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config, getConfigSection } from "./config.js";
-import { getNamingConfig, renderRelativePath } from "./naming.js";
+import { resolveArtistFolderFromRecord } from "./naming.js";
 import { UnmappedFilesService } from "./unmapped-files.js";
 import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "./library-media-metrics.js";
@@ -127,7 +127,7 @@ type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folder
  * DiskScanService — Reconciles the library_files DB with actual disk state
  * and handles metadata file backfill.
  *
- * Modelled after Lidarr's DiskScanService:
+ * Disk scan service for library file reconciliation:
  * 1. Clean orphaned records (DB entries for files that no longer exist)
  * 2. Index new files found on disk (manually placed files)
  * 3. Update changed files (size/mtime mismatch)
@@ -137,11 +137,11 @@ export class DiskScanService {
     private static readonly unmappedFilesService = new UnmappedFilesService();
 
     // ==========================================================================
-    // Public API — Lidarr-style Scan(folders, filter, addNewArtists, artistIds)
+    // Public API — Scan(folders, filter, addNewArtists, artistIds)
     // ==========================================================================
 
     /**
-     * Unified disk scan entry point, modelled after Lidarr's DiskScanService.Scan().
+     * Unified disk scan entry point.
      *
      * - No options or empty options → scan all managed artists (reconcile library_files with disk)
      * - artistIds provided → scan only those artists' directories
@@ -275,7 +275,7 @@ export class DiskScanService {
      * Phase C: Update records where file size/mtime has changed.
      *
      * When called from `reconcileAllArtists`, a pre-built `fileIndex` is passed
-     * so that each library root is walked only once (Lidarr-style single-pass).
+     * so that each library root is walked only once (single-pass).
      */
     private static async scanArtist(
         artistId: string,
@@ -355,8 +355,8 @@ export class DiskScanService {
     /**
      * Scan ALL managed artists' library directories and reconcile library_files
      * with disk. Walks each library root once and builds a file index so that
-     * individual artist scans avoid redundant filesystem walks (Lidarr-style
-     * single-pass collection scan).
+     * individual artist scans avoid redundant filesystem walks (single-pass
+     * collection scan).
      *
      * Used by RescanFolders to detect missing files across the entire library.
      */
@@ -369,7 +369,7 @@ export class DiskScanService {
         let totalFlagsReset = 0;
         let unmappedOrphans = 0;
 
-        // Build file index once per root (single-pass, Lidarr-style)
+        // Build file index once per root (single-pass)
         const fileIndex: RootFileIndex = new Map();
         const musicPath = Config.getMusicPath();
         const videoPath = Config.getVideoPath();
@@ -488,11 +488,10 @@ export class DiskScanService {
             fileIndex?: RootFileIndex;
         },
     ): Promise<{ indexed: number }> {
-        const artist = db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any;
+        const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
         if (!artist) return { indexed: 0 };
 
-        const naming = getNamingConfig();
-        const artistFolder = renderRelativePath(naming.artist_folder, { artistName: artist.name });
+        const artistFolder = resolveArtistFolderFromRecord(artist);
 
         // Collect all existing file paths for this artist (for quick lookup)
         const existingPaths = new Set(
@@ -970,7 +969,6 @@ export class DiskScanService {
      * adding artists/albums/tracks as managed items without forcing an
      * immediate full-artist refresh.
      *
-     * Modelled after Lidarr's RescanFolders with addNewArtists=true.
      * Runs as part of scan({ addNewArtists: true }).
      *
      * @param onProgress Optional callback for progress reporting (SSE etc.)
@@ -988,12 +986,12 @@ export class DiskScanService {
             totalFolders: 0,
         };
 
-        const naming = getNamingConfig();
-
         // Build a lookup of expected folder names for all known DB artists
-        const allArtists = db.prepare("SELECT id, name FROM artists").all() as Array<{
+        const allArtists = db.prepare("SELECT id, name, mbid, path FROM artists").all() as Array<{
             id: number;
             name: string;
+            mbid?: string | null;
+            path?: string | null;
         }>;
         const managedArtistIds = new Set(
             getManagedArtists({ includeLibraryFiles: true }).map((artist) => String(artist.id))
@@ -1003,7 +1001,7 @@ export class DiskScanService {
             if (!managedArtistIds.has(String(a.id))) {
                 continue;
             }
-            const folder = renderRelativePath(naming.artist_folder, { artistName: a.name });
+            const folder = resolveArtistFolderFromRecord(a);
             knownFolderToArtistId.set(folder.toLowerCase(), a.id);
         }
 
@@ -1230,10 +1228,9 @@ export class DiskScanService {
             // Could be artist picture or album cover — check depth
             // Artist picture is directly under artist folder, album cover is under album subfolder
             const parentDir = path.basename(path.dirname(filePath));
-            const naming = getNamingConfig();
-            const artist = db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any;
+            const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
             if (artist) {
-                const artistDirName = renderRelativePath(naming.artist_folder, { artistName: artist.name });
+                const artistDirName = path.basename(resolveArtistFolderFromRecord(artist));
                 if (parentDir === artistDirName || parentDir === artist.name) {
                     return { albumId: null, mediaId: null, fileType: "cover", quality: null };
                 }
@@ -1431,7 +1428,7 @@ export class DiskScanService {
     /**
      * Walk a library root directory once and index all files by their
      * top-level subdirectory. Avoids redundant per-artist walks when
-     * scanning the full library (Lidarr-style single-pass collection).
+     * scanning the full library (single-pass collection).
      */
     private static async buildRootFileIndex(rootPath: string): Promise<Map<string, string[]>> {
         const index = new Map<string, string[]>();
@@ -1458,7 +1455,7 @@ export class DiskScanService {
 
     /**
      * Recursively walk a directory and return all file paths.
-     * Named to match Lidarr's GetAudioFiles convention.
+     * Collect audio/video files from a directory tree.
      */
     private static async getMediaFiles(dir: string): Promise<string[]> {
         const results: string[] = [];

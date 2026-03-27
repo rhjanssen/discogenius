@@ -40,6 +40,20 @@ export function closeDatabase() {
   }
 }
 
+export function backfillArtistPaths(resolveFolder: (name: string, mbid?: string | null) => string): number {
+  const artists = db.prepare("SELECT id, name, mbid FROM artists WHERE path IS NULL").all() as Array<{ id: number; name: string; mbid: string | null }>;
+  if (artists.length === 0) return 0;
+
+  const update = db.prepare("UPDATE artists SET path = ? WHERE id = ? AND path IS NULL");
+  const tx = db.transaction(() => {
+    for (const artist of artists) {
+      update.run(resolveFolder(artist.name, artist.mbid), artist.id);
+    }
+  });
+  tx();
+  return artists.length;
+}
+
 const BASE_SCHEMA_VERSION = 1;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
@@ -214,7 +228,7 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
   },
   {
     // 5
-    description: "create persistent Lidarr-style history_events table",
+    description: "create persistent history_events table",
     up: () => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS history_events (
@@ -429,6 +443,15 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON job_queue(queue_order)");
     },
   },
+  {
+    version: 4,
+    description: "add artist path column for stored folder resolution",
+    up: () => {
+      if (!columnExists("artists", "path")) {
+        db.exec("ALTER TABLE artists ADD COLUMN path TEXT");
+      }
+    },
+  },
 ];
 
 type MigrationRunSummary = {
@@ -527,6 +550,7 @@ export function initDatabase() {
       artist_roles TEXT,               -- JSON array: [{"categoryId": -1, "category": "Artist"}, {"categoryId": 2, "category": "Songwriter"}, ...ETC]
       user_date_added DATETIME,        -- When added to TIDAL favorites
       mbid TEXT,                       -- MusicBrainz ID
+      path TEXT,                       -- Resolved library folder path (set at add/import time)
       
       -- Biography
       bio_text TEXT,                   -- Full biography text
@@ -759,7 +783,7 @@ export function initDatabase() {
       expected_path TEXT,                -- Path the file should have based on current naming template
       needs_rename BOOLEAN DEFAULT 0,    -- Flag if file_path != expected_path
       
-      -- Import & Source Data (Lidarr-parity)
+      -- Import & Source Data
       original_filename TEXT,            -- Original filename before rename/import (Scene Name)
       release_group TEXT,                -- Release group extracted from original filename
       fingerprint TEXT,                  -- AcoustID/Chromaprint fingerprint for audio matching
@@ -843,7 +867,7 @@ export function initDatabase() {
   `);
 
   // ====================================================================
-  // SCHEDULED TASKS (Lidarr-style scheduler definitions)
+  // SCHEDULED TASKS
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -867,7 +891,7 @@ export function initDatabase() {
   `);
 
   // ====================================================================
-  // QUALITY PROFILES (Lidarr-inspired)
+  // QUALITY PROFILES
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS quality_profiles (

@@ -131,22 +131,39 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
     };
 }
 
-function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemContract {
+function resolveQueueItemContentType(j: any): QueueItemContract['type'] {
+    if (j.type === JobTypes.DownloadVideo) {
+        return 'video';
+    }
+
+    if (j.type === JobTypes.DownloadAlbum) {
+        return 'album';
+    }
+
+    if (j.type === JobTypes.DownloadPlaylist) {
+        return 'playlist';
+    }
+
+    if (j.type === JobTypes.ImportDownload) {
+        const payloadType = j.payload?.type;
+        return payloadType === 'video' || payloadType === 'album' || payloadType === 'playlist'
+            ? payloadType
+            : 'track';
+    }
+
+    return 'track';
+}
+
+export function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemContract {
     const downloadState = j.payload?.downloadState ?? {};
-    const contentType = j.type === JobTypes.DownloadVideo
-        ? 'video'
-        : j.type === JobTypes.DownloadAlbum
-            ? 'album'
-            : j.type === JobTypes.ImportDownload
-                ? (j.payload?.type || 'track')
-                : 'track';
+    const contentType = resolveQueueItemContentType(j);
     const tidalId = j.ref_id || j.payload?.tidalId || null;
 
-    let title: string | undefined = j.payload?.title || j.payload?.resolved?.title;
+    let title: string | undefined = j.payload?.title || j.payload?.playlistName || j.payload?.resolved?.title;
     let artist: string | undefined = j.payload?.artist || j.payload?.resolved?.artist;
     let cover: string | null | undefined = j.payload?.cover ?? j.payload?.resolved?.cover;
-    let album_id: string | null | undefined = j.payload?.album_id;
-    let album_title: string | null | undefined = j.payload?.album_title;
+    let album_id: string | null | undefined = j.payload?.album_id ?? j.payload?.albumId ?? j.payload?.resolved?.albumId;
+    let album_title: string | null | undefined = j.payload?.album_title ?? j.payload?.albumTitle ?? j.payload?.resolved?.albumTitle;
     let quality: string | null | undefined = j.payload?.quality ?? null;
 
     if (tidalId && (!title || !artist || cover === undefined || album_id === undefined || album_title === undefined)) {
@@ -178,6 +195,14 @@ function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemContract 
                 if (album_id === undefined) album_id = row?.album_id ?? null;
                 if (album_title === undefined) album_title = row?.album_title ?? null;
                 if (quality === undefined || quality === null) quality = row?.quality ?? null;
+            } else if (contentType === 'playlist') {
+                const row = db.prepare(`
+                    SELECT p.title, p.square_cover_id, p.cover_id
+                    FROM playlists p
+                    WHERE p.tidal_id = ? OR p.uuid = ?
+                `).get(tidalId, tidalId) as any;
+                if (!title) title = row?.title;
+                if (cover === undefined) cover = row?.square_cover_id ?? row?.cover_id ?? null;
             } else {
                 const row = db.prepare(`
                     SELECT m.title, m.version as version, ar.name as artist_name, a.cover as album_cover, a.id as album_id, a.title as album_title, m.quality
@@ -376,7 +401,7 @@ router.get('/queue', async (req: Request, res: Response) => {
             pendingDownloadJobs.map((job, index) => [job.id, index + 1]),
         );
 
-        // Lidarr-style queue surfaces only live work.
+        // Queue surfaces only live work.
         // Completed/failed jobs belong in activity/history, not the live queue.
         // Include ImportDownload so items remain visible while import/finalization is still running.
         const jobs = TaskQueueService.listJobsByTypesAndStatuses(
@@ -403,6 +428,36 @@ router.get('/queue', async (req: Request, res: Response) => {
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue:', error);
         res.status(500).json({ error: 'Failed to get queue', message: error.message });
+    }
+});
+
+router.get('/queue/history', async (req: Request, res: Response) => {
+    try {
+        const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '50'), 10) || 50));
+        const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
+        const statuses: Array<'completed' | 'failed' | 'cancelled'> = ['completed', 'failed', 'cancelled'];
+
+        const total = TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_OR_IMPORT_JOB_TYPES, statuses);
+        const jobs = TaskQueueService.listJobsByTypesAndStatuses(
+            DOWNLOAD_OR_IMPORT_JOB_TYPES,
+            statuses,
+            limit,
+            offset,
+            { orderBy: 'history' },
+        );
+
+        const payload: QueueListResponseContract = {
+            items: jobs.map((job) => mapDownloadQueueJob(job)),
+            total,
+            limit,
+            offset,
+            hasMore: offset + jobs.length < total,
+        };
+
+        res.json(payload);
+    } catch (error: any) {
+        console.error('[QUEUE-API] Error getting queue history:', error);
+        res.status(500).json({ error: 'Failed to get queue history', message: error.message });
     }
 });
 
@@ -543,13 +598,13 @@ router.get('/queue/progress-stream', (req: Request, res: Response) => {
     sendEvent('status', { ...status, stats });
 
     // Listen for download events
-    const onProgress = (data: any) => sendEvent('progress', data);
+    const onProgressBatch = (data: any) => sendEvent('progress-batch', data);
     const onStarted = (data: any) => sendEvent('started', data);
     const onCompleted = (data: any) => sendEvent('completed', data);
     const onFailed = (data: any) => sendEvent('failed', data);
     const onQueueStatus = (data: any) => sendEvent('queue-status', data);
 
-    downloadEvents.on('progress', onProgress);
+    downloadEvents.on('progress-batch', onProgressBatch);
     downloadEvents.on('started', onStarted);
     downloadEvents.on('completed', onCompleted);
     downloadEvents.on('failed', onFailed);
@@ -563,7 +618,7 @@ router.get('/queue/progress-stream', (req: Request, res: Response) => {
     // Clean up on client disconnect
     req.on('close', () => {
         clearInterval(heartbeat);
-        downloadEvents.off('progress', onProgress);
+        downloadEvents.off('progress-batch', onProgressBatch);
         downloadEvents.off('started', onStarted);
         downloadEvents.off('completed', onCompleted);
         downloadEvents.off('failed', onFailed);

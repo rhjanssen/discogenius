@@ -18,7 +18,7 @@ export class ManualImportApplyService {
         const { getTrack, getArtist, getVideo } = await import("./tidal.js");
         const { scanAlbumShallow } = await import("./scanner.js");
         const { Config } = await import("./config.js");
-        const { getNamingConfig, renderRelativePath } = await import("./naming.js");
+        const { getNamingConfig, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } = await import("./naming.js");
         const { calculateFingerprint } = await import("./audioUtils.js");
 
         const namingConfig = getNamingConfig();
@@ -88,18 +88,29 @@ export class ManualImportApplyService {
                 if (artistId) {
                     const existingArtist = db.prepare("SELECT id FROM artists WHERE id = ?").get(artistId);
                     if (!existingArtist) {
+                        const fallbackArtistName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
                         try {
                             const remoteArtist = await getArtist(artistId);
                             db.prepare(`
-                                INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor)
-                                VALUES (?, ?, ?, ?, 0)
-                            `).run(artistId, remoteArtist.name, remoteArtist.picture || null, remoteArtist.popularity || 0);
+                                INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path)
+                                VALUES (?, ?, ?, ?, 0, ?)
+                            `).run(
+                                artistId,
+                                remoteArtist.name,
+                                remoteArtist.picture || null,
+                                remoteArtist.popularity || 0,
+                                resolveArtistFolder(remoteArtist.name)
+                            );
                         } catch (e) {
-                            db.prepare("INSERT OR IGNORE INTO artists (id, name, monitor) VALUES (?, ?, 0)")
-                                .run(artistId, trackData.artist?.name || trackData.artist_name || "Unknown Artist");
+                            db.prepare("INSERT OR IGNORE INTO artists (id, name, monitor, path) VALUES (?, ?, 0, ?)")
+                                .run(artistId, fallbackArtistName, resolveArtistFolder(fallbackArtistName));
                         }
                     }
                 }
+
+                const artistRow = artistId
+                    ? db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any
+                    : null;
 
                 const albumId = trackData.album?.id || trackData.album_id;
                 if (albumId) {
@@ -188,14 +199,20 @@ export class ManualImportApplyService {
                 })();
                 const libraryRootKey = normalizedLibraryRoot;
                 const quality = trackData.quality || (isVideo ? "MP4_1080P" : "LOSSLESS");
+                const artistFolder = resolveArtistFolderFromRecord({
+                    name: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
+                    mbid: artistRow?.mbid || null,
+                    path: artistRow?.path || null,
+                });
 
                 const releaseYear = albumRow?.release_date ? String(albumRow.release_date).slice(0, 4) : null;
                 const isMultiDisc = Number(albumRow?.num_volumes || 1) > 1;
                 const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
-                const fullPathTemplate = isVideo ? path.join(namingConfig.artist_folder, namingConfig.video_file) : path.join(namingConfig.artist_folder, trackTemplate);
+                const fullPathTemplate = isVideo ? path.join(artistFolder, namingConfig.video_file) : path.join(artistFolder, trackTemplate);
 
                 const expectedRelPath = renderRelativePath(fullPathTemplate, {
-                    artistName: trackData.artist?.name || trackData.artist_name || "Unknown Artist",
+                    artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
+                    artistMbId: artistRow?.mbid || null,
                     albumTitle: trackData.album?.title || trackData.album_title || "Unknown Album",
                     albumVersion: albumRow?.version,
                     releaseYear,

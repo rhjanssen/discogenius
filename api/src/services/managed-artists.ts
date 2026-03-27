@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { shouldRefreshArtistLidarrStyle } from "./refresh-policy.js";
+import { shouldRefreshArtist } from "./refresh-policy.js";
 
 export interface ManagedArtistRow {
   id: number;
@@ -15,7 +15,7 @@ export interface ManagedArtistOptions {
 
 export function buildManagedArtistPredicate(alias: string = "a", options: ManagedArtistOptions = {}): string {
   const { includeLibraryFiles = false } = options;
-  const clauses = [ `${alias}.monitor = 1` ];
+  const clauses = [`${alias}.monitor = 1`];
 
   if (includeLibraryFiles) {
     clauses.push(`EXISTS (
@@ -83,5 +83,5 @@ export function getManagedArtists(options: { includeLibraryFiles?: boolean; orde
 
 export function getManagedArtistsDueForRefresh(options: { includeLibraryFiles?: boolean; artistIds?: Array<string | number>; refreshDays?: number; } = {}): ManagedArtistRow[] {
   const artists = getManagedArtists({ includeLibraryFiles: options.includeLibraryFiles, orderByLastScanned: true, artistIds: options.artistIds });
-  return artists.filter((artist) => shouldRefreshArtistLidarrStyle({ artistId: artist.id, lastScanned: artist.last_scanned }));
+  return artists.filter((artist) => shouldRefreshArtist({ artistId: artist.id, lastScanned: artist.last_scanned }));
 }

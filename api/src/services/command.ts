@@ -1,5 +1,5 @@
 /**
- * Command System - Lidarr-inspired command/task management
+ * Command System - command/task management
  * 
  * This module provides a centralized command queue with:
  * - Type-based exclusivity (only one scan at a time, etc.)
@@ -25,6 +25,11 @@ import {
 } from './command-registry.js';
 import type { QueuePayloadCommon } from './job-payloads.js';
 
+export interface CanStartCommandOptions {
+    /** Job types to ignore when evaluating running-job exclusivity (e.g. download types for the Scheduler). */
+    excludeRunningTypes?: readonly string[];
+}
+
 // ============================================================================
 // Command Manager Service
 // ============================================================================
@@ -35,7 +40,7 @@ export class CommandManager {
      * When payload is provided, dynamic exclusivity overrides are applied
      * (e.g. RescanFolders with addNewArtists becomes exclusive).
      */
-    static canStartCommand(jobType: string, payload?: QueuePayloadCommon, refId?: string | null): { canStart: boolean; reason?: string } {
+    static canStartCommand(jobType: string, payload?: QueuePayloadCommon, refId?: string | null, options?: CanStartCommandOptions): { canStart: boolean; reason?: string } {
         const definition = this.getDefinition(jobType);
 
         // Dynamic exclusivity: RescanFolders with addNewArtists behaves as exclusive + type-exclusive
@@ -43,10 +48,16 @@ export class CommandManager {
         const effectiveIsExclusive = definition.isExclusive || isLibraryWideScan;
         const effectiveIsTypeExclusive = definition.isTypeExclusive || isLibraryWideScan;
 
-        // Get currently processing jobs
-        const processingJobs = db.prepare(`
+        // Get currently processing jobs, excluding types from a different processor pipeline
+        const excludeSet = options?.excludeRunningTypes && options.excludeRunningTypes.length > 0
+            ? new Set(options.excludeRunningTypes)
+            : null;
+        const allProcessing = db.prepare(`
             SELECT type, ref_id, payload FROM job_queue WHERE status = 'processing'
         `).all() as Array<{ type: string; ref_id: string | null; payload: string | null }>;
+        const processingJobs = excludeSet
+            ? allProcessing.filter(j => !excludeSet.has(j.type))
+            : allProcessing;
 
         if (processingJobs.length === 0) {
             return { canStart: true };

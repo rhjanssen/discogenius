@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ## Purpose
 
@@ -23,7 +23,7 @@ Measured 2026-03-13:
 - api/src/services/download-processor.ts (~1323 lines): inline per-job logic still too dense
 - api/src/services/library-scan.ts (~1275 lines): orchestration and side-effects still coupled
 - api/src/services/import-matcher-service.ts (~993 lines): policy/scoring logic not fully spec-driven
-- api/src/services/redundancy.ts (~948 lines): large but core; needs targeted decomposition, not rewrite
+- api/src/services/curation-service.ts (~948 lines): large but core; needs targeted decomposition, not rewrite
 - api/src/services/import-service.ts (~835 lines): orchestration + policy blending
 - api/src/services/scheduler.ts (~776 lines): per-job extraction still incomplete
 
@@ -35,7 +35,7 @@ Measured 2026-03-13:
 4. Continue route thinning in high-traffic routes so route files remain adapters.
 5. Finish import decision extraction into import-decision specifications.
 6. Add a minimal typed health surface for auth/runtime/path checks.
-7. Continue scheduler and download-processor handler extraction by job type.
+7. Continue scheduler and download-processor handler extraction by job type. Low-coupling Phase-1/maintenance scheduler cases now have a focused handler module; the heavier workflow cases still need targeted extraction, not a rewrite.
 8. Ensure config and file lifecycle events are emitted consistently where already modeled.
 9. ~~Consolidate quality normalization paths to one authoritative implementation.~~ **Done** — `HIRES_LOSSLESS` is canonical throughout; `HI_RES_LOSSLESS` alias and `QUALITY_ALIASES` map removed from `quality.ts`.
 10. Split the new system-task catalog into a dedicated command registry plus thinner activity/command routes so `/api/command`, `/api/system-task`, and `/api/status` stop sharing definition logic indirectly.
@@ -79,10 +79,10 @@ The schema uses TIDAL IDs as primary keys for `artists`, `albums`, and `media`. 
 
 A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different TIDAL IDs, different MB Release IDs (different UPCs), but the **same MB Release Group**. The Release Group is the right join key when asking "do we have this album on provider X?" across providers.
 
-**Important caveat:** MB guidelines explicitly group Standard and Deluxe editions (with bonus tracks/discs) into the **same Release Group**. This means `mb_release_group_id` is too coarse for our dedup logic, which must keep Standard and Deluxe separate. Our ISRC-set dedup in `redundancy.ts` is correctly finer-grained — a Deluxe edition has additional ISRCs for bonus tracks, so it produces a distinct ISRC set. **Never use `mb_release_group_id` as a dedup key.** Use it only as a cross-provider linking hint.
+**Important caveat:** MB guidelines explicitly group Standard and Deluxe editions (with bonus tracks/discs) into the **same Release Group**. This means `mb_release_group_id` is too coarse for our dedup logic, which must keep Standard and Deluxe separate. Our ISRC-set dedup in `curation-service.ts` is correctly finer-grained — a Deluxe edition has additional ISRCs for bonus tracks, so it produces a distinct ISRC set. **Never use `mb_release_group_id` as a dedup key.** Use it only as a cross-provider linking hint.
 
 | Layer | Key | What it represents |
-|---|---|---|
+| --- | --- | --- |
 | Track identity | `isrc` | Same recording regardless of provider or format |
 | Specific pressing | `upc` / `mbid` (Release) | A specific edition with specific UPC |
 | Abstract album | `mb_release_group_id` | The "album concept" — cross-provider join key |

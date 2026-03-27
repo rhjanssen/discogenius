@@ -25,6 +25,7 @@ export type VideoPlaybackInfo = {
 const PLAYBACK_QUALITY_ORDER = ["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"] as const;
 type PlaybackQuality = typeof PLAYBACK_QUALITY_ORDER[number];
 type PlaybackManifestType = PlaybackInfo["type"];
+export const BROWSER_PLAYBACK_MANIFEST_TYPES = ["bts", "dash"] as const satisfies readonly PlaybackManifestType[];
 
 function normalizePlaybackQuality(value: string | undefined | null): PlaybackQuality | null {
     const normalized = String(value ?? "").trim().toUpperCase();
@@ -240,7 +241,7 @@ export async function getBrowserPlaybackInfo(trackId: string, preferredQuality?:
     const qualities = buildBrowserPlaybackQualityOrder(preferredQuality);
 
     for (const q of qualities) {
-        const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, ["bts"]);
+        const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, [...BROWSER_PLAYBACK_MANIFEST_TYPES]);
         if (info) return info;
     }
 
@@ -250,7 +251,7 @@ export async function getBrowserPlaybackInfo(trackId: string, preferredQuality?:
         if (!token) return null;
 
         for (const q of qualities) {
-            const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, ["bts"]);
+            const info = await fetchPlaybackInfo(trackId, q, token.access_token, cc, [...BROWSER_PLAYBACK_MANIFEST_TYPES]);
             if (info) return info;
         }
     } catch (err) {

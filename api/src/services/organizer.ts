@@ -6,7 +6,7 @@ import { db } from "../database.js";
 import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveBioFile, saveReviewFile, saveLyricsFile } from "./metadata-files.js";
 import { getArtist, getTrack, getVideo } from "./tidal.js";
-import { getNamingConfig, renderFileStem, renderRelativePath } from "./naming.js";
+import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } from "./naming.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
@@ -846,24 +846,26 @@ export class OrganizerService {
       if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
 
       const artistId = String(album.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
-        artistName = remoteArtist.name;
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor) VALUES (?, ?, ?, ?, 0)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0);
+        const fetchedArtistName = remoteArtist.name || "Unknown Artist";
+        artistName = fetchedArtistName;
+        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
 
       const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = renderRelativePath(naming.artist_folder, {
-        artistName: resolvedArtistName,
-        artistId,
-        artistMbId,
-        explicit: album.explicit === 1,
+      const artistFolder = resolveArtistFolderFromRecord({
+        name: resolvedArtistName,
+        mbid: artistMbId || null,
+        path: artistPath || null,
       });
 
       const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
@@ -1275,25 +1277,26 @@ export class OrganizerService {
       if (!trackRow) throw new Error(`Track ${tidalId} not found in DB after scan`);
 
       const artistId = String(album.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
-        artistName = remoteArtist.name;
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor) VALUES (?, ?, ?, ?, 0)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0);
+        const fetchedArtistName = remoteArtist.name || "Unknown Artist";
+        artistName = fetchedArtistName;
+        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
 
       const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
-
-      const artistFolder = renderRelativePath(naming.artist_folder, {
-        artistName: resolvedArtistName,
-        artistId,
-        artistMbId,
-        explicit: trackRow.explicit === 1,
+      const artistFolder = resolveArtistFolderFromRecord({
+        name: resolvedArtistName,
+        mbid: artistMbId || null,
+        path: artistPath || null,
       });
 
       const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
@@ -1630,8 +1633,8 @@ export class OrganizerService {
         if (!exists) {
           try {
             const a = await getArtist(videoArtistId);
-            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor) VALUES (?, ?, ?, ?, 0)")
-              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0);
+            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolder(a.name));
           } catch {
             // ignore
           }
@@ -1682,24 +1685,25 @@ export class OrganizerService {
       });
 
       const artistId = String(video.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(artistId) as any;
+      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
-        artistName = remoteArtist.name;
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor) VALUES (?, ?, ?, ?, 0)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0);
+        const fetchedArtistName = remoteArtist.name || "Unknown Artist";
+        artistName = fetchedArtistName;
+        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = renderRelativePath(naming.artist_folder, {
-        artistName: resolvedArtistName,
-        artistId,
-        artistMbId,
-        videoTitle: video.title,
-        explicit: video.explicit === 1,
+      const artistFolder = resolveArtistFolderFromRecord({
+        name: resolvedArtistName,
+        mbid: artistMbId || null,
+        path: artistPath || null,
       });
       const targetDir = path.join(videoRoot, artistFolder);
       this.ensureDir(targetDir);

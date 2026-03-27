@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 export type EntityId = string | number;
 
 /**
- * Base repository following Lidarr's pattern
+ * Base repository pattern
  * Provides common CRUD operations and query builders
  * TId generic allows repositories to specify their ID type (string or number)
  */

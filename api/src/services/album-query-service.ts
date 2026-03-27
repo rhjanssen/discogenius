@@ -2,7 +2,7 @@ import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { scanAlbumShallow } from "./scanner.js";
 import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
-import { shouldRefreshAlbumLidarrStyle } from "./refresh-policy.js";
+import { shouldRefreshAlbum } from "./refresh-policy.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 
@@ -69,7 +69,7 @@ function shouldHydrateAlbumShallow(album: any | null): boolean {
         return true;
     }
 
-    return shouldRefreshAlbumLidarrStyle({
+    return shouldRefreshAlbum({
         albumReleaseDate: album.release_date ?? null,
         lastScanned: album.last_scanned ?? null,
     });

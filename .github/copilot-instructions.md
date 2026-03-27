@@ -65,6 +65,8 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `orpheus.ts` | Orpheus runtime bootstrap, TIDAL session sync, and music download spawning |
 | `download-processor.ts` | Handles exact media download jobs: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist` |
 | `scheduler.ts` | Handles non-download jobs: `DownloadMissing`, `RefreshMetadata`, `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ApplyRenames`, `ApplyRetags` and Phase 1 commands: `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` |
+| `health.ts` | Collects runtime/path/tool/backend diagnostics used by startup preflight and the real `HealthCheck` scheduler command |
+| `playback.ts` / `playback-segment-worker.ts` | Provides signed browser-safe playback, preferring BTS/progressive and falling back to DASH segment streaming when needed |
 | `command.ts` | Defines command types and exclusivity rules (Lidarr-style) |
 | `command-history.ts` | Builds `/api/status` activity from queued jobs, including pending command-style work |
 | `queue.ts` | `TaskQueueService` and job type definitions for the persistent task queue |
@@ -79,9 +81,10 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `library-media-metrics.ts` | Shared unmapped-media metric extraction used by scan/import review persistence |
 | `library-scan-root-review.ts` | Handles root-folder review cleanup and unmapped review-candidate persistence |
 | `library-scan-relink.ts` | Repairs unresolved `library_files` rows by relinking to known media via injected scan dependencies |
-| `monitoring-scheduler.ts` | Orchestrates monitoring scheduled tasks, queue lifecycle, and compatibility exports |
-| `monitoring-state.ts` | Persists monitoring runtime progress and resolves active-workflow state from queue/runtime |
-| `monitoring-policy.ts` | Monitoring normalization, time-window/due policy helpers, and include-decision helpers |
+| `task-scheduler.ts` | Orchestrates scheduled task passes (Lidarr-aligned per-artist pipeline), queue lifecycle, and compatibility exports |
+| `task-state.ts` | Persists scheduled-task runtime progress and resolves active-workflow state from queue/runtime |
+| `schedule-policy.ts` | Schedule normalization, staleness/due policy helpers, and include-decision helpers |
+| `curation-service.ts` | Artist-level curation engine: category filtering, version-group selection, ISRC/subset dedup, monitor propagation, download candidate generation |
 | `library-metadata-backfill.ts` | Handles artist/album/track/video metadata file backfill and tracked metadata-sidecar updates |
 | `identification-service.ts` | Assigns manual import candidates to TIDAL tracks using file/title matching |
 | `fingerprint.ts` / `audioUtils.ts` | Chromaprint/AcoustID helpers for audio identification and enrichment |

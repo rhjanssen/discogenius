@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ## Purpose
 
@@ -48,11 +48,12 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - [api/src/services/system-task-service.ts](api/src/services/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
 - [api/src/services/download-processor.ts](api/src/services/download-processor.ts): exact media download jobs
 - [api/src/services/scheduler.ts](api/src/services/scheduler.ts): non-download jobs (scan/import/curation/maintenance)
+- [api/src/services/scheduler-maintenance-handlers.ts](api/src/services/scheduler-maintenance-handlers.ts): focused low-coupling Phase-1/maintenance handlers invoked by `scheduler.ts`, while scheduler keeps queue completion/failure ownership
 - [api/src/services/command-history.ts](api/src/services/command-history.ts): activity history projection and summary derivation
 - [api/src/routes/queue.ts](api/src/routes/queue.ts): non-download task API (`/api/tasks`) for list/filter plus add/retry/cancel/clear operations
 - [api/src/routes/activity.ts](api/src/routes/activity.ts): activity/history read APIs (`/api/activity`, `/api/activity/events`) for filtered command activity and merged event feed pagination
 - [api/src/routes/status.ts](api/src/routes/status.ts): summary-only control-plane snapshot (`/api/status`) for queue stats, activity summary, command stats, running commands, and rate-limit metrics
-- [api/src/routes/download-queue.ts](api/src/routes/download-queue.ts): live queue authority (`/api/queue`) and reorder operations
+- [api/src/routes/download-queue.ts](api/src/routes/download-queue.ts): live queue authority (`/api/queue`), dedicated queue history (`GET /api/queue/history`), and reorder operations
 
 #### Control-Plane Endpoint Boundaries (Increment 1)
 
@@ -62,6 +63,8 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - `/api/status` is intentionally summary-only and should not be treated as a paginated task list surface.
 - `/api/status/tasks` has been removed.
 - `/api/queue` remains authoritative for live queue state and ordering/reorder behavior.
+- `GET /api/queue/history` is the queue-tab history surface for completed/failed/cancelled download/import rows and returns queue-shaped `QueueItemContract` payloads.
+- `/api/activity` is not the queue-history source for the Dashboard queue tab.
 - Queue reorder requests must target pending download jobs and provide exactly one anchor (`beforeJobId` xor `afterJobId`) with deduplicated positive integer `jobIds`.
 
 #### Library List Filter Contract
@@ -87,7 +90,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 | `RefreshAllMonitored` | Refresh metadata for all monitored artists | Type-exclusive |
 | `DownloadMissingForce` | Reset skip flags and requeue missing downloads for all monitored media | Type-exclusive |
 | `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
-| `HealthCheck` | System health validation (auth, runtime, paths) | Globally exclusive |
+| `HealthCheck` | System health diagnostics (runtime, writable paths, tool availability, backend capability checks) | Globally exclusive |
 | `CompactDatabase` | SQLite VACUUM + ANALYZE for maintenance | Globally exclusive |
 | `CleanupTempFiles` | Remove orphaned staging files | Globally exclusive |
 | `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
@@ -116,11 +119,19 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - api/src/services/app-events.ts: typed app-level event bus
 - api/src/services/download-events.ts: download progress/event stream
 - api/src/services/curation.listener.ts: event-driven handoff from scan completion to curation jobs
+- Queue SSE/download event contracts include optional `quality` metadata so live queue recovery and queue-history badges can preserve the selected quality across reconnects and refreshes
 
 ### Logging and Diagnostics
 
 - api/src/services/app-logger.ts: in-process app logging buffer and JSONL persistence under config/logs/
 - Startup behavior tail-loads persisted logs into memory from the end of discogenius.jsonl with a 4 MiB read cap, then continues append-only writes
+- api/src/services/health.ts: health-diagnostics snapshot covering runtime state, writable paths, tool availability, and downloader/backend capability checks
+
+### Playback and Browser Streaming
+
+- api/src/routes/playback.ts: signed browser playback routes for TIDAL audio/video streaming
+- Browser audio playback prefers BTS/progressive sources, but falls back to DASH segment playback when that is the only browser-safe TIDAL path available
+- Browser-incompatible Atmos/Hi-Res audio is served through backend browser-compatible streaming/transcode paths so local/downloaded playback remains usable in standard browsers
 
 ### Metadata, Scan, and Import
 
@@ -131,9 +142,9 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 ### Curation and Download Candidate Selection
 
-- api/src/services/redundancy.ts: artist-level curation, redundancy filtering, monitor propagation, download queue candidate generation
+- api/src/services/curation-service.ts: CurationService — artist-level curation, redundancy filtering, monitor propagation, download queue candidate generation
 - api/src/services/artist-workflow.ts: workflow phase definitions and queued handoff payloads
-- api/src/services/monitoring-scheduler.ts: scheduled pass orchestration
+- api/src/services/task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline)
 
 Detailed flow and semantics are documented in docs/CURATION_DEDUPLICATION.md.
 
@@ -206,6 +217,8 @@ Operationally important semantics:
 - Dashboard tab data fetching is active-tab gated (`enabled`) so non-visible tabs do not continuously query or paginate in the background.
 - Dashboard activity and status reads keep previous data during refresh (`placeholderData`) and use short staleness windows so polling updates are non-blocking.
 - Refresh failures with cached data are presented as "showing cached" notices instead of blocking the view.
+- Dashboard queue history uses [app/src/hooks/useQueueHistoryFeed.ts](app/src/hooks/useQueueHistoryFeed.ts) against `GET /api/queue/history`, so queue history is rendered from `QueueItemContract` rows instead of remapped `/api/activity` jobs.
+- Queue restoration in [app/src/providers/QueueProvider.tsx](app/src/providers/QueueProvider.tsx) reconciles queue SSE progress events, authoritative `/api/queue` refreshes, and global queue/job invalidation events. Active/importing rows are kept through a short 15 s grace window to avoid disappearing during reconnect or download-to-import handoff races.
 - Activity retry suppression in [app/src/pages/dashboard/ActivityTab.tsx](app/src/pages/dashboard/ActivityTab.tsx) now checks in-flight `/api/activity` results first (pending/processing). If that feed reports `hasMore`, retry stays suppressed conservatively to avoid duplicate/redundant retries while newer in-flight work may exist off-page.
 - Activity tab empty/error behavior is explicit:
   - "Activity unavailable" when initial load fails and there is no cached activity.

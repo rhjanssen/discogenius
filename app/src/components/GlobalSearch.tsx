@@ -28,6 +28,7 @@ import { getTidalImage } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";
@@ -425,7 +426,7 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         if (item.type === 'artist') {
             navigate(`/artist/${item.tidalId}`);
         } else if (item.type === 'album') {
-            navigate(`/album/${item.tidalId}`);
+            navigateToAlbum(navigate, item.tidalId);
         } else if (item.type === 'video') {
             navigate(`/video/${item.tidalId}`);
         } else if (item.type === 'track') {
@@ -433,7 +434,7 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
                 const track = await api.getTrack(item.tidalId) as { album_id?: string | number | null; albumId?: string | number | null; album?: { id?: string | number | null } | null };
                 const albumId = String(track?.album_id ?? track?.albumId ?? track?.album?.id ?? '').trim();
                 if (albumId) {
-                    navigate(`/album/${albumId}`);
+                    navigateToAlbumTrack(navigate, albumId, item.tidalId);
                 }
             } catch {
                 // If track detail lookup fails, keep the current page instead of navigating incorrectly.

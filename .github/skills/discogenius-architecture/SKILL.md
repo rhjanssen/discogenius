@@ -47,8 +47,8 @@ Use this skill when changes touch one or more of:
 
 - scanner.ts: TIDAL metadata fetch and scan tiers.
 - library-scan.ts + import services: disk/import reconciliation and apply/finalize workflow.
-- redundancy.ts + artist-workflow.ts: curation and dedup decisions plus queue coupling.
-- monitoring-scheduler.ts: scheduled pass orchestration and chaining.
+- curation-service.ts + artist-workflow.ts: curation and dedup decisions plus queue coupling.
+- task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline).
 
 ## Documentation update requirements
 

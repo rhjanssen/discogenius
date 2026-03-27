@@ -72,11 +72,25 @@ export function useDashboardInfiniteFeed<TItem>({
     });
 
     const pages = query.data?.pages ?? [];
-    const items = Array.from(new Map(
-        pages
-            .flatMap((page) => page.items)
-            .map((item) => [String(getItemId(item)), item] as const),
-    ).values());
+    const itemsById = new Map<string, TItem>();
+    for (const item of pages.flatMap((page) => page.items)) {
+        if (item == null) {
+            continue;
+        }
+
+        try {
+            const itemId = getItemId(item);
+            if (itemId == null) {
+                continue;
+            }
+
+            itemsById.set(String(itemId), item);
+        } catch {
+            continue;
+        }
+    }
+
+    const items = Array.from(itemsById.values());
     const total = pages[pages.length - 1]?.total ?? pages[0]?.total ?? 0;
     const hasData = pages.length > 0;
 

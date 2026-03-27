@@ -58,7 +58,11 @@ prepare_writable_dirs() {
   ensure_dir /config
   ensure_dir /downloads
   ensure_dir /library
-  ensure_dir /config/runtime
+
+  # Clean up stale runtime dir from pre-1.2 installations (Orpheus is now baked into the image)
+  if [[ -d /config/runtime ]]; then
+    rm -rf /config/runtime
+  fi
 
   if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads; then
     echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config or /downloads." >&2

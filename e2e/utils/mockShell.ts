@@ -47,6 +47,14 @@ export const mockQueueResponse = {
   hasMore: false,
 };
 
+export const mockQueueHistoryResponse = {
+  items: [],
+  total: 0,
+  limit: 12,
+  offset: 0,
+  hasMore: false,
+};
+
 export const mockMonitoringStatus = {
   running: false,
   checking: false,
@@ -68,6 +76,7 @@ export async function stubShellApis(
     activityResponse?: Record<string, unknown>;
     tasksResponse?: Record<string, unknown>;
     queueResponse?: Record<string, unknown>;
+    queueHistoryResponse?: Record<string, unknown>;
     monitoringStatus?: Record<string, unknown>;
     libraryStats?: Record<string, unknown>;
   },
@@ -155,6 +164,17 @@ export async function stubShellApis(
       body: JSON.stringify({
         ...mockQueueResponse,
         ...(options?.queueResponse || {}),
+      }),
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue/history', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...mockQueueHistoryResponse,
+        ...(options?.queueHistoryResponse || {}),
       }),
     });
   });

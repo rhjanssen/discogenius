@@ -51,6 +51,7 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    scrollMarginTop: `calc(${tokens.spacingVerticalXXL} * 2)`,
     transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
   },
   rowClickable: {
@@ -244,6 +245,7 @@ const TrackList = <T extends TrackListItem>({
 
               <div
                 className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
+                data-album-track-id={track.id}
                 onClick={onTrackClick ? () => onTrackClick(track) : undefined}
               >
                 <Text className={styles.number}>{displayNumber}</Text>

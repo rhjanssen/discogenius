@@ -78,7 +78,7 @@ export const ARTIST_WORKFLOW_JOB_TYPES = [
 
 /**
  * All non-download job types processed by the Scheduler.
- * Used for global priority selection (Lidarr-style CommandQueue).
+ * Used for global priority selection.
  */
 export const NON_DOWNLOAD_JOB_TYPES = [
     JobTypes.RefreshArtist,
@@ -410,7 +410,7 @@ export class TaskQueueService {
                     WHERE type = ? AND ref_id = ? AND status IN('pending', 'processing')
                 `).all(type, refId) as Array<{ id: number; payload: unknown }>;
 
-                // Mirror Lidarr-style command equality: dedupe by equivalent command body, not just artist ref.
+                // Command equality: dedupe by equivalent command body, not just artist ref.
                 for (const existing of existingRefreshJobs) {
                     const existingPayload = normalizeRefreshArtistPayload(
                         safeParsePayload(existing.payload, existing.id) as Partial<RefreshArtistJobPayload>,
@@ -459,15 +459,17 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         statusPattern: string = '%',
         limit: number = 50,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' | 'live_activity' | 'queue_order' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
     ): Job[] {
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
-            : options.orderBy === 'live_activity'
-                ? buildLiveActivityOrderClause()
-                : options.orderBy === 'queue_order'
-                    ? buildDurableQueueOrderClause()
-                    : 'created_at DESC, id DESC';
+            : options.orderBy === 'history'
+                ? 'COALESCE(completed_at, updated_at, started_at, created_at) DESC, id DESC'
+                : options.orderBy === 'live_activity'
+                    ? buildLiveActivityOrderClause()
+                    : options.orderBy === 'queue_order'
+                        ? buildDurableQueueOrderClause()
+                        : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
 SELECT * FROM job_queue 
             WHERE type LIKE ? AND status LIKE ?
@@ -485,7 +487,7 @@ LIMIT ? OFFSET ?
         statuses: readonly JobStatus[],
         limit: number = 200,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' | 'live_activity' | 'queue_order' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
     ): Job[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
@@ -495,11 +497,13 @@ LIMIT ? OFFSET ?
         const statusPlaceholders = statuses.map(() => '?').join(',');
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
-            : options.orderBy === 'live_activity'
-                ? buildLiveActivityOrderClause()
-                : options.orderBy === 'queue_order'
-                    ? buildDurableQueueOrderClause()
-                    : 'created_at DESC, id DESC';
+            : options.orderBy === 'history'
+                ? 'COALESCE(completed_at, updated_at, started_at, created_at) DESC, id DESC'
+                : options.orderBy === 'live_activity'
+                    ? buildLiveActivityOrderClause()
+                    : options.orderBy === 'queue_order'
+                        ? buildDurableQueueOrderClause()
+                        : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
             SELECT * FROM job_queue
             WHERE type IN (${typePlaceholders})
@@ -599,7 +603,7 @@ ${buildExecutionOrderClause()}
 
     /**
      * Return the top-N pending jobs across all given types, sorted globally by priority.
-     * Used by the Scheduler to implement Lidarr-style CommandQueue selection:
+     * Used by the Scheduler for CommandQueue selection:
      * the caller iterates the list and picks the first job that passes exclusivity checks.
      */
     static getTopPendingJobsByTypes(types: readonly JobType[], limit: number = 20): Job[] {
@@ -887,7 +891,7 @@ ${buildExecutionOrderClause()}
     }
 
     /**
-     * Boost a pending job to manual/high priority (Lidarr-style "user is looking at it")
+     * Boost a pending job to manual/high priority
      */
     static boostToManual(typePattern: string, refId: string, priority: number = 1): number {
         const result = db.prepare(`

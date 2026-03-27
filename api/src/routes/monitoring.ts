@@ -13,7 +13,7 @@ import {
   queueCurationPass,
   queueDownloadMissingPass,
   queueCheckUpgradesPass,
-} from "../services/monitoring-scheduler.js";
+} from "../services/task-scheduler.js";
 
 const router = Router();
 

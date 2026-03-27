@@ -58,6 +58,7 @@ import { formatMetadataAttribution } from "@/utils/date";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { QueueContext } from "@/providers/QueueProvider";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import {
   compactDetailActionButtonStyles,
   detailActionButtonRadiusStyles,
@@ -870,7 +871,7 @@ const ArtistPage = () => {
     return (
       <MediaCard
         key={tidalId}
-        to={`/album/${tidalId}`}
+        to={getAlbumPath(tidalId)}
         imageUrl={imageUrl}
         alt={albumTitle}
         title={albumTitle}
@@ -1098,7 +1099,7 @@ const ArtistPage = () => {
             onTrackClick={(track) => {
               const albumId = track.album_id ?? track.album?.id ?? null;
               if (albumId) {
-                navigate(`/album/${albumId}`);
+                navigateToAlbumTrack(navigate, albumId, track.id);
               }
             }}
           />
@@ -1172,6 +1173,23 @@ const ArtistPage = () => {
           });
         }
       });
+    });
+
+    // Sort album-type sections into canonical order
+    const sectionOrder: Record<string, number> = {
+      'albums': 1,
+      'eps': 2, 'ep': 2,
+      'singles': 3, 'single': 3,
+      'live': 4, 'live albums': 4,
+      'compilations': 5, 'compilation': 5,
+      'soundtracks': 6, 'soundtrack': 6,
+      'demos': 7, 'demo': 7,
+      'remixes': 8, 'remix': 8,
+    };
+    mods.sort((a, b) => {
+      const orderA = sectionOrder[a.title?.toLowerCase()] ?? 50;
+      const orderB = sectionOrder[b.title?.toLowerCase()] ?? 50;
+      return orderA - orderB;
     });
 
     return mods;

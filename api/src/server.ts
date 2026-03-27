@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import fs from "fs";
 import path from "path";
 
-import { closeDatabase, initDatabase } from "./database.js";
+import { backfillArtistPaths, closeDatabase, initDatabase } from "./database.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/albums.js";
 import activityRouter from "./routes/activity.js";
@@ -37,7 +37,7 @@ import { closeAppLogging, initAppLogging } from "./services/app-logger.js";
 import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config.js";
 import { initCurationListeners } from "./services/curation.listener.js";
 import { downloadProcessor } from "./services/download-processor.js";
-import { startMonitoring } from "./services/monitoring-scheduler.js";
+import { startMonitoring } from "./services/task-scheduler.js";
 import { setupTidalProxy } from "./services/proxy.js";
 import {
   getRuntimeDiagnosticsSnapshot,
@@ -46,6 +46,7 @@ import {
 } from "./services/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/runtime-maintenance.js";
 import { collectHealthDiagnosticsSnapshot } from "./services/health.js";
+import { resolveArtistFolder } from "./services/naming.js";
 import { Scheduler } from "./services/scheduler.js";
 import { readIntEnv } from "./utils/env.js";
 
@@ -149,6 +150,12 @@ app.use(cors({
 }));
 
 initDatabase();
+
+const backfilled = backfillArtistPaths(resolveArtistFolder);
+if (backfilled > 0) {
+  console.log(`📁 Backfilled path for ${backfilled} existing artist(s)`);
+}
+
 initAppLogging();
 startRuntimeDiagnostics();
 const startupHealthSnapshot = collectHealthDiagnosticsSnapshot();

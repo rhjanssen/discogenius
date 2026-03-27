@@ -1,6 +1,6 @@
 import { db } from "../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "./config.js";
-import { RedundancyService } from "./redundancy.js";
+import { CurationService } from "./curation-service.js";
 import { scanArtistDeep } from "./scanner.js";
 import { JobTypes, TaskQueueService, type Job } from "./queue.js";
 import { getManagedArtists, getManagedArtistsDueForRefresh } from "./managed-artists.js";
@@ -13,7 +13,7 @@ import {
     hasActiveTask,
     loadMonitoringProgress,
     saveMonitoringProgress,
-} from "./monitoring-state.js";
+} from "./task-state.js";
 import {
     getNextMonitoringWindowAtOrAfter,
     isScheduledTaskDue,
@@ -23,10 +23,10 @@ import {
     parseScheduledTaskTime,
     resolveMonitoringPassWorkflow,
     type MonitoringPassWorkflow,
-} from "./monitoring-policy.js";
+} from "./schedule-policy.js";
 
-export type { MonitoringConfig } from "./monitoring-state.js";
-export type { MonitoringPassWorkflow } from "./monitoring-policy.js";
+export type { MonitoringConfig } from "./task-state.js";
+export type { MonitoringPassWorkflow } from "./schedule-policy.js";
 
 let schedulerInterval: NodeJS.Timeout | null = null;
 let isMonitoring = false;
@@ -125,12 +125,12 @@ function getScheduledTaskUpdateStmt() {
     `);
 }
 
-export function getMonitoringStatus(): { running: boolean; checking: boolean; config: import("./monitoring-state.js").MonitoringConfig } {
+export function getMonitoringStatus(): { running: boolean; checking: boolean; config: import("./task-state.js").MonitoringConfig } {
     const configFromFile = getConfigSection("monitoring");
     const runtimeState = getEffectiveMonitoringRuntimeState(configFromFile, { isChecking });
     const checking = runtimeState.checkInProgress;
 
-    const config: import("./monitoring-state.js").MonitoringConfig = {
+    const config: import("./task-state.js").MonitoringConfig = {
         ...configFromFile,
         ...runtimeState,
     };
@@ -142,7 +142,7 @@ export function getMonitoringStatus(): { running: boolean; checking: boolean; co
     };
 }
 
-export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>): import("./monitoring-state.js").MonitoringConfig {
+export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>): import("./task-state.js").MonitoringConfig {
     updateConfig("monitoring", updates);
     const config = getMonitoringStatus().config;
 
@@ -290,101 +290,6 @@ export function queueDownloadMissingPass(options: {
     );
 }
 
-/**
- * Queue all monitoring phases upfront with staggered priorities.
- * Instead of chaining sequentially (metadata → rescan → curation → download),
- * this allows them to run in parallel within the worker pool:
- * - Metadata refresh gets priority 100 (runs first slot)
- * - Rescan gets priority 50 (can start while metadata still running)
- * - Curation gets priority 25 (can start while rescan still running)
- * - Download gets priority 10 (lowest priority, but can run concurrently)
- * 
- * This matches Lidarr's approach: queue all work at once, let scheduler parallelization handle it.
- */
-export function queueMonitoringPhasesConcurrent(options: {
-    trigger?: number;
-    monitoringCycle?: MonitoringPassWorkflow;
-    includeRootScan?: boolean;
-    artistIds?: string[];
-    monitorArtist?: boolean;
-} = {}) {
-    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
-    const trigger = options.trigger ?? 0;
-    const artistIds = normalizeArtistIds(options.artistIds) ?? [];
-    
-    // Priority ordering: metadata > rescan > curation > download
-    // Higher priority starts first, but can run concurrently with lower priority work
-    const results = {
-        metadataJobId: -1,
-        rescanJobId: -1,
-        curationJobId: -1,
-        downloadJobId: -1,
-    };
-    
-    // Metadata refresh: highest priority, starts first
-    // addJob signature: (type, payload, refId, priority, trigger)
-    results.metadataJobId = TaskQueueService.addJob(
-        JobTypes.RefreshMetadata,
-        {
-            title: "Refreshing metadata",
-            description: "Metadata refresh phase (interleaved with other phases)",
-            artistIds: artistIds.length > 0 ? artistIds : undefined,
-            expectedArtists: 0,
-            monitoringCycle,
-        },
-        "metadata-refresh-phase",
-        100, // Priority 100
-        trigger,
-    );
-    
-    // Rescan folders: medium-high priority, can start after metadata begins
-    if (monitoringCycle === "full-cycle" || monitoringCycle === "root-scan-cycle") {
-        results.rescanJobId = TaskQueueService.addJob(
-            JobTypes.RescanFolders,
-            {
-                addNewArtists: true,
-                artistIds: artistIds.length > 0 ? artistIds : undefined,
-                monitorArtist: options.monitorArtist ?? true,
-            fullProcessing: monitoringCycle === "full-cycle",
-                monitoringCycle,
-            },
-            "rescan-folders-phase",
-            50, // Priority 50
-            trigger,
-        );
-    }
-    
-    // Curation: medium priority, interleaves with refresh and rescan
-    results.curationJobId = TaskQueueService.addJob(
-        JobTypes.ApplyCuration,
-        {
-            title: "Applying curation",
-            description: "Curation phase (interleaved with other phases)",
-            artistIds: artistIds.length > 0 ? artistIds : undefined,
-            expectedArtists: 0,
-            monitoringCycle,
-        },
-        "apply-curation-phase",
-        25, // Priority 25
-        trigger,
-    );
-    
-    // Download missing: lowest priority within monitoring cycle
-    results.downloadJobId = TaskQueueService.addJob(
-        JobTypes.DownloadMissing,
-        {
-            artistIds: artistIds.length > 0 ? artistIds : undefined,
-            title: "Queueing missing downloads",
-            description: "Download phase (interleaved with other phases)",
-            monitoringCycle,
-        },
-        "download-missing-phase",
-        10, // Priority 10
-        trigger,
-    );
-    
-    return results;
-}
 export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
     const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
     if (!monitoringCycle) {
@@ -393,30 +298,27 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
 
     switch (job.type) {
         case JobTypes.RefreshMetadata:
+            // Per-artist curation is handled by the event-driven pipeline:
+            // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist
+            // Only queue the library-wide root scan if full-cycle, then DownloadMissing directly.
             if (monitoringCycle === "full-cycle") {
                 queueRescanFoldersPass({
                     trigger: job.trigger ?? 0,
                     fullProcessing: true,
                     monitoringCycle,
                 });
-                return;
             }
-
-            queueCurationPass({
+            // Queue DownloadMissing directly — per-artist curation already flows via events
+            queueDownloadMissingPass({
                 trigger: job.trigger ?? 0,
                 monitoringCycle,
             });
             return;
         case JobTypes.RescanFolders:
-            // Only chain monitoring phases for library-wide scans (not per-artist)
-            if (job.payload?.addNewArtists) {
-                queueCurationPass({
-                    trigger: job.trigger ?? 0,
-                    monitoringCycle,
-                });
-            }
+            // Library-wide rescan doesn't chain to curation (per-artist events handle that)
             return;
         case JobTypes.ApplyCuration:
+            // Manual ApplyCuration still chains to DownloadMissing
             queueDownloadMissingPass({
                 trigger: job.trigger ?? 0,
                 monitoringCycle,
@@ -842,7 +744,7 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
 
     for (const artist of monitoredArtists) {
         try {
-            const queued = await RedundancyService.queueMonitoredItems(String(artist.id));
+            const queued = await CurationService.queueMonitoredItems(String(artist.id));
             totalAlbums += queued.albums;
             totalTracks += queued.tracks;
             totalVideos += queued.videos;

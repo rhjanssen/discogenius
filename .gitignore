@@ -53,3 +53,6 @@ api/config/
 package-lock.json
 bun.lockb
 pnpm-lock.yaml
+
+# Local runtime (OrpheusDL venv, bootstrap)
+.runtime/

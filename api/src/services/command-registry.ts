@@ -19,7 +19,7 @@ import {
   queueRescanFoldersPass,
   queueUpdateLibraryMetadata,
   queueCheckUpgradesPass,
-} from "./monitoring-scheduler.js";
+} from "./task-scheduler.js";
 
 export interface CommandDefinition {
   type: JobType;
@@ -171,7 +171,7 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
     isPerRefExclusive: true,
-    maxConcurrent: 1,
+    maxConcurrent: 3,
   },
   [JobTypes.ScanAlbum]: {
     type: JobTypes.ScanAlbum,
@@ -237,7 +237,7 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
     isPerRefExclusive: true,
-    maxConcurrent: 1,
+    maxConcurrent: 3,
   },
   [JobTypes.ImportDownload]: {
     type: JobTypes.ImportDownload,
@@ -253,6 +253,7 @@ export const COMMAND_DEFINITIONS = {
     requiresDiskAccess: true,
     isTypeExclusive: false,
     isExclusive: false,
+    isPerRefExclusive: true,
     isLongRunning: true,
   },
   [JobTypes.ConfigPrune]: {
@@ -334,8 +335,8 @@ const SYSTEM_TASK_DEFINITIONS = [
     id: "download-missing",
     kind: "manual",
     commandName: "DownloadMissing",
-    name: "Download Missing",
-    description: "Queue missing monitored items for download.",
+    name: "Queue Downloads",
+    description: "Queue monitored missing items so download jobs can be processed by the queue.",
     taskName: JobTypes.DownloadMissing,
     category: "downloads",
     riskLevel: "medium",

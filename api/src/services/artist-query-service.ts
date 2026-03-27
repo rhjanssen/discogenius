@@ -12,7 +12,7 @@ import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
 import { ScanLevel, getArtistScanLevel, scanArtistDeep, scanArtistShallow } from "./scanner.js";
-import { shouldRefreshArtistLidarrStyle } from "./refresh-policy.js";
+import { shouldRefreshArtist } from "./refresh-policy.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -85,7 +85,7 @@ function shouldHydrateArtistShallow(artist: ArtistMonitorRow | undefined, artist
         return true;
     }
 
-    return shouldRefreshArtistLidarrStyle({
+    return shouldRefreshArtist({
         artistId,
         lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
     });
@@ -104,7 +104,7 @@ function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId:
         return true;
     }
 
-    return shouldRefreshArtistLidarrStyle({
+    return shouldRefreshArtist({
         artistId,
         lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
     });
@@ -599,13 +599,13 @@ export class ArtistQueryService {
         }
 
         pushAlbumModule("Albums", modules.ARTIST_ALBUMS, "ALBUM");
-        pushAlbumModule("Live Albums", modules.ARTIST_LIVE_ALBUMS, "LIVE");
         pushAlbumModule("EPs", modules.ARTIST_EPS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "EP");
         pushAlbumModule("Singles", modules.ARTIST_SINGLES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "SINGLE");
+        pushAlbumModule("Live Albums", modules.ARTIST_LIVE_ALBUMS, "LIVE");
         pushAlbumModule("Compilations", modules.ARTIST_COMPILATIONS, "COMPILATION");
-        pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "REMIX");
         pushAlbumModule("Soundtracks", modules.ARTIST_SOUNDTRACKS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "SOUNDTRACK");
         pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "DEMO");
+        pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "REMIX");
         pushAlbumModule("Appears On", modules.ARTIST_APPEARS_ON, "APPEARS_ON");
 
         if (videos.length > 0) {

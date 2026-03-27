@@ -10,7 +10,13 @@ All notable changes to this project are documented in this file.
 
 - Increment 1 control-plane split finalized: `/api/activity` is now the canonical paginated/filterable activity feed, while `/api/status` is summary-only.
 - Removed `/api/status/tasks`; `/api/queue` remains the live queue authority (including reorder invariants).
+- Added `GET /api/queue/history` as the queue-tab history source, with Dashboard queue history now rendered from queue-shaped `QueueItemContract` rows instead of remapped `/api/activity` jobs.
+- Queue SSE/download event contracts now include `quality`, and frontend queue restoration now reconciles SSE progress, authoritative `/api/queue` refreshes, and global queue/job invalidation with a short grace window to avoid reconnect/import-transition flicker.
 - Dashboard activity/status refresh now follows stale-data non-blocking behavior, including explicit activity empty/error semantics.
+- Browser TIDAL playback now prefers BTS/progressive streams but falls back to DASH when that is the only browser-safe source available.
+- Downloaded Dolby Atmos audio now has a browser-compatible backend streaming path for web playback.
+- Scheduler `HealthCheck` now runs real diagnostics across runtime state, writable paths, tool availability, and downloader capability checks instead of acting as a stub.
+- Artist page release modules are now ordered as Albums → EPs → Singles → Live → Compilations → Soundtracks → Demos → Remixes → Appears On.
 
 ## [1.1.0] - 2026-03-22
 

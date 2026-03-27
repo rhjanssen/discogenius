@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { BaseRepository } from "./BaseRepository.js";
+import { resolveUniqueArtistFolder } from "../services/naming.js";
 
 /**
  * Artist entity matching the new schema
@@ -14,6 +15,7 @@ export interface Artist {
     artist_roles?: string;         // JSON array of role objects
     user_date_added?: string;      // When added to TIDAL favorites
     similar_artists?: string;      // JSON array of similar artist IDs
+    path?: string;                 // Resolved library folder path
 
     // Biography
     bio_text?: string;             // Full biography text
@@ -39,6 +41,7 @@ export interface ArtistInsert {
     bio_text?: string;
     bio_source?: string;
     monitor?: boolean;
+    path?: string;
 }
 
 /**
@@ -71,14 +74,28 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
     }
 
     /**
+     * Check if an artist path already exists in the database.
+     */
+    pathExists(p: string): boolean {
+        const row = this.prepare("SELECT 1 FROM artists WHERE path = ? LIMIT 1").get(p);
+        return row !== undefined;
+    }
+
+    /**
      * Insert or ignore artist (useful for featured artists)
      */
     insertOrIgnore(artist: ArtistInsert): void {
+        const artistPath = artist.path || resolveUniqueArtistFolder(
+            artist.name,
+            artist.id,
+            undefined,
+            (p) => this.pathExists(p)
+        );
         this.prepare(`
             INSERT OR IGNORE INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 
-                user_date_added, similar_artists, bio_text, bio_source, monitor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_date_added, similar_artists, bio_text, bio_source, monitor, path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             artist.id,
             artist.name,
@@ -90,7 +107,8 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
             artist.similar_artists || null,
             artist.bio_text || null,
             artist.bio_source || null,
-            artist.monitor ? 1 : 0
+            artist.monitor ? 1 : 0,
+            artistPath || null
         );
     }
 
@@ -98,11 +116,17 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
      * Insert artist (will error if already exists)
      */
     insert(artist: ArtistInsert): void {
+        const artistPath = artist.path || resolveUniqueArtistFolder(
+            artist.name,
+            artist.id,
+            undefined,
+            (p) => this.pathExists(p)
+        );
         this.prepare(`
             INSERT INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 
-                user_date_added, similar_artists, bio_text, bio_source, monitor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_date_added, similar_artists, bio_text, bio_source, monitor, path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             artist.id,
             artist.name,
@@ -114,7 +138,8 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
             artist.similar_artists || null,
             artist.bio_text || null,
             artist.bio_source || null,
-            artist.monitor ? 1 : 0
+            artist.monitor ? 1 : 0,
+            artistPath || null
         );
     }
 
@@ -132,6 +157,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
             bio_source: updates.bio_source,
             picture: updates.picture,
             popularity: updates.popularity,
+            path: updates.path,
         };
 
         for (const [key, value] of Object.entries(fieldMap)) {

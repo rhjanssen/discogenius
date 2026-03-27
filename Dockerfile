@@ -14,6 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install tidal-dl-ng (for-dj fork uses "tidal_dl_ng-dev" config folder)
 RUN pip3 install --upgrade tidal-dl-ng-for-dj
 
+# Install OrpheusDL with TIDAL module (baked into image, not runtime-bootstrapped)
+RUN git clone --depth 1 https://github.com/OrfiTeam/OrpheusDL.git /opt/orpheusdl \
+    && pip3 install -r /opt/orpheusdl/requirements.txt \
+    && git clone --depth 1 --recurse-submodules https://github.com/Dniel97/orpheusdl-tidal.git /opt/orpheusdl/modules/tidal \
+    && (test -f /opt/orpheusdl/modules/tidal/requirements.txt && pip3 install -r /opt/orpheusdl/modules/tidal/requirements.txt || true) \
+    && rm -rf /opt/orpheusdl/.git /opt/orpheusdl/modules/tidal/.git \
+    && rm -rf /opt/orpheusdl/config \
+    && ln -s /config/orpheusdl/config /opt/orpheusdl/config
+
 # ==================== Builder Stage ====================
 FROM base AS builder
 

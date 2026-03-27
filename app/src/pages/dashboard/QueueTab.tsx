@@ -32,19 +32,13 @@ import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
 import { useDownloadQueue, type QueueItem } from "@/hooks/useDownloadQueue";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
-import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState } from "@/components/ui/ContentState";
 import { TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import { useDashboardStyles } from "./dashboardStyles";
-import {
-    formatJobDescription,
-    formatJobType,
-    formatRelativeTime,
-    getActivityTypeIcon,
-} from "./dashboardUtils";
+import { formatRelativeTime } from "./dashboardUtils";
 
 function normalizeTrackLabel(value?: string | null): string {
     return String(value || "")
@@ -223,41 +217,12 @@ function renderHistoryStatusIndicator(
     return <Clock24Regular className={styles.downloadStatusPendingIcon} />;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
-
-function getOptionalString(value: unknown): string | null {
-    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
 function getOptionalIdentifier(value: unknown): string | null {
     if (typeof value === "number" && Number.isFinite(value)) {
         return String(value);
     }
 
-    return getOptionalString(value);
-}
-
-function getRecordIdentifier(record: Record<string, unknown> | null, ...keys: string[]): string | null {
-    for (const key of keys) {
-        const value = getOptionalIdentifier(record?.[key]);
-        if (value) {
-            return value;
-        }
-    }
-
-    return null;
-}
-
-function getTidalMediaIdFromUrl(url: unknown, mediaType: 'album' | 'track' | 'video'): string | null {
-    const normalizedUrl = getOptionalString(url);
-    if (!normalizedUrl) {
-        return null;
-    }
-
-    const match = normalizedUrl.match(new RegExp(`/${mediaType}/([^/?#]+)`, 'i'));
-    return match?.[1] ? decodeURIComponent(match[1]) : null;
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function buildAlbumNavPath(albumId: unknown): string | null {
@@ -286,44 +251,17 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     return buildAlbumNavPath(firstItem.album_id);
 }
 
-function getQueueHistoryNavPath(
-    job: ActivityJob,
-    payload: Record<string, unknown> | null,
-    resolved: Record<string, unknown> | null,
-    mediaBadge: QueueHistoryMediaBadge | null,
-): string | null {
-    const payloadType = getOptionalString(payload?.type)?.toLowerCase();
-    const resolvedAlbum = asRecord(resolved?.album);
-    const payloadAlbum = asRecord(payload?.album);
-
-    if (mediaBadge?.kind === 'album') {
-        return buildAlbumNavPath(
-            getRecordIdentifier(resolved, 'albumId', 'album_id', 'tidalId', 'id')
-            ?? getRecordIdentifier(payload, 'albumId', 'album_id', 'tidalId', 'id')
-            ?? getTidalMediaIdFromUrl(payload?.url, 'album'),
-        );
+function getQueueHistoryNavPath(item: QueueItem): string | null {
+    if (item.type === 'video') {
+        return buildVideoNavPath(item.tidalId);
     }
 
-    if (mediaBadge?.kind === 'video') {
-        return buildVideoNavPath(
-            getRecordIdentifier(resolved, 'videoId', 'mediaId', 'tidalId', 'id')
-            ?? getRecordIdentifier(payload, 'videoId', 'mediaId', 'tidalId', 'id')
-            ?? getTidalMediaIdFromUrl(payload?.url, 'video'),
-        );
+    if (item.type === 'album') {
+        return buildAlbumNavPath(item.tidalId ?? item.album_id);
     }
 
-    if (mediaBadge?.kind === 'track') {
-        if (payloadType === 'playlist' || job.type === 'DownloadPlaylist' || job.type === 'ImportPlaylist') {
-            return null;
-        }
-
-        return buildAlbumNavPath(
-            getRecordIdentifier(resolved, 'albumId', 'album_id')
-            ?? getRecordIdentifier(resolvedAlbum, 'id', 'albumId', 'album_id')
-            ?? getRecordIdentifier(payload, 'albumId', 'album_id')
-            ?? getRecordIdentifier(payloadAlbum, 'id', 'albumId', 'album_id')
-            ?? getTidalMediaIdFromUrl(payload?.albumUrl, 'album'),
-        );
+    if (item.type === 'track') {
+        return buildAlbumNavPath(item.album_id);
     }
 
     return null;
@@ -352,72 +290,52 @@ type QueueHistoryRowModel = {
     error: string | null;
 };
 
-function getQueueHistoryMediaBadge(job: ActivityJob, payload: Record<string, unknown> | null): QueueHistoryMediaBadge | null {
-    const payloadType = getOptionalString(payload?.type)?.toLowerCase();
-
-    if (payloadType === 'album') {
-        return { kind: 'album' };
-    }
-
-    if (payloadType === 'video') {
-        return { kind: 'video' };
-    }
-
-    if (payloadType === 'playlist') {
-        return { kind: 'track', label: 'Playlist' };
-    }
-
-    if (payloadType === 'track') {
-        return { kind: 'track' };
-    }
-
-    switch (job.type) {
-        case 'DownloadAlbum':
+function getQueueHistoryMediaBadge(item: QueueItem): QueueHistoryMediaBadge | null {
+    switch (item.type) {
+        case 'album':
             return { kind: 'album' };
-        case 'DownloadVideo':
+        case 'video':
             return { kind: 'video' };
-        case 'DownloadPlaylist':
-        case 'ImportPlaylist':
+        case 'playlist':
             return { kind: 'track', label: 'Playlist' };
-        case 'DownloadTrack':
+        case 'track':
             return { kind: 'track' };
         default:
             return null;
     }
 }
 
-function getQueueHistoryStatusLabel(status?: string, error?: string | null): string {
-    if (error || status === 'failed') {
+function getQueueHistoryStatusLabel(item: QueueItem): string {
+    if (item.error || item.status === 'failed') {
         return 'Failed';
     }
 
-    if (status === 'cancelled') {
+    if (item.status === 'cancelled') {
         return 'Cancelled';
+    }
+
+    if (item.status === 'pending') {
+        return 'Queued';
+    }
+
+    if (item.status === 'processing' || item.status === 'downloading') {
+        return 'In progress';
     }
 
     return 'Completed';
 }
 
-function mapQueueHistoryJobToRow(job: ActivityJob): QueueHistoryRowModel {
-    const payload = asRecord(job.payload);
-    const resolved = asRecord(payload?.resolved);
-    const mediaBadge = getQueueHistoryMediaBadge(job, payload);
-    const title = getOptionalString(resolved?.title)
-        ?? getOptionalString(payload?.title)
-        ?? getOptionalString(payload?.playlistName)
-        ?? formatJobType(job);
-    const artist = getOptionalString(resolved?.artist)
-        ?? getOptionalString(payload?.artist)
-        ?? getOptionalString(payload?.artistName);
-    const fallbackDescription = formatJobDescription(job);
-    const subtitle = artist ?? (fallbackDescription && fallbackDescription !== title ? fallbackDescription : null);
-    const cover = getOptionalString(resolved?.cover) ?? getOptionalString(payload?.cover);
-    const coverUrl = cover
+function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
+    const mediaBadge = getQueueHistoryMediaBadge(item);
+    const title = item.title || item.album_title || 'Unknown item';
+    const subtitle = item.artist || null;
+    const coverUrl = item.cover
         ? mediaBadge?.kind === 'video'
-            ? getTidalImage(cover, 'video', 'small')
-            : getAlbumCover(cover, 'small')
+            ? getTidalImage(item.cover, 'video', 'small')
+            : getAlbumCover(item.cover, 'small')
         : null;
-    const navPath = getQueueHistoryNavPath(job, payload, resolved, mediaBadge);
+    const navPath = getQueueHistoryNavPath(item);
+    const timeSource = item.completed_at || item.updated_at || item.started_at || item.created_at;
 
     return {
         title,
@@ -426,10 +344,10 @@ function mapQueueHistoryJobToRow(job: ActivityJob): QueueHistoryRowModel {
         isVideo: mediaBadge?.kind === 'video',
         mediaBadge,
         navPath,
-        quality: getOptionalString(payload?.quality) ?? getOptionalString(payload?.qualityProfile),
-        statusLabel: getQueueHistoryStatusLabel(job.status, job.error),
-        timeLabel: formatRelativeTime(job.endTime || job.startTime),
-        error: job.error ?? null,
+        quality: item.quality ?? null,
+        statusLabel: getQueueHistoryStatusLabel(item),
+        timeLabel: formatRelativeTime(timeSource),
+        error: item.error ?? null,
     };
 }
 
@@ -588,9 +506,14 @@ const QueueTab = () => {
     const [activeBulkAction, setActiveBulkAction] = useState<string | null>(null);
 
     const groupedDownloads = useMemo(() => {
+        const activeDownloads = downloadQueue.filter(i => i.status === 'downloading' || i.status === 'processing');
+        const pendingDownloads = downloadQueue.filter(i => i.status === 'pending');
+        const failedDownloads = downloadQueue.filter(i => i.status === 'failed');
+        const filteredQueue = [...activeDownloads, ...pendingDownloads, ...failedDownloads];
+
         const albumTrackCounts = new Map<string, number>();
 
-        downloadQueue.forEach((item) => {
+        filteredQueue.forEach((item) => {
             if (item.type === 'track' && item.album_id) {
                 albumTrackCounts.set(item.album_id, (albumTrackCounts.get(item.album_id) ?? 0) + 1);
             }
@@ -598,7 +521,7 @@ const QueueTab = () => {
 
         const groups: Record<string, QueueGroup> = {};
 
-        downloadQueue.forEach((item, index) => {
+        filteredQueue.forEach((item, index) => {
             const isAlbum = item.type === 'album';
             const isVideo = item.type === 'video';
             const shouldGroupTrackAsAlbum = item.type === 'track'
@@ -648,7 +571,19 @@ const QueueTab = () => {
             groups[groupId].items.push(item);
         });
 
-        return Object.values(groups).sort((a, b) => a.sortIndex - b.sortIndex);
+        return Object.values(groups).sort((a, b) => {
+            const aActiveItem = a.items.find(i => i.status === 'downloading' || i.status === 'processing');
+            const bActiveItem = b.items.find(i => i.status === 'downloading' || i.status === 'processing');
+            const rankGroup = (groupStatus: string, activeItem?: QueueItem) => {
+                if (groupStatus === 'downloading' && activeItem?.stage === 'import') return 0;
+                if (groupStatus === 'downloading') return 1;
+                if (groupStatus === 'pending') return 2;
+                return 3;
+            };
+            const rankDiff = rankGroup(a.status, aActiveItem) - rankGroup(b.status, bActiveItem);
+            if (rankDiff !== 0) return rankDiff;
+            return a.sortIndex - b.sortIndex;
+        });
     }, [downloadQueue]);
 
     const pendingReorderGroups = useMemo(
@@ -951,6 +886,8 @@ const QueueTab = () => {
                             const activeStage = activeItem?.stage || firstItem?.stage;
                             const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing');
                             const isImportPending = !isDownloading && !isFailed && activeStage === 'import';
+                            const shouldRenderGroupedTrackRows = (group.items.length > 1)
+                                || (group.items.length === 1 && group.items[0].type === 'track' && group.type === 'album');
                             const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                             const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
                             const isPendingReorderable = isPendingReorderableGroup(group);
@@ -1142,7 +1079,7 @@ const QueueTab = () => {
                                         </div>
                                     </div>
 
-                                    {(group.items.length > 1 || (group.items.length === 1 && group.items[0].type === 'track' && group.type === 'album')) && group.items.map(item => {
+                                    {shouldRenderGroupedTrackRows && group.items.map(item => {
                                         const itemProg = getProgress(item.id);
                                         const matchedTrack = group.type === 'album' ? findProgressTrackState(item.title, prog?.tracks) : undefined;
                                         const albumTrackIndex = group.type === 'album'
@@ -1228,9 +1165,9 @@ const QueueTab = () => {
                                         );
                                     })}
 
-                                    {group.type === 'album' && group.items.length === 1 && prog?.tracks && prog.tracks.length > 0 && (
+                                    {group.type === 'album' && group.items.length === 1 && (prog?.tracks?.length ?? 0) > 0 && (
                                         <div>
-                                            {prog.tracks.map((t, idx) => {
+                                            {prog!.tracks!.map((t, idx) => {
                                                 const visualStatus = inferAlbumTrackStatus(idx, prog, prog.tracks, t.status);
                                                 const isTrackDownloading = visualStatus === 'downloading';
                                                 const isTrackCompleted = visualStatus === 'completed';
@@ -1308,11 +1245,11 @@ const QueueTab = () => {
                         </div>
                     </div>
                     <div className={styles.downloadList}>
-                        {queueHistoryItems.map((job) => {
-                            const row = mapQueueHistoryJobToRow(job);
-                            const statusTextClassName = job.error || job.status === 'failed'
+                        {queueHistoryItems.map((item) => {
+                            const row = mapQueueHistoryItemToRow(item);
+                            const statusTextClassName = item.error || item.status === 'failed'
                                 ? styles.queueHistoryStatusTextDanger
-                                : job.status === 'cancelled'
+                                : item.status === 'cancelled'
                                     ? styles.queueHistoryStatusTextNeutral
                                     : styles.queueHistoryStatusTextSuccess;
 
@@ -1336,7 +1273,7 @@ const QueueTab = () => {
 
                             return (
                                 <div
-                                    key={`queue-history-${String(job.id)}`}
+                                    key={`queue-history-${String(item.id)}`}
                                     className={mergeClasses(
                                         styles.downloadItem,
                                         styles.queueHistoryItem,
@@ -1358,9 +1295,7 @@ const QueueTab = () => {
                                         <div className={row.isVideo ? styles.downloadCoverPlaceholderVideo : styles.downloadCoverPlaceholder}>
                                             {row.mediaBadge?.kind === 'video'
                                                 ? <Video24Regular className={styles.queueHistoryPlaceholderIcon} />
-                                                : row.mediaBadge
-                                                    ? <MusicNote224Regular className={styles.queueHistoryPlaceholderIcon} />
-                                                    : <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>}
+                                                : <MusicNote224Regular className={styles.queueHistoryPlaceholderIcon} />}
                                         </div>
                                     )}
 
@@ -1388,7 +1323,7 @@ const QueueTab = () => {
                                     </div>
 
                                     <div className={styles.queueHistoryStatus}>
-                                        {renderHistoryStatusIndicator(styles, job.status, job.error)}
+                                        {renderHistoryStatusIndicator(styles, item.status, item.error)}
                                         <Text className={mergeClasses(styles.queueHistoryStatusText, statusTextClassName)}>
                                             {row.statusLabel}
                                         </Text>

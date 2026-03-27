@@ -271,7 +271,7 @@ const useStyles = makeStyles({
         flexWrap: 'nowrap',
     },
     actionCell: {
-        minWidth: '132px',
+        minWidth: '120px',
     },
     destructiveButton: {
         color: tokens.colorPaletteRedForeground1,
@@ -818,7 +818,7 @@ const ManualImportTab = () => {
                     {getSortLabel('filename', 'Filename / Path')}
                 </button>
             ),
-            width: 'minmax(300px, 1.35fr)',
+            width: 'minmax(120px, 1.5fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.titleStack}>
@@ -840,7 +840,7 @@ const ManualImportTab = () => {
                     {getSortLabel('detected_artist', 'Identified')}
                 </button>
             ),
-            width: 'minmax(220px, 1.1fr)',
+            width: 'minmax(100px, 1fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.identifiedInfo}>
@@ -906,7 +906,7 @@ const ManualImportTab = () => {
         {
             key: 'actions',
             header: 'Actions',
-            width: '132px',
+            width: '80px',
             align: 'right',
             className: mergeClasses(styles.wrappingCell, styles.actionCell),
             render: (row) => renderActionButtons(row),
@@ -941,7 +941,7 @@ const ManualImportTab = () => {
     if (isLoading) {
         return (
             <div className={styles.emptyState}>
-                <DataGridSkeleton rows={8} columns={5} columnTemplate="minmax(180px, 1.6fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(80px, 0.8fr) 132px" compact />
+                <DataGridSkeleton rows={8} columns={5} columnTemplate="minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr) 80px" compact />
             </div>
         );
     }

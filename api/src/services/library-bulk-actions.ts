@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
 import { updateAlbumDownloadStatus, updateArtistDownloadStatus, updateArtistDownloadStatusFromMedia } from "./download-state.js";
-import { RedundancyService } from "./redundancy.js";
+import { CurationService } from "./curation-service.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
@@ -491,7 +491,7 @@ export class LibraryBulkActionService {
         if (action === "download") {
             for (const row of rows) {
                 const artistId = String(row.id);
-                const queueCounts = await RedundancyService.queueMonitoredItems(artistId);
+                const queueCounts = await CurationService.queueMonitoredItems(artistId);
                 const jobCount = queueCounts.albums + queueCounts.tracks + queueCounts.videos;
                 result.items.push({
                     id: artistId,

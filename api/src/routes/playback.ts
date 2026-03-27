@@ -5,7 +5,7 @@
  * GET /stream/play/:trackId   → validates signature, fetches from TIDAL CDN, pipes to client
  *
  * Browser preview intentionally stays on a Tidarr-style safe path:
- *   - BTS/progressive only
+ *   - prefers BTS/progressive, but falls back to DASH when that is all TIDAL offers
  *   - byte range support preserved for scrubbing/seeking
  *   - Atmos/Hi-Res requests fall back to browser-friendly stereo ladders
  */
@@ -15,6 +15,7 @@ import { pipeline } from "stream";
 import { promisify } from "util";
 import { Readable } from "stream";
 import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "../services/playback.js";
+import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worker.js";
 import type { PlaybackInfo, VideoPlaybackInfo } from "../services/playback.js";
 import { authMiddleware } from "../middleware/auth.js";
 
@@ -86,39 +87,89 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     try {
         console.log(`[Playback] Fetching browser playback info for track ${trackId} (preferred=${quality || "auto"})...`);
         const info: PlaybackInfo | null = await getBrowserPlaybackInfo(trackId, quality || undefined);
-        if (!info || info.type !== "bts") {
+        if (!info) {
             console.error(`[Playback] No browser-safe playback source for track ${trackId}`);
             return res.status(502).json({ error: "No playable quality available" });
         }
 
-        console.log(`[Playback] BTS stream for track ${trackId}`);
-        const range = typeof req.headers["range"] === "string" ? req.headers["range"] : undefined;
-        const upstream = await fetch(info.url, {
-            headers: range ? { Range: range } : {},
+        if (info.type === "bts") {
+            console.log(`[Playback] BTS stream for track ${trackId}`);
+            const range = typeof req.headers["range"] === "string" ? req.headers["range"] : undefined;
+            const upstream = await fetch(info.url, {
+                headers: range ? { Range: range } : {},
+            });
+
+            if (!upstream.ok || !upstream.body) {
+                return res.status(upstream.status).json({ error: "Upstream fetch failed" });
+            }
+
+            res.status(upstream.status);
+            for (const h of [
+                "content-type", "content-length", "accept-ranges",
+                "content-range", "cache-control", "expires", "last-modified", "etag",
+            ]) {
+                const v = upstream.headers.get(h);
+                if (v) {
+                    res.setHeader(h, v);
+                }
+            }
+
+            if (!res.getHeader("accept-ranges")) {
+                res.setHeader("accept-ranges", "bytes");
+            }
+
+            const nodeStream = Readable.fromWeb(upstream.body as any);
+            await streamPipeline(nodeStream, res);
+            return;
+        }
+
+        console.log(`[Playback] DASH stream for track ${trackId} (${info.segments.length} segments)`);
+        const worker = spawnSegmentedPlaybackWorker({
+            segments: info.segments,
+            contentType: info.contentType,
+        });
+        let stderr = "";
+        worker.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
         });
 
-        if (!upstream.ok || !upstream.body) {
-            return res.status(upstream.status).json({ error: "Upstream fetch failed" });
-        }
-
-        res.status(upstream.status);
-        for (const h of [
-            "content-type", "content-length", "accept-ranges",
-            "content-range", "cache-control", "expires", "last-modified", "etag",
-        ]) {
-            const v = upstream.headers.get(h);
-            if (v) {
-                res.setHeader(h, v);
+        const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+            worker.once("close", (code, signal) => resolve({ code, signal }));
+            worker.once("error", reject);
+        });
+        const spawnedPromise = new Promise<void>((resolve, reject) => {
+            worker.once("spawn", () => resolve());
+            worker.once("error", reject);
+        });
+        const cleanupWorker = () => {
+            if (worker.exitCode === null && worker.signalCode === null) {
+                worker.kill();
             }
-        }
+        };
 
-        if (!res.getHeader("accept-ranges")) {
-            res.setHeader("accept-ranges", "bytes");
-        }
+        req.once("close", cleanupWorker);
+        res.once("close", cleanupWorker);
 
-        const nodeStream = Readable.fromWeb(upstream.body as any);
-        await streamPipeline(nodeStream, res);
-        return;
+        try {
+            await spawnedPromise;
+
+            res.status(200);
+            res.setHeader("content-type", info.contentType || "audio/mp4");
+            res.setHeader("cache-control", "no-store");
+            res.setHeader("accept-ranges", "none");
+
+            await streamPipeline(worker.stdout, res);
+
+            const { code, signal } = await exitPromise;
+            if ((code ?? 0) !== 0 && signal == null) {
+                console.error(`[Playback] DASH worker exited with code ${code}: ${stderr.trim() || "unknown error"}`);
+            }
+            return;
+        } finally {
+            req.off("close", cleanupWorker);
+            res.off("close", cleanupWorker);
+            cleanupWorker();
+        }
     } catch (err: any) {
         // Ignore premature close (client stopped playback)
         if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;

@@ -45,8 +45,7 @@ function sanitizeSegment(input: string): string {
     .trim();
 }
 
-// Lidarr-style cleaners implementing exact semantics
-// These match the implementations in .ref_lidarr/src/NzbDrone.Core/Organizer/FileNameBuilder.cs
+// Path/filename cleaners
 
 function cleanTitle(input: string): string {
   // 1. Replace & with "and"
@@ -55,7 +54,7 @@ function cleanTitle(input: string): string {
   // 2. Replace / with space
   result = result.replace(/\//g, " ");
 
-  // 3. Remove special characters matching Lidarr's ScenifyRemoveChars pattern
+  // 3. Remove special characters
   // This removes: <>:"/\|?*'!#@$%^~;``() and brackets
   // The logic is to remove punctuation but keep alphanumeric and spaces
   result = result.replace(/[<>:"/\\|?*'!#@$%^~;`()[\]{}]/g, " ");
@@ -280,6 +279,23 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
     case "artistid":
       baseValue = derived.artistId;
       break;
+    case "artistnamefirstcharacter": {
+      // Like Lidarr's TitleFirstCharacter: strip diacritics first, then check alphanumeric
+      const theArtistName = titleThe(derived.artistName);
+      if (theArtistName.length === 0) { baseValue = "_"; break; }
+      const normalized = theArtistName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const first = normalized[0];
+      if (/[a-zA-Z0-9]/.test(first)) {
+        baseValue = first.toUpperCase();
+        break;
+      }
+      if (normalized.length > 1 && /[a-zA-Z0-9]/.test(normalized[1])) {
+        baseValue = normalized[1].toUpperCase();
+        break;
+      }
+      baseValue = "_";
+      break;
+    }
 
     // Album titles - all variants
     case "albumtitle":
@@ -473,4 +489,55 @@ export function renderFileStem(template: string, context: NamingContext): string
 
 export function getLibraryRootPath(libraryPath: string, root: LibraryRoot): string {
   return path.join(libraryPath, root);
+}
+
+/**
+ * Resolve the library folder name for an artist using the active naming convention.
+ * Used when an artist is first added to compute and persist `artist.path`.
+ */
+export function resolveArtistFolder(artistName: string, artistMbId?: string | null): string {
+  const naming = getNamingConfig();
+  return renderRelativePath(naming.artist_folder, { artistName, artistMbId });
+}
+
+/**
+ * Resolve a unique artist folder name, disambiguating if needed.
+ * Mirrors Lidarr's SetPropertiesAndValidate disambiguation logic.
+ * @param pathExists - function that checks if an artist.path already exists in DB
+ */
+export function resolveUniqueArtistFolder(
+  artistName: string,
+  artistId?: number | string | null,
+  artistMbId?: string | null,
+  pathExists?: (path: string) => boolean
+): string {
+  const basePath = resolveArtistFolder(artistName, artistMbId);
+
+  if (!pathExists || !pathExists(basePath)) {
+    return basePath;
+  }
+
+  // Try disambiguation with TIDAL artist ID (like Lidarr uses MusicBrainz disambiguation)
+  if (artistId) {
+    const disambiguated = `${basePath} (${artistId})`;
+    if (!pathExists(disambiguated)) {
+      return disambiguated;
+    }
+  }
+
+  // Fall back to numeric suffix (like Lidarr's numeric fallback)
+  let i = 1;
+  let candidate: string;
+  do {
+    candidate = `${basePath} (${i})`;
+    i++;
+  } while (pathExists(candidate) && i < 100);
+
+  return candidate;
+}
+
+export function resolveArtistFolderFromRecord(artist: { name: string; mbid?: string | null; path?: string | null }): string {
+  const stored = String(artist.path || "").trim();
+  if (stored) return stored;
+  return resolveArtistFolder(artist.name, artist.mbid);
 }

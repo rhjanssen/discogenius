@@ -664,12 +664,6 @@ class ApiClient {
     });
   }
 
-  async libraryScanNow(artistId: string) {
-    return this.request(`/library-files/scan-now/${artistId}`, {
-      method: 'POST',
-    });
-  }
-
   async scanRootFolders(options?: { monitorArtist?: boolean }) {
     return this.request('/library-files/scan-roots', {
       method: 'POST',
@@ -844,6 +838,14 @@ class ApiClient {
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
     return this.request(`/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
+  }
+
+  async getQueueHistory(params?: { limit?: number; offset?: number; timeoutMs?: number | null }): Promise<QueueListResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
+    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    const query = queryParams.toString();
+    return this.request(`/queue/history${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseQueueListResponseContract);
   }
 
   async getStatusOverview(options: RequestControlOptions = {}): Promise<StatusOverviewContract> {
@@ -1119,7 +1121,7 @@ class ApiClient {
 
     const eventSource = new EventSource(url, { withCredentials: false });
 
-    const eventTypes = ['status', 'progress', 'started', 'completed', 'failed', 'queue-status', 'heartbeat'];
+    const eventTypes = ['status', 'progress-batch', 'started', 'completed', 'failed', 'queue-status', 'heartbeat'];
 
     eventTypes.forEach(eventType => {
       eventSource.addEventListener(eventType, (e: MessageEvent) => {

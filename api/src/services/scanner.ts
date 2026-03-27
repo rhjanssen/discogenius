@@ -1,7 +1,7 @@
 /**
  * Modular Scanner Service
  * 
- * Implements tiered scanning levels (BASIC → SHALLOW → DEEP) following Lidarr patterns.
+ * Implements tiered scanning levels (BASIC → SHALLOW → DEEP).
  * Each level builds on the previous, making incremental API calls.
  * 
  * ARTIST SCAN LEVELS:
@@ -29,6 +29,7 @@ import { shouldHydrateArtistAlbumTracks, shouldHydrateArtistCatalog } from "./sc
 import { createCooperativeBatcher } from "../utils/concurrent.js";
 import pLimit from "p-limit";
 import { readIntEnv } from "../utils/env.js";
+import { resolveArtistFolder } from "./naming.js";
 
 export enum ScanLevel {
     NONE = 0,
@@ -120,19 +121,21 @@ async function storeSimilarArtists(artistId: string, forceUpdate: boolean = fals
         const ids = new Set<string>();
 
         const upsertArtist = db.prepare(`
-            INSERT INTO artists (id, name, picture, popularity, monitor)
-            VALUES (?, ?, ?, ?, 0)
+            INSERT INTO artists (id, name, picture, popularity, monitor, path)
+            VALUES (?, ?, ?, ?, 0, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ${forceUpdate
                 ? `
                 name = excluded.name,
                 picture = excluded.picture,
-                popularity = excluded.popularity
+                popularity = excluded.popularity,
+                path = COALESCE(artists.path, excluded.path)
                 `
                 : `
                 name = COALESCE(excluded.name, name),
                 picture = COALESCE(excluded.picture, picture),
-                popularity = COALESCE(excluded.popularity, popularity)
+                popularity = COALESCE(excluded.popularity, popularity),
+                path = COALESCE(artists.path, excluded.path)
                 `}
         `);
 
@@ -153,7 +156,8 @@ async function storeSimilarArtists(artistId: string, forceUpdate: boolean = fals
                     similarArtistId,
                     s?.name || 'Unknown Artist',
                     s?.picture || null,
-                    s?.popularity ?? null
+                    s?.popularity ?? null,
+                    resolveArtistFolder(s?.name || 'Unknown Artist')
                 );
                 insertRelation.run(artistId, similarArtistId);
             }
@@ -177,15 +181,17 @@ async function storeSimilarAlbums(
         const pairs: Array<{ albumId: string; artistId: string }> = [];
 
         const upsertArtist = db.prepare(`
-            INSERT INTO artists (id, name, monitor)
-            VALUES (?, ?, 0)
+            INSERT INTO artists (id, name, monitor, path)
+            VALUES (?, ?, 0, ?)
             ON CONFLICT(id) DO UPDATE SET
                 ${forceUpdate
                 ? `
-                name = excluded.name
+                name = excluded.name,
+                path = COALESCE(artists.path, excluded.path)
                 `
                 : `
-                name = COALESCE(excluded.name, name)
+                name = COALESCE(excluded.name, name),
+                path = COALESCE(artists.path, excluded.path)
                 `}
         `);
 
@@ -240,7 +246,11 @@ async function storeSimilarAlbums(
                     pairs.push({ albumId: similarAlbumId, artistId: similarArtistId });
                 }
 
-                upsertArtist.run(similarArtistId, s?.artist_name || 'Unknown Artist');
+                upsertArtist.run(
+                    similarArtistId,
+                    s?.artist_name || 'Unknown Artist',
+                    resolveArtistFolder(s?.artist_name || 'Unknown Artist')
+                );
                 upsertAlbum.run(
                     similarAlbumId,
                     similarArtistId,
@@ -385,6 +395,7 @@ export async function scanArtistBasic(artistId: string, options: ScanOptions = {
     }
 
     const artistData = await getArtist(artistId);
+    const resolvedArtistFolder = resolveArtistFolder(artistData.name, (artistData as any)?.mbid ?? null);
 
     // BLOCK: Various Artists - prevent monitoring to avoid library flooding
     if (artistData.name === 'Various Artists' || artistId === '0') {
@@ -396,9 +407,9 @@ export async function scanArtistBasic(artistId: string, options: ScanOptions = {
         db.prepare(`
             INSERT INTO artists (
               id, name, picture, popularity, artist_types, artist_roles,
-              monitor, monitored_at, user_date_added, last_scanned
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP)
+                            monitor, monitored_at, user_date_added, last_scanned, path
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
         `).run(
             artistId,
             artistData.name,
@@ -408,7 +419,8 @@ export async function scanArtistBasic(artistId: string, options: ScanOptions = {
             JSON.stringify(artistData.artist_roles || []),
             shouldMonitorInt,
             shouldMonitorInt,
-            null
+            null,
+            resolvedArtistFolder
         );
     } else {
         const monitorValue = options.monitorArtist === true ? shouldMonitorInt : existing.monitor;
@@ -417,7 +429,8 @@ export async function scanArtistBasic(artistId: string, options: ScanOptions = {
                 name = ?, picture = ?, popularity = ?, artist_types = ?, artist_roles = ?,
                 monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
-                last_scanned = CURRENT_TIMESTAMP
+                last_scanned = CURRENT_TIMESTAMP,
+                path = COALESCE(path, ?)
             WHERE id = ?
         `).run(
             artistData.name,
@@ -427,6 +440,7 @@ export async function scanArtistBasic(artistId: string, options: ScanOptions = {
             JSON.stringify(artistData.artist_roles || []),
             monitorValue,
             monitorValue,
+            resolvedArtistFolder,
             artistId
         );
     }
@@ -600,7 +614,7 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
             });
         }
 
-        // Inline album track scanning (Lidarr-style: tracks are fetched as part of
+        // Inline album track scanning (tracks are fetched as part of
         // artist refresh, not queued as separate jobs). Uses bounded parallelism
         // since each album scan is an independent API call.
         if (shouldHydrateArtistAlbumTracks(options)) {
@@ -689,8 +703,9 @@ export async function scanAlbumBasic(
     if (primaryArtistId) {
         const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
         if (!artistExists) {
-            db.prepare(`INSERT INTO artists(id, name, monitor) VALUES(?, ?, 0)`)
-                .run(primaryArtistId, albumData.artist_name || 'Unknown Artist');
+            const primaryArtistName = albumData.artist_name || 'Unknown Artist';
+            db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`)
+                .run(primaryArtistId, primaryArtistName, resolveArtistFolder(primaryArtistName));
         }
     }
 
@@ -1331,7 +1346,8 @@ async function scanAlbumTracks(albumId: string): Promise<void> {
                     const found = track.artists.find((a: any) => String(a.id) === String(trackArtistId));
                     if (found) artistName = found.name;
                 }
-                db.prepare(`INSERT INTO artists(id, name, monitor) VALUES(?, ?, 0)`).run(trackArtistId, artistName);
+                db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`)
+                    .run(trackArtistId, artistName, resolveArtistFolder(artistName));
             }
         }
 
@@ -1565,8 +1581,9 @@ async function storeAlbum(
     // Ensure primary artist exists
     const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
     if (!artistExists && primaryArtistId !== scanningArtistId) {
-        db.prepare(`INSERT INTO artists (id, name, monitor) VALUES (?, ?, 0)`)
-            .run(primaryArtistId, album.artist_name || 'Unknown Artist');
+        const primaryArtistName = album.artist_name || 'Unknown Artist';
+        db.prepare(`INSERT INTO artists (id, name, monitor, path) VALUES (?, ?, 0, ?)`)
+            .run(primaryArtistId, primaryArtistName, resolveArtistFolder(primaryArtistName));
     }
 
     const exists = db.prepare("SELECT id, monitor, monitor_lock FROM albums WHERE id = ?").get(album.tidal_id) as any;
@@ -1743,7 +1760,9 @@ async function storeAlbum(
             if (otherArtistId !== scanningArtistId && otherArtistId !== primaryArtistId) {
                 const otherArtistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(otherArtistId);
                 if (!otherArtistExists) {
-                    db.prepare(`INSERT INTO artists(id, name, monitor) VALUES(?, ?, 0)`).run(otherArtistId, artist.name || 'Unknown Artist');
+                    const otherArtistName = artist.name || 'Unknown Artist';
+                    db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`)
+                        .run(otherArtistId, otherArtistName, resolveArtistFolder(otherArtistName));
                 }
                 const participant = participants.get(otherArtistId);
                 upsertRelatedRelation.run(
@@ -1786,14 +1805,15 @@ async function storeTrackArtists(track: any): Promise<void> {
     const primaryArtistName = track?.artist_name || null;
 
     const upsertArtist = db.prepare(`
-        INSERT INTO artists (id, name, picture, popularity, monitor)
-        VALUES (?, ?, ?, 0, 0)
+        INSERT INTO artists (id, name, picture, popularity, monitor, path)
+        VALUES (?, ?, ?, 0, 0, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = CASE
                 WHEN artists.name = 'Unknown Artist' AND excluded.name <> 'Unknown Artist' THEN excluded.name
                 ELSE artists.name
             END,
-            picture = COALESCE(artists.picture, excluded.picture)
+            picture = COALESCE(artists.picture, excluded.picture),
+            path = COALESCE(artists.path, excluded.path)
     `);
 
     const insertMediaArtist = db.prepare(`
@@ -1848,7 +1868,8 @@ async function storeTrackArtists(track: any): Promise<void> {
 
     const tx = db.transaction(() => {
         for (const [artistId, info] of byArtistId) {
-            upsertArtist.run(artistId, info.name || 'Unknown Artist', info.picture);
+            const artistName = info.name || 'Unknown Artist';
+            upsertArtist.run(artistId, artistName, info.picture, resolveArtistFolder(artistName));
             insertMediaArtist.run(mediaId, artistId, info.type);
         }
     });
