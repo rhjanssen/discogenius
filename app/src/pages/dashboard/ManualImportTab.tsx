@@ -269,6 +269,7 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalXXS,
         justifyContent: 'flex-end',
         flexWrap: 'nowrap',
+        paddingRight: tokens.spacingHorizontalS,
     },
     actionCell: {
         minWidth: '120px',

@@ -515,7 +515,7 @@ const AlbumPage = () => {
 
   const handleToggleLock = () => {
     if (!album) return;
-    toggleLock({ id: album.id, type: 'album', isLocked, isMonitored });
+    toggleLock({ id: album.id, type: 'album', isLocked });
     updateAlbumPageCache((current) => ({
       ...current,
       album: { ...current.album, monitor_locked: !isLocked } as typeof current.album & { monitor_locked: boolean },

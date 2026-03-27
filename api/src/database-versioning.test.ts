@@ -68,15 +68,106 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
     LIMIT 1
   `).get() as { schemaFrom: number; schemaTo: number; migrationNotes: string } | undefined;
 
-  assert.equal(userVersion, 3);
+  assert.equal(userVersion, 4);
   assert.deepEqual(runtimeRows, [
-    { key: "runtime.current_schema_version", value: "3" },
+    { key: "runtime.current_schema_version", value: "4" },
     { key: "runtime.schema_version_format", value: "integer" },
   ]);
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 10000);
-  assert.equal(latestHistory?.schemaTo, 3);
+  assert.equal(latestHistory?.schemaTo, 4);
   assert.match(latestHistory?.migrationNotes ?? "", /baseline current schema as 1/);
   assert.match(latestHistory?.migrationNotes ?? "", /add reverse media_artists lookup index/i);
   assert.match(latestHistory?.migrationNotes ?? "", /queue ordering column/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
+});
+
+// ====================================================================
+// MIGRATION SMOKE TESTS
+// ====================================================================
+
+test("fresh database initializes with correct schema version", () => {
+  const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
+  assert.equal(userVersion, 4);
+
+  const coreTables = [
+    "artists", "albums", "media", "media_artists", "library_files",
+    "unmapped_files", "config", "job_queue", "quality_profiles",
+    "upgrade_queue", "playlists", "playlist_tracks", "history_events",
+    "database_version_history",
+  ];
+  for (const tableName of coreTables) {
+    const row = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName) as { name: string } | undefined;
+    assert.ok(row, `Expected table '${tableName}' to exist`);
+  }
+});
+
+test("migration from integer schema v1 runs pending migrations", () => {
+  dbModule.db.pragma("user_version = 1");
+  dbModule.db.prepare(`
+    INSERT INTO config (key, value, description)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run("runtime.schema_version_format", "integer", "Schema versioning format");
+
+  dbModule.initDatabase();
+
+  const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
+  assert.equal(userVersion, 4);
+
+  // v4 migration adds artists.path
+  const artistCols = dbModule.db.prepare("PRAGMA table_info(artists)").all() as Array<{ name: string }>;
+  assert.ok(artistCols.some((c) => c.name === "path"), "Expected artists table to have 'path' column");
+
+  // v3 migration adds job_queue.queue_order
+  const jobCols = dbModule.db.prepare("PRAGMA table_info(job_queue)").all() as Array<{ name: string }>;
+  assert.ok(jobCols.some((c) => c.name === "queue_order"), "Expected job_queue table to have 'queue_order' column");
+});
+
+test("migration from integer schema v3 runs only v4 migration", () => {
+  dbModule.db.pragma("user_version = 3");
+  dbModule.db.prepare(`
+    INSERT INTO config (key, value, description)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run("runtime.schema_version_format", "integer", "Schema versioning format");
+
+  dbModule.initDatabase();
+
+  const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
+  assert.equal(userVersion, 4);
+
+  const latestHistory = dbModule.db.prepare(`
+    SELECT schema_from as schemaFrom, schema_to as schemaTo, migration_notes as migrationNotes
+    FROM database_version_history
+    ORDER BY id DESC
+    LIMIT 1
+  `).get() as { schemaFrom: number; schemaTo: number; migrationNotes: string } | undefined;
+
+  assert.ok(latestHistory);
+  assert.equal(latestHistory?.schemaFrom, 3);
+  assert.equal(latestHistory?.schemaTo, 4);
+  assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
+});
+
+test("unversioned database with existing data runs full migration chain", () => {
+  dbModule.db.pragma("user_version = 0");
+  dbModule.db.prepare("DELETE FROM config WHERE key = 'runtime.schema_version_format'").run();
+  dbModule.db.prepare("INSERT OR IGNORE INTO artists (id, name) VALUES (1, 'Test Artist')").run();
+
+  dbModule.initDatabase();
+
+  const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
+  assert.equal(userVersion, 4);
+
+  const latestHistory = dbModule.db.prepare(`
+    SELECT schema_from as schemaFrom, schema_to as schemaTo
+    FROM database_version_history
+    ORDER BY id DESC
+    LIMIT 1
+  `).get() as { schemaFrom: number; schemaTo: number } | undefined;
+
+  assert.ok(latestHistory);
+  assert.equal(latestHistory?.schemaFrom, 0);
+  assert.equal(latestHistory?.schemaTo, 4);
 });

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
 import { getCurrentAppReleaseInfo } from "./services/app-release.js";
@@ -1119,6 +1121,27 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
+
+  // Integrity check
+  const integrityResult = db.pragma("integrity_check", { simple: true }) as string;
+  if (integrityResult !== "ok") {
+    console.error(`🚨 Database integrity check failed: ${integrityResult}`);
+    console.error("   The database may be corrupted. Consider restoring from a backup.");
+  }
+
+  // Pre-migration backup for safety
+  const currentVersion = db.pragma("user_version", { simple: true }) as number;
+  if (currentVersion > 0 && fs.existsSync(DB_PATH)) {
+    const backupPath = `${DB_PATH}.pre-migration-v${currentVersion}.bak`;
+    if (!fs.existsSync(backupPath)) {
+      try {
+        fs.copyFileSync(DB_PATH, backupPath);
+        console.log(`📦 Database backup created: ${path.basename(backupPath)}`);
+      } catch (err) {
+        console.warn(`⚠️  Could not create pre-migration backup: ${(err as Error).message}`);
+      }
+    }
+  }
 
   const migrationSummary = runMigrations();
 

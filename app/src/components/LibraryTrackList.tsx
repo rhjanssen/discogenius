@@ -402,7 +402,6 @@ const LibraryTrackList = ({
                         id: track.id,
                         type: "track",
                         isLocked: isLockedTrack(track),
-                        isMonitored: isMonitoredTrack(track),
                       });
                     }}
                     onShowInfo={(event) => {
@@ -538,7 +537,6 @@ const LibraryTrackList = ({
                             id: track.id,
                             type: "track",
                             isLocked: isLockedTrack(track),
-                            isMonitored: isMonitoredTrack(track),
                           });
                         }}
                         onShowInfo={(event) => {

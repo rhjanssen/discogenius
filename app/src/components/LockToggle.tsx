@@ -8,7 +8,7 @@ interface LockToggleProps {
     id: string;
     type: "artist" | "album" | "track";
     isLocked: boolean;
-    isMonitored: boolean;
+    isMonitored?: boolean;
     className?: string;
 }
 
@@ -16,7 +16,6 @@ export const LockToggle: React.FC<LockToggleProps> = ({
     id,
     type,
     isLocked,
-    isMonitored,
     className,
 }) => {
     const { toggleLock, isTogglingLock } = useMonitoring();
@@ -25,7 +24,7 @@ export const LockToggle: React.FC<LockToggleProps> = ({
     const handleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-        toggleLock({ id, type, isLocked, isMonitored });
+        toggleLock({ id, type, isLocked });
     };
 
     const Icon = isLocked ? LockOpen24Regular : LockClosed24Regular;

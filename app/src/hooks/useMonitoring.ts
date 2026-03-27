@@ -56,39 +56,29 @@ export const useMonitoring = () => {
         },
     });
 
-    // Re-implementing Lock properly:
     const toggleLock = async ({
         id,
         type,
         isLocked,
-        isMonitored,
     }: {
         id: string;
         type: "artist" | "album" | "track" | "video";
         isLocked: boolean;
-        isMonitored: boolean;
     }) => {
         if (type === "artist") {
             throw new Error("Artist lock is not supported");
         }
 
-        if (isLocked) {
-            // Unlock
-            if (type === "video") {
-                return api.updateVideo(id, { monitor_lock: false });
-            }
-            return api.request(`/${type}s/${id}/reset-override`, { method: "POST" });
-        } else {
-            // Lock
-            if (type === "video") {
-                return api.updateVideo(id, { monitor_lock: true });
-            }
-            const endpoint = isMonitored
-                ? `/${type}s/${id}/lock-wanted`
-                : `/${type}s/${id}/lock-unwanted`;
-
-            return api.request(endpoint, { method: "POST" });
+        if (type === "video") {
+            return api.updateVideo(id, { monitor_lock: !isLocked });
         }
+
+        if (type === "album") {
+            return api.updateAlbum(id, { monitor_lock: !isLocked });
+        }
+
+        // track
+        return api.updateTrack(id, { monitor_lock: !isLocked });
     };
 
     const lockMutation = useMutation({

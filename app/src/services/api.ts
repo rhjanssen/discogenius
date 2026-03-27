@@ -447,17 +447,7 @@ class ApiClient {
       : tracks;
   }
 
-  async lockAlbumWanted(artistId: string, albumId: string) {
-    return this.request(`/artists/${artistId}/albums/${albumId}/lock-wanted`, { method: 'POST' });
-  }
 
-  async lockAlbumUnwanted(artistId: string, albumId: string) {
-    return this.request(`/artists/${artistId}/albums/${albumId}/lock-unwanted`, { method: 'POST' });
-  }
-
-  async resetAlbumOverride(artistId: string, albumId: string) {
-    return this.request(`/artists/${artistId}/albums/${albumId}/reset-override`, { method: 'POST' });
-  }
 
   async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }): Promise<AlbumsListResponseContract> {
     const queryParams = new URLSearchParams();

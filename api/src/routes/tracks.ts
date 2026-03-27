@@ -177,87 +177,12 @@ router.post("/:trackId/monitor", (req, res) => {
   }
 });
 
-// Manual override: Lock track as wanted (persists across filter runs)
-router.post("/:trackId/lock-wanted", (req, res) => {
-  try {
-    const trackId = req.params.trackId;
-
-    const result = db.prepare(`
-      UPDATE media
-      SET monitor = 1,
-          monitor_lock = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-          locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)
-      WHERE id = ? AND album_id IS NOT NULL
-    `).run(trackId);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ detail: "Track not found" });
-    }
-
-    refreshTrackState(trackId);
-
-    res.json({ success: true, locked: true, wanted: true });
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-// Manual override: Lock track as unwanted (persists across filter runs)
-router.post("/:trackId/lock-unwanted", (req, res) => {
-  try {
-    const trackId = req.params.trackId;
-
-    const result = db.prepare(`
-      UPDATE media
-      SET monitor = 0,
-          monitor_lock = 1,
-          locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)
-      WHERE id = ? AND album_id IS NOT NULL
-    `).run(trackId);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ detail: "Track not found" });
-    }
-
-    refreshTrackState(trackId);
-
-    res.json({ success: true, locked: true, wanted: false });
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-// Reset override: Unlock track (let filter decide)
-router.post("/:trackId/reset-override", (req, res) => {
-  try {
-    const trackId = req.params.trackId;
-
-    const result = db.prepare(`
-      UPDATE media
-      SET monitor_lock = 0,
-          locked_at = NULL
-      WHERE id = ? AND album_id IS NOT NULL
-    `).run(trackId);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ detail: "Track not found" });
-    }
-
-    refreshTrackState(trackId);
-
-    res.json({ success: true, locked: false });
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-// Update track (toggle monitoring, etc.)
+// Update track (toggle monitoring, lock, etc.)
 router.patch("/:trackId", (req, res) => {
   try {
     const trackId = req.params.trackId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored"], "Track update");
+    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Track update");
     const updates: string[] = [];
     const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");
@@ -265,6 +190,17 @@ router.patch("/:trackId", (req, res) => {
     if (monitored !== undefined) {
       updates.push("monitor = ?");
       values.push(monitored ? 1 : 0);
+    }
+
+    const monitorLock = getOptionalBoolean(body, "monitor_lock");
+    if (monitorLock !== undefined) {
+      updates.push("monitor_lock = ?");
+      values.push(monitorLock ? 1 : 0);
+      if (monitorLock) {
+        updates.push("locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)");
+      } else {
+        updates.push("locked_at = NULL");
+      }
     }
 
     if (updates.length === 0) {
