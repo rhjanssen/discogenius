@@ -76,12 +76,15 @@ services:
     # Some hosts cache `latest` aggressively unless you force a pull.
     image: rhjanssen/discogenius:latest
     container_name: discogenius
+    env_file:
+      - .env
     environment:
       - PUID=1000
       - PGID=1000
+      - PORT=${PORT:-3737}
       - TZ=Etc/UTC
     ports:
-      - 3737:3737
+      - ${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}
     volumes:
       - /any/path/to/discogenius/config:/config
       - /any/path/to/your/library:/library
@@ -95,15 +98,16 @@ docker run -d \
   --name discogenius \
   -e PUID=1000 \
   -e PGID=1000 \
+  -e PORT=3737 \
   -e TZ=Etc/UTC \
-  -p 3737:3737 \
+  -p 127.0.0.1:3737:3737 \
   -v /any/path/to/discogenius/config:/config \
   -v /any/path/to/your/library:/library \
   --restart unless-stopped \
   rhjanssen/discogenius:latest
 ```
 
-Open the app at http://localhost:3737
+Open the app at [http://localhost:3737](http://localhost:3737)
 
 #### Configuration
 
@@ -111,11 +115,11 @@ Open the app at http://localhost:3737
 
 **TZ**: Container timezone. Use `Etc/UTC` or your local timezone.
 
-**Port Binding**: By default `3737:3737` publishes on all interfaces. For localhost only:
+**Port Binding**: Docker Compose reads `PORT` from `.env` and uses it for both the app listener and published port, defaulting to `127.0.0.1:3737:3737`. Change `PORT` in `.env` to move Docker to a different port. To expose Discogenius on all interfaces instead of localhost-only:
 
 ```yaml
 ports:
-  - 127.0.0.1:3737:3737
+  - 0.0.0.0:${PORT:-3737}:${PORT:-3737}
 ```
 
 **Updating**: Pull and restart:
@@ -197,6 +201,45 @@ That means:
 - AI can make serious mistakes, including subtle logic bugs that are easy to miss.
 
 Please review code carefully before deploying in production.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

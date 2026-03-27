@@ -23,15 +23,14 @@ import {
     Person24Regular,
     Album24Regular,
     Video24Regular,
-    ArrowDownload24Regular,
     FolderSearch24Regular,
     Filter24Regular,
     ArrowSortDownLines24Regular,
+    MoreHorizontal24Regular,
 } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { LibraryStats } from "@/hooks/useLibrary";
-import type { HistoryEventItemContract } from "@contracts/history";
 import { useToast } from "@/hooks/useToast";
 import { useDownloadQueue } from "@/hooks/useDownloadQueue";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -42,11 +41,11 @@ import {
 } from "@/utils/appEvents";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import QueueTab from "./QueueTab";
-import TasksTab from "./TasksTab";
 import ActivityTab from "./ActivityTab";
 import ManualImportTab from "./ManualImportTab";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 import { formatCompactNumber } from "@/utils/format";
+import { useSystemTasks } from "@/hooks/useSystemTasks";
 
 const useStyles = makeStyles({
     container: {
@@ -253,14 +252,12 @@ const useStyles = makeStyles({
     },
 });
 
-const HISTORY_AUDIT_PAGE_SIZE = 12;
 const dashboardStatsQueryKey = ["dashboardStats"] as const;
-const historyEventsQueryKey = ["historyEvents"] as const;
 
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
 
-function getInitialDashboardTab(): "queue" | "tasks" | "activity" | "manualImport" {
+function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
     if (hasConsumedDashboardReloadState) {
         return "queue";
     }
@@ -273,7 +270,7 @@ function getInitialDashboardTab(): "queue" | "tasks" | "activity" | "manualImpor
     }
 
     const storedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
-    return storedTab === "activity" || storedTab === "tasks" || storedTab === "manualImport" || storedTab === "queue"
+    return storedTab === "activity" || storedTab === "manualImport" || storedTab === "queue"
         ? storedTab
         : "queue";
 }
@@ -289,10 +286,10 @@ const Dashboard = () => {
     } = useDownloadQueue();
 
     const [scanningAll, setScanningAll] = useState(false);
-    const [downloadingMissing, setDownloadingMissing] = useState(false);
     const [scanningRoots, setScanningRoots] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
-    const [mobileTab, setMobileTab] = useState<"queue" | "tasks" | "activity" | "manualImport">(getInitialDashboardTab);
+    const { runnableTasks, isRunningTaskId, runTask } = useSystemTasks();
+    const [mobileTab, setMobileTab] = useState<"queue" | "activity" | "manualImport">(getInitialDashboardTab);
     const [activityFilter, setActivityFilter] = useState<string>('all');
 
     useEffect(() => {
@@ -305,7 +302,7 @@ const Dashboard = () => {
         hasStatusData,
     } = useStatusOverview();
     useDebouncedQueryInvalidation({
-        queryKeys: [dashboardStatsQueryKey, historyEventsQueryKey],
+        queryKeys: [dashboardStatsQueryKey],
         globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated"],
         windowEvents: [LIBRARY_UPDATED_EVENT, ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
@@ -320,18 +317,6 @@ const Dashboard = () => {
         placeholderData: (previousData) => previousData,
     });
     const libraryStats = statsQuery.data ?? null;
-    const historyEventsQuery = useQuery({
-        queryKey: historyEventsQueryKey,
-        queryFn: async (): Promise<{ items: HistoryEventItemContract[] }> => {
-            const result = await api.getHistoryEvents({ limit: HISTORY_AUDIT_PAGE_SIZE });
-            return { items: result.items };
-        },
-        staleTime: 15_000,
-        refetchOnWindowFocus: false,
-        retry: 1,
-        placeholderData: (previousData) => previousData,
-    });
-    const libraryAuditEvents = historyEventsQuery.data?.items ?? [];
     const hasActiveJobs = (types: string[]) =>
         taskQueueStats.some(s =>
             types.includes(s.type) &&
@@ -358,20 +343,6 @@ const Dashboard = () => {
             toast({ title: "Refresh Failed", description: e.message, variant: "destructive" });
         } finally {
             setScanningAll(false);
-        }
-    };
-
-    const handleDownloadMissing = async () => {
-        setDownloadingMissing(true);
-        try {
-            const result: any = await api.downloadMissing();
-            const total = (result?.albums || 0) + (result?.tracks || 0) + (result?.videos || 0);
-            toast({ title: "Downloads Queued", description: result?.message || `Queued ${total} item(s) for download.` });
-            dispatchActivityRefresh();
-        } catch (e: any) {
-            toast({ title: "Download Queue Failed", description: e.message, variant: "destructive" });
-        } finally {
-            setDownloadingMissing(false);
         }
     };
 
@@ -431,13 +402,15 @@ const Dashboard = () => {
             disabled: curationBusy,
             onClick: handleQueueCuration,
         },
-        {
-            key: 'download-missing',
-            label: downloadingMissing ? 'Downloading Missing...' : 'Download Missing',
-            icon: <ArrowDownload24Regular />,
-            disabled: downloadingMissing,
-            onClick: handleDownloadMissing,
-        },
+    ];
+
+    const overflowTaskIds = [
+        "download-missing",
+        "health-check",
+        "housekeeping",
+        "cleanup-temp-files",
+        "check-upgrades",
+        "update-library-metadata",
     ];
 
     const statCards = [
@@ -473,7 +446,6 @@ const Dashboard = () => {
 
     const dashboardTabs = [
         { key: 'queue', label: 'Queue' },
-        { key: 'tasks', label: 'Tasks' },
         { key: 'activity', label: 'Activity' },
         { key: 'manualImport', label: 'Unmapped Files' },
     ] as const;
@@ -497,6 +469,35 @@ const Dashboard = () => {
                             {action.label}
                         </Button>
                     ))}
+                    <Menu>
+                        <MenuTrigger disableButtonEnhancement>
+                            <Button
+                                appearance="subtle"
+                                icon={<MoreHorizontal24Regular />}
+                                className={styles.headerActionButton}
+                            >
+                                More
+                            </Button>
+                        </MenuTrigger>
+                        <MenuPopover>
+                            <MenuList>
+                                {overflowTaskIds.map((taskId) => {
+                                    const task = runnableTasks.find((t) => t.id === taskId);
+                                    if (!task) return null;
+                                    const isRunning = isRunningTaskId === taskId;
+                                    return (
+                                        <MenuItem
+                                            key={taskId}
+                                            disabled={isRunning || task.active}
+                                            onClick={() => void runTask(taskId)}
+                                        >
+                                            {task.name}
+                                        </MenuItem>
+                                    );
+                                })}
+                            </MenuList>
+                        </MenuPopover>
+                    </Menu>
                 </div>
             </div>
 
@@ -540,7 +541,7 @@ const Dashboard = () => {
                         <div className={responsiveTabsStyles.desktopTabs}>
                             <TabList
                                 selectedValue={mobileTab}
-                                onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "tasks" | "activity" | "manualImport")}
+                                onTabSelect={(_, data) => setMobileTab(data.value as "queue" | "activity" | "manualImport")}
                             >
                                 {dashboardTabs.map((tab) => (
                                     <Tab key={tab.key} value={tab.key} aria-label={tab.label} title={tab.label}>
@@ -593,17 +594,9 @@ const Dashboard = () => {
                 {mobileTab === "activity" && (
                     <div className={styles.tabContentPanel}>
                         <ActivityTab
-                            libraryAuditEvents={libraryAuditEvents}
                             activityFilter={activityFilter}
-                            isLibraryAuditLoading={historyEventsQuery.isLoading}
                             isActive={mobileTab === "activity"}
                         />
-                    </div>
-                )}
-
-                {mobileTab === "tasks" && (
-                    <div className={styles.tabContentPanel}>
-                        <TasksTab isActive={mobileTab === "tasks"} />
                     </div>
                 )}
 
@@ -618,3 +611,14 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+
+
+
+
+
+
+
+
+
+
+

@@ -873,6 +873,52 @@ export function parseProgress(output: string): TidalDlNgProgress | null {
         return null;
     }
 
+    if (normalized.includes("Yep, looks good! You are logged in.")) {
+        return {
+            trackTitle: "",
+            progress: 15,
+            isComplete: false,
+            isStarting: true,
+            state: 'downloading',
+            statusMessage: "Authenticated with TIDAL",
+        };
+    }
+
+    if (normalized.includes("Let us check if you are already logged in")) {
+        return {
+            trackTitle: "",
+            progress: 5,
+            isComplete: false,
+            isStarting: true,
+            state: 'downloading',
+            statusMessage: "Checking TIDAL session...",
+        };
+    }
+
+    const convertingVideoMatch = normalized.match(/Converting video:\s*([^\s]+)\s*->/i);
+    if (convertingVideoMatch) {
+        return {
+            trackTitle: "",
+            progress: 90,
+            isComplete: false,
+            isStarting: false,
+            state: 'downloading',
+            statusMessage: `Converting video ${convertingVideoMatch[1]}...`,
+        };
+    }
+
+    const conversionCompleteMatch = normalized.match(/Video conversion complete:\s*(.+)$/i);
+    if (conversionCompleteMatch) {
+        return {
+            trackTitle: "",
+            progress: 95,
+            isComplete: false,
+            isStarting: false,
+            state: 'downloading',
+            statusMessage: `Video conversion complete: ${conversionCompleteMatch[1].trim()}`,
+        };
+    }
+
     // Check for "Downloaded item" completion
     const downloadedMatch = normalized.match(/Downloaded (?:item|video|track|file) '([^']+)'/i);
     if (downloadedMatch) {

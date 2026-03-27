@@ -62,6 +62,7 @@ export interface ListTracksQuery {
   search?: string;
   monitored?: boolean;
   downloaded?: boolean;
+  locked?: boolean;
   libraryFilter?: string;
   sort?: string;
   dir?: string;
@@ -207,6 +208,13 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
 
   if (input.downloaded !== undefined) {
     where.push(input.downloaded ? trackDownloadedPredicate : `NOT (${trackDownloadedPredicate})`);
+  }
+
+  if (input.locked !== undefined) {
+    where.push("COALESCE(media.monitor_lock, 0) = ?");
+    const lockedValue = input.locked ? 1 : 0;
+    params.push(lockedValue);
+    countParams.push(lockedValue);
   }
 
   if (input.libraryFilter === "atmos") {

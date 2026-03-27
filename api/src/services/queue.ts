@@ -268,6 +268,59 @@ function buildExecutionOrderClause(alias?: string): string {
             `;
 }
 
+function buildDurableQueueOrderClause(alias?: string): string {
+    const queueOrder = buildColumnName("queue_order", alias);
+    const createdAt = buildColumnName("created_at", alias);
+    const id = buildColumnName("id", alias);
+
+    return `
+                COALESCE(${queueOrder}, 2147483647) ASC,
+                ${createdAt} ASC,
+                ${id} ASC
+            `;
+}
+
+function buildLiveActivityOrderClause(alias?: string): string {
+    const status = buildColumnName("status", alias);
+    const priority = buildColumnName("priority", alias);
+    const trigger = buildColumnName("trigger", alias);
+    const queueOrder = buildColumnName("queue_order", alias);
+    const createdAt = buildColumnName("created_at", alias);
+    const startedAt = buildColumnName("started_at", alias);
+    const updatedAt = buildColumnName("updated_at", alias);
+    const id = buildColumnName("id", alias);
+
+    return `
+                CASE
+                    WHEN ${status} = 'processing' THEN 0
+                    WHEN ${status} = 'pending' THEN 1
+                    ELSE 2
+                END ASC,
+                CASE
+                    WHEN ${status} = 'processing' THEN COALESCE(${updatedAt}, ${startedAt}, ${createdAt})
+                END DESC,
+                CASE
+                    WHEN ${status} = 'processing' THEN ${id}
+                END DESC,
+                CASE
+                    WHEN ${status} = 'pending' THEN ${priority}
+                END DESC,
+                CASE
+                    WHEN ${status} = 'pending' THEN ${trigger}
+                END DESC,
+                CASE
+                    WHEN ${status} = 'pending' THEN COALESCE(${queueOrder}, 2147483647)
+                END ASC,
+                CASE
+                    WHEN ${status} = 'pending' THEN ${createdAt}
+                END ASC,
+                CASE
+                    WHEN ${status} = 'pending' THEN ${id}
+                END ASC,
+                ${id} DESC
+            `;
+}
+
 function hydrateJobRow(row: { type: string; payload: unknown; id: number } & Record<string, unknown>): Job | null {
     if (!isJobType(row.type)) {
         console.warn(`[TaskQueue] Encountered unknown job type ${String(row.type)} for job ${row.id}; skipping typed hydration`);
@@ -307,6 +360,22 @@ export function compareJobsByExecutionOrder(left: Job, right: Job): number {
     return left.id - right.id;
 }
 
+export function compareJobsByDurableQueueOrder(left: Job, right: Job): number {
+    const leftQueueOrder = left.queue_order ?? Number.MAX_SAFE_INTEGER;
+    const rightQueueOrder = right.queue_order ?? Number.MAX_SAFE_INTEGER;
+    if (leftQueueOrder !== rightQueueOrder) {
+        return leftQueueOrder - rightQueueOrder;
+    }
+
+    const leftCreatedAt = parseSqliteDate(left.created_at);
+    const rightCreatedAt = parseSqliteDate(right.created_at);
+    if (leftCreatedAt !== rightCreatedAt) {
+        return leftCreatedAt - rightCreatedAt;
+    }
+
+    return left.id - right.id;
+}
+
 export function sortJobsByExecutionOrder<T extends Job>(jobs: T[]): T[] {
     return jobs.sort(compareJobsByExecutionOrder);
 }
@@ -315,7 +384,14 @@ export class TaskQueueService {
     /**
      * Add a job to the queue
      */
-    static addJob<T extends JobType>(type: T, payload: JobPayloadMap[T], refId?: string, priority: number = 0, trigger: number = 0): number {
+    static addJob<T extends JobType>(
+        type: T,
+        payload: JobPayloadMap[T],
+        refId?: string,
+        priority: number = 0,
+        trigger: number = 0,
+        queueOrder?: number | null,
+    ): number {
         // Validate download jobs have valid tidalId
         if (isDownloadJobType(type)) {
             const tidalId = payload?.tidalId || refId;
@@ -363,7 +439,10 @@ export class TaskQueueService {
 VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `);
 
-        const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger, null);
+        const normalizedQueueOrder = Number.isInteger(queueOrder) && (queueOrder as number) > 0
+            ? (queueOrder as number)
+            : null;
+        const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger, normalizedQueueOrder);
         const newId = info.lastInsertRowid as number;
         db.prepare(`
             UPDATE job_queue
@@ -380,11 +459,15 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         statusPattern: string = '%',
         limit: number = 50,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'live_activity' | 'queue_order' } = {},
     ): Job[] {
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
-            : 'created_at DESC, id DESC';
+            : options.orderBy === 'live_activity'
+                ? buildLiveActivityOrderClause()
+                : options.orderBy === 'queue_order'
+                    ? buildDurableQueueOrderClause()
+                    : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
 SELECT * FROM job_queue 
             WHERE type LIKE ? AND status LIKE ?
@@ -402,7 +485,7 @@ LIMIT ? OFFSET ?
         statuses: readonly JobStatus[],
         limit: number = 200,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' } = {},
+        options: { orderBy?: 'created_desc' | 'execution' | 'live_activity' | 'queue_order' } = {},
     ): Job[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
@@ -412,7 +495,11 @@ LIMIT ? OFFSET ?
         const statusPlaceholders = statuses.map(() => '?').join(',');
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
-            : 'created_at DESC, id DESC';
+            : options.orderBy === 'live_activity'
+                ? buildLiveActivityOrderClause()
+                : options.orderBy === 'queue_order'
+                    ? buildDurableQueueOrderClause()
+                    : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
             SELECT * FROM job_queue
             WHERE type IN (${typePlaceholders})
@@ -632,7 +719,8 @@ ${buildExecutionOrderClause()}
     static retry(id: number) {
         db.prepare(`
             UPDATE job_queue 
-            SET status = 'pending', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP 
+            SET status = 'pending', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE id = ?
     `).run(id);
         const job = this.getById(id);
@@ -646,7 +734,8 @@ ${buildExecutionOrderClause()}
     static resetProcessingJobs(typePattern: string = '%'): number {
         const result = db.prepare(`
             UPDATE job_queue
-            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP
+            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
+                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE status = 'processing' AND type LIKE ?
     `).run(typePattern);
 
@@ -661,7 +750,8 @@ ${buildExecutionOrderClause()}
         const placeholders = buildTypeInClause(types);
         const result = db.prepare(`
             UPDATE job_queue
-            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP
+            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
+                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE status = 'processing' AND type IN (${placeholders})
         `).run(...types);
 
@@ -701,18 +791,19 @@ ${buildExecutionOrderClause()}
 
         const result = db.prepare(`
             UPDATE job_queue
-SET
-status = 'pending',
-    started_at = NULL,
-    completed_at = NULL,
-    progress = 0,
-    error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error END,
-        updated_at = CURRENT_TIMESTAMP
+            SET
+                status = 'pending',
+                started_at = NULL,
+                completed_at = NULL,
+                progress = 0,
+                error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error END,
+                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState'),
+                updated_at = CURRENT_TIMESTAMP
             WHERE status = 'processing'
               AND type LIKE ?
-    AND COALESCE(started_at, updated_at, created_at) <= datetime('now', ?)
+              AND COALESCE(started_at, updated_at, created_at) <= datetime('now', ?)
               ${excludeClause}
-`).run(...params);
+        `).run(...params);
 
         return result.changes;
     }
@@ -750,6 +841,7 @@ status = 'pending',
                 completed_at = NULL,
                 progress = 0,
                 error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error END,
+                payload = json_remove(COALESCE(payload, '{}'), '$.downloadState'),
                 updated_at = CURRENT_TIMESTAMP
             WHERE status = 'processing'
               AND type IN (${typeClause})

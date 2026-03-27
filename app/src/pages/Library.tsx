@@ -71,7 +71,7 @@ import {
 } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
-import { CardGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
+import { CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
   searchBox: {
@@ -198,11 +198,6 @@ const useStyles = makeStyles({
     overflow: "auto",
     flexGrow: 1,
   },
-  loadMoreSpinner: {
-    display: "flex",
-    justifyContent: "center",
-    padding: tokens.spacingVerticalM,
-  },
   contentPadding: {
     padding: tokens.spacingHorizontalXXS,
     "@media (min-width: 768px)": {
@@ -312,6 +307,7 @@ const Library = () => {
     setArtistFilter,
     setAlbumFilter,
     setAlbumDownloadFilter,
+    setAlbumLockFilter,
     setAlbumQualityFilter,
     setSortOptions,
     setSearchQuery,
@@ -337,11 +333,6 @@ const Library = () => {
     tracks: false,
     videos: false,
   });
-
-  const [isFetchingMoreArtists, setIsFetchingMoreArtists] = useState(false);
-  const [isFetchingMoreAlbums, setIsFetchingMoreAlbums] = useState(false);
-  const [isFetchingMoreTracks, setIsFetchingMoreTracks] = useState(false);
-  const [isFetchingMoreVideos, setIsFetchingMoreVideos] = useState(false);
 
   // Filters - load from persisted settings
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>(
@@ -413,9 +404,16 @@ const Library = () => {
     return undefined;
   }, [statusFilters]);
 
-  const { tracks, loading: tracksLoading, hasMore: hasMoreTracks, total: totalTracks, loadMore: loadMoreTracks } = useTracks({
+  const lockedFilter = useMemo(() => {
+    if (statusFilters.onlyLocked && !statusFilters.onlyUnlocked) return true;
+    if (!statusFilters.onlyLocked && statusFilters.onlyUnlocked) return false;
+    return undefined;
+  }, [statusFilters]);
+
+  const { tracks, loading: tracksLoading, hasMore: hasMoreTracks, loadMore: loadMoreTracks } = useTracks({
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
+    locked: lockedFilter,
     libraryFilter,
     sort: sortBy,
     dir: sortDirection,
@@ -426,13 +424,13 @@ const Library = () => {
     videos,
     loading: videosLoading,
     hasMore: hasMoreVideos,
-    total: totalVideos,
     loadMore: loadMoreVideos,
     toggleMonitor: toggleVideoMonitor,
     toggleLock: toggleVideoLock,
   } = useVideos({
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
+    locked: lockedFilter,
     sort: sortBy,
     dir: sortDirection,
     search: debouncedSearchQuery,
@@ -444,7 +442,8 @@ const Library = () => {
     setArtistFilter(monitoredFilter);
     setAlbumFilter(monitoredFilter);
     setAlbumDownloadFilter(downloadedFilter);
-  }, [monitoredFilter, downloadedFilter, setArtistFilter, setAlbumFilter, setAlbumDownloadFilter]);
+    setAlbumLockFilter(lockedFilter);
+  }, [monitoredFilter, downloadedFilter, lockedFilter, setArtistFilter, setAlbumFilter, setAlbumDownloadFilter, setAlbumLockFilter]);
 
   useEffect(() => {
     setAlbumQualityFilter(libraryFilter);
@@ -454,29 +453,23 @@ const Library = () => {
     setSortOptions(sortBy, sortDirection);
   }, [sortBy, sortDirection, setSortOptions]);
 
-
-  const filteredArtists = artists;
-  const filteredAlbums = albums;
-  const filteredTracks = tracks;
-  const filteredVideos = videos;
-
-  const artistSelection = useSelectableCollection({
-    items: filteredArtists,
+    const artistSelection = useSelectableCollection({
+    items: artists,
     getItemId: (artist: any) => artist.id,
   });
   const clearArtistSelection = artistSelection.clearSelection;
   const albumSelection = useSelectableCollection({
-    items: filteredAlbums,
+    items: albums,
     getItemId: (album: any) => album.id,
   });
   const clearAlbumSelection = albumSelection.clearSelection;
   const trackSelection = useSelectableCollection({
-    items: filteredTracks,
+    items: tracks,
     getItemId: (track: any) => track.id,
   });
   const clearTrackSelection = trackSelection.clearSelection;
   const videoSelection = useSelectableCollection({
-    items: filteredVideos,
+    items: videos,
     getItemId: (video: any) => video.id,
   });
   const clearVideoSelection = videoSelection.clearSelection;
@@ -1340,11 +1333,20 @@ const Library = () => {
       case "tracks":
         return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
       case "videos":
+        if (viewMode === "list") {
+          return <DataGridSkeleton rows={10} columns={5} columnTemplate="64px minmax(220px, 1fr) 80px 100px 120px" compact />;
+        }
         return <CardGridSkeleton cards={10} thumbnailAspect="videoWide" minCardWidth={240} />;
       case "albums":
+        if (viewMode === "list") {
+          return <DataGridSkeleton rows={10} columns={6} columnTemplate="40px minmax(220px, 1fr) 72px 64px 96px 120px" compact />;
+        }
         return <CardGridSkeleton cards={12} minCardWidth={172} />;
       case "artists":
       default:
+        if (viewMode === "list") {
+          return <DataGridSkeleton rows={10} columns={6} columnTemplate="40px minmax(220px, 1fr) 72px 72px 132px 140px" compact />;
+        }
         return <CardGridSkeleton cards={12} minCardWidth={172} />;
     }
   };
@@ -1644,6 +1646,8 @@ const Library = () => {
   );
 
   const canToggleView = selectedTab !== "tracks";
+  const showLockFilter = selectedTab !== "artists";
+  const showDownloadFilter = selectedTab !== "artists";
 
   return (
     <div className={styles.container}>
@@ -1694,8 +1698,8 @@ const Library = () => {
                 onLibraryFilterChange={setLibraryFilter}
                 statusFilters={statusFilters}
                 onStatusFiltersChange={setStatusFilters}
-                showDownloadFilter={true}
-                showLockFilter={true}
+                showDownloadFilter={showDownloadFilter}
+                showLockFilter={showLockFilter}
                 className={styles.menuButtonIconOnly}
                 hideLabelOnMobile
               />
@@ -1733,8 +1737,8 @@ const Library = () => {
                 onLibraryFilterChange={setLibraryFilter}
                 statusFilters={statusFilters}
                 onStatusFiltersChange={setStatusFilters}
-                showDownloadFilter={true}
-                showLockFilter={true}
+                showDownloadFilter={showDownloadFilter}
+                showLockFilter={showLockFilter}
                 className={styles.menuButtonIconOnly}
                 hideLabelOnMobile
               />
@@ -1774,7 +1778,7 @@ const Library = () => {
               sentinelRef: artistSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : filteredArtists.length === 0 ? (
+            }) : artists.length === 0 ? (
               renderNoResultsContent("artists")
             ) : (
               renderPane({
@@ -1784,12 +1788,12 @@ const Library = () => {
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
-                    {filteredArtists.map((artist) => renderArtistCard(artist))}
+                    {artists.map((artist) => renderArtistCard(artist))}
                   </div>
                 ) : (
                   <DataGrid
                     columns={artistColumns}
-                    items={filteredArtists}
+                    items={artists}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/artist/${a.id}`)}
                     selection={viewMode === 'list' ? {
@@ -1810,7 +1814,7 @@ const Library = () => {
               sentinelRef: albumSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : filteredAlbums.length === 0 ? (
+            }) : albums.length === 0 ? (
               renderNoResultsContent("albums")
             ) : (
               renderPane({
@@ -1820,12 +1824,12 @@ const Library = () => {
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
-                    {filteredAlbums.map((album) => renderAlbumCard(album))}
+                    {albums.map((album) => renderAlbumCard(album))}
                   </div>
                 ) : (
                   <DataGrid
                     columns={albumColumns}
-                    items={filteredAlbums}
+                    items={albums}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/album/${a.id}`)}
                     selection={viewMode === 'list' ? {
@@ -1846,7 +1850,7 @@ const Library = () => {
               sentinelRef: trackSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : filteredTracks.length === 0 ? (
+            }) : tracks.length === 0 ? (
               renderNoResultsContent("tracks")
             ) : (
               renderPane({
@@ -1855,7 +1859,7 @@ const Library = () => {
                 isFetching: isFetchingMore.tracks,
                 topContent: renderSelectionBar(),
                 children: <LibraryTrackList
-                  tracks={filteredTracks}
+                  tracks={tracks}
                   selection={viewMode === 'list' ? {
                     ...trackSelection.selection,
                     getSelectionLabel: (track: any) => track.title ? `Select ${track.title}` : "Select track",
@@ -1873,7 +1877,7 @@ const Library = () => {
               sentinelRef: videoSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : filteredVideos.length === 0 ? (
+            }) : videos.length === 0 ? (
               renderNoResultsContent("videos")
             ) : (
               renderPane({
@@ -1883,7 +1887,7 @@ const Library = () => {
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <VideoGrid
-                    videos={filteredVideos}
+                    videos={videos}
                     loading={videosLoading}
                     onToggleMonitor={(video) => toggleVideoMonitor(video.id, !video.is_monitored)}
                     onDownload={(video) => void addToQueue(tidalUrl("video", video.id), "video", video.id)}
@@ -1892,7 +1896,7 @@ const Library = () => {
                 ) : (
                   <DataGrid
                     columns={videoColumns}
-                    items={filteredVideos}
+                    items={videos}
                     getRowKey={(v: any) => v.id}
                     onRowClick={(v: any) => navigate(`/video/${v.id}`)}
                     selection={viewMode === 'list' ? {

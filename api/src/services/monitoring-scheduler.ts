@@ -38,7 +38,7 @@ let scheduledTaskQueueStampStmt: any | null = null;
 
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
-const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 25, 1);
+const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 50, 1);
 
 export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
 
@@ -958,4 +958,5 @@ export function queueConfigPrune(options: { trigger?: number } = {}) {
         options.trigger ?? 1,
     );
 }
+
 

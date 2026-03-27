@@ -31,7 +31,7 @@ Measured 2026-03-13:
 
 1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 1.0.x schema baseline now uses an independent integer `PRAGMA user_version` starting at `1`, with app/api/schema provenance tracked in `database_version_history`.
 2. ~~Add a persistent history table and write path for key file lifecycle events.~~ **Done** — `history_events` table, backend write path, and `/api/history` endpoint are implemented.
-3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). ~~Phase 2: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.~~ **Done** — the backend now exposes a typed `/api/system-task` catalog for scheduled tasks plus manual operator tasks, and Settings ships a Lidarr-style System Tasks control plane for run-now actions and editable schedule state.
+3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). ~~Phase 2: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.~~ **Partially done** — the backend exposes a typed `/api/system-task` catalog for scheduled tasks plus manual operator tasks, and the Dashboard overflow now surfaces selected run-now actions. Settings does not currently ship a general System Tasks control plane or editable per-task schedule UI.
 4. Continue route thinning in high-traffic routes so route files remain adapters.
 5. Finish import decision extraction into import-decision specifications.
 6. Add a minimal typed health surface for auth/runtime/path checks.
@@ -52,6 +52,14 @@ Measured 2026-03-13:
 
 - Add lightweight endpoint timing counters for `/api/activity`, `/api/activity/events`, and `/api/tasks` in non-debug builds to spot regressions early without adding heavy profiling overhead.
 - If event volume grows substantially, evaluate cursor-style pagination for `/api/activity/events` as a future optimization; current offset pagination is correct and acceptable for present scale.
+
+## Next Metadata Storage Step (Lidarr-Aligned, Pre-ID-Migration)
+
+- Add additive `artist_metadata` and `album_metadata` cold tables keyed to current `artists.id` and `albums.id`; keep hot/library ownership on the existing core tables.
+- Dual-write scanner output into both the current hot fields and the new cold metadata tables first, so read-path migration can happen without a schema flip.
+- Move artist and album page reads to DB-first metadata access once dual-write is stable, instead of relying on scanner-shaped in-memory payload assembly.
+- Collapse to one DB-backed album page contract after the DB-first read path lands.
+- Keep this as a separate incremental step from the broader provider-neutral/internal-ID migration below; it should not depend on changing primary keys.
 
 ## Provider-Agnostic ID Model (Multi-Provider Foundation)
 

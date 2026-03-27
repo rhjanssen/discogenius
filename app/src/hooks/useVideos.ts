@@ -15,6 +15,7 @@ export type { Video };
 export const useVideos = (options?: {
   monitored?: boolean;
   downloaded?: boolean;
+  locked?: boolean;
   sort?: string;
   dir?: 'asc' | 'desc';
   search?: string;
@@ -32,6 +33,7 @@ export const useVideos = (options?: {
 
   const monitored = options?.monitored;
   const downloaded = options?.downloaded;
+  const locked = options?.locked;
   const sort = options?.sort;
   const dir = options?.dir;
   const search = options?.search;
@@ -55,6 +57,7 @@ export const useVideos = (options?: {
         offset: pageNum * 50,
         monitored,
         downloaded,
+        locked,
         sort,
         dir,
         search,
@@ -88,7 +91,7 @@ export const useVideos = (options?: {
         setLoading(false);
       }
     }
-  }, [enabled, monitored, downloaded, sort, dir, search]);
+  }, [enabled, monitored, downloaded, locked, sort, dir, search]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loading) return;
@@ -194,7 +197,7 @@ export const useVideos = (options?: {
     setPage(0);
     setHasMore(true);
     fetchRef.current(0, false);
-  }, [enabled, monitored, downloaded, sort, dir, search]);
+  }, [enabled, monitored, downloaded, locked, sort, dir, search]);
 
   return {
     videos,

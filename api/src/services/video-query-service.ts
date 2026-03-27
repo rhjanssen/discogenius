@@ -43,6 +43,7 @@ export interface ListVideosQuery {
   search?: string;
   monitored?: boolean;
   downloaded?: boolean;
+  locked?: boolean;
   sort?: string;
   dir?: string;
 }
@@ -168,6 +169,13 @@ export function listVideos(input: ListVideosQuery): VideosListResponseContract {
 
   if (input.downloaded !== undefined) {
     where.push(input.downloaded ? videoDownloadedPredicate : `NOT (${videoDownloadedPredicate})`);
+  }
+
+  if (input.locked !== undefined) {
+    where.push("COALESCE(media.monitor_lock, 0) = ?");
+    const lockedValue = input.locked ? 1 : 0;
+    params.push(lockedValue);
+    countParams.push(lockedValue);
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";

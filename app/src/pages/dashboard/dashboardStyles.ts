@@ -69,11 +69,35 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
     },
+    queueSection: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalXS,
+    },
+    queueSelectionBar: {
+        marginBottom: tokens.spacingVerticalXS,
+    },
+    queueSectionHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalM,
+        flexWrap: "wrap",
+    },
+    queueSectionHeading: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalXXS,
+        minWidth: 0,
+    },
+    queueSectionHint: {
+        color: tokens.colorNeutralForeground3,
+    },
     syncNotice: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        padding: tokens.spacingHorizontalM,
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground3} 70%, transparent)`,
@@ -110,11 +134,16 @@ export const useDashboardStyles = makeStyles({
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         overflow: "hidden",
     },
+    downloadGroup: {
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+    },
     downloadItem: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        padding: tokens.spacingHorizontalM,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         cursor: "pointer",
         transitionProperty: "background-color",
@@ -125,6 +154,27 @@ export const useDashboardStyles = makeStyles({
         ":last-child": {
             borderBottom: "none",
         },
+    },
+    downloadItemReorderable: {
+        userSelect: "none",
+    },
+    downloadItemSelected: {
+        backgroundColor: `color-mix(in srgb, ${tokens.colorBrandBackground2} 32%, ${tokens.colorNeutralBackground1})`,
+        ":hover": {
+            backgroundColor: `color-mix(in srgb, ${tokens.colorBrandBackground2} 44%, ${tokens.colorNeutralBackground1Hover})`,
+        },
+    },
+    downloadItemBusy: {
+        opacity: 0.68,
+    },
+    downloadItemDragging: {
+        opacity: 0.58,
+    },
+    downloadItemDropBefore: {
+        boxShadow: `inset 0 2px 0 ${tokens.colorBrandStroke1}`,
+    },
+    downloadItemDropAfter: {
+        boxShadow: `inset 0 -2px 0 ${tokens.colorBrandStroke1}`,
     },
     downloadSubItem: {
         display: "flex",
@@ -149,6 +199,37 @@ export const useDashboardStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         flexShrink: 0,
     },
+    downloadSelectionCell: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXXS,
+        flexShrink: 0,
+    },
+    downloadDragHandle: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "20px",
+        minWidth: "20px",
+        borderRadius: tokens.borderRadiusSmall,
+        color: tokens.colorNeutralForeground3,
+        fontSize: tokens.fontSizeBase300,
+        lineHeight: tokens.lineHeightBase300,
+        letterSpacing: "-0.08em",
+        cursor: "grab",
+        transitionProperty: "background-color, color, opacity",
+        transitionDuration: tokens.durationFaster,
+        ":hover": {
+            backgroundColor: tokens.colorSubtleBackgroundHover,
+            color: tokens.colorNeutralForeground2,
+        },
+        ":active": {
+            cursor: "grabbing",
+        },
+    },
+    downloadDragHandleDragging: {
+        opacity: 0.6,
+    },
     downloadStatusLead: {
         width: "16px",
         minWidth: "16px",
@@ -162,6 +243,15 @@ export const useDashboardStyles = makeStyles({
         color: tokens.colorNeutralForeground2,
         whiteSpace: "nowrap",
         textTransform: "lowercase",
+    },
+    downloadSubItemStatusText: {
+        fontSize: tokens.fontSizeBase100,
+        lineHeight: tokens.lineHeightBase100,
+        color: tokens.colorNeutralForeground2,
+        whiteSpace: "nowrap",
+        textTransform: "lowercase",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
     },
     downloadStatusPendingIcon: {
         width: "16px",
@@ -310,6 +400,64 @@ export const useDashboardStyles = makeStyles({
     downloadActions: {
         display: "flex",
         gap: tokens.spacingHorizontalXS,
+        flexWrap: "wrap",
+        justifyContent: "flex-end",
+        flexShrink: 0,
+    },
+    queueHistoryItem: {
+        outlineStyle: "none",
+    },
+    queueHistoryItemClickable: {
+        cursor: "pointer",
+        ":hover": {
+            backgroundColor: tokens.colorNeutralBackground1Hover,
+        },
+        ":focus-visible": {
+            outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: `-${tokens.strokeWidthThin}`,
+        },
+    },
+    queueHistoryItemStatic: {
+        cursor: "default",
+        ":hover": {
+            backgroundColor: tokens.colorNeutralBackground1,
+        },
+    },
+    queueHistoryPlaceholderIcon: {
+        width: "16px",
+        height: "16px",
+    },
+    queueHistoryStatus: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        flexShrink: 0,
+        justifyContent: "flex-end",
+    },
+    queueHistoryStatusText: {
+        fontSize: tokens.fontSizeBase200,
+        fontWeight: tokens.fontWeightSemibold,
+        whiteSpace: "nowrap",
+    },
+    queueHistoryStatusTextSuccess: {
+        color: tokens.colorPaletteGreenForeground1,
+    },
+    queueHistoryStatusTextDanger: {
+        color: tokens.colorPaletteRedForeground1,
+    },
+    queueHistoryStatusTextNeutral: {
+        color: tokens.colorNeutralForeground2,
+    },
+    queueHistoryErrorText: {
+        fontSize: tokens.fontSizeBase100,
+        color: tokens.colorPaletteRedForeground1,
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
+    },
+    downloadReorderActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXXS,
         flexShrink: 0,
     },
     downloadStateIndicator: {
@@ -346,11 +494,8 @@ export const useDashboardStyles = makeStyles({
     activitySectionHeader: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
         gap: tokens.spacingHorizontalS,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground3} 68%, transparent)`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalXS}`,
     },
     activitySectionItems: {
         display: "flex",
@@ -358,49 +503,46 @@ export const useDashboardStyles = makeStyles({
     },
     activitySectionLabel: {
         color: tokens.colorNeutralForeground2,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
+        fontSize: tokens.fontSizeBase200,
     },
     activitySectionCount: {
         color: tokens.colorNeutralForeground3,
     },
     activityItem: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        "@media (max-width: 959px)": {
-            padding: tokens.spacingHorizontalM,
+        cursor: "default",
+        transitionProperty: "background-color",
+        transitionDuration: tokens.durationFaster,
+        ":hover": {
+            backgroundColor: tokens.colorSubtleBackgroundHover,
         },
         ":last-child": {
             borderBottom: "none",
         },
     },
-    activityItemDefault: {
-        borderLeft: `3px solid ${tokens.colorBrandForeground1}`,
-    },
-    activityItemUpgrade: {
-        borderLeft: `3px solid ${tokens.colorPaletteBlueForeground2}`,
-    },
     activityLeading: {
-        width: "40px",
+        width: "32px",
         textAlign: "center",
         flexShrink: 0,
+        paddingTop: tokens.spacingVerticalSNudge,
     },
     activityLeadingContent: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: tokens.spacingHorizontalS,
+        gap: tokens.spacingHorizontalXS,
     },
     activityLeadingContentCompact: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        gap: tokens.spacingHorizontalXS,
     },
     activityIconOffset: {
-        marginLeft: tokens.spacingHorizontalS,
         display: "inline-flex",
     },
     activityContent: {
@@ -412,100 +554,91 @@ export const useDashboardStyles = makeStyles({
     },
     activitySummaryRow: {
         display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXXS,
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalM,
         minWidth: 0,
-        "@media (min-width: 600px) and (orientation: landscape)": {
-            flexDirection: "row",
-            alignItems: "baseline",
-            gap: tokens.spacingHorizontalXS,
-        },
-        "@media (min-width: 960px)": {
-            flexDirection: "row",
-            alignItems: "baseline",
-            gap: tokens.spacingHorizontalS,
+        "@media (max-width: 699px)": {
+            flexDirection: "column",
+            gap: tokens.spacingVerticalXS,
         },
     },
-    activityBadgeRow: {
+    activityTitleStack: {
         display: "flex",
-        flexWrap: "wrap",
-        gap: tokens.spacingHorizontalXS,
-        marginTop: tokens.spacingVerticalXXS,
+        flexDirection: "column",
+        gap: tokens.spacingVerticalXXS,
+        flex: 1,
+        minWidth: 0,
+        "@media (min-width: 700px)": {
+            flexDirection: "row",
+            alignItems: "baseline",
+            flexWrap: "wrap",
+            columnGap: tokens.spacingHorizontalXS,
+            rowGap: tokens.spacingVerticalXXS,
+        },
     },
     activityTitleText: {
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
+        "@media (min-width: 700px)": {
+            flexShrink: 0,
+            maxWidth: "100%",
+        },
     },
     activityInlineDescription: {
         color: tokens.colorNeutralForeground2,
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
         minWidth: 0,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
+        "@media (min-width: 700px)": {
+            flex: "1 1 16rem",
+        },
     },
     activitySecondaryText: {
         color: tokens.colorNeutralForeground2,
         marginTop: tokens.spacingVerticalSNudge,
     },
-    activityAuditItem: {
-        display: "flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 20%, transparent)`,
-        cursor: "default",
-        transitionProperty: "background-color",
-        transitionDuration: tokens.durationFaster,
-        ":hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
-        },
-        ":last-child": {
-            borderBottom: "none",
-        },
-    },
-    activityAuditLoadingRow: {
+    activityLoadingRow: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
         padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
     },
-    activityAuditIcon: {
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: tokens.colorNeutralForeground3,
-        width: "16px",
-        height: "16px",
-    },
     activityErrorText: {
         color: tokens.colorPaletteRedForeground1,
-        marginTop: tokens.spacingVerticalXXS,
         whiteSpace: "normal",
         overflowWrap: "anywhere",
-    },
-    activityTimeColumn: {
-        width: "80px",
-        textAlign: "right",
-        flexShrink: 0,
+        "@media (min-width: 700px)": {
+            flexBasis: "100%",
+        },
     },
     activityTimeActions: {
         display: "flex",
         alignItems: "center",
         justifyContent: "flex-end",
-        gap: tokens.spacingHorizontalS,
+        gap: tokens.spacingHorizontalXS,
+        flexShrink: 0,
+        "@media (max-width: 699px)": {
+            justifyContent: "flex-start",
+        },
     },
     activityTime: {
         fontSize: tokens.fontSizeBase100,
         color: tokens.colorNeutralForeground3,
+        whiteSpace: "nowrap",
     },
     statusIconSuccess: {
         color: tokens.colorPaletteGreenForeground1,
         width: "16px",
         height: "16px",
+    },
+    statusIconSuccessHistory: {
+        color: tokens.colorPaletteGreenForeground1,
+        width: "20px",
+        height: "20px",
     },
     statusIconError: {
         color: tokens.colorPaletteRedForeground1,
@@ -520,6 +653,7 @@ export const useDashboardStyles = makeStyles({
     loadMoreRow: {
         display: "flex",
         justifyContent: "center",
-        marginTop: tokens.spacingVerticalM,
+        padding: tokens.spacingVerticalM,
     },
 });
+

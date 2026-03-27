@@ -459,13 +459,14 @@ class ApiClient {
     return this.request(`/artists/${artistId}/albums/${albumId}/reset-override`, { method: 'POST' });
   }
 
-  async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }): Promise<AlbumsListResponseContract> {
+  async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }): Promise<AlbumsListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
     if (params?.search) queryParams.set('search', params.search);
     if (params?.monitored !== undefined) queryParams.set('monitored', params.monitored ? 'true' : 'false');
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
+    if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
     if (params?.library_filter) queryParams.set('library_filter', params.library_filter);
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
@@ -507,13 +508,14 @@ class ApiClient {
     return this.request(`/albums/${albumId}/versions`, {}, parseAlbumVersionsContract);
   }
 
-  async getTracks(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
+  async getTracks(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
     if (params?.search) queryParams.set('search', params.search);
     if (params?.monitored !== undefined) queryParams.set('monitored', params.monitored ? 'true' : 'false');
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
+    if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
     if (params?.library_filter) queryParams.set('library_filter', params.library_filter);
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
@@ -547,13 +549,14 @@ class ApiClient {
     return this.request(`/tracks/${trackId}`, { method: 'DELETE' });
   }
 
-  async getVideos(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; sort?: string; dir?: 'asc' | 'desc' }): Promise<VideosListResponseContract> {
+  async getVideos(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; sort?: string; dir?: 'asc' | 'desc' }): Promise<VideosListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
     if (params?.search) queryParams.set('search', params.search);
     if (params?.monitored !== undefined) queryParams.set('monitored', params.monitored ? 'true' : 'false');
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
+    if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();

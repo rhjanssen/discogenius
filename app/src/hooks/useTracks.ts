@@ -11,6 +11,7 @@ import {
 export const useTracks = (options?: {
   monitored?: boolean;
   downloaded?: boolean;
+  locked?: boolean;
   libraryFilter?: 'all' | 'stereo' | 'atmos' | 'video';
   sort?: string;
   dir?: 'asc' | 'desc';
@@ -29,6 +30,7 @@ export const useTracks = (options?: {
 
   const monitored = options?.monitored;
   const downloaded = options?.downloaded;
+  const locked = options?.locked;
   const libraryFilter = options?.libraryFilter ?? 'all';
   const sort = options?.sort;
   const dir = options?.dir;
@@ -53,6 +55,7 @@ export const useTracks = (options?: {
         offset: pageNum * 100,
         monitored,
         downloaded,
+        locked,
         library_filter: libraryFilter === 'video' ? 'all' : libraryFilter,
         sort,
         dir,
@@ -87,7 +90,7 @@ export const useTracks = (options?: {
         setLoading(false);
       }
     }
-  }, [enabled, monitored, downloaded, libraryFilter, sort, dir, search]);
+  }, [enabled, monitored, downloaded, locked, libraryFilter, sort, dir, search]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loading) return;
@@ -150,7 +153,7 @@ export const useTracks = (options?: {
     setPage(0);
     setHasMore(true);
     fetchRef.current(0, false);
-  }, [enabled, monitored, downloaded, libraryFilter, sort, dir, search]);
+  }, [enabled, monitored, downloaded, locked, libraryFilter, sort, dir, search]);
 
   return {
     tracks,

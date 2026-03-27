@@ -37,7 +37,7 @@ import type { LibraryFilesListResponseContract, VideoDetailContract } from "@con
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ErrorState } from "@/components/ui/ContentState";
-import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
+
 import {
     compactDetailActionButtonStyles,
     detailActionButtonRadiusStyles,
@@ -447,11 +447,7 @@ const VideoPage = () => {
     }, [isDownloaded, isPlaying, remoteStreamUrl, toast]);
 
     if (isVideoLoading) {
-        return (
-            <div className={styles.stateShell}>
-                <MediaDetailSkeleton variant="video" />
-            </div>
-        );
+        return null;
     }
 
     if (error || !video) {

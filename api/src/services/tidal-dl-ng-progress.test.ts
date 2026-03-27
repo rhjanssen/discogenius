@@ -31,3 +31,33 @@ test("parseProgress handles rich-tag prefixed output", () => {
   assert.equal(progress.isComplete, true);
   assert.equal(progress.state, "completed");
 });
+
+test("parseProgress handles current login status output", () => {
+  const progress = parseProgress("Let us check if you are already logged in... Yep, looks good! You are logged in.");
+
+  assert.ok(progress);
+  assert.equal(progress.progress, 15);
+  assert.equal(progress.isComplete, false);
+  assert.equal(progress.state, "downloading");
+  assert.equal(progress.statusMessage, "Authenticated with TIDAL");
+});
+
+test("parseProgress handles current video conversion stage output", () => {
+  const progress = parseProgress("Converting video: 2ceb9af8-eeae-47e3-b1dc-e571ea9a3470 ->");
+
+  assert.ok(progress);
+  assert.equal(progress.progress, 90);
+  assert.equal(progress.isComplete, false);
+  assert.equal(progress.state, "downloading");
+  assert.match(progress.statusMessage ?? "", /Converting video/);
+});
+
+test("parseProgress handles current video conversion completion output", () => {
+  const progress = parseProgress("Video conversion complete: 2ceb9af8-eeae-47e3-b1dc-e571ea9a3470.mp4");
+
+  assert.ok(progress);
+  assert.equal(progress.progress, 95);
+  assert.equal(progress.isComplete, false);
+  assert.equal(progress.state, "downloading");
+  assert.equal(progress.statusMessage, "Video conversion complete: 2ceb9af8-eeae-47e3-b1dc-e571ea9a3470.mp4");
+});

@@ -27,6 +27,7 @@ export interface RuntimeMaintenanceSummary {
   artistMonitorRepairs: number;
   albumStatesRefreshed: number;
   artistStatesRefreshed: number;
+  databaseOptimized: boolean;
   mediaIdentityIndexEnsured: boolean;
   trackedAssetIdentityIndexesEnsured: boolean;
 }
@@ -205,6 +206,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     artistMonitorRepairs: 0,
     albumStatesRefreshed: 0,
     artistStatesRefreshed: 0,
+    databaseOptimized: false,
     mediaIdentityIndexEnsured: false,
     trackedAssetIdentityIndexesEnsured: false,
   };
@@ -249,6 +251,11 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   refreshDownloadState(summary);
 
+  db.exec(`PRAGMA optimize;`);
+  db.prepare(`ANALYZE;`).run();
+  db.prepare(`VACUUM;`).run();
+  summary.databaseOptimized = true;
+
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||
     summary.staleTrackedAssetsRemoved > 0 ||
@@ -274,3 +281,5 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   return summary;
 }
+
+

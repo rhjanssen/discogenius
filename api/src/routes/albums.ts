@@ -4,8 +4,6 @@ import { getTrack } from "../services/tidal.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { updateAlbumDownloadStatus } from "../services/download-state.js";
 import { AlbumQueryService } from "../services/album-query-service.js";
-import type { AlbumTrackContract } from "../contracts/media.js";
-import { hydrateTrackRows, type TrackRow } from "../services/track-query-service.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -16,6 +14,29 @@ import {
 
 const router = Router();
 
+const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
+  if (Array.isArray(value)) {
+    return parseOptionalQueryBoolean(value[0]);
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (TRUE_QUERY_VALUES.has(normalized)) {
+    return true;
+  }
+  if (FALSE_QUERY_VALUES.has(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
 function refreshAlbumState(albumId: string) {
   if (!albumId) return;
   updateAlbumDownloadStatus(albumId);
@@ -24,40 +45,6 @@ function refreshAlbumState(albumId: string) {
 const parseOptionalMonitored = (value: unknown): boolean => {
   return value === undefined ? true : Boolean(value);
 };
-
-function getAlbumTrackRows(albumId: string): TrackRow[] {
-  return db.prepare(`
-    SELECT
-      m.*,
-      a.title as album_title,
-      a.cover as album_cover,
-      ar.name as artist_name
-    FROM media m
-    LEFT JOIN albums a ON a.id = m.album_id
-    LEFT JOIN artists ar ON ar.id = m.artist_id
-    WHERE m.album_id = ? AND m.type != 'Music Video'
-    ORDER BY m.volume_number ASC, m.track_number ASC, m.id ASC
-  `).all(albumId) as TrackRow[];
-}
-
-function getAlbumTrackStats(albumId: string): { storedTracks: number; missingTrackScans: number } {
-  const stats = db.prepare(`
-    SELECT
-      COUNT(*) as stored_tracks,
-      SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) as missing_track_scans
-    FROM media
-    WHERE album_id = ? AND type != 'Music Video'
-  `).get(albumId) as { stored_tracks?: number; missing_track_scans?: number } | undefined;
-
-  return {
-    storedTracks: Number(stats?.stored_tracks || 0),
-    missingTrackScans: Number(stats?.missing_track_scans || 0),
-  };
-}
-
-function hydrateAlbumTracks(tracks: TrackRow[]): AlbumTrackContract[] {
-  return hydrateTrackRows(tracks);
-}
 
 /**
  * Albums routes - updated for new schema where:
@@ -72,14 +59,9 @@ function hydrateAlbumTracks(tracks: TrackRow[]): AlbumTrackContract[] {
 // Get all albums with pagination
 router.get("/", (req, res) => {
   try {
-    const monitoredParam = req.query.monitored as string | undefined;
-    const monitoredFilter = monitoredParam === undefined
-      ? undefined
-      : ["1", "true", "yes", "on"].includes(monitoredParam.toLowerCase());
-    const downloadedParam = req.query.downloaded as string | undefined;
-    const downloadedFilter = downloadedParam === undefined
-      ? undefined
-      : ["1", "true", "yes", "on"].includes(downloadedParam.toLowerCase());
+    const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
+    const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
+    const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
 
     res.json(AlbumQueryService.listAlbums({
       limit: parseInt(req.query.limit as string) || 50,
@@ -87,6 +69,7 @@ router.get("/", (req, res) => {
       search: req.query.search as string | undefined,
       monitored: monitoredFilter,
       downloaded: downloadedFilter,
+      locked: lockedFilter,
       libraryFilter: req.query.library_filter as string | undefined,
       sort: req.query.sort as string | undefined,
       dir: req.query.dir as string | undefined,
@@ -114,18 +97,7 @@ router.get("/:albumId", async (req, res) => {
 router.get("/:albumId/tracks", async (req, res) => {
   try {
     const albumId = req.params.albumId;
-    const album = db.prepare(`
-      SELECT id, num_tracks, last_scanned
-      FROM albums
-      WHERE id = ?
-    `).get(albumId) as any;
-
-    const tracks = getAlbumTrackRows(albumId);
-    if (tracks.length > 0) {
-      return res.json(hydrateAlbumTracks(tracks));
-    }
-
-    res.json([]);
+    res.json(await AlbumQueryService.getAlbumTracks(albumId));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

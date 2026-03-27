@@ -16,7 +16,8 @@ services:
       - DISCOGENIUS_DISABLE_MONITORING=${DISCOGENIUS_DISABLE_MONITORING:-1}
       - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
     ports:
-      - "${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}"
+      # Defaults to 3737. Change PORT in .env to publish Discogenius on a different port.
+      - "${PORT:-3737}:${PORT:-3737}"
     volumes:
       # Persistent config directory (database, settings, tidal tokens)
       - ./config:/config

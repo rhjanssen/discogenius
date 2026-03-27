@@ -1,7 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { makeStyles } from "@fluentui/react-components";
 import { Toaster } from "@/components/ui/toaster";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { FluentThemeProvider } from "@/providers/FluentThemeProvider";
@@ -37,21 +35,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const useStyles = makeStyles({
-  suspenseFallback: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "60vh",
-  },
-});
-
-const PageFallback = () => {
-  const styles = useStyles();
-  return (
-    <LoadingState className={styles.suspenseFallback} label="Loading page..." />
-  );
-};
+const PageFallback = () => null;
 
 const SuspendedPage = ({
   children,

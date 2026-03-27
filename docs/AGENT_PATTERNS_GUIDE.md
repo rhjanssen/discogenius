@@ -1,6 +1,6 @@
 # Discogenius Agent Patterns & Implementation Guide
 
-**Last Updated**: March 21, 2026  
+**Last Updated**: March 26, 2026  
 **Status**: Post v1.0.6 code quality refactoring analysis  
 **Purpose**: Comprehensive reference for agents building features that align with established patterns
 
@@ -10,7 +10,7 @@
 
 | Task | Primary Pattern | Key Files | Example |
 |------|-----------------|-----------|---------|
-| Add status display (loading/empty/error) | ContentState components | `app/src/components/ui/ContentState.tsx` | LoadingState, EmptyState, ErrorState |
+| Add status display (loading/empty/error) | ContentState + LoadingSkeletons | `app/src/components/ui/{ContentState,LoadingSkeletons}.tsx` | LoadingState/EmptyState/ErrorState + CardGridSkeleton/DataGridSkeleton |
 | Add a badge (quality, downloaded, explicit) | Badge library in ui/ | `app/src/components/ui/{QualityBadge,StatusBadges,ExplicitBadge}.tsx` | Always use Fluent props + tokens |
 | Extract duplicated UI check | Utility function | `app/src/utils/monitoringUtils.ts` | `isMonitorLocked()`, `isMonitored()` |
 | Paginate/scroll through lists | useInfiniteScroll hook | `app/src/hooks/useInfiniteScroll.ts` | Set up containerRef, sentinelRef, onLoadMore |
@@ -40,6 +40,7 @@
 - **StatusBadges.tsx**: DownloadedBadge, MissingBadge
 - **ExplicitBadge.tsx**: Explicit label badge
 - **ContentState.tsx**: LoadingState, EmptyState, ErrorState
+- **LoadingSkeletons.tsx**: CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton, MediaDetailSkeleton
 - **ExplicitBadge.tsx, MediaTypeBadge.tsx, WarningBadge.tsx**
 
 **Pattern Rules**:
@@ -70,7 +71,7 @@ export const NewStatusBadge = () => (
 
 ---
 
-### 2. Content State Components (Loading/Empty/Error)
+### 2. Content States and Skeleton Loading
 
 **Location**: `app/src/components/ui/ContentState.tsx`
 
@@ -80,6 +81,11 @@ export const NewStatusBadge = () => (
 - `LoadingState`: spinner + label
 - `EmptyState`: icon + title + description + actions
 - `ErrorState`: error icon + error message (extractable to text)
+- `LoadingSkeletons`: shape-preserving loading placeholders for list/detail surfaces
+
+**When to Use Which**:
+- Use `LoadingState` for simple blocking states where preserving list/detail layout is not important.
+- Use `LoadingSkeletons` (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `MediaDetailSkeleton`) for library grids/tables, detail pages, and suspense fallbacks where layout continuity matters.
 
 **Required Props**:
 - To all: `minHeight` (default 240px), `className`, `panelClassName`, `align` ("center"|"left")
@@ -152,7 +158,7 @@ return (
 #### useLibrary
 **Purpose**: Manage multi-tab library state (artists/albums/tracks/videos) with filters, sorting, pagination  
 **Returns**: Artists, albums, stats, filter state, sort state, load functions  
-**Key Feature**: Persists sort preference to localStorage
+**Key Features**: Persists sort preference to localStorage; propagates monitored/downloaded/locked list filters to tab-specific fetches
 
 **Example**:
 ```typescript

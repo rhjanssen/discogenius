@@ -118,7 +118,7 @@ function createActivityFixture() {
         type: 'ImportDownload',
         status: 'running',
         description: 'Album: Around the World by Daft Punk',
-        startTime: now,
+        startTime: now - 60_000,
         payload: { type: 'album', reason: 'upgrade', resolved: { title: 'Around the World', artist: 'Daft Punk' } },
       },
       {
@@ -126,14 +126,14 @@ function createActivityFixture() {
         type: 'RefreshArtist',
         status: 'processing',
         description: 'Daft Punk',
-        startTime: now,
+        startTime: now - 5_000,
       },
       {
         id: 3,
         type: 'MissingAlbumSearch',
         status: 'running',
         description: 'Daft Punk',
-        startTime: now,
+        startTime: now - 30_000,
       },
       {
         id: 6,
@@ -331,6 +331,474 @@ function createFailedAlbumQueueFixture() {
   };
 }
 
+function createPendingPriorityQueueFixture() {
+  const nowIso = new Date().toISOString();
+  return {
+    status: {
+      activity: {
+        pending: 2,
+        processing: 0,
+        history: 0,
+      },
+      taskQueueStats: [
+        { type: 'DownloadAlbum', status: 'pending', count: 2 },
+      ],
+      commandStats: {
+        downloads: { pending: 2, processing: 0, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 802,
+          url: 'https://tidal.com/album/album-802',
+          tidalId: 'album-802',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Discovery',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-802',
+          album_title: 'Discovery',
+        },
+        {
+          id: 803,
+          url: 'https://tidal.com/album/album-803',
+          tidalId: 'album-803',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Homework',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-803',
+          album_title: 'Homework',
+        },
+      ],
+      total: 3,
+      hasMore: false,
+    },
+  };
+}
+
+function createPendingOnlyQueueFixture() {
+  const nowIso = new Date().toISOString();
+  return {
+    status: {
+      activity: {
+        pending: 1,
+        processing: 0,
+        history: 0,
+      },
+      taskQueueStats: [
+        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+      ],
+      commandStats: {
+        downloads: { pending: 1, processing: 0, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 901,
+          url: 'https://tidal.com/album/album-901',
+          tidalId: 'album-901',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Discovery',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-901',
+          album_title: 'Discovery',
+        },
+      ],
+      total: 1,
+      hasMore: false,
+    },
+  };
+}
+
+function createMixedLiveQueueFixture() {
+  const nowIso = new Date().toISOString();
+  const now = Date.now();
+
+  return {
+    status: {
+      activity: {
+        pending: 2,
+        processing: 1,
+        history: 1,
+      },
+      taskQueueStats: [
+        { type: 'DownloadAlbum', status: 'processing', count: 1 },
+        { type: 'DownloadAlbum', status: 'pending', count: 2 },
+      ],
+      commandStats: {
+        downloads: { pending: 2, processing: 1, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 1001,
+          url: 'https://tidal.com/album/album-1001',
+          tidalId: 'album-1001',
+          type: 'album',
+          status: 'downloading',
+          progress: 48,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'From A Bakermat Point Of View',
+          artist: 'Bakermat',
+          cover: null,
+          album_id: 'album-1001',
+          album_title: 'From A Bakermat Point Of View',
+          currentFileNum: 5,
+          totalFiles: 10,
+          currentTrack: 'Bakermat - Another Man',
+          trackProgress: 48,
+          trackStatus: 'downloading',
+          state: 'downloading',
+          tracks: [
+            { title: 'Bakermat - One Day', trackNum: 1, status: 'completed' },
+            { title: 'Bakermat - Baianá', trackNum: 2, status: 'completed' },
+            { title: 'Bakermat - Learn to Lose', trackNum: 3, status: 'completed' },
+            { title: 'Bakermat - Trouble', trackNum: 4, status: 'completed' },
+            { title: 'Bakermat - Another Man', trackNum: 5, status: 'downloading' },
+            { title: 'Bakermat - Dreamreacher', trackNum: 6, status: 'queued' },
+            { title: 'Bakermat - Games Continued', trackNum: 7, status: 'queued' },
+          ],
+        },
+        {
+          id: 1002,
+          url: 'https://tidal.com/album/album-1002',
+          tidalId: 'album-1002',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Discovery',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-1002',
+          album_title: 'Discovery',
+        },
+        {
+          id: 1003,
+          url: 'https://tidal.com/album/album-1003',
+          tidalId: 'album-1003',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Homework',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-1003',
+          album_title: 'Homework',
+        },
+      ],
+      total: 3,
+      hasMore: false,
+    },
+    historyItems: [
+      {
+        id: 190,
+        type: 'DownloadAlbum',
+        status: 'completed',
+        startTime: now - 60_000,
+        endTime: now - 30_000,
+        payload: {
+          type: 'album',
+          title: 'Around the World',
+          artist: 'Daft Punk',
+        },
+      },
+    ],
+  };
+}
+
+function createBackendOrderedMixedQueueFixture() {
+  const nowIso = new Date().toISOString();
+
+  return {
+    status: {
+      activity: {
+        pending: 1,
+        processing: 1,
+        history: 0,
+      },
+      taskQueueStats: [
+        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+        { type: 'ImportDownload', status: 'processing', count: 1 },
+        { type: 'DownloadAlbum', status: 'processing', count: 1 },
+      ],
+      commandStats: {
+        downloads: { pending: 1, processing: 2, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 1201,
+          url: 'https://tidal.com/album/album-1201',
+          tidalId: 'album-1201',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Alpha pending',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1201',
+          album_title: 'Alpha pending',
+          queuePosition: 1,
+        },
+        {
+          id: 1202,
+          url: 'https://tidal.com/album/album-1202',
+          tidalId: 'album-1202',
+          type: 'album',
+          status: 'processing',
+          stage: 'import',
+          state: 'importing',
+          progress: 100,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'Bravo importing',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1202',
+          album_title: 'Bravo importing',
+          queuePosition: 2,
+        },
+        {
+          id: 1203,
+          url: 'https://tidal.com/album/album-1203',
+          tidalId: 'album-1203',
+          type: 'album',
+          status: 'downloading',
+          stage: 'download',
+          state: 'downloading',
+          progress: 26,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'Charlie downloading',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1203',
+          album_title: 'Charlie downloading',
+          queuePosition: 3,
+        },
+      ],
+      total: 3,
+      hasMore: false,
+    },
+  };
+}
+
+function createImportTransitionQueueFixture() {
+  const nowIso = new Date().toISOString();
+
+  return {
+    status: {
+      activity: {
+        pending: 1,
+        processing: 2,
+        history: 0,
+      },
+      taskQueueStats: [
+        { type: 'DownloadAlbum', status: 'processing', count: 2 },
+        { type: 'DownloadAlbum', status: 'pending', count: 1 },
+      ],
+      commandStats: {
+        downloads: { pending: 1, processing: 2, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 1301,
+          url: 'https://tidal.com/album/album-1301',
+          tidalId: 'album-1301',
+          type: 'album',
+          status: 'downloading',
+          stage: 'download',
+          state: 'downloading',
+          progress: 51,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'Anchor download',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1301',
+          album_title: 'Anchor download',
+          queuePosition: 1,
+        },
+        {
+          id: 1302,
+          url: 'https://tidal.com/album/album-1302',
+          tidalId: 'album-1302',
+          type: 'album',
+          status: 'downloading',
+          stage: 'download',
+          state: 'downloading',
+          progress: 98,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'Import stays second',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1302',
+          album_title: 'Import stays second',
+          queuePosition: 2,
+        },
+        {
+          id: 1303,
+          url: 'https://tidal.com/album/album-1303',
+          tidalId: 'album-1303',
+          type: 'album',
+          status: 'pending',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Next download',
+          artist: 'Queue Order',
+          cover: null,
+          album_id: 'album-1303',
+          album_title: 'Next download',
+          queuePosition: 3,
+        },
+      ],
+      total: 3,
+      hasMore: false,
+    },
+  };
+}
+
+function createImportSubitemFixture() {
+  const nowIso = new Date().toISOString();
+
+  return {
+    status: {
+      activity: {
+        pending: 1,
+        processing: 1,
+        history: 0,
+      },
+      taskQueueStats: [
+        { type: 'ImportDownload', status: 'processing', count: 1 },
+        { type: 'DownloadTrack', status: 'pending', count: 1 },
+      ],
+      commandStats: {
+        downloads: { pending: 1, processing: 1, failed: 0 },
+      },
+    },
+    queue: {
+      items: [
+        {
+          id: 1401,
+          url: 'https://tidal.com/track/track-1401',
+          tidalId: 'track-1401',
+          type: 'track',
+          status: 'processing',
+          stage: 'import',
+          state: 'importing',
+          progress: 100,
+          created_at: nowIso,
+          updated_at: nowIso,
+          started_at: nowIso,
+          title: 'Import track alpha',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-1400',
+          album_title: 'Discovery import group',
+          queuePosition: 1,
+        },
+        {
+          id: 1402,
+          url: 'https://tidal.com/track/track-1402',
+          tidalId: 'track-1402',
+          type: 'track',
+          status: 'pending',
+          stage: 'download',
+          progress: 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          title: 'Queued track beta',
+          artist: 'Daft Punk',
+          cover: null,
+          album_id: 'album-1400',
+          album_title: 'Discovery import group',
+          queuePosition: 2,
+        },
+      ],
+      total: 2,
+      hasMore: false,
+    },
+  };
+}
+
+function createQueueHistoryNavigationFixture() {
+  const now = Date.now();
+
+  return {
+    stats: {
+      artists: { total: 1, monitored: 1, downloaded: 0 },
+      albums: { total: 1, monitored: 1, downloaded: 0 },
+      tracks: { total: 1, monitored: 1, downloaded: 0 },
+      videos: { total: 0, monitored: 0, downloaded: 0 },
+    },
+    status: {
+      activity: {
+        pending: 0,
+        processing: 0,
+        history: 1,
+      },
+      taskQueueStats: [],
+      commandStats: {},
+    },
+    activityItems: [
+      {
+        id: 290,
+        type: 'DownloadTrack',
+        status: 'completed',
+        startTime: now - 90_000,
+        endTime: now - 45_000,
+        payload: {
+          type: 'track',
+          tidalId: 'track-history-1',
+          title: 'Digital Love',
+          artist: 'Daft Punk',
+          albumId: 'album-history-1',
+          albumTitle: 'Discovery',
+          resolved: {
+            title: 'Digital Love',
+            artist: 'Daft Punk',
+            albumId: 'album-history-1',
+          },
+        },
+      },
+    ],
+  };
+}
+
 async function stubDashboardApisWithActivity(page: Page) {
   const fixture = createActivityFixture();
   await stubDashboardApis(page, fixture);
@@ -413,51 +881,29 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Import Album').first()).toBeVisible();
     await expect(page.getByText('Download Album').first()).toBeVisible();
     await expect(page.getByText('Around the World by Daft Punk').first()).toBeVisible();
+
+    const runningSectionText = await page.locator('section[aria-label="Running"]').innerText();
+    expect(runningSectionText.indexOf('Import Album')).toBeLessThan(runningSectionText.indexOf('Refresh Artist'));
+    expect(runningSectionText.indexOf('Refresh Artist')).toBeLessThan(runningSectionText.indexOf('Missing Album Search'));
   });
 
-  test('activity tab surfaces library audit context for imported and renamed files', async ({ page }) => {
+  test('activity tab uses the current running, queued, and recent sections', async ({ page }) => {
     await stubDashboardApisWithActivity(page);
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
 
-    const eventsSection = page.locator('section[aria-label="Events"]');
-    await expect(eventsSection).toContainText('File imported');
-    await expect(eventsSection).toContainText('Imported to …/Daft Punk/Around the World.flac');
-    await expect(eventsSection).toContainText('File renamed');
-    await expect(eventsSection).toContainText('…/Daft Punk/Old Name.flac → …/Daft Punk/Around the World.flac');
-    await expect(eventsSection).toContainText('FLAC');
-  });
-
-  test('tasks tab keeps only scheduled and queue sections while activity stays event-driven', async ({ page }) => {
-    await stubDashboardApisWithActivity(page);
-    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
-
-    await page.getByRole('tab', { name: /^Tasks$/i }).click();
-    const queueSection = page.locator('section[aria-label="Queue"]');
-
-    await expect(queueSection).toContainText('Import Album');
-    await expect(queueSection).toContainText('Download Album');
-
-    const taskSectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
-      elements.map((element) => element.getAttribute('aria-label')),
-    );
-
-    expect(taskSectionLabels).toEqual(['Scheduled tasks', 'Queue']);
-
-    await page.getByRole('tab', { name: /^Activity$/i }).click();
-
-    const eventsSection = page.locator('section[aria-label="Events"]');
-    await expect(eventsSection).toContainText('Download Album');
-    await expect(eventsSection).toContainText('File imported');
+    await expect(page.locator('section[aria-label="Running"]')).toContainText('Import Album');
+    await expect(page.locator('section[aria-label="Queued"]')).toContainText('Download Album');
+    await expect(page.locator('section[aria-label="Recent"]')).toContainText('Download Album');
+    await expect(page.locator('section[aria-label="Library audit"]')).toHaveCount(0);
 
     const sectionLabels = await page.locator('section[aria-label]').evaluateAll((elements) =>
       elements.map((element) => element.getAttribute('aria-label')),
     );
 
-    expect(sectionLabels).toEqual(['Events']);
+    expect(sectionLabels).toEqual(['Running', 'Queued', 'Recent']);
   });
 
   test('failed import activity shows context, error, and retry action', async ({ page }) => {
@@ -667,5 +1113,369 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Bakermat - Queen of NY')).toBeVisible();
     await page.waitForTimeout(200);
     await expect(page.getByText('Queued')).toHaveCount(0);
+  });
+
+  test('queue tab inserts an active album from live started and progress events before queue refresh completes', async ({ page }) => {
+    await page.addInitScript(({ targetUrlPart, mockEvents }) => {
+      class MockEventSource {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSED = 2;
+        readyState = MockEventSource.OPEN;
+        url: string;
+        withCredentials = false;
+        onerror: ((event: Event) => void) | null = null;
+        private listeners: Record<string, Array<(event: MessageEvent) => void>> = {};
+
+        constructor(url: string) {
+          this.url = url;
+
+          if (url.includes(targetUrlPart)) {
+            setTimeout(() => {
+              for (const item of mockEvents) {
+                const callbacks = this.listeners[item.type] || [];
+                const event = { data: JSON.stringify(item.data) } as MessageEvent;
+                callbacks.forEach((callback) => callback(event));
+              }
+            }, 0);
+          }
+        }
+
+        addEventListener(type: string, callback: (event: MessageEvent) => void) {
+          this.listeners[type] = this.listeners[type] || [];
+          this.listeners[type].push(callback);
+        }
+
+        removeEventListener(type: string, callback: (event: MessageEvent) => void) {
+          this.listeners[type] = (this.listeners[type] || []).filter((listener) => listener !== callback);
+        }
+
+        close() {
+          this.readyState = MockEventSource.CLOSED;
+        }
+      }
+
+      // @ts-expect-error test-only EventSource mock
+      window.EventSource = MockEventSource;
+    }, {
+      targetUrlPart: '/api/queue/progress-stream',
+      mockEvents: [
+        { type: 'status', data: { isPaused: false, stats: [] } },
+        {
+          type: 'started',
+          data: {
+            jobId: 901,
+            tidalId: 'album-901',
+            type: 'album',
+            title: 'Discovery',
+            artist: 'Daft Punk',
+            cover: null,
+          },
+        },
+        {
+          type: 'progress',
+          data: {
+            jobId: 901,
+            tidalId: 'album-901',
+            type: 'album',
+            title: 'Discovery',
+            artist: 'Daft Punk',
+            progress: 21,
+            currentFileNum: 3,
+            totalFiles: 14,
+            state: 'downloading',
+          },
+        },
+      ],
+    });
+
+    await stubDashboardApis(page, {
+      queue: {
+        items: [],
+        total: 0,
+        hasMore: false,
+      },
+    });
+
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    await expect(page.getByText('Discovery')).toBeVisible();
+    await expect(page.getByText('Daft Punk')).toBeVisible();
+    await expect(page.getByText('Album', { exact: true })).toBeVisible();
+    await expect(page.getByText('No items in queue')).toHaveCount(0);
+  });
+
+  test('queue tab keeps pending-only queue groups visible', async ({ page }) => {
+    await stubDashboardApis(page, createPendingOnlyQueueFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    await expect(page.getByText('Discovery')).toBeVisible();
+    await expect(page.getByText('Daft Punk')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Move Discovery up/i })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /Select Discovery/i })).toBeVisible();
+  });
+
+  test('queue history row navigates to the album page when track history includes album context', async ({ page }) => {
+    await stubDashboardApis(page, createQueueHistoryNavigationFixture());
+
+    await page.route('**/api/albums/album-history-1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'album-history-1',
+          title: 'Discovery',
+          artist_id: null,
+          artist_name: 'Daft Punk',
+          cover_id: null,
+          vibrant_color: null,
+          is_monitored: true,
+          monitor_locked: false,
+          num_tracks: 0,
+          last_scanned: null,
+          quality: null,
+        }),
+      });
+    });
+
+    await page.route('**/api/albums/album-history-1/tracks', async (route) => {
+      await route.fulfill({ json: [] });
+    });
+
+    await page.route('**/api/albums/album-history-1/versions', async (route) => {
+      await route.fulfill({ json: [] });
+    });
+
+    await page.route('**/api/albums/album-history-1/similar', async (route) => {
+      await route.fulfill({ json: [] });
+    });
+
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    const historyRow = page.locator('section[aria-label="Queue history"]').getByRole('link', { name: /Open Digital Love/i });
+
+    await expect(historyRow).toBeVisible();
+    await historyRow.click();
+
+    await expect(page).toHaveURL(`${baseURL}/album/album-history-1`);
+    await expect(page.getByText('No tracks found')).toBeVisible();
+  });
+
+  test('queue tab shows inline pending reorder controls without a dialog', async ({ page }) => {
+    await stubDashboardApis(page, createPendingPriorityQueueFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    await expect(page.getByRole('button', { name: 'Edit priorities' })).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await expect(page.getByText('Discovery')).toBeVisible();
+    await expect(page.getByText('Homework')).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /Select Discovery/i })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /Select Homework/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Move Discovery up/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Move Discovery down/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /More queue actions for Discovery/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Move Homework up/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Move Homework down/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Select all visible/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Remove selected/i })).toBeVisible();
+  });
+
+  test('queue tab keeps active and pending live queue groups visible in a stable list', async ({ page }) => {
+    await stubDashboardApis(page, createMixedLiveQueueFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    const liveQueue = page.locator('section[aria-label="Live queue"]');
+    const liveGroups = liveQueue.locator('[data-queue-group-id]');
+
+    await expect(liveQueue.getByText('From A Bakermat Point Of View')).toBeVisible();
+    await expect(liveQueue.getByText('Discovery')).toBeVisible();
+    await expect(liveQueue.getByText('Homework')).toBeVisible();
+    await expect(liveQueue.getByText('Bakermat - Dreamreacher')).toBeVisible();
+    await expect(liveQueue.getByRole('button', { name: /Move Discovery up/i })).toBeVisible();
+    await expect(liveQueue.getByRole('button', { name: /Move Homework down/i })).toBeVisible();
+
+    const boxesBeforeHover = await liveGroups.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      }),
+    );
+
+    expect(boxesBeforeHover).toHaveLength(3);
+    expect(boxesBeforeHover.every((box) => box.height > 0)).toBeTruthy();
+    for (let index = 1; index < boxesBeforeHover.length; index += 1) {
+      expect(boxesBeforeHover[index].top).toBeGreaterThanOrEqual(boxesBeforeHover[index - 1].bottom - 1);
+    }
+
+    await liveGroups.nth(0).hover();
+
+    const boxesAfterHover = await liveGroups.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      }),
+    );
+
+    expect(boxesAfterHover).toHaveLength(3);
+    expect(boxesAfterHover.every((box) => box.height > 0)).toBeTruthy();
+    for (let index = 1; index < boxesAfterHover.length; index += 1) {
+      expect(boxesAfterHover[index].top).toBeGreaterThanOrEqual(boxesAfterHover[index - 1].bottom - 1);
+    }
+  });
+
+  test('queue tab keeps pending rows visible in backend order under mixed pending, importing, and downloading states', async ({ page }) => {
+    await stubDashboardApis(page, createBackendOrderedMixedQueueFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    const liveQueue = page.locator('section[aria-label="Live queue"]');
+    const liveGroups = liveQueue.locator('[data-queue-group-id]');
+
+    await expect(liveGroups).toHaveCount(3);
+    await expect(liveGroups.nth(0)).toContainText('Alpha pending');
+    await expect(liveGroups.nth(1)).toContainText('Bravo importing');
+    await expect(liveGroups.nth(2)).toContainText('Charlie downloading');
+    await expect(liveQueue.getByRole('button', { name: /Move Alpha pending up/i })).toBeVisible();
+    await expect(liveQueue.getByRole('checkbox', { name: /Select Alpha pending/i })).toBeVisible();
+    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+  });
+
+  test('queue tab keeps an importing row in place when a later item starts downloading', async ({ page }) => {
+    await page.addInitScript(({ targetUrlPart, mockEvents }) => {
+      class MockEventSource {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSED = 2;
+        readyState = MockEventSource.OPEN;
+        url: string;
+        withCredentials = false;
+        onerror: ((event: Event) => void) | null = null;
+        private listeners: Record<string, Array<(event: MessageEvent) => void>> = {};
+
+        constructor(url: string) {
+          this.url = url;
+
+          if (url.includes(targetUrlPart)) {
+            for (const item of mockEvents) {
+              setTimeout(() => {
+                const callbacks = this.listeners[item.type] || [];
+                const event = { data: JSON.stringify(item.data) } as MessageEvent;
+                callbacks.forEach((callback) => callback(event));
+              }, item.delayMs);
+            }
+          }
+        }
+
+        addEventListener(type: string, callback: (event: MessageEvent) => void) {
+          this.listeners[type] = this.listeners[type] || [];
+          this.listeners[type].push(callback);
+        }
+
+        removeEventListener(type: string, callback: (event: MessageEvent) => void) {
+          this.listeners[type] = (this.listeners[type] || []).filter((listener) => listener !== callback);
+        }
+
+        close() {
+          this.readyState = MockEventSource.CLOSED;
+        }
+      }
+
+      // @ts-expect-error test-only EventSource mock
+      window.EventSource = MockEventSource;
+    }, {
+      targetUrlPart: '/api/queue/progress-stream',
+      mockEvents: [
+        { delayMs: 0, type: 'status', data: { isPaused: false, stats: [] } },
+        {
+          delayMs: 150,
+          type: 'progress',
+          data: {
+            jobId: 1302,
+            tidalId: 'album-1302',
+            type: 'album',
+            title: 'Import stays second',
+            artist: 'Queue Order',
+            progress: 100,
+            state: 'importing',
+            statusMessage: 'Waiting to import',
+          },
+        },
+        {
+          delayMs: 200,
+          type: 'started',
+          data: {
+            jobId: 1303,
+            tidalId: 'album-1303',
+            type: 'album',
+            title: 'Next download',
+            artist: 'Queue Order',
+            cover: null,
+          },
+        },
+        {
+          delayMs: 240,
+          type: 'progress',
+          data: {
+            jobId: 1303,
+            tidalId: 'album-1303',
+            type: 'album',
+            title: 'Next download',
+            artist: 'Queue Order',
+            progress: 14,
+            state: 'downloading',
+          },
+        },
+      ],
+    });
+
+    await stubDashboardApis(page, createImportTransitionQueueFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    const liveGroups = page.locator('section[aria-label="Live queue"] [data-queue-group-id]');
+
+    await expect(liveGroups).toHaveCount(3);
+    await expect(liveGroups.nth(0)).toContainText('Anchor download');
+    await expect(liveGroups.nth(1)).toContainText('Import stays second');
+    await expect(liveGroups.nth(2)).toContainText('Next download');
+
+    await page.waitForTimeout(500);
+
+    await expect(liveGroups.nth(0)).toContainText('Anchor download');
+    await expect(liveGroups.nth(1)).toContainText('Import stays second');
+    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(2)).toContainText('Next download');
+  });
+
+  test('queue tab renders import status text cleanly inside subitems instead of clipping it into the status gutter', async ({ page }) => {
+    await stubDashboardApis(page, createImportSubitemFixture());
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
+
+    const importTrackRow = page
+      .locator('section[aria-label="Live queue"] [data-queue-subitem-row="true"]')
+      .filter({ hasText: 'Import track alpha' })
+      .first();
+    const importStatus = importTrackRow.locator('[data-queue-track-status="importing"]');
+
+    await expect(importTrackRow).toBeVisible();
+    await expect(importStatus).toBeVisible();
+
+    const [rowBox, statusBox] = await Promise.all([
+      importTrackRow.boundingBox(),
+      importStatus.boundingBox(),
+    ]);
+
+    expect(rowBox).not.toBeNull();
+    expect(statusBox).not.toBeNull();
+    expect(statusBox!.width).toBeGreaterThan(20);
+    expect(statusBox!.x).toBeGreaterThan(rowBox!.x + 24);
+    expect(statusBox!.x + statusBox!.width).toBeLessThan(rowBox!.x + rowBox!.width - 16);
   });
 });

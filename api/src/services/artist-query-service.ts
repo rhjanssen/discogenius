@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { getArtist, getArtistBio, getArtistPage } from "./tidal.js";
+import { getArtist, getArtistPage } from "./tidal.js";
 import {
     getAlbumDownloadStats,
     getAlbumDownloadStatsMap,
@@ -9,8 +9,10 @@ import {
 } from "./download-state.js";
 import { hydrateTrackRows } from "./track-query-service.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
-import { loadArtistWithEffectiveMonitor } from "./artist-monitoring.js";
+import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
+import { ScanLevel, getArtistScanLevel, scanArtistDeep, scanArtistShallow } from "./scanner.js";
+import { shouldRefreshArtistLidarrStyle } from "./refresh-policy.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -67,6 +69,78 @@ function buildArtistCountMap(
     `).all(...artistIds) as ArtistCountRow[];
 
     return new Map(rows.map((row) => [String(row.artist_id), row]));
+}
+
+function hasArtistIdentityGap(artist: ArtistMonitorRow): boolean {
+    const artistName = String(artist.name ?? "").trim();
+    return !artistName || artistName === "Unknown Artist" || artist.artist_types == null;
+}
+
+function shouldHydrateArtistShallow(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
+    if (!artist) {
+        return true;
+    }
+
+    if (hasArtistIdentityGap(artist) || artist.bio_text == null) {
+        return true;
+    }
+
+    return shouldRefreshArtistLidarrStyle({
+        artistId,
+        lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
+    });
+}
+
+function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
+    if (!artist) {
+        return true;
+    }
+
+    if (shouldHydrateArtistShallow(artist, artistId)) {
+        return true;
+    }
+
+    if (getArtistScanLevel(artistId) < ScanLevel.DEEP) {
+        return true;
+    }
+
+    return shouldRefreshArtistLidarrStyle({
+        artistId,
+        lastScanned: typeof artist.last_scanned === "string" ? artist.last_scanned : null,
+    });
+}
+
+async function ensureArtistHydrated(
+    artistId: string,
+    target: "shallow" | "page",
+): Promise<ArtistMonitorRow | undefined> {
+    const existing = loadArtistWithEffectiveMonitor(artistId);
+    const shouldHydrate = target === "page"
+        ? shouldHydrateArtistPage(existing, artistId)
+        : shouldHydrateArtistShallow(existing, artistId);
+
+    if (!shouldHydrate) {
+        return existing;
+    }
+
+    try {
+        if (target === "page") {
+            await scanArtistDeep(artistId, {
+                forceUpdate: Boolean(existing),
+                seedSimilarArtists: false,
+            });
+        } else {
+            await scanArtistShallow(artistId, {
+                forceUpdate: Boolean(existing),
+                includeSimilarArtists: false,
+                seedSimilarArtists: false,
+            });
+        }
+    } catch {
+        return existing;
+    }
+
+    return loadArtistWithEffectiveMonitor(artistId);
 }
 
 export class ArtistQueryService {
@@ -162,35 +236,25 @@ export class ArtistQueryService {
     }
 
     static async getArtistById(artistId: string): Promise<ArtistContract | null> {
-        const artist = loadArtistWithEffectiveMonitor(artistId);
+        const artist = await ensureArtistHydrated(artistId, "shallow");
 
         if (!artist) {
-            try {
-                const tidalArtist = await getArtist(artistId);
-                return {
-                    id: String(tidalArtist.tidal_id),
-                    name: tidalArtist.name,
-                    picture: tidalArtist.picture,
-                    is_monitored: false,
-                    is_downloaded: false,
-                    last_scanned: null,
-                    album_count: 0,
-                    downloaded: 0,
-                };
-            } catch {
-                return null;
-            }
+            return null;
         }
 
         const artistDownloadStats = getArtistDownloadStats(artistId);
+        const biography = artist.bio_text == null
+            ? (artist.biography == null ? null : String(artist.biography))
+            : String(artist.bio_text);
+
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
             picture: artist.picture == null ? null : String(artist.picture),
             cover_image_url: artist.cover_image_url == null ? null : String(artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
-            bio: artist.bio == null ? null : String(artist.bio),
-            biography: artist.biography == null ? null : String(artist.biography),
+            bio: biography,
+            biography,
             album_count: Number(artist.album_count ?? 0),
             downloaded: artistDownloadStats.downloadedPercent,
             is_monitored: Boolean(artist.effective_monitor),
@@ -280,38 +344,15 @@ export class ArtistQueryService {
     }
 
     static async getArtistDetail(id: string): Promise<any | null> {
-        let artist = db.prepare(`
+        const hydratedArtist = await ensureArtistHydrated(id, "shallow");
+
+        if (!hydratedArtist) {
+            return null;
+        }
+
+        const artist = db.prepare(`
       SELECT * FROM artists WHERE id = ?
     `).get(id) as any;
-
-        if (!artist) {
-            try {
-                const tidalArtist = await getArtist(id);
-                const bio = await getArtistBio(id).catch(() => null);
-                const bioText = bio?.text ?? null;
-                const bioSource = bio?.source ?? null;
-                const bioUpdated = bio?.lastUpdated ?? null;
-
-                db.prepare(`
-          INSERT OR IGNORE INTO artists (
-            id, name, picture, popularity, bio_text, bio_source, bio_last_updated, monitor
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-        `).run(
-                    tidalArtist.tidal_id,
-                    tidalArtist.name,
-                    tidalArtist.picture,
-                    tidalArtist.popularity,
-                    bioText,
-                    bioSource,
-                    bioUpdated,
-                );
-
-                artist = db.prepare(`SELECT * FROM artists WHERE id = ?`).get(id) as any;
-            } catch {
-                return null;
-            }
-        }
 
         if (!artist) {
             return null;
@@ -370,12 +411,12 @@ export class ArtistQueryService {
     }
 
     static async getArtistPageDb(artistId: string): Promise<any | null> {
-        const artist = loadArtistWithEffectiveMonitor(artistId);
+        const artist = await ensureArtistHydrated(artistId, "page");
 
         if (!artist) {
             return null;
         }
-        const needsEnrichment = !artist.name || artist.name === "Unknown Artist" || artist.artist_types == null;
+        const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
         const albums = db.prepare(`
       SELECT 

@@ -13,6 +13,29 @@ import {
 
 const router = Router();
 
+const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
+  if (Array.isArray(value)) {
+    return parseOptionalQueryBoolean(value[0]);
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (TRUE_QUERY_VALUES.has(normalized)) {
+    return true;
+  }
+  if (FALSE_QUERY_VALUES.has(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
 function refreshVideoState(videoId: string) {
   if (!videoId) return;
   updateArtistDownloadStatusFromMedia(videoId);
@@ -33,16 +56,9 @@ router.get("/", (req, res) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
     const search = req.query.search as string;
-    const monitoredParam = req.query.monitored as string | undefined;
-    const monitoredFilter =
-      monitoredParam === undefined
-        ? undefined
-        : ["1", "true", "yes", "on"].includes(monitoredParam.toLowerCase());
-    const downloadedParam = req.query.downloaded as string | undefined;
-    const downloadedFilter =
-      downloadedParam === undefined
-        ? undefined
-        : ["1", "true", "yes", "on"].includes(downloadedParam.toLowerCase());
+    const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
+    const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
+    const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
 
     const sortParam = (req.query.sort as string | undefined) || 'releaseDate';
     const dirParam = (req.query.dir as string | undefined) || 'desc';
@@ -53,6 +69,7 @@ router.get("/", (req, res) => {
       search,
       monitored: monitoredFilter,
       downloaded: downloadedFilter,
+      locked: lockedFilter,
       sort: sortParam,
       dir: sortDir,
     }));

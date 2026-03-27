@@ -42,7 +42,7 @@ docker compose up -d
 
 For the production-style path, use the example compose file as the starting point and pin the image tag you want to run.
 
-Before first run, create your local environment file from the template and adjust values (including `PORT`) as needed:
+Before first run, create your local environment file from the template and adjust values (change `PORT` if you want Docker to listen on a non-default port) as needed:
 
 ```bash
 cp .env.example .env
@@ -62,12 +62,14 @@ Before stable release, prefer pinning a specific alpha tag in the compose file i
 
 ## 4. Verify Deployment
 
-1.  Check the logs to ensure the service started correctly:
-    ```bash
-    docker logs -f discogenius
-    ```
-2.  Open your browser to `http://localhost:3737` (default), or use your configured `PORT` value from `.env`.
-3.  Verify the UI changes or backend functionality you were testing.
+1. Check the logs to ensure the service started correctly:
+
+   ```bash
+   docker logs -f discogenius
+   ```
+
+2. Open your browser to `http://localhost:3737` by default, or use whatever `PORT` you configured in `.env`.
+3. Verify the UI changes or backend functionality you were testing.
 
 > [!IMPORTANT]
 > **UI Testing:** Since the frontend is built into the Docker image, changes to `app/src/` require a full rebuild (Step 2). Hot reloading is available in local dev via `yarn dev`.

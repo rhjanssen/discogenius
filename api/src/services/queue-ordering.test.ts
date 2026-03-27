@@ -92,3 +92,71 @@ test("reorderPendingJobs rejects invalid reorder sets", () => {
         /requires exactly one anchor/i,
     );
 });
+
+test("import jobs inherit durable queue order and live queue listing stays stable across transitions", () => {
+    const first = queuePendingDownload("track", "21");
+    const second = queuePendingDownload("track", "22");
+    const third = queuePendingDownload("track", "23");
+
+    queueModule.TaskQueueService.markProcessing(first);
+    queueModule.TaskQueueService.markProcessing(second);
+
+    const originalJob = queueModule.TaskQueueService.getById(first);
+    const secondJob = queueModule.TaskQueueService.getById(second);
+    const thirdJob = queueModule.TaskQueueService.getById(third);
+    assert.ok(originalJob);
+    assert.ok(secondJob);
+    assert.ok(thirdJob);
+
+    const importJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.ImportDownload,
+        {
+            type: "track",
+            tidalId: "21",
+            path: "E:/tmp/downloads/job_21",
+            originalJobId: first,
+        },
+        "21",
+        100,
+        0,
+        originalJob?.queue_order,
+    );
+
+    queueModule.TaskQueueService.complete(first);
+
+    const importJob = queueModule.TaskQueueService.getById(importJobId);
+    assert.ok(importJob);
+    assert.equal(importJob?.queue_order, originalJob?.queue_order);
+
+    const liveJobs = queueModule.TaskQueueService.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_OR_IMPORT_JOB_TYPES,
+        ["pending", "processing"],
+        10,
+        0,
+        { orderBy: "queue_order" },
+    );
+
+    assert.deepEqual(
+        liveJobs.map((job) => ({ id: job.id, type: job.type, status: job.status, queueOrder: job.queue_order })),
+        [
+            {
+                id: importJobId,
+                type: queueModule.JobTypes.ImportDownload,
+                status: "pending",
+                queueOrder: originalJob?.queue_order,
+            },
+            {
+                id: second,
+                type: queueModule.JobTypes.DownloadTrack,
+                status: "processing",
+                queueOrder: secondJob?.queue_order,
+            },
+            {
+                id: third,
+                type: queueModule.JobTypes.DownloadTrack,
+                status: "pending",
+                queueOrder: thirdJob?.queue_order,
+            },
+        ],
+    );
+});

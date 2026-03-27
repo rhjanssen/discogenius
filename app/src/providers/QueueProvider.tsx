@@ -12,6 +12,15 @@ export type { DownloadProgress, QueueItem };
 
 const QUEUE_FALLBACK_REFRESH_MS = 45_000;
 
+type LiveQueueEvent = Partial<DownloadProgress> & {
+  jobId?: number;
+  type?: QueueItem['type'];
+  tidalId?: string;
+  title?: string;
+  artist?: string;
+  cover?: string | null;
+};
+
 interface QueueContextType {
   queue: QueueItem[];
   loading: boolean;
@@ -112,6 +121,143 @@ const mergeRecoveredProgress = (existing: DownloadProgress | undefined, recovere
   };
 };
 
+const isImportState = (state?: DownloadProgress['state']): boolean =>
+  state === 'importPending' || state === 'importing' || state === 'importFailed';
+
+const isActiveLiveState = (state?: DownloadProgress['state']): boolean =>
+  state === 'downloading' || state === 'importing';
+
+const buildLiveProgressSnapshot = (data: LiveQueueEvent, existing?: DownloadProgress): DownloadProgress | null => {
+  const jobId = Number(data.jobId ?? existing?.jobId);
+  const type = data.type ?? existing?.type;
+
+  if (!Number.isFinite(jobId) || jobId <= 0 || !type) {
+    return null;
+  }
+
+  return {
+    jobId,
+    tidalId: data.tidalId ?? existing?.tidalId ?? '',
+    type,
+    title: data.title ?? existing?.title,
+    artist: data.artist ?? existing?.artist,
+    cover: data.cover ?? existing?.cover ?? null,
+    progress: data.progress ?? existing?.progress ?? 0,
+    currentFileNum: data.currentFileNum ?? existing?.currentFileNum,
+    totalFiles: data.totalFiles ?? existing?.totalFiles,
+    currentTrack: data.currentTrack ?? existing?.currentTrack,
+    trackProgress: data.trackProgress ?? existing?.trackProgress,
+    trackStatus: data.trackStatus ?? existing?.trackStatus,
+    statusMessage: data.statusMessage ?? existing?.statusMessage,
+    speed: data.speed ?? existing?.speed,
+    eta: data.eta ?? existing?.eta,
+    size: data.size ?? existing?.size,
+    sizeleft: data.sizeleft ?? existing?.sizeleft,
+    state: data.state ?? existing?.state ?? 'downloading',
+    tracks: data.tracks ?? existing?.tracks,
+  };
+};
+
+const buildLiveQueueItem = (data: LiveQueueEvent, existing?: QueueItem): QueueItem | null => {
+  const jobId = Number(data.jobId ?? existing?.id);
+  const type = data.type ?? existing?.type;
+
+  if (!Number.isFinite(jobId) || jobId <= 0 || !type) {
+    return null;
+  }
+
+  const timestamp = new Date().toISOString();
+  const stage: QueueItem['stage'] = isImportState(data.state) ? 'import' : (existing?.stage ?? 'download');
+
+  let status: QueueItem['status'];
+  if (data.state === 'failed' || data.state === 'importFailed') {
+    status = 'failed';
+  } else if (data.state === 'completed') {
+    status = 'completed';
+  } else if (data.state === 'importPending') {
+    status = 'pending';
+  } else if (stage === 'import') {
+    status = 'processing';
+  } else {
+    status = 'downloading';
+  }
+
+  return {
+    id: jobId,
+    url: existing?.url ?? null,
+    type,
+    queuePosition: existing?.queuePosition,
+    quality: existing?.quality ?? null,
+    stage,
+    tidalId: data.tidalId ?? existing?.tidalId ?? null,
+    path: existing?.path ?? null,
+    status,
+    progress: data.progress ?? existing?.progress ?? 0,
+    error: status === 'failed' ? (data.statusMessage ?? existing?.error ?? null) : existing?.error ?? null,
+    created_at: existing?.created_at ?? timestamp,
+    updated_at: timestamp,
+    started_at: existing?.started_at ?? timestamp,
+    completed_at: status === 'completed' ? (existing?.completed_at ?? timestamp) : (existing?.completed_at ?? null),
+    title: data.title ?? existing?.title,
+    artist: data.artist ?? existing?.artist,
+    cover: data.cover ?? existing?.cover ?? null,
+    album_id: existing?.album_id ?? (type === 'album' ? (data.tidalId ?? null) : null),
+    album_title: existing?.album_title ?? (type === 'album' ? (data.title ?? null) : null),
+    currentFileNum: data.currentFileNum ?? existing?.currentFileNum,
+    totalFiles: data.totalFiles ?? existing?.totalFiles,
+    currentTrack: data.currentTrack ?? existing?.currentTrack,
+    trackProgress: data.trackProgress ?? existing?.trackProgress,
+    trackStatus: data.trackStatus ?? existing?.trackStatus,
+    statusMessage: data.statusMessage ?? existing?.statusMessage,
+    speed: data.speed ?? existing?.speed,
+    eta: data.eta ?? existing?.eta,
+    size: data.size ?? existing?.size,
+    sizeleft: data.sizeleft ?? existing?.sizeleft,
+    state: data.state ?? existing?.state ?? (stage === 'import' ? 'importing' : 'downloading'),
+    tracks: data.tracks ?? existing?.tracks,
+  };
+};
+
+const mergeMissingLiveQueueItems = (
+  serverItems: QueueItem[],
+  existingQueue: QueueItem[],
+  liveProgress: Map<number, DownloadProgress>,
+): QueueItem[] => {
+  if (serverItems.length === 0 && existingQueue.length === 0 && liveProgress.size === 0) {
+    return serverItems;
+  }
+
+  const serverIds = new Set(serverItems.map((item) => item.id));
+  const optimisticItems = new Map<number, QueueItem>();
+
+  for (const item of existingQueue) {
+    if (serverIds.has(item.id)) {
+      continue;
+    }
+
+    const live = liveProgress.get(item.id);
+    const hasActiveLiveEvidence = live && isActiveLiveState(live.state);
+    if (!hasActiveLiveEvidence) {
+      continue;
+    }
+
+    optimisticItems.set(item.id, live ? (buildLiveQueueItem(live, item) ?? item) : item);
+  }
+
+  for (const [jobId, live] of liveProgress.entries()) {
+    if (serverIds.has(jobId) || optimisticItems.has(jobId) || !isActiveLiveState(live.state)) {
+      continue;
+    }
+
+    const optimisticItem = buildLiveQueueItem(live);
+    if (optimisticItem) {
+      optimisticItems.set(jobId, optimisticItem);
+    }
+  }
+
+  return [...optimisticItems.values(), ...serverItems];
+};
+
 // eslint-disable-next-line react-refresh/only-export-components
 export const QueueContext = createContext<QueueContextType | undefined>(undefined);
 
@@ -125,6 +271,8 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const eventSourceRef = useRef<EventSource | null>(null);
   const isUnmountedRef = useRef(false);
   const isManualCloseRef = useRef(false);
+  const queueRef = useRef<QueueItem[]>([]);
+  const progressRef = useRef<Map<number, DownloadProgress>>(new Map());
   const sseReconnectAttempts = useRef(0);
   const queueBackoffRef = useRef(10000);
   const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,6 +287,14 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
+
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   const fetchQueue = useCallback(async () => {
     try {
@@ -157,9 +313,12 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         offset += pageItems.length;
       }
 
-      setQueue(serverItems);
+      const mergedQueueItems = mergeMissingLiveQueueItems(serverItems, queueRef.current, progressRef.current);
+      queueRef.current = mergedQueueItems;
+      setQueue(mergedQueueItems);
       setProgress(prev => {
         const next = new Map<number, DownloadProgress>();
+        const serverItemIds = new Set(mergedQueueItems.map((item) => item.id));
 
         for (const item of serverItems) {
           const recovered = buildProgressFromQueueItem(item);
@@ -175,6 +334,17 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
 
+        for (const [jobId, existing] of prev.entries()) {
+          if (serverItemIds.has(jobId) || next.has(jobId)) {
+            continue;
+          }
+
+          if (isActiveLiveState(existing.state)) {
+            next.set(jobId, existing);
+          }
+        }
+
+        progressRef.current = next;
         return next;
       });
 
@@ -198,6 +368,38 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       void fetchQueue();
     }, delay);
   }, [fetchQueue]);
+
+  const ensureLiveQueueItem = useCallback((data: LiveQueueEvent) => {
+    const jobId = Number(data.jobId);
+    if (!Number.isFinite(jobId) || jobId <= 0) {
+      scheduleQueueRefresh(0);
+      return false;
+    }
+
+    const existing = queueRef.current.find((item) => item.id === jobId);
+    const nextItem = buildLiveQueueItem(data, existing);
+    if (!nextItem) {
+      scheduleQueueRefresh(0);
+      return false;
+    }
+
+    const wasKnown = Boolean(existing);
+    setQueue(prev => {
+      const existingIndex = prev.findIndex((item) => item.id === jobId);
+      const next = existingIndex === -1
+        ? [nextItem, ...prev]
+        : prev.map((item, index) => index === existingIndex ? { ...item, ...nextItem } : item);
+
+      queueRef.current = next;
+      return next;
+    });
+
+    if (!wasKnown) {
+      scheduleQueueRefresh(0);
+    }
+
+    return !wasKnown;
+  }, [scheduleQueueRefresh]);
 
   // Use the global event stream to know when to refetch the full queue
   // or apply optimistic updates when jobs are added/removed.
@@ -241,46 +443,69 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           sseReconnectAttempts.current = 0;
           switch (event) {
             case 'progress':
+              {
+                const insertedUnknownItem = ensureLiveQueueItem(data);
+                if (insertedUnknownItem) {
+                  dispatchActivityRefresh();
+                }
+              }
               setProgress(prev => {
                 const next = new Map(prev);
-                next.set(data.jobId, data);
+                const snapshot = buildLiveProgressSnapshot(data, prev.get(data.jobId));
+                if (snapshot) {
+                  next.set(data.jobId, snapshot);
+                }
+                progressRef.current = next;
                 return next;
               });
               // Update queue item progress
-              setQueue(prev => prev.map(item =>
-                item.id === data.jobId
-                  ? {
-                    ...item,
-                    progress: data.progress,
-                    status: 'downloading' as const,
-                    currentFileNum: data.currentFileNum,
-                    totalFiles: data.totalFiles,
-                    currentTrack: data.currentTrack,
-                    trackProgress: data.trackProgress,
-                    trackStatus: data.trackStatus,
-                    statusMessage: data.statusMessage,
-                    state: data.state,
-                    speed: data.speed,
-                    eta: data.eta,
-                    size: data.size,
-                    sizeleft: data.sizeleft,
-                    tracks: data.tracks,
-                  }
-                  : item
-              ));
+              setQueue(prev => {
+                const next = prev.map(item => {
+                  if (item.id !== data.jobId) return item;
+                  const updated = buildLiveQueueItem(data, item);
+                  return updated ? { ...updated, updated_at: new Date().toISOString() } : item;
+                });
+                queueRef.current = next;
+                return next;
+              });
               break;
             case 'started':
-              setQueue(prev => prev.map(item =>
-                item.id === data.jobId
-                  ? { ...item, status: 'downloading' as const, progress: 0 }
-                  : item
-              ));
+              ensureLiveQueueItem({ ...data, progress: 0, state: 'downloading' });
+              setProgress(prev => {
+                const next = new Map(prev);
+                const snapshot = buildLiveProgressSnapshot({ ...data, progress: 0, state: 'downloading' }, prev.get(data.jobId));
+                if (snapshot) {
+                  next.set(data.jobId, snapshot);
+                }
+                progressRef.current = next;
+                return next;
+              });
+              setQueue(prev => {
+                const next = prev.map(item =>
+                  item.id === data.jobId
+                    ? {
+                      ...item,
+                      status: 'downloading' as const,
+                      stage: 'download' as const,
+                      progress: 0,
+                      state: 'downloading' as const,
+                      title: data.title ?? item.title,
+                      artist: data.artist ?? item.artist,
+                      cover: data.cover ?? item.cover,
+                      updated_at: new Date().toISOString(),
+                    }
+                    : item,
+                );
+                queueRef.current = next;
+                return next;
+              });
               dispatchActivityRefresh();
               break;
             case 'completed':
               setProgress(prev => {
                 const next = new Map(prev);
                 next.delete(data.jobId);
+                progressRef.current = next;
                 return next;
               });
               setQueue(prev => prev.filter(item => item.id !== data.jobId));
@@ -307,6 +532,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     }))
                     : data.tracks,
                 });
+                progressRef.current = next;
                 return next;
               });
               setQueue(prev => prev.map(item =>
@@ -426,6 +652,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setProgress(prev => {
         const next = new Map(prev);
         next.delete(id);
+        progressRef.current = next;
         return next;
       });
       toastRef.current({
@@ -450,6 +677,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setProgress(prev => {
         const next = new Map(prev);
         next.delete(id);
+        progressRef.current = next;
         return next;
       });
       setQueue(prev => prev.filter(item => item.id !== id));
@@ -490,6 +718,7 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             next.delete(id);
           }
         }
+        progressRef.current = next;
         return next;
       });
       toastRef.current({

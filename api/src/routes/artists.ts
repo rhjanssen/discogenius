@@ -22,20 +22,37 @@ import {
 
 const router = Router();
 
+const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
+  if (Array.isArray(value)) {
+    return parseOptionalQueryBoolean(value[0]);
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (TRUE_QUERY_VALUES.has(normalized)) {
+    return true;
+  }
+  if (FALSE_QUERY_VALUES.has(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
 const parseOptionalMonitored = (value: unknown): boolean => {
   return value === undefined ? true : Boolean(value);
 };
 
 router.get("/", async (req, res) => {
   try {
-    const monitoredParam = req.query.monitored as string | undefined;
-    const monitoredFilter = monitoredParam === undefined
-      ? undefined
-      : ["1", "true", "yes", "on"].includes(monitoredParam.toLowerCase());
-    const includeDownloadStatsParam = req.query.includeDownloadStats as string | undefined;
-    const includeDownloadStats = includeDownloadStatsParam === undefined
-      ? true
-      : ["1", "true", "yes", "on"].includes(includeDownloadStatsParam.toLowerCase());
+    const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
+    const includeDownloadStats = parseOptionalQueryBoolean(req.query.includeDownloadStats) ?? true;
 
     res.json(ArtistQueryService.listArtists({
       limit: parseInt(req.query.limit as string) || 50,

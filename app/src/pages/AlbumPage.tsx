@@ -10,6 +10,8 @@ import {
   Spinner,
   Avatar,
   Tooltip,
+  Skeleton,
+  SkeletonItem,
   makeStyles,
   tokens,
   mergeClasses,
@@ -28,7 +30,7 @@ import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
-import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
+import { TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -483,8 +485,28 @@ const AlbumPage = () => {
   /** Open track info dialog */
   if (loading) {
     return (
-      <div className={styles.stateShell}>
-        <MediaDetailSkeleton variant="album" />
+      <div className={styles.container}>
+        <Skeleton animation="wave">
+          <div className={styles.header}>
+            <div className={styles.headerContent}>
+              <SkeletonItem className={styles.coverArt} />
+              <div className={styles.albumInfo}>
+                <SkeletonItem style={{ height: '28px', width: 'min(300px, 70%)', borderRadius: tokens.borderRadiusMedium }} />
+                <SkeletonItem style={{ height: '16px', width: 'min(180px, 40%)', borderRadius: tokens.borderRadiusMedium }} />
+                <div className={styles.metadata}>
+                  <SkeletonItem style={{ height: '14px', width: '60px', borderRadius: tokens.borderRadiusMedium }} />
+                  <SkeletonItem style={{ height: '14px', width: '40px', borderRadius: tokens.borderRadiusMedium }} />
+                  <SkeletonItem style={{ height: '14px', width: '70px', borderRadius: tokens.borderRadiusMedium }} />
+                </div>
+                <div className={styles.actions}>
+                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
+                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </Skeleton>
+        <TrackListSkeleton rows={8} />
       </div>
     );
   }

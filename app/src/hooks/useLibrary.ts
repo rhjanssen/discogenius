@@ -48,6 +48,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   const [artistMonitoredFilter, setArtistMonitoredFilter] = useState<boolean | undefined>(undefined);
   const [albumMonitoredFilter, setAlbumMonitoredFilter] = useState<boolean | undefined>(undefined);
   const [albumDownloadedFilter, setAlbumDownloadedFilter] = useState<boolean | undefined>(undefined);
+  const [albumLockedFilter, setAlbumLockedFilter] = useState<boolean | undefined>(undefined);
   const [albumLibraryFilter, setAlbumLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>('all');
   // Initialize sort from persisted settings or use defaults
   const [listSort, setListSort] = useState<{ sort: SortKey; dir: SortDir }>(() => {
@@ -119,6 +120,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
         offset: page * 50,
         monitored: albumMonitoredFilter,
         downloaded: albumDownloadedFilter,
+        locked: albumLockedFilter,
         library_filter: albumLibraryFilter === 'video' ? 'all' : albumLibraryFilter,
         sort: listSort.sort,
         dir: listSort.dir,
@@ -143,7 +145,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
         variant: "destructive",
       });
     }
-  }, [toast, albumMonitoredFilter, albumDownloadedFilter, albumLibraryFilter, listSort, searchQuery]);
+  }, [toast, albumMonitoredFilter, albumDownloadedFilter, albumLockedFilter, albumLibraryFilter, listSort, searchQuery]);
 
   const fetchLibrary = useCallback(async (
     monitored: boolean | undefined = artistMonitoredFilter,
@@ -328,6 +330,10 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     setAlbumDownloadedFilter(downloaded);
   }, []);
 
+  const setAlbumLockFilter = useCallback((locked: boolean | undefined) => {
+    setAlbumLockedFilter(locked);
+  }, []);
+
   const setAlbumQualityFilter = useCallback((filter: 'all' | 'stereo' | 'atmos' | 'video') => {
     setAlbumLibraryFilter(filter);
   }, []);
@@ -371,7 +377,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     }
 
     fetchLibraryRef.current(undefined, { tab: 'albums', refreshStats: false });
-  }, [activeTab, albumMonitoredFilter, albumDownloadedFilter, albumLibraryFilter, listSort, searchQuery]);
+  }, [activeTab, albumMonitoredFilter, albumDownloadedFilter, albumLockedFilter, albumLibraryFilter, listSort, searchQuery]);
 
   // Listen for library update events
   useEffect(() => {
@@ -430,6 +436,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     setArtistFilter,
     setAlbumFilter,
     setAlbumDownloadFilter,
+    setAlbumLockFilter,
     setAlbumQualityFilter,
     setSortOptions,
     setSearchQuery,

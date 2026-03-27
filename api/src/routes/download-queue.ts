@@ -1,6 +1,6 @@
 import express, { Request, Response, Router } from 'express';
 import { db } from '../database.js';
-import { compareJobsByExecutionOrder, DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
+import { DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
 import { downloadProcessor } from '../services/download-processor.js';
 import { downloadEvents } from '../services/download-events.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -369,8 +369,8 @@ router.get('/queue', async (req: Request, res: Response) => {
             ['pending'],
             TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_JOB_TYPES, ['pending']),
             0,
-            { orderBy: 'execution' },
-        ).sort(compareJobsByExecutionOrder);
+            { orderBy: 'queue_order' },
+        );
 
         const queuePositionById = new Map<number, number>(
             pendingDownloadJobs.map((job, index) => [job.id, index + 1]),
@@ -384,30 +384,8 @@ router.get('/queue', async (req: Request, res: Response) => {
             ['pending', 'processing'],
             5000,
             0,
-            { orderBy: 'execution' },
-        ).sort((left, right) => {
-            const leftProcessing = left.status === 'processing';
-            const rightProcessing = right.status === 'processing';
-            if (leftProcessing !== rightProcessing) {
-                return leftProcessing ? -1 : 1;
-            }
-
-            const leftImportPending = !leftProcessing && left.type === JobTypes.ImportDownload;
-            const rightImportPending = !rightProcessing && right.type === JobTypes.ImportDownload;
-            if (leftImportPending !== rightImportPending) {
-                return leftImportPending ? -1 : 1;
-            }
-
-            if (!leftProcessing && !rightProcessing) {
-                const leftQueuePosition = queuePositionById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-                const rightQueuePosition = queuePositionById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-                if (leftQueuePosition !== rightQueuePosition) {
-                    return leftQueuePosition - rightQueuePosition;
-                }
-            }
-
-            return compareJobsByExecutionOrder(left, right);
-        });
+            { orderBy: 'queue_order' },
+        );
 
         const total = jobs.length;
         const mapped = jobs

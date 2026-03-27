@@ -291,7 +291,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     taskName: JobTypes.RescanFolders,
     category: "monitoring",
     riskLevel: "medium",
-    visibleInSystemTasks: true,
+    visibleInSystemTasks: false,
     run: () => queueMonitoringCyclePass({ trigger: 1, includeRootScan: true }),
   },
   {
@@ -299,11 +299,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     kind: "scheduled",
     commandName: "Housekeeping",
     name: "Housekeeping",
-    description: "Clean stale runtime state and library housekeeping records.",
+    description: "Clean stale runtime state, repair library housekeeping records, and optimize the SQLite database.",
     taskName: JobTypes.Housekeeping,
     category: "maintenance",
     riskLevel: "medium",
-    visibleInSystemTasks: true,
+    visibleInSystemTasks: false,
     run: () => queueHousekeepingPass({ trigger: 1 }),
   },
   {
@@ -351,7 +351,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     taskName: JobTypes.CheckUpgrades,
     category: "downloads",
     riskLevel: "medium",
-    visibleInSystemTasks: false,
+    visibleInSystemTasks: true,
     run: () => queueCheckUpgradesPass({ trigger: 1 }),
   },
   {
@@ -423,7 +423,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     taskName: JobTypes.CompactDatabase,
     category: "maintenance",
     riskLevel: "high",
-    visibleInSystemTasks: true,
+    visibleInSystemTasks: false,
     run: () => queueCompactDatabase({ trigger: 1 }),
   },
   {
@@ -538,3 +538,5 @@ export function runSystemTaskById(id: string): number {
 export function runCommandByName(commandName: string): number {
   return findSystemTaskDefinitionByCommandName(commandName)?.run() ?? -1;
 }
+
+

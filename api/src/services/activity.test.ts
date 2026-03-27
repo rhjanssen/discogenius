@@ -146,6 +146,45 @@ test("activity page computes absolute pending queue positions without scanning t
     assert.equal(mixedPage.items[1]?.queuePosition, 3);
 });
 
+test("activity page prioritizes processing downloads ahead of newer pending downloads", () => {
+    const processingId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadVideo,
+        { tidalId: "video-processing", url: "https://listen.tidal.com/video/video-processing", type: "video" },
+        "video-processing",
+    );
+    queueModule.TaskQueueService.markProcessing(processingId);
+
+    const pendingOneId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadVideo,
+        { tidalId: "video-pending-1", url: "https://listen.tidal.com/video/video-pending-1", type: "video" },
+        "video-pending-1",
+    );
+    const pendingTwoId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadVideo,
+        { tidalId: "video-pending-2", url: "https://listen.tidal.com/video/video-pending-2", type: "video" },
+        "video-pending-2",
+    );
+
+    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, started_at = ?, updated_at = ? WHERE id = ?")
+        .run("2024-04-01 08:00:00", "2024-04-01 08:01:00", "2024-04-01 08:03:00", processingId);
+    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, updated_at = ? WHERE id = ?")
+        .run("2024-04-01 08:04:00", "2024-04-01 08:04:00", pendingOneId);
+    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, updated_at = ? WHERE id = ?")
+        .run("2024-04-01 08:05:00", "2024-04-01 08:05:00", pendingTwoId);
+
+    const page = commandHistoryModule.getActivityPage({
+        statuses: ["pending", "processing"],
+        categories: ["downloads"],
+        limit: 2,
+        offset: 0,
+    });
+
+    assert.equal(page.total, 3);
+    assert.deepEqual(page.items.map((item) => item.id), [processingId, pendingOneId]);
+    assert.equal(page.items[0]?.status, "running");
+    assert.equal(page.items[1]?.queuePosition, 1);
+});
+
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {
     const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "events-playlist" }, "events-playlist");
     const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});

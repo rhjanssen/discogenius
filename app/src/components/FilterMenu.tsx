@@ -132,10 +132,14 @@ const FilterMenu = ({
         if (statusFilters) {
             if (statusFilters.onlyMonitored) count++;
             if (statusFilters.onlyUnmonitored) count++;
-            if (statusFilters.onlyLocked) count++;
-            if (statusFilters.onlyUnlocked) count++;
-            if (statusFilters.onlyDownloaded) count++;
-            if (statusFilters.onlyNotDownloaded) count++;
+            if (showLockFilter) {
+                if (statusFilters.onlyLocked) count++;
+                if (statusFilters.onlyUnlocked) count++;
+            }
+            if (showDownloadFilter) {
+                if (statusFilters.onlyDownloaded) count++;
+                if (statusFilters.onlyNotDownloaded) count++;
+            }
         }
         return count;
     })();
@@ -294,3 +298,4 @@ const FilterMenu = ({
 };
 
 export default FilterMenu;
+

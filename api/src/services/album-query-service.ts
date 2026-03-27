@@ -1,7 +1,9 @@
 import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
-import { scanAlbumBasic } from "./scanner.js";
-import type { AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
+import { scanAlbumShallow } from "./scanner.js";
+import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
+import { shouldRefreshAlbumLidarrStyle } from "./refresh-policy.js";
+import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 
 const albumDownloadedPredicate = `
@@ -31,6 +33,7 @@ export interface AlbumListQuery {
     search?: string;
     monitored?: boolean;
     downloaded?: boolean;
+    locked?: boolean;
     libraryFilter?: string;
     sort?: string;
     dir?: string;
@@ -47,6 +50,65 @@ function normalizeAlbumRow(album: any, downloadedPercent: number, isDownloaded: 
     };
 }
 
+function queryAlbumRow(albumId: string): any | null {
+    return db.prepare(`
+      SELECT albums.*, artists.name as artist_name
+      FROM albums
+      LEFT JOIN artists ON albums.artist_id = artists.id
+      WHERE albums.id = ?
+    `).get(albumId) as any | null;
+}
+
+function shouldHydrateAlbumShallow(album: any | null): boolean {
+    if (!album) {
+        return true;
+    }
+
+    const albumTitle = String(album.title ?? "").trim();
+    if (!albumTitle || album.review_text == null) {
+        return true;
+    }
+
+    return shouldRefreshAlbumLidarrStyle({
+        albumReleaseDate: album.release_date ?? null,
+        lastScanned: album.last_scanned ?? null,
+    });
+}
+
+async function ensureAlbumHydrated(albumId: string): Promise<any | null> {
+    const existing = queryAlbumRow(albumId);
+    if (!shouldHydrateAlbumShallow(existing)) {
+        return existing;
+    }
+
+    try {
+        await scanAlbumShallow(albumId, {
+            forceUpdate: Boolean(existing),
+            includeSimilarAlbums: false,
+            seedSimilarAlbums: false,
+        });
+    } catch {
+        return existing;
+    }
+
+    return queryAlbumRow(albumId);
+}
+
+function getAlbumTrackRows(albumId: string): TrackRow[] {
+    return db.prepare(`
+      SELECT
+        m.*, 
+        a.title as album_title,
+        a.cover as album_cover,
+        ar.name as artist_name
+      FROM media m
+      LEFT JOIN albums a ON a.id = m.album_id
+      LEFT JOIN artists ar ON ar.id = m.artist_id
+      WHERE m.album_id = ? AND m.type != 'Music Video'
+      ORDER BY m.volume_number ASC, m.track_number ASC, m.id ASC
+    `).all(albumId) as TrackRow[];
+}
+
 export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
         const limit = input.limit;
@@ -54,6 +116,7 @@ export class AlbumQueryService {
         const search = input.search;
         const monitoredFilter = input.monitored;
         const downloadedFilter = input.downloaded;
+        const lockedFilter = input.locked;
         const libraryFilter = input.libraryFilter || "all";
         const sortParam = input.sort || "releaseDate";
         const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -87,6 +150,12 @@ export class AlbumQueryService {
 
         if (downloadedFilter !== undefined) {
             where.push(downloadedFilter ? albumDownloadedPredicate : `NOT (${albumDownloadedPredicate})`);
+        }
+
+        if (lockedFilter !== undefined) {
+            where.push(`COALESCE(albums.monitor_lock, 0) = ?`);
+            params.push(lockedFilter ? 1 : 0);
+            countParams.push(lockedFilter ? 1 : 0);
         }
 
         if (libraryFilter === "atmos") {
@@ -136,19 +205,7 @@ export class AlbumQueryService {
     }
 
     static async getAlbum(albumId: string): Promise<any | null> {
-        const queryAlbum = () => db.prepare(`
-      SELECT albums.*, artists.name as artist_name
-      FROM albums
-      LEFT JOIN artists ON albums.artist_id = artists.id
-      WHERE albums.id = ?
-    `).get(albumId) as any;
-
-        let album = queryAlbum();
-
-        if (!album) {
-            await scanAlbumBasic(albumId);
-            album = queryAlbum();
-        }
+        const album = await ensureAlbumHydrated(albumId);
 
         if (!album) {
             return null;
@@ -156,6 +213,29 @@ export class AlbumQueryService {
 
         const downloadStats = getAlbumDownloadStats(albumId);
         return normalizeAlbumRow(album, downloadStats.downloadedPercent, downloadStats.isDownloaded);
+    }
+
+    static async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
+        const album = queryAlbumRow(albumId);
+        if (!album) {
+            return [];
+        }
+
+        let tracks = getAlbumTrackRows(albumId);
+        if (tracks.length === 0) {
+            try {
+                await scanAlbumShallow(albumId, {
+                    includeSimilarAlbums: false,
+                    seedSimilarAlbums: false,
+                });
+            } catch {
+                return [];
+            }
+
+            tracks = getAlbumTrackRows(albumId);
+        }
+
+        return hydrateTrackRows(tracks);
     }
 
     static getSimilarAlbums(albumId: string): SimilarAlbumContract[] {

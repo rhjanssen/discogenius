@@ -1075,9 +1075,11 @@ export function getActivityPage(query: ActivityQuery = {}): ActivityPage {
         };
     }
 
-    const orderBy = statuses.length === 1 && statuses[0] === "pending"
-        ? "execution"
-        : "created_desc";
+    const orderBy = statuses.every((status) => status === "pending" || status === "processing")
+        ? "live_activity"
+        : statuses.length === 1 && statuses[0] === "pending"
+            ? "execution"
+            : "created_desc";
     const total = TaskQueueService.countJobsByTypesAndStatuses(filteredTypes, statuses);
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
         orderBy,

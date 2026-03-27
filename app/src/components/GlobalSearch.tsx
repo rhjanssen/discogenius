@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     SearchBox,
@@ -22,7 +22,8 @@ import {
     ArrowDownload24Regular,
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
-import { CardGridSkeleton, ListRowsSkeleton } from "@/components/ui/LoadingSkeletons";
+import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
+import { MediaCard } from "@/components/cards/MediaCard";
 import { getTidalImage } from "@/utils/tidalImages";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { api } from "@/services/api";
@@ -118,12 +119,7 @@ const useStyles = makeStyles({
         },
     },
     resultsContainer: {
-        position: "absolute",
-        top: `calc(100% + ${tokens.spacingVerticalXXS})`,
-        left: 0,
-        right: 0,
-        width: "100%",
-        maxHeight: "calc(100vh - 120px)",
+        position: "fixed",
         backgroundColor: tokens.colorNeutralBackground2,
         boxShadow: tokens.shadow16,
         borderRadius: tokens.borderRadiusLarge,
@@ -131,9 +127,6 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        "@media (max-width: 639px)": {
-            maxHeight: "calc(100dvh - 164px)",
-        },
     },
     tabContainer: {
         padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalNone}`,
@@ -215,81 +208,6 @@ const useStyles = makeStyles({
         justifyContent: "center",
         gap: tokens.spacingHorizontalXS,
         marginTop: tokens.spacingVerticalXS,
-    },
-    albumCard: {
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-end",
-        minHeight: "228px",
-        paddingTop: tokens.spacingVerticalNone,
-        paddingBottom: tokens.spacingVerticalNone,
-        paddingLeft: tokens.spacingHorizontalNone,
-        paddingRight: tokens.spacingHorizontalNone,
-        overflow: "hidden",
-        cursor: "pointer",
-        backgroundColor: "color-mix(in srgb, rgba(255,255,255,0.08) 68%, transparent)",
-        borderRadius: tokens.borderRadiusLarge,
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-        boxShadow: tokens.shadow4,
-        transitionDuration: tokens.durationFast,
-        transitionTimingFunction: tokens.curveEasyEase,
-        transitionProperty: "transform, box-shadow, border-color, background-color",
-        "&:hover": {
-            transform: "translateY(-2px)",
-            boxShadow: tokens.shadow16,
-            borderTopColor: tokens.colorNeutralStroke1Hover,
-            borderRightColor: tokens.colorNeutralStroke1Hover,
-            borderBottomColor: tokens.colorNeutralStroke1Hover,
-            borderLeftColor: tokens.colorNeutralStroke1Hover,
-            backgroundColor: "color-mix(in srgb, rgba(255,255,255,0.12) 72%, transparent)",
-        },
-    },
-    albumCardPreview: {
-        position: "absolute",
-        inset: 0,
-        backgroundColor: tokens.colorNeutralBackground3,
-    },
-    albumCardImage: {
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        display: "block",
-        transform: "scale(1.01)",
-    },
-    albumCardScrim: {
-        position: "absolute",
-        inset: 0,
-        backgroundImage: "linear-gradient(180deg, rgba(5, 7, 11, 0.08) 0%, rgba(5, 7, 11, 0.26) 46%, rgba(5, 7, 11, 0.94) 100%)",
-    },
-    albumCardContent: {
-        position: "relative",
-        zIndex: 1,
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXXS,
-        justifyContent: "flex-end",
-        minHeight: "88px",
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM}`,
-    },
-    albumCardTitle: {
-        fontWeight: tokens.fontWeightSemibold,
-        color: tokens.colorNeutralForeground1,
-        lineHeight: tokens.lineHeightBase200,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "normal",
-        display: "-webkit-box",
-        WebkitBoxOrient: "vertical",
-        WebkitLineClamp: 2,
-    },
-    albumCardSubtitle: {
-        color: tokens.colorNeutralForeground2,
-        fontSize: tokens.fontSizeBase200,
-        lineHeight: tokens.lineHeightBase200,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
     },
     // List Items
     listContainer: {
@@ -389,11 +307,6 @@ const useStyles = makeStyles({
     sectionSpacer: {
         marginTop: tokens.spacingVerticalL,
     },
-    helperText: {
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        color: tokens.colorNeutralForeground2,
-    },
 });
 
 type TabType = 'top' | 'artists' | 'albums' | 'tracks' | 'videos';
@@ -410,7 +323,7 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
     const { searchResults, isSearching, search, addItem, removeItem } = useSearch();
     const [processingItems, setProcessingItems] = useState<Set<string>>(new Set());
     const [downloadingItems, setDownloadingItems] = useState<Set<string>>(new Set());
-    const [resultsMaxHeight, setResultsMaxHeight] = useState<number | null>(null);
+    const [resultsLayout, setResultsLayout] = useState<{ maxHeight: number; top: number; left: number; width: number } | null>(null);
     const searchRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const { toast } = useToast();
@@ -438,13 +351,13 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!isOpen) {
-            setResultsMaxHeight(null);
+            setResultsLayout(null);
             return;
         }
 
-        const updateResultsMaxHeight = () => {
+        const updateResultsLayout = () => {
             const host = searchRef.current;
             if (!host) {
                 return;
@@ -453,34 +366,79 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
             const rect = host.getBoundingClientRect();
             const visualViewport = window.visualViewport;
             const viewportHeight = visualViewport?.height ?? window.innerHeight;
+            const viewportWidth = visualViewport?.width ?? window.innerWidth;
             const viewportTop = visualViewport?.offsetTop ?? 0;
-            const availableBottom = viewportTop + viewportHeight;
-            const isMobileViewport = window.matchMedia("(max-width: 639px)").matches;
-            const bottomChromeOffset = isMobileViewport ? 84 : 12;
-            const nextMaxHeight = Math.max(160, Math.floor(availableBottom - rect.bottom - bottomChromeOffset));
-            setResultsMaxHeight(nextMaxHeight);
+            const viewportLeft = visualViewport?.offsetLeft ?? 0;
+            const viewportBottom = viewportTop + viewportHeight;
+            const viewportRight = viewportLeft + viewportWidth;
+            const viewportPadding = 8;
+            const top = Math.max(
+                viewportTop + viewportPadding,
+                Math.floor(rect.bottom + 4)
+            );
+            const maxHeight = Math.max(160, Math.floor(viewportBottom - top - viewportPadding));
+            const maxWidth = Math.max(180, Math.floor(viewportWidth - viewportPadding * 2));
+            const width = Math.max(180, Math.min(Math.ceil(rect.width), maxWidth));
+            const unclampedLeft = Math.floor(rect.left);
+            const left = Math.min(
+                Math.max(viewportLeft + viewportPadding, unclampedLeft),
+                Math.max(viewportLeft + viewportPadding, viewportRight - viewportPadding - width)
+            );
+
+            setResultsLayout(prev => {
+                if (
+                    prev &&
+                    prev.maxHeight === maxHeight &&
+                    prev.top === top &&
+                    prev.left === left &&
+                    prev.width === width
+                ) {
+                    return prev;
+                }
+
+                return {
+                    maxHeight,
+                    top,
+                    left,
+                    width,
+                };
+            });
         };
 
-        updateResultsMaxHeight();
+        updateResultsLayout();
 
         const visualViewport = window.visualViewport;
-        window.addEventListener("resize", updateResultsMaxHeight);
-        window.addEventListener("scroll", updateResultsMaxHeight, true);
-        visualViewport?.addEventListener("resize", updateResultsMaxHeight);
-        visualViewport?.addEventListener("scroll", updateResultsMaxHeight);
+        window.addEventListener("resize", updateResultsLayout);
+        window.addEventListener("scroll", updateResultsLayout, true);
+        visualViewport?.addEventListener("resize", updateResultsLayout);
+        visualViewport?.addEventListener("scroll", updateResultsLayout);
 
         return () => {
-            window.removeEventListener("resize", updateResultsMaxHeight);
-            window.removeEventListener("scroll", updateResultsMaxHeight, true);
-            visualViewport?.removeEventListener("resize", updateResultsMaxHeight);
-            visualViewport?.removeEventListener("scroll", updateResultsMaxHeight);
+            window.removeEventListener("resize", updateResultsLayout);
+            window.removeEventListener("scroll", updateResultsLayout, true);
+            visualViewport?.removeEventListener("resize", updateResultsLayout);
+            visualViewport?.removeEventListener("scroll", updateResultsLayout);
         };
     }, [isOpen]);
 
-    const handleItemClick = (item: SearchResultItem) => {
-        if (item.type === 'artist') navigate(`/artist/${item.tidalId}`);
-        else if (item.type === 'album') navigate(`/album/${item.tidalId}`);
-        else if (item.type === 'video') navigate(`/video/${item.tidalId}`);
+    const handleItemClick = async (item: SearchResultItem) => {
+        if (item.type === 'artist') {
+            navigate(`/artist/${item.tidalId}`);
+        } else if (item.type === 'album') {
+            navigate(`/album/${item.tidalId}`);
+        } else if (item.type === 'video') {
+            navigate(`/video/${item.tidalId}`);
+        } else if (item.type === 'track') {
+            try {
+                const track = await api.getTrack(item.tidalId) as { album_id?: string | number | null; albumId?: string | number | null; album?: { id?: string | number | null } | null };
+                const albumId = String(track?.album_id ?? track?.albumId ?? track?.album?.id ?? '').trim();
+                if (albumId) {
+                    navigate(`/album/${albumId}`);
+                }
+            } catch {
+                // If track detail lookup fails, keep the current page instead of navigating incorrectly.
+            }
+        }
         setIsOpen(false);
     };
 
@@ -549,25 +507,14 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         if (type === "album") {
             const subtitle = item.subtitle?.split('·').slice(1).join(' · ').trim() || item.subtitle;
             return (
-                <Card
+                <MediaCard
                     key={item.tidalId}
-                    className={styles.albumCard}
                     onClick={() => handleItemClick(item)}
-                >
-                    <div className={styles.albumCardPreview}>
-                        <img
-                            src={getTidalImage(item.imageId, 'album', 'medium')}
-                            alt={item.name}
-                            className={styles.albumCardImage}
-                            loading="lazy"
-                        />
-                        <div className={styles.albumCardScrim} />
-                    </div>
-                    <div className={styles.albumCardContent}>
-                        <Text className={styles.albumCardTitle}>{item.name}</Text>
-                        <Text className={styles.albumCardSubtitle}>{subtitle}</Text>
-                    </div>
-                </Card>
+                    imageUrl={getTidalImage(item.imageId, 'album', 'medium') || null}
+                    alt={item.name}
+                    title={item.name}
+                    subtitle={subtitle}
+                />
             );
         }
 
@@ -695,7 +642,7 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
                 case 'videos':
                 case 'top':
                 default:
-                    return <ListRowsSkeleton rows={5} />;
+                    return <TrackListSkeleton rows={5} />;
             }
         };
 
@@ -798,7 +745,14 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
                     className={styles.resultsContainer}
                     role="dialog"
                     aria-label="Search results"
-                    style={resultsMaxHeight != null ? { maxHeight: `${resultsMaxHeight}px` } : undefined}
+                    style={resultsLayout
+                        ? {
+                            top: `${resultsLayout.top}px`,
+                            left: `${resultsLayout.left}px`,
+                            width: `${resultsLayout.width}px`,
+                            maxHeight: `${resultsLayout.maxHeight}px`,
+                        }
+                        : { visibility: "hidden" }}
                 >
                     <div className={styles.tabContainer}>
                         <TabList
@@ -822,4 +776,9 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
 };
 
 export default GlobalSearch;
+
+
+
+
+
 

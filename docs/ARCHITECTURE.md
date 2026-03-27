@@ -64,6 +64,13 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - `/api/queue` remains authoritative for live queue state and ordering/reorder behavior.
 - Queue reorder requests must target pending download jobs and provide exactly one anchor (`beforeJobId` xor `afterJobId`) with deduplicated positive integer `jobIds`.
 
+#### Library List Filter Contract
+
+- `/api/albums`, `/api/tracks`, and `/api/videos` support optional list filters: `monitored`, `downloaded`, and `locked`.
+- These list endpoints keep existing pagination/search/sort behavior (`limit`, `offset`, `search`, `sort`, `dir`), and media-specific filters such as `library_filter` where applicable.
+- Boolean query parsing is normalized to accept `1|true|yes|on` and `0|false|no|off` (case-insensitive). Unknown boolean values are treated as not provided.
+- `locked` maps to `monitor_lock` filtering and is used to keep intentional user lock state queryable across library list surfaces.
+
 #### Control-Plane Optimization Increment (Completed)
 
 - Shared filter/pagination parsing is centralized in [api/src/utils/activity-query.ts](api/src/utils/activity-query.ts) and reused by [api/src/routes/activity.ts](api/src/routes/activity.ts) and [api/src/routes/queue.ts](api/src/routes/queue.ts) to keep validation behavior consistent across tasks/activity surfaces.
@@ -73,7 +80,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 #### Command Summary
 
-**Manual operator commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive, and exposed in Settings through `/api/system-task`):
+**Manual operator commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive, and available through `/api/system-task`, with selected run-now actions surfaced in the Dashboard overflow menu):
 
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
@@ -190,8 +197,8 @@ Operationally important semantics:
 - Monitoring scheduler drives periodic metadata/root-scan passes.
 - Follow-up pass chaining is explicit (refresh -> root scan -> curation -> download missing).
 - System task state is exposed through scheduled task snapshots, the `/api/system-task` operator surface, and status APIs.
-- `/api/system-task` now projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, run-now capability, and editable schedule settings where supported.
-- The frontend Settings page consumes that typed surface as the canonical operator control plane instead of hard-coding command lists.
+- `/api/system-task` now projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, and run-now capability, plus schedule metadata for supported scheduled tasks.
+- The current frontend uses that surface selectively: operator run-now actions are available from the Dashboard overflow menu, while Settings remains focused on monitoring configuration and the monitoring-cycle trigger rather than a general system-task control plane.
 
 ### Frontend Activity/Status Refresh Semantics
 
@@ -203,6 +210,7 @@ Operationally important semantics:
 - Activity tab empty/error behavior is explicit:
   - "Activity unavailable" when initial load fails and there is no cached activity.
   - "No recent activity" when load succeeds but there are no activity or audit entries.
+- Loading UX now prefers layout-matching skeletons (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `MediaDetailSkeleton`) for library/detail/suspense fallbacks where preserving layout structure improves perceived responsiveness.
 
 ## Auth and Connection Model
 

@@ -1,13 +1,6 @@
-import React from "react";
 import { Skeleton, SkeletonItem, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 
-type MediaDetailSkeletonVariant = "artist" | "album" | "video";
 type ThumbnailAspect = "square" | "video" | "videoWide";
-
-interface MediaDetailSkeletonProps {
-  variant: MediaDetailSkeletonVariant;
-  className?: string;
-}
 
 interface CardGridSkeletonProps {
   cards?: number;
@@ -31,11 +24,6 @@ interface DataGridSkeletonProps {
   className?: string;
 }
 
-interface ListRowsSkeletonProps {
-  rows?: number;
-  className?: string;
-}
-
 interface TrackTableSkeletonProps {
   rows?: number;
   showCover?: boolean;
@@ -44,126 +32,7 @@ interface TrackTableSkeletonProps {
   className?: string;
 }
 
-interface SettingsPageSkeletonProps {
-  sections?: number;
-  rowsPerSection?: number;
-  className?: string;
-}
-
 const useStyles = makeStyles({
-  mediaRoot: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalL,
-    width: "100%",
-    paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
-  },
-  detailHeader: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalL,
-    padding: tokens.spacingHorizontalL,
-    borderRadius: tokens.borderRadiusXLarge,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    "@media (min-width: 768px)": {
-      flexDirection: "row",
-      alignItems: "flex-end",
-      gap: tokens.spacingHorizontalXXL,
-      padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalXXL,
-      paddingBottom: tokens.spacingVerticalXL,
-    },
-  },
-  detailHeaderCompactDesktop: {
-    "@media (min-width: 768px)": {
-      paddingBottom: tokens.spacingVerticalS,
-    },
-  },
-  detailArtworkCircle: {
-    width: "120px",
-    height: "120px",
-    borderRadius: tokens.borderRadiusCircular,
-    flexShrink: 0,
-    "@media (min-width: 480px)": {
-      width: "160px",
-      height: "160px",
-    },
-    "@media (min-width: 768px)": {
-      width: "200px",
-      height: "200px",
-    },
-  },
-  detailArtworkRect: {
-    width: "140px",
-    height: "140px",
-    borderRadius: tokens.borderRadiusLarge,
-    flexShrink: 0,
-    "@media (min-width: 480px)": {
-      width: "180px",
-      height: "180px",
-    },
-    "@media (min-width: 768px)": {
-      width: "220px",
-      height: "220px",
-    },
-  },
-  detailInfo: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-    flex: 1,
-    minWidth: 0,
-  },
-  titleLine: {
-    height: "32px",
-    width: "min(520px, 92%)",
-    borderRadius: tokens.borderRadiusMedium,
-    "@media (min-width: 768px)": {
-      height: "40px",
-      width: "min(640px, 82%)",
-    },
-  },
-  subtitleLine: {
-    height: "18px",
-    width: "min(240px, 60%)",
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  metadataRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
-    alignItems: "center",
-  },
-  metadataChip: {
-    height: "20px",
-    width: "72px",
-    borderRadius: tokens.borderRadiusCircular,
-  },
-  actionRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
-    alignItems: "center",
-  },
-  actionButton: {
-    height: "32px",
-    width: "104px",
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  section: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-  },
-  sectionTitle: {
-    height: "24px",
-    width: "160px",
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  sectionTitleWide: {
-    width: "220px",
-  },
   trackList: {
     display: "flex",
     flexDirection: "column",
@@ -218,8 +87,15 @@ const useStyles = makeStyles({
   },
   cardGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-    gap: tokens.spacingHorizontalL,
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: tokens.spacingHorizontalS,
+    "@media (min-width: 480px)": {
+      gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
+      gap: tokens.spacingHorizontalM,
+    },
+    "@media (min-width: 900px)": {
+      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+    },
   },
   card: {
     display: "flex",
@@ -250,20 +126,6 @@ const useStyles = makeStyles({
     height: "14px",
     width: "56%",
     borderRadius: tokens.borderRadiusMedium,
-  },
-  videoPlayer: {
-    width: "100%",
-    aspectRatio: "16 / 9",
-    borderRadius: tokens.borderRadiusLarge,
-  },
-  videoPanel: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-    padding: tokens.spacingHorizontalL,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    borderRadius: tokens.borderRadiusXLarge,
   },
   dataGrid: {
     display: "flex",
@@ -378,35 +240,6 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXS,
     paddingTop: tokens.spacingVerticalXS,
   },
-  settingsRoot: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalL,
-    width: "100%",
-  },
-  settingsSection: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-    padding: tokens.spacingHorizontalL,
-    borderRadius: tokens.borderRadiusXLarge,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-  },
-  settingsRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    gap: tokens.spacingHorizontalL,
-    alignItems: "center",
-    "@media (max-width: 768px)": {
-      gridTemplateColumns: "1fr",
-    },
-  },
-  settingsToggle: {
-    width: "44px",
-    height: "24px",
-    borderRadius: tokens.borderRadiusCircular,
-  },
 });
 
 function range(count: number) {
@@ -422,26 +255,24 @@ export function TrackListSkeleton({
   const styles = useStyles();
 
   return (
-    <div className={mergeClasses(styles.trackList, className)} aria-busy="true" aria-label="Loading tracks">
-      <Skeleton animation="wave">
-        {range(rows).map((row) => (
-          <div key={row} className={styles.trackRow}>
-            {showNumber ? <SkeletonItem className={styles.trackNumber} /> : null}
-            {showCover ? <SkeletonItem className={styles.trackCover} /> : null}
-            <div className={styles.trackBody}>
-              <SkeletonItem className={styles.trackTitle} />
-              <SkeletonItem className={styles.trackMeta} />
-            </div>
-            <div className={styles.trackActions}>
-              <SkeletonItem className={styles.actionDot} />
-              <SkeletonItem className={styles.actionDot} />
-              <SkeletonItem className={styles.actionDot} />
-              <SkeletonItem className={styles.actionDot} />
-            </div>
+    <Skeleton animation="wave" className={mergeClasses(styles.trackList, className)} aria-busy="true" aria-label="Loading tracks">
+      {range(rows).map((row) => (
+        <div key={row} className={styles.trackRow}>
+          {showNumber ? <SkeletonItem className={styles.trackNumber} /> : null}
+          {showCover ? <SkeletonItem className={styles.trackCover} /> : null}
+          <div className={styles.trackBody}>
+            <SkeletonItem className={styles.trackTitle} />
+            <SkeletonItem className={styles.trackMeta} />
           </div>
-        ))}
-      </Skeleton>
-    </div>
+          <div className={styles.trackActions}>
+            <SkeletonItem className={styles.actionDot} />
+            <SkeletonItem className={styles.actionDot} />
+            <SkeletonItem className={styles.actionDot} />
+            <SkeletonItem className={styles.actionDot} />
+          </div>
+        </div>
+      ))}
+    </Skeleton>
   );
 }
 
@@ -460,17 +291,15 @@ export function CardGridSkeleton({
   const gridStyle = minCardWidth ? { gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))` } : undefined;
 
   return (
-    <div className={mergeClasses(styles.cardGrid, className)} style={gridStyle} aria-busy="true" aria-label="Loading cards">
-      <Skeleton animation="wave">
-        {range(cards).map((card) => (
-          <div key={card} className={styles.card}>
-            <SkeletonItem className={thumbClassName} />
-            <SkeletonItem className={styles.cardTitle} />
-            <SkeletonItem className={styles.cardSubtitle} />
-          </div>
-        ))}
-      </Skeleton>
-    </div>
+    <Skeleton animation="wave" className={mergeClasses(styles.cardGrid, className)} style={gridStyle} aria-busy="true" aria-label="Loading cards">
+      {range(cards).map((card) => (
+        <div key={card} className={styles.card}>
+          <SkeletonItem className={thumbClassName} />
+          <SkeletonItem className={styles.cardTitle} />
+          <SkeletonItem className={styles.cardSubtitle} />
+        </div>
+      ))}
+    </Skeleton>
   );
 }
 
@@ -491,30 +320,21 @@ export function DataGridSkeleton({
     : undefined;
 
   return (
-    <div className={mergeClasses(styles.dataGrid, className)} aria-busy="true" aria-label="Loading table">
-      <Skeleton animation="wave">
-        <div className={styles.dataGridHeader} style={{ gridTemplateColumns }}>
+    <Skeleton animation="wave" className={mergeClasses(styles.dataGrid, className)} aria-busy="true" aria-label="Loading data">
+      <div className={styles.dataGridHeader} style={{ gridTemplateColumns }}>
+        {range(columns).map((column) => (
+          <SkeletonItem key={`header-${column}`} className={styles.gridCell} />
+        ))}
+      </div>
+      {range(rows).map((row) => (
+        <div key={row} className={styles.dataGridRow} style={{ gridTemplateColumns, ...rowStyle }}>
           {range(columns).map((column) => (
-            <SkeletonItem key={`header-${column}`} className={styles.gridCell} />
+            <SkeletonItem key={`cell-${row}-${column}`} className={styles.gridCell} />
           ))}
         </div>
-        {range(rows).map((row) => (
-          <div key={row} className={styles.dataGridRow} style={{ gridTemplateColumns, ...rowStyle }}>
-            {range(columns).map((column) => (
-              <SkeletonItem key={`cell-${row}-${column}`} className={styles.gridCell} />
-            ))}
-          </div>
-        ))}
-      </Skeleton>
-    </div>
+      ))}
+    </Skeleton>
   );
-}
-
-export function ListRowsSkeleton({
-  rows = 8,
-  className,
-}: ListRowsSkeletonProps) {
-  return <TrackListSkeleton rows={rows} className={className} />;
 }
 
 export function TrackTableSkeleton({
@@ -535,168 +355,53 @@ export function TrackTableSkeleton({
 
   return (
     <div className={className} aria-busy="true" aria-label="Loading track table">
-      <div className={styles.trackTableMobileList}>
-        <Skeleton animation="wave">
-          {range(rows).map((row) => (
-            <div key={`mobile-${row}`} className={styles.trackTableMobileCard}>
-              {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
-              <div className={styles.trackTableMobileInfo}>
-                <SkeletonItem className={styles.trackTableTitle} />
-                <SkeletonItem className={styles.trackTableMeta} />
-                {showArtist || showAlbum ? <SkeletonItem className={styles.trackTableMeta} /> : null}
-                <div className={styles.trackTableMobileActions}>
-                  <SkeletonItem className={styles.actionDot} />
-                  <SkeletonItem className={styles.actionDot} />
-                  <SkeletonItem className={styles.actionDot} />
-                  <SkeletonItem className={styles.actionDot} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </Skeleton>
-      </div>
-
-      <div className={styles.trackTable}>
-        <Skeleton animation="wave">
-          <div className={styles.trackTableHeader} style={{ gridTemplateColumns: columnTemplate }}>
-            {showCover ? <SkeletonItem className={styles.trackTableCell} /> : null}
-            <SkeletonItem className={styles.trackTableCell} />
-            {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
-            {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
-            <SkeletonItem className={styles.trackTableCell} />
-          </div>
-
-          {range(rows).map((row) => (
-            <div key={row} className={styles.trackTableRow} style={{ gridTemplateColumns: columnTemplate }}>
-              {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
-              <div className={styles.trackTableTitleCell}>
-                <SkeletonItem className={styles.trackTableTitle} />
-                <SkeletonItem className={styles.trackTableMeta} />
-              </div>
-              {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
-              {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
-              <div className={styles.trackTableActions}>
+      <Skeleton animation="wave" className={styles.trackTableMobileList}>
+        {range(rows).map((row) => (
+          <div key={`mobile-${row}`} className={styles.trackTableMobileCard}>
+            {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
+            <div className={styles.trackTableMobileInfo}>
+              <SkeletonItem className={styles.trackTableTitle} />
+              <SkeletonItem className={styles.trackTableMeta} />
+              {showArtist || showAlbum ? <SkeletonItem className={styles.trackTableMeta} /> : null}
+              <div className={styles.trackTableMobileActions}>
                 <SkeletonItem className={styles.actionDot} />
                 <SkeletonItem className={styles.actionDot} />
                 <SkeletonItem className={styles.actionDot} />
                 <SkeletonItem className={styles.actionDot} />
               </div>
             </div>
-          ))}
-        </Skeleton>
-      </div>
-    </div>
-  );
-}
-
-export function MediaDetailSkeleton({
-  variant,
-  className,
-}: MediaDetailSkeletonProps) {
-  const styles = useStyles();
-
-  if (variant === "video") {
-    return (
-      <div className={mergeClasses(styles.mediaRoot, className)} aria-busy="true" aria-label="Loading video details">
-        <Skeleton animation="wave">
-          <SkeletonItem className={styles.videoPlayer} />
-          <div className={styles.videoPanel}>
-            <SkeletonItem className={styles.titleLine} />
-            <div className={styles.metadataRow}>
-              {range(4).map((item) => (
-                <SkeletonItem key={item} className={styles.metadataChip} />
-              ))}
-            </div>
-            <div className={styles.actionRow}>
-              {range(4).map((item) => (
-                <SkeletonItem key={item} className={styles.actionButton} />
-              ))}
-            </div>
           </div>
-        </Skeleton>
-      </div>
-    );
-  }
-
-  const artworkClassName = variant === "artist" ? styles.detailArtworkCircle : styles.detailArtworkRect;
-  const detailHeaderClassName = mergeClasses(
-    styles.detailHeader,
-    variant === "artist" ? styles.detailHeaderCompactDesktop : undefined,
-  );
-
-  return (
-    <div className={mergeClasses(styles.mediaRoot, className)} aria-busy="true" aria-label={`Loading ${variant} details`}>
-      <Skeleton animation="wave">
-        <div className={detailHeaderClassName}>
-          <SkeletonItem className={artworkClassName} />
-          <div className={styles.detailInfo}>
-            <SkeletonItem className={styles.titleLine} />
-            <SkeletonItem className={styles.subtitleLine} />
-            <div className={styles.metadataRow}>
-              {range(4).map((item) => (
-                <SkeletonItem key={item} className={styles.metadataChip} />
-              ))}
-            </div>
-            <div className={styles.actionRow}>
-              {range(4).map((item) => (
-                <SkeletonItem key={item} className={styles.actionButton} />
-              ))}
-            </div>
-          </div>
-        </div>
+        ))}
       </Skeleton>
 
-      <div className={styles.section}>
-        <Skeleton animation="wave">
-          <SkeletonItem className={mergeClasses(styles.sectionTitle, styles.sectionTitleWide)} />
-        </Skeleton>
-        <TrackListSkeleton
-          rows={variant === "album" ? 9 : 5}
-          showCover={false}
-        />
-      </div>
+      <Skeleton animation="wave" className={styles.trackTable}>
+        <div className={styles.trackTableHeader} style={{ gridTemplateColumns: columnTemplate }}>
+          {showCover ? <SkeletonItem className={styles.trackTableCell} /> : null}
+          <SkeletonItem className={styles.trackTableCell} />
+          {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
+          {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
+          <SkeletonItem className={styles.trackTableCell} />
+        </div>
 
-      <div className={styles.section}>
-        <Skeleton animation="wave">
-          <SkeletonItem className={styles.sectionTitle} />
-        </Skeleton>
-        <CardGridSkeleton cards={6} />
-      </div>
-    </div>
-  );
-}
-
-export function SettingsPageSkeleton({
-  sections = 4,
-  rowsPerSection = 4,
-  className,
-}: SettingsPageSkeletonProps) {
-  const styles = useStyles();
-
-  return (
-    <div className={mergeClasses(styles.settingsRoot, className)} aria-busy="true" aria-label="Loading settings">
-      <Skeleton animation="wave">
-        {range(sections).map((section) => (
-          <div key={section} className={styles.settingsSection}>
-            <SkeletonItem className={styles.titleLine} />
-            <SkeletonItem className={styles.subtitleLine} />
-            {range(rowsPerSection).map((row) => (
-              <div key={row} className={styles.settingsRow}>
-                <div className={styles.trackBody}>
-                  <SkeletonItem className={styles.trackTitle} />
-                  <SkeletonItem className={styles.trackMeta} />
-                </div>
-                <SkeletonItem className={styles.settingsToggle} />
-              </div>
-            ))}
+        {range(rows).map((row) => (
+          <div key={row} className={styles.trackTableRow} style={{ gridTemplateColumns: columnTemplate }}>
+            {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
+            <div className={styles.trackTableTitleCell}>
+              <SkeletonItem className={styles.trackTableTitle} />
+              <SkeletonItem className={styles.trackTableMeta} />
+            </div>
+            {showArtist ? <SkeletonItem className={styles.trackTableCell} /> : null}
+            {showAlbum ? <SkeletonItem className={styles.trackTableCell} /> : null}
+            <div className={styles.trackTableActions}>
+              <SkeletonItem className={styles.actionDot} />
+              <SkeletonItem className={styles.actionDot} />
+              <SkeletonItem className={styles.actionDot} />
+              <SkeletonItem className={styles.actionDot} />
+            </div>
           </div>
         ))}
       </Skeleton>
     </div>
   );
 }
-
-
-
-
 

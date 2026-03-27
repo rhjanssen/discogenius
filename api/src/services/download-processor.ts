@@ -651,7 +651,7 @@ export class DownloadProcessor {
                 path: this.currentDownloadPath,
                 resolved,
                 originalJobId: job.id
-            }, tidalId, Math.max(job.priority, 100), job.trigger);
+            }, tidalId, Math.max(job.priority, 100), job.trigger, job.queue_order);
 
             TaskQueueService.complete(job.id);
 
@@ -843,6 +843,7 @@ export class DownloadProcessor {
                         try {
                             const rows = db.prepare(`
                                 SELECT m.title,
+                                       m.version,
                                        m.track_number as track_num,
                                        COALESCE(m.volume_number, 1) as volume_num,
                                        ar.name as artist_name
@@ -854,13 +855,19 @@ export class DownloadProcessor {
                             if (rows.length > 0) {
                                 totalTracks = rows.length;
                                 const hasMultipleVolumes = rows.some((row) => Number(row.volume_num || 1) > 1);
-                                albumTracks = rows.map(r => ({
-                                    title: r.artist_name ? `${r.artist_name} - ${r.title}` : r.title,
-                                    trackNum: hasMultipleVolumes
-                                        ? (Number(r.volume_num || 1) * 100) + Number(r.track_num || 0)
-                                        : Number(r.track_num || 0),
-                                    status: 'queued' as const,
-                                }));
+                                albumTracks = rows.map((row) => {
+                                    const normalizedVersion = String(row.version || '').trim();
+                                    const baseTitle = normalizedVersion && !row.title?.toLowerCase().includes(normalizedVersion.toLowerCase())
+                                        ? `${row.title} (${normalizedVersion})`
+                                        : row.title;
+                                    return {
+                                        title: row.artist_name ? `${row.artist_name} - ${baseTitle}` : baseTitle,
+                                        trackNum: hasMultipleVolumes
+                                            ? (Number(row.volume_num || 1) * 100) + Number(row.track_num || 0)
+                                            : Number(row.track_num || 0),
+                                        status: 'queued' as const,
+                                    };
+                                });
                             }
                         } catch (e) {
                             console.warn(`[DOWNLOAD-PROCESSOR] Could not pre-fetch album tracks for ${id}:`, e);
@@ -1072,6 +1079,8 @@ export class DownloadProcessor {
                             return false;
                         }
 
+                        const fallbackTrackTitle = currentTrackName || payload.title || payload.albumTitle || payload.playlistName;
+
                         if (progress.statusMessage) {
                             statusMessage = progress.statusMessage;
                         }
@@ -1139,6 +1148,19 @@ export class DownloadProcessor {
                                     tracks: albumTracks.length > 0 ? albumTracks : undefined,
                                 });
                             }
+                        } else if (progress.progress > lastProgress) {
+                            lastProgress = progress.progress;
+                            emitDownloadProgress({
+                                progress: progress.progress,
+                                currentFileNum: totalTracks > 0 ? Math.min(totalTracks, completedTracks + 1) : undefined,
+                                totalFiles: totalTracks || undefined,
+                                currentTrack: fallbackTrackTitle || undefined,
+                                trackProgress: fallbackTrackTitle ? progress.progress : undefined,
+                                trackStatus: fallbackTrackTitle ? 'downloading' : undefined,
+                                state: progress.state || 'downloading',
+                                statusMessage,
+                                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                            });
                         }
 
                         if (progress.isListComplete && progress.listName) {
@@ -1161,9 +1183,11 @@ export class DownloadProcessor {
                                 progress: lastProgress,
                                 currentFileNum: completedTracks > 0 ? completedTracks : undefined,
                                 totalFiles: totalTracks || undefined,
-                                currentTrack: currentTrackName || undefined,
-                                trackProgress: currentTrackName ? trackProgress.get(currentTrackName) : undefined,
-                                trackStatus: currentTrackName ? 'downloading' : undefined,
+                                currentTrack: fallbackTrackTitle || undefined,
+                                trackProgress: fallbackTrackTitle
+                                    ? (currentTrackName ? trackProgress.get(currentTrackName) : lastProgress)
+                                    : undefined,
+                                trackStatus: fallbackTrackTitle ? 'downloading' : undefined,
                                 statusMessage: progress.statusMessage,
                                 state: progress.state || 'downloading',
                                 tracks: albumTracks.length > 0 ? albumTracks : undefined,

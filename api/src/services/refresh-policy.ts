@@ -7,8 +7,10 @@ const DAY_MS = 24 * HOUR_MS;
 export const MIN_RETRY_HOURS = 12;
 export const ARTIST_HARD_REFRESH_DAYS = 30;
 export const ARTIST_ACTIVE_REFRESH_DAYS = 2;
+export const ARTIST_INACTIVE_REFRESH_DAYS = 14;
 export const ALBUM_HARD_REFRESH_DAYS = 60;
 export const RECENT_RELEASE_DAYS = 30;
+export const INACTIVE_ARTIST_RELEASE_YEARS = 5;
 
 function parseTimestamp(raw: string | null | undefined): number | null {
   if (!raw) return null;
@@ -24,17 +26,28 @@ function isNewerThanHours(timestamp: number, hours: number): boolean {
   return Date.now() - timestamp < hours * HOUR_MS;
 }
 
-export function hasRecentArtistRelease(artistId: string | number): boolean {
+export function getLatestArtistReleaseTimestamp(artistId: string | number): number | null {
   const row = db.prepare(`
     SELECT MAX(release_date) AS latest_release
     FROM albums
     WHERE artist_id = ?
   `).get(String(artistId)) as { latest_release?: string | null } | undefined;
 
-  const latest = parseTimestamp(row?.latest_release ?? null);
+  return parseTimestamp(row?.latest_release ?? null);
+}
+
+export function hasRecentArtistRelease(artistId: string | number): boolean {
+  const latest = getLatestArtistReleaseTimestamp(artistId);
   if (latest === null) return false;
 
   return Date.now() - latest <= RECENT_RELEASE_DAYS * DAY_MS;
+}
+
+export function hasInactiveArtistCatalog(artistId: string | number): boolean {
+  const latest = getLatestArtistReleaseTimestamp(artistId);
+  if (latest === null) return false;
+
+  return Date.now() - latest >= INACTIVE_ARTIST_RELEASE_YEARS * 365 * DAY_MS;
 }
 
 export function shouldRefreshArtistLidarrStyle(options: {
@@ -47,8 +60,8 @@ export function shouldRefreshArtistLidarrStyle(options: {
   if (isNewerThanHours(last, MIN_RETRY_HOURS)) return false;
   if (isOlderThanDays(last, ARTIST_HARD_REFRESH_DAYS)) return true;
   if (hasRecentArtistRelease(options.artistId)) return true;
+  if (hasInactiveArtistCatalog(options.artistId)) return isOlderThanDays(last, ARTIST_INACTIVE_REFRESH_DAYS);
 
-  // Discogenius lacks a robust "artist ended" status, so use a conservative active cadence.
   return isOlderThanDays(last, ARTIST_ACTIVE_REFRESH_DAYS);
 }
 

@@ -646,7 +646,15 @@ export class Scheduler {
                     break;
                 }
                 case JobTypes.Housekeeping: {
-                    runRuntimeMaintenance();
+                    this.updateJobDescription(job, {
+                        progress: 10,
+                        description: 'Running housekeeping and optimizing the database',
+                    });
+                    const summary = runRuntimeMaintenance();
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), repaired ${summary.mediaMonitorRepairs + summary.albumMonitorRepairs} monitor state gap(s), and optimized the database`,
+                    });
                     break;
                 }
                 default:
@@ -664,6 +672,8 @@ export class Scheduler {
         }
     }
 }
+
+
 
 
 

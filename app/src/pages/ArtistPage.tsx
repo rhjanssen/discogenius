@@ -9,6 +9,8 @@ import {
   Spinner,
   Card,
   Badge,
+  Skeleton,
+  SkeletonItem,
   makeStyles,
   tokens,
   Menu,
@@ -43,7 +45,7 @@ import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
-import { MediaDetailSkeleton } from "@/components/ui/LoadingSkeletons";
+import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -82,16 +84,6 @@ const useStyles = makeStyles({
   stateShell: {
     width: "100%",
     alignSelf: "stretch",
-  },
-  loadingStatus: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-  },
-  loadingLabel: {
-    color: tokens.colorNeutralForeground2,
-    textAlign: "center",
   },
   header: {
     position: "relative",
@@ -713,7 +705,7 @@ const ArtistPage = () => {
     setSyncing(true);
     dispatchActivityRefresh();
     try {
-      const result: any = await api.scanArtist(artistId, { forceUpdate: false });
+      const result: any = await api.scanArtist(artistId, { forceUpdate: true });
       toast({
         title: "Refresh & scan queued",
         description: result?.message || "Refreshing TIDAL metadata and scanning local files.",
@@ -1187,10 +1179,28 @@ const ArtistPage = () => {
 
   if (pageLoading) {
     return (
-      <div className={styles.stateShell}>
-        <div className={styles.loadingStatus} role="status" aria-live="polite" aria-label="Loading artist details...">
-          <Text size={200} className={styles.loadingLabel}>Loading artist details...</Text>
-          <MediaDetailSkeleton variant="artist" />
+      <div className={styles.container}>
+        <Skeleton animation="wave">
+          <div className={styles.header}>
+            <div className={styles.headerContent}>
+              <SkeletonItem className={styles.artistImage} />
+              <div className={styles.artistInfo}>
+                <SkeletonItem style={{ height: '32px', width: 'min(280px, 60%)', borderRadius: tokens.borderRadiusMedium }} />
+                <SkeletonItem style={{ height: '16px', width: 'min(200px, 40%)', borderRadius: tokens.borderRadiusMedium }} />
+                <div className={styles.actions}>
+                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
+                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
+                  <SkeletonItem style={{ height: '32px', width: '40px', borderRadius: tokens.borderRadiusMedium }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </Skeleton>
+        <div className={styles.modules}>
+          <Skeleton animation="wave">
+            <SkeletonItem style={{ height: '24px', width: '120px', borderRadius: tokens.borderRadiusMedium, marginBottom: tokens.spacingVerticalS }} />
+          </Skeleton>
+          <CardGridSkeleton cards={6} />
         </div>
       </div>
     );
