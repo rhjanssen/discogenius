@@ -269,10 +269,11 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalXXS,
         justifyContent: 'flex-end',
         flexWrap: 'nowrap',
-        paddingRight: tokens.spacingHorizontalS,
     },
     actionCell: {
         minWidth: '120px',
+        overflow: 'visible',
+        paddingRight: tokens.spacingHorizontalM,
     },
     destructiveButton: {
         color: tokens.colorPaletteRedForeground1,
