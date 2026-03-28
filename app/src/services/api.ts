@@ -203,12 +203,13 @@ class ApiClient {
       return null as T;
     }
 
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(text) as unknown;
-      return parser ? parser(parsed) : parsed as T;
+      parsed = JSON.parse(text);
     } catch {
       return text as unknown as T;
     }
+    return parser ? parser(parsed) : parsed as T;
   }
 
   // Auth endpoints
