@@ -848,7 +848,7 @@ export class OrganizerService {
       const artistId = String(album.artist_id);
       const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
@@ -1273,7 +1273,7 @@ export class OrganizerService {
       const artistId = String(album.artist_id);
       const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);
@@ -1670,7 +1670,7 @@ export class OrganizerService {
       const artistId = String(video.artist_id);
       const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
-      let artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
+      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
         const remoteArtist = await getArtist(artistId);

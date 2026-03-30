@@ -715,9 +715,9 @@ export class DiskScanService {
                         // Try to guess artist/album from folder structure
                         const relative = path.relative(rootPath, resolved);
                         const segments = relative.split(path.sep);
-                        let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
-                        let detectedAlbum = segments.length >= 2 ? segments[1] : null;
-                        let detectedTrack = null;
+                        const detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
+                        const detectedAlbum = segments.length >= 2 ? segments[1] : null;
+                        const detectedTrack = null;
                         const metrics = getUnmappedMediaMetrics(undefined, ext);
 
                         // Routine rescans should stay lightweight and avoid deep media parsing.

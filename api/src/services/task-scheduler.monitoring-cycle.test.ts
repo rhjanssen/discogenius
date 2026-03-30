@@ -50,7 +50,7 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     queueModule.TaskQueueService.complete(refreshJobId);
     taskSchedulerModule.queueNextMonitoringPass(refreshJob);
 
-    let pendingRootScans = queueModule.TaskQueueService.getTopPendingJobsByTypes(
+    const pendingRootScans = queueModule.TaskQueueService.getTopPendingJobsByTypes(
         [queueModule.JobTypes.RescanFolders],
         10,
     );
