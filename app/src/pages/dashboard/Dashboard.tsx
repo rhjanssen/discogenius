@@ -19,6 +19,7 @@ import {
 import {
     ArrowSync24Regular,
     ChevronDownRegular,
+    MoreHorizontal24Regular,
     Play24Regular,
     Pause24Regular,
     MusicNote224Regular,
@@ -92,12 +93,10 @@ const useStyles = makeStyles({
     header: {
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "flex-start",
-        flexWrap: "wrap",
+        alignItems: "center",
         gap: tokens.spacingHorizontalM,
         "@media (max-width: 639px)": {
             flexDirection: "column",
-            alignItems: "center",
             textAlign: "center",
         },
     },
@@ -161,6 +160,11 @@ const useStyles = makeStyles({
     headerActionButton: {
         ...compactDetailActionButtonStyles,
         ...detailActionButtonRadiusStyles,
+        minWidth: "76px",
+        "@media (min-width: 768px)": {
+            ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
+            minWidth: "auto",
+        },
     },
     headerActionRow: {
         display: "flex",
@@ -212,11 +216,6 @@ const dashboardStatsQueryKey = ["dashboardStats"] as const;
 
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
-
-interface DashboardAction extends OverflowAction {
-    icon?: React.ReactNode;
-    priority: number;
-}
 
 function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
     if (hasConsumedDashboardReloadState) {
@@ -341,7 +340,7 @@ const Dashboard = () => {
         }
     };
 
-    const dashboardActions = [
+    const actions: OverflowAction[] = [
         {
             key: 'refresh',
             label: refreshBusy ? 'Refreshing Metadata...' : 'Refresh Metadata',
@@ -377,31 +376,21 @@ const Dashboard = () => {
             onClick: () => void runTask('download-missing'),
             priority: 4,
         },
+        ...["check-upgrades", "health-check", "housekeeping", "cleanup-temp-files"]
+            .map((taskId, index) => {
+                const task = runnableTasks.find((t) => t.id === taskId);
+                if (!task) return null;
+                const isRunning = isRunningTaskId === taskId;
+                return {
+                    key: taskId,
+                    label: task.name,
+                    disabled: isRunning || task.active,
+                    onClick: () => void runTask(taskId),
+                    priority: 5 + index,
+                };
+            })
+            .filter((a): a is NonNullable<typeof a> => a !== null),
     ];
-
-    const overflowTaskIds = [
-        "check-upgrades",
-        "health-check",
-        "housekeeping",
-        "cleanup-temp-files",
-    ];
-
-    const systemTaskActions = overflowTaskIds
-        .map((taskId, index) => {
-            const task = runnableTasks.find((t) => t.id === taskId);
-            if (!task) return null;
-            const isRunning = isRunningTaskId === taskId;
-            return {
-                key: taskId,
-                label: task.name,
-                disabled: isRunning || task.active,
-                onClick: () => void runTask(taskId),
-                priority: 5 + index,
-            };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null);
-
-    const allActions = [...dashboardActions, ...systemTaskActions];
 
     const statCards = [
         {
@@ -439,6 +428,9 @@ const Dashboard = () => {
         { key: 'activity', label: 'Activity' },
         { key: 'manualImport', label: 'Unmapped Files' },
     ] as const;
+    const hasMobileOverflowActions = actions.length > 4;
+    const mobileVisibleActions = actions.slice(0, hasMobileOverflowActions ? 3 : 4);
+    const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(3) : [];
 
     return (
         <div className={styles.container}>
@@ -453,18 +445,54 @@ const Dashboard = () => {
                         <Title1 className={styles.brandTitle}>Discogenius</Title1>
                     </div>
                 </div>
-                <Overflow minimumVisible={2}>
+                <div className={styles.desktopOnly}>
+                    <Overflow minimumVisible={2}>
+                        <div className={styles.headerActionRow}>
+                            {actions.map((action) => (
+                                <OverflowItem key={action.key} id={action.key} priority={actions.length - (action.priority ?? 0)}>
+                                    <Button appearance="subtle" icon={action.icon} onClick={action.onClick} disabled={action.disabled} className={styles.headerActionButton}>
+                                        {action.label}
+                                    </Button>
+                                </OverflowItem>
+                            ))}
+                            <ActionOverflowMenu actions={actions} />
+                        </div>
+                    </Overflow>
+                </div>
+                <div className={styles.mobileOnly}>
                     <div className={styles.headerActionRow}>
-                        {allActions.map((action) => (
-                            <OverflowItem key={action.key} id={action.key} priority={allActions.length - (action.priority ?? 0)}>
-                                <Button appearance="subtle" icon={action.icon} onClick={action.onClick} disabled={action.disabled} className={styles.headerActionButton}>
-                                    {action.label}
-                                </Button>
-                            </OverflowItem>
+                        {mobileVisibleActions.map((action) => (
+                            <Button
+                                key={action.key}
+                                appearance="subtle"
+                                icon={action.icon}
+                                onClick={action.onClick}
+                                disabled={action.disabled}
+                                className={styles.headerActionButton}
+                            >
+                                {action.label}
+                            </Button>
                         ))}
-                        <ActionOverflowMenu actions={allActions} />
+                        {mobileOverflowActions.length > 0 ? (
+                            <Menu>
+                                <MenuTrigger disableButtonEnhancement>
+                                    <Button appearance="subtle" icon={<MoreHorizontal24Regular />} className={styles.headerActionButton}>
+                                        More
+                                    </Button>
+                                </MenuTrigger>
+                                <MenuPopover>
+                                    <MenuList>
+                                        {mobileOverflowActions.map((action) => (
+                                            <MenuItem key={action.key} disabled={action.disabled} onClick={action.onClick}>
+                                                {action.label}
+                                            </MenuItem>
+                                        ))}
+                                    </MenuList>
+                                </MenuPopover>
+                            </Menu>
+                        ) : null}
                     </div>
-                </Overflow>
+                </div>
             </div>
 
             {/* Library Stats */}

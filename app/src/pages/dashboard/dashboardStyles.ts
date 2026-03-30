@@ -83,11 +83,8 @@ export const useDashboardStyles = makeStyles({
     queueSection: {
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalXS,
+        gap: tokens.spacingVerticalS,
         minWidth: 0,
-    },
-    queueSelectionBar: {
-        marginBottom: tokens.spacingVerticalXS,
     },
     queueSectionHeader: {
         display: "flex",
@@ -101,6 +98,22 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
         minWidth: 0,
+    },
+    queueSectionTitle: {
+        color: tokens.colorNeutralForeground2,
+        margin: 0,
+    },
+    queueSectionActions: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: tokens.spacingHorizontalS,
+        flexWrap: "wrap",
+        minWidth: 0,
+    },
+    queueSectionSelectionCount: {
+        color: tokens.colorNeutralForeground3,
+        whiteSpace: "nowrap",
     },
     queueSectionHint: {
         color: tokens.colorNeutralForeground3,
@@ -335,9 +348,11 @@ export const useDashboardStyles = makeStyles({
         minWidth: 0,
     },
     downloadHeaderRowInline: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalM,
+        "@media (min-width: 700px)": {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: tokens.spacingHorizontalM,
+        },
     },
     downloadTitleRow: {
         display: "flex",
@@ -372,8 +387,10 @@ export const useDashboardStyles = makeStyles({
         minWidth: 0,
     },
     downloadArtistMetaRowInline: {
-        flexWrap: "nowrap",
-        gap: tokens.spacingHorizontalM,
+        "@media (min-width: 700px)": {
+            flexWrap: "nowrap",
+            gap: tokens.spacingHorizontalM,
+        },
     },
     downloadBadgeRow: {
         display: "flex",
@@ -383,7 +400,9 @@ export const useDashboardStyles = makeStyles({
         minWidth: 0,
     },
     downloadBadgeRowInline: {
-        flexWrap: "nowrap",
+        "@media (min-width: 700px)": {
+            flexWrap: "nowrap",
+        },
     },
     downloadProgress: {
         display: "flex",

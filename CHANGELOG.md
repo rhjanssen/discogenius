@@ -6,6 +6,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-03-30
+
+### Changed
+
+- Dashboard header actions now stay inline with the title on desktop while mobile keeps a capped action row with overflow.
+- Queue section headers now use Fluent subheader typography with improved spacing, and active download metadata stays stacked on mobile to avoid squeezed badges.
+- Queue selection controls moved inline with the `Active` header for a simpler Lidarr-style workflow.
+- Multi-selection queue moves now batch refreshes so moving several items feels faster and steadier.
+
+### Fixed
+
+- Existing databases can now upgrade cleanly to the current schema because migrations run before indexes that depend on migration-added columns like `job_queue.queue_order`.
+- Queue drag handles and delete actions now apply consistently to the whole selected set instead of only the row you happened to grab.
+
 ## [1.2.0] - 2026-03-30
 
 ### Added

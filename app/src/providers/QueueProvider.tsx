@@ -77,7 +77,10 @@ interface QueueContextType {
   processItem: (id: number) => Promise<void>;
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
-  reorderItems: (params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) => Promise<void>;
+  reorderItems: (
+    params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number },
+    options?: { refresh?: boolean; dispatchActivity?: boolean },
+  ) => Promise<void>;
   clearCompleted: () => Promise<void>;
   pauseQueue: () => Promise<void>;
   resumeQueue: () => Promise<void>;
@@ -799,11 +802,18 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const reorderItems = async (params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) => {
+  const reorderItems = async (
+    params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number },
+    options?: { refresh?: boolean; dispatchActivity?: boolean },
+  ) => {
     try {
       await api.reorderQueueItems(params);
-      await fetchQueue();
-      dispatchActivityRefresh();
+      if (options?.refresh !== false) {
+        await fetchQueue();
+      }
+      if (options?.dispatchActivity !== false) {
+        dispatchActivityRefresh();
+      }
     } catch (error: any) {
       console.error('Error reordering queue:', error);
       toastRef.current({

@@ -1065,6 +1065,32 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)`);
 
   // ====================================================================
+  // MIGRATIONS — must run before indexes so migration-added columns exist
+  // ====================================================================
+  // Integrity check
+  const integrityResult = db.pragma("integrity_check", { simple: true }) as string;
+  if (integrityResult !== "ok") {
+    console.error(`🚨 Database integrity check failed: ${integrityResult}`);
+    console.error("   The database may be corrupted. Consider restoring from a backup.");
+  }
+
+  // Pre-migration backup for safety
+  const currentVersion = db.pragma("user_version", { simple: true }) as number;
+  if (currentVersion > 0 && fs.existsSync(DB_PATH)) {
+    const backupPath = `${DB_PATH}.pre-migration-v${currentVersion}.bak`;
+    if (!fs.existsSync(backupPath)) {
+      try {
+        fs.copyFileSync(DB_PATH, backupPath);
+        console.log(`📦 Database backup created: ${path.basename(backupPath)}`);
+      } catch (err) {
+        console.warn(`⚠️  Could not create pre-migration backup: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  const migrationSummary = runMigrations();
+
+  // ====================================================================
   // INDEXES
   // ====================================================================
   // Artist indexes
@@ -1154,29 +1180,6 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
-
-  // Integrity check
-  const integrityResult = db.pragma("integrity_check", { simple: true }) as string;
-  if (integrityResult !== "ok") {
-    console.error(`🚨 Database integrity check failed: ${integrityResult}`);
-    console.error("   The database may be corrupted. Consider restoring from a backup.");
-  }
-
-  // Pre-migration backup for safety
-  const currentVersion = db.pragma("user_version", { simple: true }) as number;
-  if (currentVersion > 0 && fs.existsSync(DB_PATH)) {
-    const backupPath = `${DB_PATH}.pre-migration-v${currentVersion}.bak`;
-    if (!fs.existsSync(backupPath)) {
-      try {
-        fs.copyFileSync(DB_PATH, backupPath);
-        console.log(`📦 Database backup created: ${path.basename(backupPath)}`);
-      } catch (err) {
-        console.warn(`⚠️  Could not create pre-migration backup: ${(err as Error).message}`);
-      }
-    }
-  }
-
-  const migrationSummary = runMigrations();
 
   console.log("✅ Database schema initialized");
 

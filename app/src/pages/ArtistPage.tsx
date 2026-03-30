@@ -30,7 +30,8 @@ import {
   Info24Regular,
   ArrowSortDownLines24Regular,
   FolderSync24Regular,
-} from "@fluentui/react-icons";import { api } from "@/services/api";
+} from "@fluentui/react-icons";
+import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -1122,7 +1123,6 @@ const ArtistPage = () => {
                 id: track.id,
                 type: "track",
                 isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
-                isMonitored: Boolean(track.is_monitored ?? track.monitor),
               });
             }}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}

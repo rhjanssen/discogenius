@@ -768,7 +768,8 @@ const AlbumPage = () => {
 
                   <ActionOverflowMenu actions={albumActions} />
                 </div>
-              </Overflow>            </div>
+              </Overflow>
+            </div>
           </div>
         </div>
 
@@ -800,7 +801,6 @@ const AlbumPage = () => {
                 id: track.id,
                 type: "track",
                 isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
-                isMonitored: Boolean(track.is_monitored ?? track.monitor),
               });
             }}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}

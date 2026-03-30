@@ -13,8 +13,10 @@ import { MoreHorizontal24Regular } from "@fluentui/react-icons";
 export interface OverflowAction {
   key: string;
   label: string;
+  icon?: JSX.Element;
   disabled?: boolean;
   onClick: () => void;
+  priority?: number;
 }
 
 const OverflowMenuItem = ({ action }: { action: OverflowAction }) => {
