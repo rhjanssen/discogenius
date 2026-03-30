@@ -5,7 +5,6 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "./download-state.js";
-import { DiskScanService } from "./library-scan.js";
 import { AudioTagMaintenanceService } from "./audio-tag-maintenance.js";
 import { getDownloadWorkspacePath } from "./download-routing.js";
 import { getExistingLibraryMediaIds } from "./download-recovery.js";
@@ -246,13 +245,23 @@ export async function processImportDownloadJob(
         if (affectedArtistId) {
             options.updateState({
                 progress: 97,
-                description: "ImportDownload: refreshing library file records",
+                description: "ImportDownload: verifying library file records",
                 currentFileNum: organizeResult.processedTrackIds.length,
                 totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                statusMessage: "Refreshing library file records",
+                statusMessage: "Verifying library file records",
                 state: "importing",
             });
-            await DiskScanService.scan({ artistIds: [String(affectedArtistId)] });
+
+            // The organizer already creates library_files records for every file
+            // it processes (tracks, videos, covers, lyrics, etc.) via upsertLibraryFile().
+            // A full DiskScanService.scan() here is unnecessary — it would re-walk the
+            // entire artist directory and re-parse every unmapped audio file (1-5s per FLAC).
+            // Instead, just verify the imported files are tracked.
+            const trackedCount = (db.prepare(
+                `SELECT COUNT(*) as count FROM library_files WHERE artist_id = ? AND verified_at IS NOT NULL`,
+            ).get(String(affectedArtistId)) as { count: number }).count;
+
+            console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
@@ -265,11 +274,9 @@ export async function processImportDownloadJob(
                 state: "importing",
             });
 
-            try {
-                await AudioTagMaintenanceService.applyForMediaIds(organizeResult.processedTrackIds);
-            } catch (error) {
+            void AudioTagMaintenanceService.applyForMediaIds(organizeResult.processedTrackIds).catch((error) => {
                 console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${tidalId}:`, error);
-            }
+            });
         }
 
         const historyContext = resolveImportHistoryContext(type, tidalId);

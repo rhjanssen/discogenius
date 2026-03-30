@@ -50,6 +50,9 @@ export const compactDetailActionButtonStyles = {
   "& .fui-Button__content": {
     fontSize: tokens.fontSizeBase100,
     marginLeft: "0 !important",
+    textAlign: "center",
+    whiteSpace: "normal",
+    lineHeight: tokens.lineHeightBase100,
   },
   "& .fui-Button__icon": {
     marginRight: "0",
@@ -74,6 +77,9 @@ export const compactDetailActionButtonStyles = {
       fontSize: tokens.fontSizeBase300,
       marginTop: "0",
       marginLeft: tokens.spacingHorizontalS,
+      whiteSpace: "nowrap",
+      lineHeight: tokens.lineHeightBase300,
+      textAlign: "left",
     },
     "& .fui-Button__icon": {
       marginRight: tokens.spacingHorizontalSNudge,

@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { updateAlbumDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
+import { invalidateAlbumDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { scanArtistBasic } from "./scanner.js";
 import { queueArtistWorkflow } from "./artist-workflow.js";
@@ -45,7 +45,7 @@ function refreshArtistProgress(artistId: string) {
     `).all(artistId, artistId) as Array<{ id: number }>;
 
     for (const row of albumIds) {
-        updateAlbumDownloadStatus(String(row.id));
+        invalidateAlbumDownloadStatus(String(row.id));
     }
 
     updateArtistDownloadStatus(artistId);

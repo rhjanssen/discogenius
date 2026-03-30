@@ -10,7 +10,21 @@ export const SUPPORTED_IMPORT_EXTENSIONS = new Set([
 ]);
 
 const IGNORED_IMPORT_FOLDERS = new Set([
-    ".git", ".vs", "$recycle.bin", "system volume information", "@eaDir",
+    ".git",
+    ".vs",
+    ".appledouble",
+    ".@__thumb",
+    "$recycle.bin",
+    "system volume information",
+    "@eadir",
+    "extras",
+    "extrafanart",
+    "plex versions",
+]);
+
+const IGNORED_IMPORT_FILES = new Set([
+    ".ds_store",
+    "thumbs.db",
 ]);
 
 export async function scanImportDirectory(
@@ -50,6 +64,10 @@ export async function scanImportDirectory(
             }
 
             if (!entry.isFile()) {
+                continue;
+            }
+
+            if (entry.name.startsWith("._") || IGNORED_IMPORT_FILES.has(entry.name.toLowerCase())) {
                 continue;
             }
 

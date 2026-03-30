@@ -24,7 +24,6 @@ const initStream = () => {
 
     suppressNextStreamError = false;
 
-    console.log('[GlobalEvents] Initializing EventSource connection...');
     globalEventSource = api.createGlobalEventStream(
         (eventType, data) => {
             currentConnectionAttempts = 0; // Reset on successful message
@@ -53,7 +52,6 @@ const initStream = () => {
             if (currentConnectionAttempts < MAX_RECONNECT) {
                 currentConnectionAttempts++;
                 const backoffMs = Math.min(1000 * Math.pow(2, currentConnectionAttempts), 30000);
-                console.log(`[GlobalEvents] Reconnecting in ${backoffMs}ms...`);
                 if (reconnectTimer) {
                     clearTimeout(reconnectTimer);
                 }
@@ -112,7 +110,6 @@ export function useGlobalEvents(interestEvents?: string[]) {
                 }
                 globalEventSource.close();
                 globalEventSource = null;
-                console.log('[GlobalEvents] All subscribers detached, closing stream.');
             }
         };
     }, [handleEvent, isDisabled]);

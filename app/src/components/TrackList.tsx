@@ -46,7 +46,7 @@ const useStyles = makeStyles({
   },
   row: {
     display: "flex",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
@@ -98,10 +98,6 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     fontWeight: tokens.fontWeightSemibold,
-    "@media (max-width: 639px)": {
-      whiteSpace: "normal",
-      wordBreak: "break-word",
-    },
   },
   metaRow: {
     display: "flex",
@@ -129,12 +125,6 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     marginLeft: "auto",
     flexShrink: 0,
-    "@media (max-width: 639px)": {
-      width: "100%",
-      marginLeft: 0,
-      justifyContent: "space-between",
-      paddingLeft: `calc(28px + ${tokens.spacingHorizontalS})`,
-    },
   },
   actions: {
     display: "flex",

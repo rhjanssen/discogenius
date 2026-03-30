@@ -8,8 +8,8 @@ import { readIntEnv } from "../utils/env.js";
 import {
     getArtistsWithPendingJobs,
     getEffectiveMonitoringRuntimeState,
-    hasActiveArtistWorkflow,
     hasActiveHousekeepingTask,
+    hasActiveMonitoringCycleWorkflow,
     hasActiveTask,
     loadMonitoringProgress,
     saveMonitoringProgress,
@@ -35,6 +35,7 @@ let isChecking = false;
 let scheduledTaskUpsertStmt: any | null = null;
 let scheduledTaskGetStmt: any | null = null;
 let scheduledTaskQueueStampStmt: any | null = null;
+let activeMonitoringDownloadPassStmt: any | null = null;
 
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
@@ -105,6 +106,21 @@ function getScheduledTaskQueueStampStmt() {
     `);
     }
     return scheduledTaskQueueStampStmt;
+}
+
+function getActiveMonitoringDownloadPassStmt() {
+        if (!activeMonitoringDownloadPassStmt) {
+                activeMonitoringDownloadPassStmt = db.prepare(`
+            SELECT 1
+            FROM job_queue
+            WHERE type = ?
+                AND json_extract(payload, '$.monitoringCycle') IS NOT NULL
+                AND status IN ('pending', 'processing')
+            LIMIT 1
+        `);
+        }
+
+        return activeMonitoringDownloadPassStmt;
 }
 
 function getScheduledTaskInsertStmt() {
@@ -191,6 +207,7 @@ export function queueMetadataRefreshPass(options: {
         : artists;
     const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
+    const refId = monitoringCycle ? `metadata-refresh:${monitoringCycle}` : "metadata-refresh";
     const jobId = TaskQueueService.addJob(
         JobTypes.RefreshMetadata,
         {
@@ -204,7 +221,7 @@ export function queueMetadataRefreshPass(options: {
             expectedArtists: queuedArtists.length,
             monitoringCycle,
         },
-        "metadata-refresh",
+        refId,
         0,
         options.trigger ?? 1,
     );
@@ -226,18 +243,22 @@ export function queueRescanFoldersPass(options: {
     monitoringCycle?: Extract<MonitoringPassWorkflow, "full-cycle" | "root-scan-cycle">;
     artistIds?: string[];
     monitorArtist?: boolean;
+    addNewArtists?: boolean;
+    trackUnmappedFiles?: boolean;
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const refId = monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders";
     const jobId = TaskQueueService.addJob(
         JobTypes.RescanFolders,
         {
-            addNewArtists: true,
+            addNewArtists: options.addNewArtists ?? false,
             artistIds: normalizeArtistIds(options.artistIds),
             monitorArtist: options.monitorArtist ?? true,
             fullProcessing: options.fullProcessing ?? false,
+            trackUnmappedFiles: options.trackUnmappedFiles ?? true,
             monitoringCycle,
         },
-        "rescan-folders",
+        refId,
         0,
         options.trigger ?? 1,
     );
@@ -253,6 +274,7 @@ export function queueCurationPass(options: {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const artistIds = normalizeArtistIds(options.artistIds);
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds });
+    const refId = monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation";
     return TaskQueueService.addJob(
         JobTypes.ApplyCuration,
         {
@@ -264,7 +286,7 @@ export function queueCurationPass(options: {
             expectedArtists: artists.length,
             monitoringCycle,
         },
-        "apply-curation",
+        refId,
         0,
         options.trigger ?? 1,
     );
@@ -276,6 +298,7 @@ export function queueDownloadMissingPass(options: {
     artistIds?: string[];
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const refId = monitoringCycle ? `download-missing:${monitoringCycle}` : "download-missing";
     return TaskQueueService.addJob(
         JobTypes.DownloadMissing,
         {
@@ -284,10 +307,19 @@ export function queueDownloadMissingPass(options: {
             description: "Adding monitored missing items to the download queue",
             monitoringCycle,
         },
-        "download-missing",
+        refId,
         0,
         options.trigger ?? 1,
     );
+}
+
+function hasActiveMonitoringCycleDownloadPass(): boolean {
+    return Boolean(getActiveMonitoringDownloadPassStmt().get(JobTypes.DownloadMissing));
+}
+
+function markMonitoringCycleCompleted() {
+    markScheduledTaskQueued("monitoring-cycle");
+    updateConfig("monitoring", { last_check: new Date().toISOString() });
 }
 
 export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
@@ -299,24 +331,21 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
     switch (job.type) {
         case JobTypes.RefreshMetadata:
             // Per-artist curation is handled by the event-driven pipeline:
-            // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist
-            // Only queue the library-wide root scan if full-cycle, then DownloadMissing directly.
+            // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist.
+            // Only queue the library-wide root scan if full-cycle; DownloadMissing
+            // is deferred until all monitoring-originated follow-up work drains.
             if (monitoringCycle === "full-cycle") {
                 queueRescanFoldersPass({
                     trigger: job.trigger ?? 0,
                     fullProcessing: true,
+                    trackUnmappedFiles: false,
                     monitoringCycle,
+                    addNewArtists: false,
                 });
             }
-            // Queue DownloadMissing directly — per-artist curation already flows via events
-            queueDownloadMissingPass({
-                trigger: job.trigger ?? 0,
-                monitoringCycle,
-            });
-            return;
+            break;
         case JobTypes.RescanFolders:
-            // Library-wide rescan doesn't chain to curation (per-artist events handle that)
-            return;
+            break;
         case JobTypes.ApplyCuration:
             // Manual ApplyCuration still chains to DownloadMissing
             queueDownloadMissingPass({
@@ -325,7 +354,23 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
             });
             return;
         default:
-            return;
+            break;
+    }
+
+    if (hasActiveMonitoringCycleWorkflow()) {
+        return;
+    }
+
+    if (job.type === JobTypes.DownloadMissing) {
+        markMonitoringCycleCompleted();
+        return;
+    }
+
+    if (!hasActiveMonitoringCycleDownloadPass()) {
+        queueDownloadMissingPass({
+            trigger: job.trigger ?? 0,
+            monitoringCycle,
+        });
     }
 }
 
@@ -425,7 +470,7 @@ function getEffectiveScheduledTaskDefinition(definition: ScheduledTaskDefinition
 function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boolean {
     switch (definition.key) {
         case "monitoring-cycle":
-            return hasActiveArtistWorkflow();
+            return hasActiveMonitoringCycleWorkflow();
         case "housekeeping":
             return hasActiveHousekeepingTask();
         default:
@@ -530,7 +575,7 @@ function queueDueScheduledTasks() {
                 continue;
             }
 
-            if (isChecking || hasActiveArtistWorkflow()) {
+            if (isChecking || hasActiveMonitoringCycleWorkflow()) {
                 continue;
             }
 
@@ -539,8 +584,6 @@ function queueDueScheduledTasks() {
             try {
                 const jobId = queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
                 if (jobId !== -1) {
-                    markScheduledTaskQueued(definition.key);
-                    updateConfig("monitoring", { last_check: new Date().toISOString() });
                     console.log("🔄 Scheduled monitoring cycle queued");
                 }
             } finally {

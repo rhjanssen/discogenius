@@ -1,10 +1,8 @@
 import fs from "fs";
 import path from "path";
-import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config, getConfigSection } from "./config.js";
 import { resolveArtistFolderFromRecord } from "./naming.js";
-import { UnmappedFilesService } from "./unmapped-files.js";
 import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "./library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
@@ -30,6 +28,35 @@ const MEDIA_EXTENSIONS = new Set([
     '.flac', '.alac', '.wav', '.aiff', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wma',
     '.mp4', '.m4v', '.mkv', '.mov', '.avi', '.ts', '.webm'
 ]);
+
+const IGNORED_SCAN_DIRECTORIES = new Set([
+    '.appledouble',
+    '.git',
+    '.vs',
+    '.@__thumb',
+    '@eadir',
+    '$recycle.bin',
+    'system volume information',
+    'extras',
+    'extrafanart',
+    'plex versions',
+]);
+
+const IGNORED_SCAN_FILES = new Set([
+    '.ds_store',
+    'thumbs.db',
+    '.partial~',
+]);
+
+function shouldSkipScanDirectory(name: string): boolean {
+    const normalized = name.trim().toLowerCase();
+    return normalized.startsWith('.') || IGNORED_SCAN_DIRECTORIES.has(normalized);
+}
+
+function shouldSkipScanFile(name: string): boolean {
+    const normalized = name.trim().toLowerCase();
+    return normalized.startsWith('._') || IGNORED_SCAN_FILES.has(normalized);
+}
 
 export interface DiskScanResult {
     /** DB records removed because file no longer exists on disk */
@@ -75,6 +102,8 @@ export interface ScanOptions {
     trigger?: number;
     /** Progress callback. */
     onProgress?: (event: ScanProgress) => void;
+    /** Persist unmatched media candidates discovered during the scan. */
+    trackUnmappedFiles?: boolean;
 }
 
 export type ScanProgress = {
@@ -134,8 +163,6 @@ type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folder
  * 4. Backfill missing metadata files (covers, bios, lyrics, etc.)
  */
 export class DiskScanService {
-    private static readonly unmappedFilesService = new UnmappedFilesService();
-
     // ==========================================================================
     // Public API — Scan(folders, filter, addNewArtists, artistIds)
     // ==========================================================================
@@ -176,6 +203,7 @@ export class DiskScanService {
                     artistsTotal: artistIds.length,
                 });
                 const artistResult = await this.scanArtist(artistId, {
+                    trackUnmappedFiles: options.trackUnmappedFiles,
                     onProgress: (event) => {
                         onProgress?.({
                             phase: "reconcile",
@@ -207,6 +235,8 @@ export class DiskScanService {
                     currentFileNum: event.currentFileNum,
                     totalFiles: event.totalFiles,
                 });
+            }, {
+                trackUnmappedFiles: options.trackUnmappedFiles,
             });
             result.artists = reconcileResult.artists;
             result.orphansRemoved = reconcileResult.totalOrphans;
@@ -282,6 +312,7 @@ export class DiskScanService {
         options?: {
             onProgress?: (event: ArtistScanProgress) => void;
             fileIndex?: RootFileIndex;
+            trackUnmappedFiles?: boolean;
         },
     ): Promise<DiskScanResult> {
         const result: DiskScanResult = {
@@ -312,6 +343,7 @@ export class DiskScanService {
                 options?.onProgress?.(event);
             },
             fileIndex: options?.fileIndex,
+            trackUnmappedFiles: options?.trackUnmappedFiles,
         });
         result.filesIndexed = phaseB.indexed;
 
@@ -362,6 +394,7 @@ export class DiskScanService {
      */
     private static async reconcileAllArtists(
         onProgress?: (event: FullLibraryScanProgress) => void,
+        options?: { trackUnmappedFiles?: boolean },
     ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; unmappedOrphans: number }> {
         const artists = getManagedArtists({ includeLibraryFiles: true })
             .map((artist) => ({ id: String(artist.id), name: artist.name || String(artist.id) }));
@@ -410,6 +443,7 @@ export class DiskScanService {
                     });
                 },
                 fileIndex,
+                trackUnmappedFiles: options?.trackUnmappedFiles,
             });
             totalOrphans += result.orphansRemoved;
             totalFlagsReset += result.downloadFlagsReset;
@@ -486,6 +520,7 @@ export class DiskScanService {
         options?: {
             onProgress?: (event: ArtistScanProgress) => void;
             fileIndex?: RootFileIndex;
+            trackUnmappedFiles?: boolean;
         },
     ): Promise<{ indexed: number }> {
         const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
@@ -668,7 +703,7 @@ export class DiskScanService {
 
                     // Cleanup any existing unmapped_file record for this path
                     db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(resolved);
-                } else {
+                } else if (options?.trackUnmappedFiles !== false) {
                     // No match found in Tidal database. Track this as an unmapped file.
                     try {
                         const stats = fs.statSync(resolved);
@@ -683,37 +718,10 @@ export class DiskScanService {
                         let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
                         let detectedAlbum = segments.length >= 2 ? segments[1] : null;
                         let detectedTrack = null;
-                        let bitrate: number | null = null;
-                        let sampleRate: number | null = null;
-                        let bitDepth: number | null = null;
-                        let channels: number | null = null;
-                        let codec: string | null = null;
-                        let audioQuality = null;
-                        let duration: number | null = null;
+                        const metrics = getUnmappedMediaMetrics(undefined, ext);
 
-                        // Parse ID3 tags to get real metadata if possible
-                        try {
-                            const metadata = await mm.parseFile(resolved, { skipCovers: true });
-                            if (metadata.common.artist) detectedArtist = metadata.common.artist;
-                            else if (metadata.common.albumartist) detectedArtist = metadata.common.albumartist;
-
-                            if (metadata.common.album) detectedAlbum = metadata.common.album;
-                            if (metadata.common.title) detectedTrack = metadata.common.title;
-
-                            if (metadata.format) {
-                                const metrics = getUnmappedMediaMetrics(metadata.format, ext);
-                                duration = metrics.duration;
-                                bitrate = metrics.bitrate;
-                                sampleRate = metrics.sampleRate;
-                                bitDepth = metrics.bitDepth;
-                                channels = metrics.channels;
-                                codec = metrics.codec;
-                                audioQuality = metrics.audioQuality;
-                            }
-                        } catch (err) {
-                            // ignore parse error and fallback to directory structure
-                        }
-
+                        // Routine rescans should stay lightweight and avoid deep media parsing.
+                        // Explicit import discovery performs richer metadata extraction when needed.
                         db.prepare(`
                             INSERT INTO unmapped_files (
                                 file_path, relative_path, library_root, filename, extension, file_size, duration,
@@ -742,114 +750,20 @@ export class DiskScanService {
                             path.basename(resolved),
                             ext,
                             stats.size,
-                            duration,
-                            bitrate,
-                            sampleRate,
-                            bitDepth,
-                            channels,
-                            codec,
+                            metrics.duration,
+                            metrics.bitrate,
+                            metrics.sampleRate,
+                            metrics.bitDepth,
+                            metrics.channels,
+                            metrics.codec,
                             detectedArtist,
                             detectedAlbum,
                             detectedTrack,
-                            audioQuality,
+                            metrics.audioQuality,
                             "No matching TIDAL track found"
                         );
                     } catch (e) {
                         console.error(`[DiskScan] Failed to track unmapped file ${resolved}:`, e);
-                    }
-                }
-            }
-
-            // Group unmapped files by detected release and let the shared manual-import pipeline
-            // evaluate whether the folder is confident enough to auto-import.
-            const folderPathPattern = `${dir}${dir.endsWith(path.sep) ? "" : path.sep}%`;
-            const folderUnmappedFiles = db.prepare(`
-                SELECT * FROM unmapped_files
-                WHERE file_path LIKE ?
-            `).all(folderPathPattern) as any[];
-
-            if (folderUnmappedFiles.length >= 1) {
-                const albumGroups = new Map<string, any[]>();
-
-                for (const f of folderUnmappedFiles) {
-                    const artist = f.detected_artist || 'Unknown Artist';
-                    const album = f.detected_album || 'Unknown Album';
-                    // Skip files with no detected album to avoid bogus grouping
-                    if (album === 'Unknown Album' && artist === 'Unknown Artist') continue;
-
-                    const groupKey = `${artist}|${album}`;
-                    if (!albumGroups.has(groupKey)) albumGroups.set(groupKey, []);
-                    albumGroups.get(groupKey)!.push(f);
-                }
-
-                for (const [groupKey, groupFiles] of albumGroups.entries()) {
-                    const [consensusArtist, consensusAlbum] = groupKey.split('|');
-
-                    if (consensusArtist && consensusAlbum && consensusAlbum !== 'Unknown Album') {
-                        try {
-                            console.log(`[DiskScan] Auto-Import feature evaluating "${consensusArtist} - ${consensusAlbum}" (${groupFiles.length} files) in ${dir}`);
-                            const explicitAlbumId = this.extractTidalAlbumIdFromPath(groupFiles[0]?.file_path);
-
-                            if (explicitAlbumId) {
-                                const directMatch = await this.unmappedFilesService.identifyAgainstAlbum(
-                                    groupFiles.map((file) => Number(file.id)),
-                                    explicitAlbumId,
-                                    "ExistingFiles",
-                                );
-
-                                if (directMatch.autoImportReady) {
-                                    const mappingPayload = Object.entries(directMatch.mappedTracks).map(([fileId, tidalId]) => ({
-                                        id: Number(fileId),
-                                        tidalId,
-                                    }));
-
-                                    if (mappingPayload.length > 0) {
-                                        console.log(`[DiskScan] SUCCESS: Auto-importing ${mappingPayload.length}/${groupFiles.length} files via explicit TIDAL album ${explicitAlbumId}`);
-                                        await this.unmappedFilesService.bulkMap(mappingPayload);
-                                        indexed += mappingPayload.length;
-                                        shouldPromoteArtist = true;
-                                        continue;
-                                    }
-                                }
-
-                                console.log(
-                                    `[DiskScan] Explicit TIDAL album ${explicitAlbumId} rejected by import decision pipeline` +
-                                    `${directMatch.rejections?.length ? `: ${directMatch.rejections.join(", ")}` : "."}`
-                                );
-                            }
-
-                            const bestMatch = await this.unmappedFilesService.findBestAlbumCandidate(
-                                groupFiles,
-                                "ExistingFiles"
-                            );
-                            if (!bestMatch) {
-                                continue;
-                            }
-
-                            if (bestMatch.autoImportReady) {
-                                const mappingPayload = Object.entries(bestMatch.trackIdsByFilePath || {}).map(([filePath, tidalId]) => ({
-                                    id: Number(groupFiles.find((file) => file.file_path === filePath)?.id || 0),
-                                    tidalId,
-                                })).filter((item) => item.id > 0);
-
-                                if (mappingPayload.length > 0) {
-                                    console.log(
-                                        `[DiskScan] SUCCESS: Auto-importing ${mappingPayload.length}/${groupFiles.length} files into TIDAL album ` +
-                                        `${bestMatch.item.id || bestMatch.item.tidal_id}`
-                                    );
-                                    await this.unmappedFilesService.bulkMap(mappingPayload);
-                                    indexed += mappingPayload.length;
-                                    shouldPromoteArtist = true;
-                                }
-                            } else {
-                                console.log(
-                                    `[DiskScan] Passing: best match for ${consensusArtist} - ${consensusAlbum} was rejected by import decision pipeline` +
-                                    `${bestMatch.rejections?.length ? `: ${bestMatch.rejections.join(", ")}` : "."}`
-                                );
-                            }
-                        } catch (err) {
-                            console.error(`[DiskScan] Auto-Import failed for group ${consensusAlbum} in ${dir}:`, err);
-                        }
                     }
                 }
             }
@@ -875,12 +789,6 @@ export class DiskScanService {
         }
 
         return { indexed };
-    }
-
-    private static extractTidalAlbumIdFromPath(filePath?: string | null): string | null {
-        if (!filePath) return null;
-        const match = filePath.match(/\[TIDAL-(\d+)\]/i);
-        return match?.[1] || null;
     }
 
     /**
@@ -1473,8 +1381,16 @@ export class DiskScanService {
                 for (const entry of entries) {
                     const fullPath = path.join(currentDir, entry.name);
                     if (entry.isDirectory()) {
+                        if (shouldSkipScanDirectory(entry.name)) {
+                            await cooperateEntryWalk();
+                            continue;
+                        }
                         queue.push(fullPath);
                     } else if (entry.isFile()) {
+                        if (shouldSkipScanFile(entry.name)) {
+                            await cooperateEntryWalk();
+                            continue;
+                        }
                         results.push(fullPath);
                     }
                     await cooperateEntryWalk();

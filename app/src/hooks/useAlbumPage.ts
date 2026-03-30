@@ -69,6 +69,7 @@ export function useAlbumPage(albumId: string | undefined) {
         enabled: !!albumId,
         refetchOnMount: 'always',
         refetchOnWindowFocus: false,
-        staleTime: 10_000,
+        staleTime: 30_000,
+        placeholderData: (previousData) => previousData,
     });
 }

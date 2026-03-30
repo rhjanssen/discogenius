@@ -297,6 +297,52 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
     });
 }
 
+/**
+ * Strip all metadata tags from an audio file (Lidarr's ScrubAudioTags equivalent).
+ * Uses ffmpeg with `-map_metadata -1` to remove all existing tags before a clean rewrite.
+ */
+export async function removeAllTags(filePath: string): Promise<boolean> {
+    const tempPath = filePath + '.scrub' + path.extname(filePath);
+    const args = ['-y', '-i', filePath, '-map_metadata', '-1', '-c', 'copy', tempPath];
+
+    return new Promise((resolve) => {
+        const ffmpegBin = resolveFfmpegBinary();
+        let settled = false;
+        const finish = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (!value && fs.existsSync(tempPath)) {
+                fs.rmSync(tempPath, { force: true });
+            }
+            resolve(value);
+        };
+
+        const child = spawn(ffmpegBin, args, {
+            stdio: ['ignore', 'ignore', 'pipe'],
+            windowsHide: true,
+        });
+
+        let stderr = '';
+        child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+        child.on('error', () => finish(false));
+        child.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`Failed to scrub tags from ${filePath}: ${stderr.trim() || `exit ${code}`}`);
+                finish(false);
+                return;
+            }
+            try {
+                if (!fs.existsSync(tempPath)) { finish(false); return; }
+                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                fs.renameSync(tempPath, filePath);
+                finish(true);
+            } catch {
+                finish(false);
+            }
+        });
+    });
+}
+
 async function hasEmbeddedVideoThumbnail(filePath: string): Promise<boolean> {
     const extension = path.extname(filePath).toLowerCase();
     if (!VIDEO_THUMBNAIL_EMBED_EXTENSIONS.has(extension)) {

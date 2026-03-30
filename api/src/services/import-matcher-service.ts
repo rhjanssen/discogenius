@@ -954,9 +954,15 @@ export class ImportMatcherService {
             const sorted = [...validMatches].sort((a, b) => b.score - a.score);
             if (sorted[0].score - sorted[1].score < 0.15) {
                 const topMatch = sorted[0];
+                const ambiguityReason = "Ambiguous: score gap to next candidate is below threshold";
                 validMatches = validMatches.map((m) =>
                     m === topMatch
-                        ? { ...m, autoImportReady: false, rejections: [...(m.rejections || []), "Ambiguous: score gap to next candidate is below threshold"] }
+                        ? {
+                            ...m,
+                            autoImportReady: false,
+                            rejections: [...(m.rejections || []), ambiguityReason],
+                            typedRejections: [...(m.typedRejections || []), { reason: ambiguityReason, type: "temporary" as const }],
+                        }
                         : m
                 );
             }

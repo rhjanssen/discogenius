@@ -1,8 +1,8 @@
 import fs from "fs";
 import * as mm from "music-metadata";
 import { db } from "../database.js";
-import { type MetadataConfig, getConfigSection } from "./config.js";
-import { writeMetadata } from "./audioUtils.js";
+import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "./config.js";
+import { writeMetadata, removeAllTags } from "./audioUtils.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 
 type RetagTrackRow = {
@@ -98,8 +98,18 @@ function buildFullTitle(title: string | null | undefined, version: string | null
     : `${baseTitle} (${normalizedVersion})`;
 }
 
+/**
+ * Resolve the effective tag write policy from config, supporting both the
+ * legacy boolean `write_audio_metadata` and the new Lidarr-aligned enum
+ * `write_audio_tags_policy`.
+ */
+function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
+  if (config.write_audio_tags_policy) return config.write_audio_tags_policy;
+  return config.write_audio_metadata === true ? "all_files" : "no";
+}
+
 function isRetagMaintenanceEnabled(config: MetadataConfig): boolean {
-  return config.write_audio_metadata === true || config.embed_replaygain !== false;
+  return resolveTagPolicy(config) !== "no" || config.embed_replaygain !== false;
 }
 
 function normalizeReleaseDate(value: string | null | undefined): string | null {
@@ -470,7 +480,7 @@ export class AudioTagMaintenanceService {
 
     const tags: ManagedTag[] = [];
 
-    if (config.write_audio_metadata === true) {
+    if (resolveTagPolicy(config) !== "no") {
       tags.push(
         {
           key: "title",
@@ -825,6 +835,8 @@ export class AudioTagMaintenanceService {
       WHERE id = ?
     `);
 
+    const pendingUpdates: Array<[number, string, number]> = []; // [size, mtime, id]
+
     for (const id of ids) {
       const row = rowsById.get(id);
       if (!row) {
@@ -853,6 +865,15 @@ export class AudioTagMaintenanceService {
         this.buildDesiredTags(row, config).map((tag) => [tag.ffmpegKey, tag.targetValue]),
       );
 
+      // Scrub all existing tags before writing (Lidarr's ScrubAudioTags)
+      if (config.scrub_audio_tags) {
+        const scrubbed = await removeAllTags(resolvedPath);
+        if (!scrubbed) {
+          result.errors.push({ id, error: "Tag scrub failed" });
+          continue;
+        }
+      }
+
       const success = await writeMetadata(resolvedPath, desiredTags);
       if (!success) {
         result.errors.push({ id, error: "Metadata write failed" });
@@ -860,8 +881,17 @@ export class AudioTagMaintenanceService {
       }
 
       const stat = fs.statSync(resolvedPath);
-      updateFileRecord.run(stat.size, stat.mtime.toISOString(), id);
+      pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
       result.retagged++;
+    }
+
+    // Commit all DB updates in a single transaction
+    if (pendingUpdates.length > 0) {
+      db.transaction(() => {
+        for (const [size, mtime, id] of pendingUpdates) {
+          updateFileRecord.run(size, mtime, id);
+        }
+      })();
     }
 
     return result;

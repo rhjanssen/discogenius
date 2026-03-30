@@ -1,8 +1,7 @@
 import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
-import { scanAlbumShallow } from "./scanner.js";
 import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
-import { shouldRefreshAlbum } from "./refresh-policy.js";
+import { scanAlbumShallow } from "./scanner.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 
@@ -57,41 +56,6 @@ function queryAlbumRow(albumId: string): any | null {
       LEFT JOIN artists ON albums.artist_id = artists.id
       WHERE albums.id = ?
     `).get(albumId) as any | null;
-}
-
-function shouldHydrateAlbumShallow(album: any | null): boolean {
-    if (!album) {
-        return true;
-    }
-
-    const albumTitle = String(album.title ?? "").trim();
-    if (!albumTitle || album.review_text == null) {
-        return true;
-    }
-
-    return shouldRefreshAlbum({
-        albumReleaseDate: album.release_date ?? null,
-        lastScanned: album.last_scanned ?? null,
-    });
-}
-
-async function ensureAlbumHydrated(albumId: string): Promise<any | null> {
-    const existing = queryAlbumRow(albumId);
-    if (!shouldHydrateAlbumShallow(existing)) {
-        return existing;
-    }
-
-    try {
-        await scanAlbumShallow(albumId, {
-            forceUpdate: Boolean(existing),
-            includeSimilarAlbums: false,
-            seedSimilarAlbums: false,
-        });
-    } catch {
-        return existing;
-    }
-
-    return queryAlbumRow(albumId);
 }
 
 function getAlbumTrackRows(albumId: string): TrackRow[] {
@@ -205,7 +169,19 @@ export class AlbumQueryService {
     }
 
     static async getAlbum(albumId: string): Promise<any | null> {
-        const album = await ensureAlbumHydrated(albumId);
+        let album = queryAlbumRow(albumId);
+
+        if (!album) {
+            try {
+                await scanAlbumShallow(albumId, {
+                    includeSimilarAlbums: true,
+                    seedSimilarAlbums: false,
+                });
+                album = queryAlbumRow(albumId);
+            } catch {
+                // Cold-load fallback only; return null below if the album still isn't available.
+            }
+        }
 
         if (!album) {
             return null;
@@ -216,24 +192,25 @@ export class AlbumQueryService {
     }
 
     static async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
-        const album = queryAlbumRow(albumId);
+        let album = queryAlbumRow(albumId);
+
+        if (!album) {
+            try {
+                await scanAlbumShallow(albumId, {
+                    includeSimilarAlbums: true,
+                    seedSimilarAlbums: false,
+                });
+                album = queryAlbumRow(albumId);
+            } catch {
+                // Cold-load fallback only; return [] below if the album still isn't available.
+            }
+        }
+
         if (!album) {
             return [];
         }
 
-        let tracks = getAlbumTrackRows(albumId);
-        if (tracks.length === 0) {
-            try {
-                await scanAlbumShallow(albumId, {
-                    includeSimilarAlbums: false,
-                    seedSimilarAlbums: false,
-                });
-            } catch {
-                return [];
-            }
-
-            tracks = getAlbumTrackRows(albumId);
-        }
+        const tracks = getAlbumTrackRows(albumId);
 
         return hydrateTrackRows(tracks);
     }

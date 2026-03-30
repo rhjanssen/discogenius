@@ -69,10 +69,22 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
     },
+    queueColumnsWrapper: {
+        display: "flex",
+        flexDirection: "column" as const,
+        gap: tokens.spacingVerticalS,
+        "@media (min-width: 960px)": {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: tokens.spacingHorizontalL,
+            alignItems: "start",
+        },
+    },
     queueSection: {
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXS,
+        minWidth: 0,
     },
     queueSelectionBar: {
         marginBottom: tokens.spacingVerticalXS,
@@ -321,11 +333,11 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
         minWidth: 0,
-        "@media (min-width: 960px)": {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: tokens.spacingHorizontalM,
-        },
+    },
+    downloadHeaderRowInline: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalM,
     },
     downloadTitleRow: {
         display: "flex",
@@ -358,11 +370,10 @@ export const useDashboardStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
         minWidth: 0,
-        "@media (min-width: 960px)": {
-            flexWrap: "nowrap",
-            minWidth: "auto",
-            gap: tokens.spacingHorizontalM,
-        },
+    },
+    downloadArtistMetaRowInline: {
+        flexWrap: "nowrap",
+        gap: tokens.spacingHorizontalM,
     },
     downloadBadgeRow: {
         display: "flex",
@@ -370,9 +381,9 @@ export const useDashboardStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
         minWidth: 0,
-        "@media (min-width: 960px)": {
-            flexWrap: "nowrap",
-        },
+    },
+    downloadBadgeRowInline: {
+        flexWrap: "nowrap",
     },
     downloadProgress: {
         display: "flex",
@@ -423,9 +434,12 @@ export const useDashboardStyles = makeStyles({
             backgroundColor: tokens.colorNeutralBackground1,
         },
     },
-    queueHistoryPlaceholderIcon: {
-        width: "16px",
-        height: "16px",
+    queueHistoryTrailing: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalS,
+        flexShrink: 0,
+        marginLeft: "auto",
     },
     queueHistoryStatus: {
         display: "flex",
@@ -434,19 +448,10 @@ export const useDashboardStyles = makeStyles({
         flexShrink: 0,
         justifyContent: "flex-end",
     },
-    queueHistoryStatusText: {
+    queueHistoryTime: {
         fontSize: tokens.fontSizeBase200,
-        fontWeight: tokens.fontWeightSemibold,
+        color: tokens.colorNeutralForeground3,
         whiteSpace: "nowrap",
-    },
-    queueHistoryStatusTextSuccess: {
-        color: tokens.colorPaletteGreenForeground1,
-    },
-    queueHistoryStatusTextDanger: {
-        color: tokens.colorPaletteRedForeground1,
-    },
-    queueHistoryStatusTextNeutral: {
-        color: tokens.colorNeutralForeground2,
     },
     queueHistoryErrorText: {
         fontSize: tokens.fontSizeBase100,
@@ -459,6 +464,18 @@ export const useDashboardStyles = makeStyles({
         alignItems: "center",
         gap: tokens.spacingHorizontalXXS,
         flexShrink: 0,
+    },
+    reorderDesktopOnly: {
+        display: "none",
+        "@media (min-width: 640px)": {
+            display: "inline-flex",
+        },
+    },
+    reorderMobileOnly: {
+        display: "inline-flex",
+        "@media (min-width: 640px)": {
+            display: "none",
+        },
     },
     downloadStateIndicator: {
         display: "flex",

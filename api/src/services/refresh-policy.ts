@@ -53,11 +53,16 @@ export function hasInactiveArtistCatalog(artistId: string | number): boolean {
 export function shouldRefreshArtist(options: {
   artistId: string | number;
   lastScanned?: string | null;
+  refreshDays?: number | null;
 }): boolean {
   const last = parseTimestamp(options.lastScanned ?? null);
+  const refreshDays = typeof options.refreshDays === "number" && Number.isFinite(options.refreshDays) && options.refreshDays > 0
+    ? options.refreshDays
+    : null;
 
   if (last === null) return true;
   if (isNewerThanHours(last, MIN_RETRY_HOURS)) return false;
+  if (refreshDays !== null) return isOlderThanDays(last, refreshDays);
   if (isOlderThanDays(last, ARTIST_HARD_REFRESH_DAYS)) return true;
   if (hasRecentArtistRelease(options.artistId)) return true;
   if (hasInactiveArtistCatalog(options.artistId)) return isOlderThanDays(last, ARTIST_INACTIVE_REFRESH_DAYS);

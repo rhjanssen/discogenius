@@ -42,6 +42,39 @@ export function closeDatabase() {
   }
 }
 
+/**
+ * Run multiple prepared-statement executions inside a single SQLite transaction.
+ * Equivalent to Lidarr's InsertMany/UpdateMany pattern — one commit instead of N.
+ */
+export function batchRun(sql: string, argsList: unknown[][]): number {
+  if (argsList.length === 0) return 0;
+  const stmt = db.prepare(sql);
+  const run = db.transaction(() => {
+    let total = 0;
+    for (const args of argsList) {
+      total += stmt.run(...args).changes;
+    }
+    return total;
+  });
+  return run();
+}
+
+/**
+ * Delete rows by ID list in a single transaction.
+ */
+export function batchDelete(table: string, ids: Array<string | number>): number {
+  if (ids.length === 0) return 0;
+  const stmt = db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+  const run = db.transaction(() => {
+    let total = 0;
+    for (const id of ids) {
+      total += stmt.run(id).changes;
+    }
+    return total;
+  });
+  return run();
+}
+
 export function backfillArtistPaths(resolveFolder: (name: string, mbid?: string | null) => string): number {
   const artists = db.prepare("SELECT id, name, mbid FROM artists WHERE path IS NULL").all() as Array<{ id: number; name: string; mbid: string | null }>;
   if (artists.length === 0) return 0;

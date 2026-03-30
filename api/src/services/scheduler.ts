@@ -357,6 +357,7 @@ export class Scheduler {
                                 artistId,
                                 artistName,
                                 workflow: monitoringCycle ? 'monitoring-intake' : 'metadata-refresh',
+                                monitoringCycle: job.payload.monitoringCycle,
                                 scanLibrary: monitoringCycle,
                                 forceDownloadQueue: false,
                                 trigger: job.trigger ?? 0,
@@ -483,6 +484,7 @@ export class Scheduler {
                         // Step 1: Disk scan — reconcile library_files with disk reality
                         await DiskScanService.scan({
                             artistIds: [artistId],
+                            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
                             onProgress: (event) => {
                                 this.updateJobDescription(job, {
                                     progress: event.progress,
@@ -511,6 +513,7 @@ export class Scheduler {
                             artistId,
                             artistName: job.payload.artistName ?? "",
                             workflow: job.payload.workflow,
+                            monitoringCycle: job.payload.monitoringCycle,
                             skipDownloadQueue: job.payload.skipDownloadQueue ?? false,
                             skipCuration: job.payload.skipCuration ?? false,
                             skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
@@ -527,6 +530,7 @@ export class Scheduler {
                             addNewArtists: addNewArtists,
                             monitorNewArtists: job.payload.monitorArtist ?? true,
                             fullProcessing: job.payload.fullProcessing ?? false,
+                            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
                             trigger: job.trigger ?? 0,
                             onProgress: (event) => {
                                 this.updateJobDescription(job, {
@@ -597,9 +601,16 @@ export class Scheduler {
                         description: 'Running housekeeping and optimizing the database',
                     });
                     const summary = runRuntimeMaintenance();
+                    const parts = [
+                        `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
+                        `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
+                        `repaired ${summary.mediaMonitorRepairs + summary.albumMonitorRepairs} monitor state gap(s)`,
+                        `pruned ${summary.historyJobsPruned} old job(s)`,
+                        `and optimized the database`,
+                    ];
                     this.updateJobDescription(job, {
                         progress: 100,
-                        description: `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), repaired ${summary.mediaMonitorRepairs + summary.albumMonitorRepairs} monitor state gap(s), and optimized the database`,
+                        description: parts.join(', '),
                     });
                     break;
                 }
@@ -615,6 +626,7 @@ export class Scheduler {
         } catch (error: any) {
             console.error(`❌ Job #${job.id} failed:`, error);
             TaskQueueService.fail(job.id, error?.message || 'Unknown scheduler error');
+            queueNextMonitoringPass(job);
         }
     }
 }

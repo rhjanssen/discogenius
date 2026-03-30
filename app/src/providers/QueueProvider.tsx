@@ -10,7 +10,6 @@ import type {
 
 export type { DownloadProgress, QueueItem };
 
-const QUEUE_FALLBACK_REFRESH_MS = 45_000;
 const QUEUE_MISSING_ITEM_GRACE_MS = 15_000;
 
 type LiveQueueEvent = Partial<DownloadProgress> & {
@@ -565,7 +564,6 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Set up SSE for real-time progress
   useEffect(() => {
     let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let queueFallbackInterval: ReturnType<typeof setInterval> | null = null;
     isUnmountedRef.current = false;
 
     const setupProgressStream = () => {
@@ -703,16 +701,12 @@ export const QueueProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setupProgressStream();
     fetchQueue();
-    queueFallbackInterval = setInterval(() => {
-      void fetchQueue();
-    }, QUEUE_FALLBACK_REFRESH_MS);
 
     return () => {
       isUnmountedRef.current = true;
       if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
       if (queueRefreshTimerRef.current) clearTimeout(queueRefreshTimerRef.current);
       if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
-      if (queueFallbackInterval) clearInterval(queueFallbackInterval);
       if (eventSourceRef.current) {
         isManualCloseRef.current = true;
         eventSourceRef.current.close();

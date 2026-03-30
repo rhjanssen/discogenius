@@ -28,6 +28,7 @@ let pendingArtistJobsStmt: any | null = null;
 let warnedJobQueueMissing = false;
 let activeLibraryRescanStmt: any | null = null;
 let activeHousekeepingStmt: any | null = null;
+let activeMonitoringCycleStmt: any | null = null;
 let monitoringStateGetStmt: any | null = null;
 let monitoringStateUpsertStmt: any | null = null;
 let monitoringProgressLoaded = false;
@@ -73,6 +74,21 @@ function getActiveHousekeepingStmt() {
     }
 
     return activeHousekeepingStmt;
+}
+
+function getActiveMonitoringCycleStmt() {
+        if (!activeMonitoringCycleStmt) {
+                activeMonitoringCycleStmt = db.prepare(`
+            SELECT 1
+            FROM job_queue
+            WHERE type IN (?, ?, ?, ?, ?)
+                AND json_extract(payload, '$.monitoringCycle') IS NOT NULL
+                AND status IN ('pending', 'processing')
+            LIMIT 1
+        `);
+        }
+
+        return activeMonitoringCycleStmt;
 }
 
 function getMonitoringStateGetStmt() {
@@ -123,6 +139,16 @@ export function hasActiveTask(taskName: string): boolean {
 
 export function hasActiveHousekeepingTask(): boolean {
     return Boolean(getActiveHousekeepingStmt().get());
+}
+
+export function hasActiveMonitoringCycleWorkflow(): boolean {
+    return Boolean(getActiveMonitoringCycleStmt().get(
+        JobTypes.RefreshMetadata,
+        JobTypes.RescanFolders,
+        JobTypes.CurateArtist,
+        JobTypes.ApplyCuration,
+        JobTypes.DownloadMissing,
+    ));
 }
 
 export function loadMonitoringProgress(): MonitoringProgress {
@@ -204,7 +230,7 @@ export function getEffectiveMonitoringRuntimeState(
 ): MonitoringProgress {
     loadMonitoringProgress();
 
-    const workflowActive = options.isChecking || hasActiveArtistWorkflow();
+    const workflowActive = options.isChecking || hasActiveMonitoringCycleWorkflow();
     const persistedInProgress = monitoringProgress.checkInProgress;
 
     if (persistedInProgress && !workflowActive) {

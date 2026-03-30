@@ -196,11 +196,12 @@ export function queueLibraryRescan(options: {
   monitorArtist?: boolean;
   fullProcessing?: boolean;
   artistIds?: string[];
+  addNewArtists?: boolean;
 } = {}) {
   return TaskQueueService.addJob(
     JobTypes.RescanFolders,
     {
-      addNewArtists: true,
+      addNewArtists: options.addNewArtists ?? false,
       artistIds: options.artistIds,
       monitorArtist: options.monitorArtist ?? true,
       fullProcessing: options.fullProcessing ?? false,
@@ -280,6 +281,7 @@ export function buildRescanFoldersJobPayload(params: {
   artistId: string;
   artistName: string;
   workflow: Extract<ArtistWorkflow, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
+  monitoringCycle?: RescanFoldersJobPayload["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
@@ -290,6 +292,7 @@ export function buildRescanFoldersJobPayload(params: {
     skipCuration: !phases.curate,
     skipMetadataBackfill: !phases.backfillMetadata,
     forceDownloadQueue: phases.queueDownloads,
+    monitoringCycle: params.monitoringCycle,
   };
 }
 
@@ -297,6 +300,7 @@ export function buildCurateArtistJobPayload(params: {
   artistId: string;
   artistName: string;
   workflow: Extract<ArtistWorkflow, "curation" | "monitoring-intake" | "full-monitoring">;
+  monitoringCycle?: RescanFoldersJobPayload["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
@@ -305,6 +309,7 @@ export function buildCurateArtistJobPayload(params: {
     workflow: params.workflow,
     skipDownloadQueue: !phases.queueDownloads,
     forceDownloadQueue: phases.queueDownloads,
+    monitoringCycle: params.monitoringCycle,
   };
 }
 

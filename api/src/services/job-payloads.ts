@@ -85,6 +85,7 @@ export interface QueuePayloadCommon {
   skipDownloadQueue?: boolean;
   skipCuration?: boolean;
   skipMetadataBackfill?: boolean;
+  trackUnmappedFiles?: boolean;
   fullProcessing?: boolean;
   addNewArtists?: boolean;
   applyAll?: boolean;
@@ -177,6 +178,7 @@ export interface RescanFoldersJobPayload extends QueuePayloadCommon {
   skipDownloadQueue?: boolean;
   skipCuration?: boolean;
   skipMetadataBackfill?: boolean;
+  trackUnmappedFiles?: boolean;
   forceDownloadQueue?: boolean;
   // Library-wide scan options
   addNewArtists?: boolean;

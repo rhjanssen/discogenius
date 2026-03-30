@@ -166,6 +166,51 @@ export type Job = { [K in JobType]: JobOfType<K> }[JobType];
 
 import { appEvents, AppEvent, JobEventPayload } from "./app-events.js";
 
+// ---------------------------------------------------------------------------
+// Throttled JOB_UPDATED emission (Lidarr-style debounce)
+// ---------------------------------------------------------------------------
+// Structural status changes (processing, completed, failed, cancelled) emit
+// immediately. Progress / description-only updates are coalesced so that at
+// most one JOB_UPDATED is emitted per job per second.
+const JOB_UPDATE_THROTTLE_MS = 1000;
+const jobUpdateBuffer = new Map<number, { payload: JobEventPayload; timer: ReturnType<typeof setTimeout> }>();
+
+/**
+ * Emit JOB_UPDATED for progress/description changes at most once per second
+ * per job.  The first call for a given job emits immediately; subsequent calls
+ * within the throttle window are coalesced and flushed when the timer fires.
+ */
+function emitThrottledJobUpdate(payload: JobEventPayload): void {
+    const existing = jobUpdateBuffer.get(payload.id);
+    if (existing) {
+        // Already have a pending timer — just update the buffered payload
+        existing.payload = payload;
+        return;
+    }
+
+    // First call for this job — emit immediately, then start throttle window
+    appEvents.emit(AppEvent.JOB_UPDATED, payload);
+    const timer = setTimeout(() => {
+        const buffered = jobUpdateBuffer.get(payload.id);
+        jobUpdateBuffer.delete(payload.id);
+        if (buffered) {
+            appEvents.emit(AppEvent.JOB_UPDATED, buffered.payload);
+        }
+    }, JOB_UPDATE_THROTTLE_MS);
+    if (timer.unref) timer.unref();
+    jobUpdateBuffer.set(payload.id, { payload, timer });
+}
+
+/** Flush and clear any pending throttled update for a job (used before
+ *  structural events that must not be preceded by a stale progress update). */
+function clearJobUpdateThrottle(jobId: number): void {
+    const existing = jobUpdateBuffer.get(jobId);
+    if (existing) {
+        clearTimeout(existing.timer);
+        jobUpdateBuffer.delete(jobId);
+    }
+}
+
 function isObjectPayload(value: unknown): value is QueuePayloadCommon {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -625,6 +670,7 @@ ${buildExecutionOrderClause()}
 
     static markProcessing(id: number) {
         db.prepare("UPDATE job_queue SET status = 'processing', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'processing', progress: job.progress } as JobEventPayload);
     }
@@ -632,7 +678,7 @@ ${buildExecutionOrderClause()}
     static updateProgress(id: number, progress: number) {
         db.prepare("UPDATE job_queue SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(progress, id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: job.status, progress } as JobEventPayload);
+        if (job) emitThrottledJobUpdate({ id, type: job.type, status: job.status, progress } as JobEventPayload);
     }
 
     static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<QueuePayloadCommon> }) {
@@ -666,7 +712,7 @@ ${buildExecutionOrderClause()}
 
         const updated = this.getById(id);
         if (updated) {
-            appEvents.emit(AppEvent.JOB_UPDATED, {
+            emitThrottledJobUpdate({
                 id,
                 type: updated.type,
                 status: updated.status,
@@ -680,6 +726,7 @@ ${buildExecutionOrderClause()}
 
     static complete(id: number) {
         db.prepare("UPDATE job_queue SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'completed', progress: 100 } as JobEventPayload);
     }
@@ -690,12 +737,14 @@ ${buildExecutionOrderClause()}
             SET status = 'failed', error = ?, attempts = attempts + 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
             WHERE id = ?
     `).run(error, id);
+        clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'failed', progress: job.progress, error } as JobEventPayload);
     }
 
     static cancel(id: number) {
         db.prepare("UPDATE job_queue SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'cancelled', progress: job.progress } as JobEventPayload);
     }

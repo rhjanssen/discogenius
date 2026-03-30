@@ -57,6 +57,7 @@ export function initCurationListeners() {
                     artistId: payload.artistId,
                     artistName: payload.artistName,
                     workflow,
+                    monitoringCycle: payload.monitoringCycle,
                 }),
                 payload.artistId,
                 0,
@@ -85,10 +86,12 @@ export function initCurationListeners() {
                     artistId: payload.artistId,
                     artistName: payload.artistName,
                     workflow,
+                    monitoringCycle: payload.monitoringCycle,
                 })
                 : {
                     artistId: payload.artistId,
                     artistName: payload.artistName,
+                    monitoringCycle: payload.monitoringCycle,
                     skipDownloadQueue: payload.skipDownloadQueue ?? false,
                     forceDownloadQueue: payload.forceDownloadQueue ?? false,
                 },

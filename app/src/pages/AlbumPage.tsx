@@ -14,6 +14,8 @@ import {
   SkeletonItem,
   makeStyles,
   tokens,
+  Overflow,
+  OverflowItem,
   mergeClasses,
 } from "@fluentui/react-components";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -57,6 +59,7 @@ import {
   detailActionButtonRadiusStyles,
   standardDetailActionButtonStyles,
 } from "@/components/media/detailActionStyles";
+import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 
 const useStyles = makeStyles({
   container: {
@@ -182,7 +185,7 @@ const useStyles = makeStyles({
   actions: {
     display: "flex",
     gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
     marginTop: tokens.spacingVerticalS,
@@ -376,6 +379,8 @@ const useStyles = makeStyles({
   },
 });
 
+/* ── Album overflow helpers ─────────────────────────────────── */
+
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
 
 const AlbumPage = () => {
@@ -546,6 +551,12 @@ const AlbumPage = () => {
     }
   };
 
+  const albumActions: OverflowAction[] = [
+    { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
+    { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
+    { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download', disabled: downloadingAlbum, onClick: handleDownloadAlbum },
+  ];
+
   /** Open track info dialog */
   if (loading) {
     return (
@@ -707,47 +718,57 @@ const AlbumPage = () => {
                 );
               })()}
 
-              <div className={styles.actions}>
-                {/* Monitor Button — icon shows action (what clicking will do) */}
-                <Button
-                  appearance={isMonitored ? "subtle" : "primary"}
-                  icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                  onClick={handleToggleMonitor}
-                  disabled={isTogglingMonitor || isLocked}
-                  title={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
-                  className={mergeClasses(
-                    styles.actionButton,
-                    isMonitored ? styles.transparentButton : styles.primaryButton
-                  )}
-                >
-                  {isMonitored ? "Unmonitor" : "Monitor"}
-                </Button>
+              <Overflow minimumVisible={2}>
+                <div className={styles.actions}>
+                  {/* Monitor Button — icon shows action (what clicking will do) */}
+                  <OverflowItem id="monitor" priority={3}>
+                    <Button
+                      appearance={isMonitored ? "subtle" : "primary"}
+                      icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                      onClick={handleToggleMonitor}
+                      disabled={isTogglingMonitor || isLocked}
+                      title={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                      className={mergeClasses(
+                        styles.actionButton,
+                        isMonitored ? styles.transparentButton : styles.primaryButton
+                      )}
+                    >
+                      {isMonitored ? "Unmonitor" : "Monitor"}
+                    </Button>
+                  </OverflowItem>
 
-                {/* Lock Button — icon shows action (what clicking will do) */}
-                <Tooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
-                  <Button
-                    appearance="subtle"
-                    icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
-                    onClick={handleToggleLock}
-                    disabled={isTogglingLock}
-                    className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                  >
-                    {isLocked ? "Unlock" : "Lock"}
-                  </Button>
-                </Tooltip>
+                  {/* Lock Button — icon shows action (what clicking will do) */}
+                  <OverflowItem id="lock" priority={2}>
+                    <Tooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+                        onClick={handleToggleLock}
+                        disabled={isTogglingLock}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        {isLocked ? "Unlock" : "Lock"}
+                      </Button>
+                    </Tooltip>
+                  </OverflowItem>
 
-                {/* Download Button */}
-                <Button
-                  icon={<ArrowDownload24Regular />}
-                  appearance="subtle"
-                  onClick={handleDownloadAlbum}
-                  disabled={downloadingAlbum}
-                  title="Download album"
-                  className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                >
-                  {downloadingAlbum ? "Adding..." : "Download"}
-                </Button>
-              </div>            </div>
+                  {/* Download Button */}
+                  <OverflowItem id="download" priority={1}>
+                    <Button
+                      icon={<ArrowDownload24Regular />}
+                      appearance="subtle"
+                      onClick={handleDownloadAlbum}
+                      disabled={downloadingAlbum}
+                      title="Download album"
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      {downloadingAlbum ? "Adding..." : "Download"}
+                    </Button>
+                  </OverflowItem>
+
+                  <ActionOverflowMenu actions={albumActions} />
+                </div>
+              </Overflow>            </div>
           </div>
         </div>
 

@@ -64,8 +64,8 @@ prepare_writable_dirs() {
     rm -rf /config/runtime
   fi
 
-  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads; then
-    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config or /downloads." >&2
+  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /opt/orpheusdl; then
+    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, or /opt/orpheusdl." >&2
   fi
 
   if ! chmod -R u+rwX,g+rwX /config /downloads; then

@@ -13,7 +13,6 @@ type UseDashboardInfiniteFeedOptions<TItem> = {
     queryKey: QueryKey;
     pageSize: number;
     timeoutMs?: number;
-    fallbackRefreshMs?: number | false;
     refreshErrorFallbackMessage: string;
     fetchPage: (args: { limit: number; offset: number; timeoutMs: number }) => Promise<FeedPage<TItem>>;
     getItemId: (item: TItem) => string | number;
@@ -35,7 +34,6 @@ export function useDashboardInfiniteFeed<TItem>({
     queryKey,
     pageSize,
     timeoutMs = 10_000,
-    fallbackRefreshMs = 45_000,
     refreshErrorFallbackMessage,
     fetchPage,
     getItemId,
@@ -63,8 +61,6 @@ export function useDashboardInfiniteFeed<TItem>({
                 : undefined
         ),
         staleTime: 5_000,
-        refetchInterval: enabled && fallbackRefreshMs !== false ? fallbackRefreshMs : false,
-        refetchIntervalInBackground: false,
         refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,

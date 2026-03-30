@@ -12,7 +12,6 @@ import type {
 export type { ActiveJob, CommandStats, StatusOverviewResponse, TaskQueueStat };
 
 export const statusOverviewQueryKey = ["statusOverview"] as const;
-const STATUS_OVERVIEW_FALLBACK_REFRESH_MS = 45_000;
 
 export function useStatusOverview() {
     useDebouncedQueryInvalidation({
@@ -37,8 +36,6 @@ export function useStatusOverview() {
             return api.getStatusOverview({ timeoutMs: 8_000 });
         },
         staleTime: 5_000,
-        refetchInterval: STATUS_OVERVIEW_FALLBACK_REFRESH_MS,
-        refetchIntervalInBackground: false,
         refetchOnWindowFocus: false,
         retry: 1,
         placeholderData: (previousData) => previousData,

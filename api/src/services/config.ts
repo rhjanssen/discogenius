@@ -113,6 +113,14 @@ export interface NamingConfig {
   video_file: string;              // Video filename stem (without extension)
 }
 
+/**
+ * Controls when audio file tags are written (aligned with Lidarr's WriteAudioTagsType).
+ * - "no"        — Never write tags
+ * - "new_files" — Only write tags on newly downloaded/imported files
+ * - "all_files" — Write tags on all files (existing + new)
+ */
+export type WriteAudioTagsPolicy = "no" | "new_files" | "all_files";
+
 export interface MetadataConfig {
   save_album_cover: boolean;
   album_cover_name: string;
@@ -131,8 +139,13 @@ export interface MetadataConfig {
   write_tidal_url: boolean;
   mark_explicit: boolean;
   upc_target: "UPC" | "EAN" | "BARCODE";
+  /** @deprecated Use write_audio_tags_policy instead */
   write_audio_metadata?: boolean;
   embed_replaygain?: boolean;
+  /** Lidarr-aligned tag write policy. Overrides legacy write_audio_metadata boolean. */
+  write_audio_tags_policy?: WriteAudioTagsPolicy;
+  /** Remove all existing tags before writing desired ones (Lidarr's ScrubAudioTags). */
+  scrub_audio_tags?: boolean;
 }
 
 export interface AccountConfig {
@@ -241,6 +254,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     upc_target: "BARCODE",
     write_audio_metadata: true,
     embed_replaygain: true,
+    write_audio_tags_policy: "all_files",
+    scrub_audio_tags: false,
   },
   account: {}
 };

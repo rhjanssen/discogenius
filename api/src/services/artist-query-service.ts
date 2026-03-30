@@ -11,7 +11,7 @@ import { hydrateTrackRows } from "./track-query-service.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
-import { ScanLevel, getArtistScanLevel, scanArtistDeep, scanArtistShallow } from "./scanner.js";
+import { ScanLevel, getArtistScanLevel, scanArtistBasic } from "./scanner.js";
 import { shouldRefreshArtist } from "./refresh-policy.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
 
@@ -110,39 +110,6 @@ function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId:
     });
 }
 
-async function ensureArtistHydrated(
-    artistId: string,
-    target: "shallow" | "page",
-): Promise<ArtistMonitorRow | undefined> {
-    const existing = loadArtistWithEffectiveMonitor(artistId);
-    const shouldHydrate = target === "page"
-        ? shouldHydrateArtistPage(existing, artistId)
-        : shouldHydrateArtistShallow(existing, artistId);
-
-    if (!shouldHydrate) {
-        return existing;
-    }
-
-    try {
-        if (target === "page") {
-            await scanArtistDeep(artistId, {
-                forceUpdate: Boolean(existing),
-                seedSimilarArtists: false,
-            });
-        } else {
-            await scanArtistShallow(artistId, {
-                forceUpdate: Boolean(existing),
-                includeSimilarArtists: false,
-                seedSimilarArtists: false,
-            });
-        }
-    } catch {
-        return existing;
-    }
-
-    return loadArtistWithEffectiveMonitor(artistId);
-}
-
 export class ArtistQueryService {
     static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
@@ -236,7 +203,17 @@ export class ArtistQueryService {
     }
 
     static async getArtistById(artistId: string): Promise<ArtistContract | null> {
-        const artist = await ensureArtistHydrated(artistId, "shallow");
+        let artist = loadArtistWithEffectiveMonitor(artistId);
+
+        // Cold-load: seed basic metadata from TIDAL for artists not yet in the DB
+        // (e.g. navigating from search results). Skip re-scanning existing artists
+        // — staleness refresh is the scheduler's job.
+        if (!artist) {
+            try {
+                await scanArtistBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                artist = loadArtistWithEffectiveMonitor(artistId);
+            } catch { /* TIDAL lookup failed — fall through to 404 */ }
+        }
 
         if (!artist) {
             return null;
@@ -344,9 +321,16 @@ export class ArtistQueryService {
     }
 
     static async getArtistDetail(id: string): Promise<any | null> {
-        const hydratedArtist = await ensureArtistHydrated(id, "shallow");
+        let existing = loadArtistWithEffectiveMonitor(id);
 
-        if (!hydratedArtist) {
+        if (!existing) {
+            try {
+                await scanArtistBasic(id, { includeSimilarArtists: false, seedSimilarArtists: false });
+                existing = loadArtistWithEffectiveMonitor(id);
+            } catch { /* TIDAL lookup failed */ }
+        }
+
+        if (!existing) {
             return null;
         }
 
@@ -411,7 +395,17 @@ export class ArtistQueryService {
     }
 
     static async getArtistPageDb(artistId: string): Promise<any | null> {
-        const artist = await ensureArtistHydrated(artistId, "page");
+        let artist = loadArtistWithEffectiveMonitor(artistId);
+
+        // Cold-load: seed basic TIDAL metadata for not-yet-added artists so
+        // search-result navigation works.  Existing artists are returned as-is;
+        // staleness refresh is the scheduler's job.
+        if (!artist) {
+            try {
+                await scanArtistBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                artist = loadArtistWithEffectiveMonitor(artistId);
+            } catch { /* TIDAL lookup failed */ }
+        }
 
         if (!artist) {
             return null;

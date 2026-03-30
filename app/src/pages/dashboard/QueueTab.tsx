@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type SyntheticEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
     Button,
@@ -23,6 +23,7 @@ import {
     MusicNote224Regular,
     Video24Regular,
     ArrowDownload24Regular,
+    ArrowUpload24Regular,
     MoreHorizontal24Regular,
     ArrowUp24Regular,
     ArrowDown24Regular,
@@ -285,7 +286,6 @@ type QueueHistoryRowModel = {
     mediaBadge: QueueHistoryMediaBadge | null;
     navPath: string | null;
     quality: string | null;
-    statusLabel: string;
     timeLabel: string;
     error: string | null;
 };
@@ -303,26 +303,6 @@ function getQueueHistoryMediaBadge(item: QueueItem): QueueHistoryMediaBadge | nu
         default:
             return null;
     }
-}
-
-function getQueueHistoryStatusLabel(item: QueueItem): string {
-    if (item.error || item.status === 'failed') {
-        return 'Failed';
-    }
-
-    if (item.status === 'cancelled') {
-        return 'Cancelled';
-    }
-
-    if (item.status === 'pending') {
-        return 'Queued';
-    }
-
-    if (item.status === 'processing' || item.status === 'downloading') {
-        return 'In progress';
-    }
-
-    return 'Completed';
 }
 
 function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
@@ -345,7 +325,6 @@ function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
         mediaBadge,
         navPath,
         quality: item.quality ?? null,
-        statusLabel: getQueueHistoryStatusLabel(item),
         timeLabel: formatRelativeTime(timeSource),
         error: item.error ?? null,
     };
@@ -504,6 +483,10 @@ const QueueTab = () => {
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
     const [busyGroupIds, setBusyGroupIds] = useState<string[]>([]);
     const [activeBulkAction, setActiveBulkAction] = useState<string | null>(null);
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeSentinelRef = useRef<HTMLDivElement | null>(null);
+    const historySentinelRef = useRef<HTMLDivElement | null>(null);
 
     const groupedDownloads = useMemo(() => {
         const activeDownloads = downloadQueue.filter(i => i.status === 'downloading' || i.status === 'processing');
@@ -574,17 +557,58 @@ const QueueTab = () => {
         return Object.values(groups).sort((a, b) => {
             const aActiveItem = a.items.find(i => i.status === 'downloading' || i.status === 'processing');
             const bActiveItem = b.items.find(i => i.status === 'downloading' || i.status === 'processing');
-            const rankGroup = (groupStatus: string, activeItem?: QueueItem) => {
-                if (groupStatus === 'downloading' && activeItem?.stage === 'import') return 0;
-                if (groupStatus === 'downloading') return 1;
-                if (groupStatus === 'pending') return 2;
-                return 3;
+            const rankGroup = (group: QueueGroup, activeItem?: QueueItem) => {
+                if (group.status === 'downloading' && activeItem?.stage === 'import') return 0;
+                if (group.status === 'pending' && group.items[0]?.stage === 'import') return 1;
+                if (group.status === 'downloading') return 2;
+                if (group.status === 'pending') return 3;
+                return 4;
             };
-            const rankDiff = rankGroup(a.status, aActiveItem) - rankGroup(b.status, bActiveItem);
+            const rankDiff = rankGroup(a, aActiveItem) - rankGroup(b, bActiveItem);
             if (rankDiff !== 0) return rankDiff;
             return a.sortIndex - b.sortIndex;
         });
     }, [downloadQueue]);
+
+    const ACTIVE_PAGE_SIZE = 25;
+    const [visibleActiveLimit, setVisibleActiveLimit] = useState(ACTIVE_PAGE_SIZE);
+    const visibleGroupedDownloads = useMemo(
+        () => groupedDownloads.slice(0, visibleActiveLimit),
+        [groupedDownloads, visibleActiveLimit],
+    );
+    const hasMoreActiveGroups = groupedDownloads.length > visibleActiveLimit;
+
+    // Reset visible limit when queue shrinks below threshold
+    useEffect(() => {
+        if (groupedDownloads.length <= ACTIVE_PAGE_SIZE) {
+            setVisibleActiveLimit(ACTIVE_PAGE_SIZE);
+        }
+    }, [groupedDownloads.length]);
+
+    // Infinite scroll: auto-load next page when sentinel enters viewport
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    if (entry.target === activeSentinelRef.current && hasMoreActiveGroups) {
+                        setVisibleActiveLimit((prev) => prev + ACTIVE_PAGE_SIZE);
+                    }
+                    if (entry.target === historySentinelRef.current && hasMoreQueueHistory && !isLoadingMoreQueueHistory) {
+                        void loadMoreQueueHistory();
+                    }
+                }
+            },
+            { rootMargin: "200px" },
+        );
+
+        const activeSentinel = activeSentinelRef.current;
+        const historySentinel = historySentinelRef.current;
+        if (activeSentinel) observer.observe(activeSentinel);
+        if (historySentinel) observer.observe(historySentinel);
+
+        return () => observer.disconnect();
+    }, [hasMoreActiveGroups, hasMoreQueueHistory, isLoadingMoreQueueHistory, loadMoreQueueHistory]);
 
     const pendingReorderGroups = useMemo(
         () => groupedDownloads.filter((group) => isPendingReorderableGroup(group)),
@@ -627,6 +651,53 @@ const QueueTab = () => {
     ));
     const isQueueMutationPending = busyGroupIds.length > 0 || activeBulkAction !== null;
 
+    const enterSelectionMode = useCallback((groupId: string) => {
+        setIsSelectionMode(true);
+        pendingGroupSelection.setSelectedRowIds((current) => {
+            const currentIds = current.map((rowId) => String(rowId));
+            return currentIds.includes(groupId) ? current : [...current, groupId];
+        });
+    }, [pendingGroupSelection]);
+
+    const exitSelectionMode = useCallback(() => {
+        setIsSelectionMode(false);
+        pendingGroupSelection.clearSelection();
+    }, [pendingGroupSelection]);
+
+    // Exit selection mode when there are no more pending reorderable groups
+    useEffect(() => {
+        if (isSelectionMode && pendingReorderGroups.length === 0) {
+            exitSelectionMode();
+        }
+    }, [isSelectionMode, pendingReorderGroups.length, exitSelectionMode]);
+
+    const handleGroupContextMenu = useCallback((e: ReactMouseEvent, groupId: string) => {
+        if (!isPendingReorderableGroup(groupedDownloads.find((g) => g.id === groupId))) return;
+        e.preventDefault();
+        enterSelectionMode(groupId);
+    }, [groupedDownloads, enterSelectionMode]);
+
+    const handleGroupTouchStart = useCallback((_e: ReactTouchEvent, groupId: string) => {
+        if (!isPendingReorderableGroup(groupedDownloads.find((g) => g.id === groupId))) return;
+        longPressTimerRef.current = setTimeout(() => {
+            enterSelectionMode(groupId);
+        }, 400);
+    }, [groupedDownloads, enterSelectionMode]);
+
+    const handleGroupTouchEnd = useCallback(() => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    }, []);
+
+    const handleGroupTouchMove = useCallback(() => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    }, []);
+
     const stopQueueControlEvent = (event: SyntheticEvent<HTMLElement>) => {
         event.stopPropagation();
     };
@@ -653,6 +724,18 @@ const QueueTab = () => {
         await withBusyGroups([groupId], null, async () => {
             await reorderItems(reorderRequest);
         });
+    };
+
+    const handleGroupMove = async (groupId: string, action: GroupMoveAction) => {
+        if (isSelectionMode && selectedPendingGroupIdSet.has(groupId) && selectedPendingGroupIds.length > 1) {
+            if (action === 'top' || action === 'bottom') {
+                await handleSelectedGroupsMoveToEdge(action);
+            } else {
+                await handleSelectedGroupsMoveOneStep(action);
+            }
+        } else {
+            await handleSingleGroupMove(groupId, action);
+        }
     };
 
     const handleSelectedGroupsMoveToEdge = async (action: 'top' | 'bottom') => {
@@ -733,7 +816,7 @@ const QueueTab = () => {
     };
 
     const handleDragStart = (event: DragEvent<HTMLDivElement>, groupId: string) => {
-        if (isQueueMutationPending || (event.target as HTMLElement).closest('[data-queue-control="true"]')) {
+        if (isQueueMutationPending) {
             event.preventDefault();
             return;
         }
@@ -812,26 +895,22 @@ const QueueTab = () => {
 
     return (
         <div className={styles.tabSection}>
+            <div className={styles.queueColumnsWrapper}>
             {hasQueueRows ? (
-                <section className={styles.queueSection} aria-label="Live queue">
+                <section className={styles.queueSection} aria-label="Active">
                     <div className={styles.queueSectionHeader}>
                         <div className={styles.queueSectionHeading}>
-                            <Text size={200} weight="semibold" className={styles.activitySectionLabel}>Live queue</Text>
-                            {hasPendingReorderUi ? (
-                                <Text size={200} className={styles.queueSectionHint}>
-                                    Pending groups can be reordered directly here
-                                </Text>
-                            ) : null}
+                            <Text size={200} weight="semibold" className={styles.activitySectionLabel}>Active</Text>
                         </div>
                     </div>
 
-                    {hasPendingReorderUi ? (
+                    {isSelectionMode && hasPendingReorderUi ? (
                         <LibrarySelectionBar
                             selectedCount={pendingGroupSelection.selectedCount}
                             allVisibleSelected={pendingGroupSelection.allVisibleSelected}
                             someVisibleSelected={pendingGroupSelection.someVisibleSelected}
                             onSelectAllVisible={pendingGroupSelection.selectAllVisible}
-                            onClearSelection={pendingGroupSelection.clearSelection}
+                            onClearSelection={exitSelectionMode}
                             actions={[
                                 {
                                     key: 'move-top',
@@ -874,7 +953,7 @@ const QueueTab = () => {
                     ) : null}
 
                     <div className={styles.downloadList}>
-                        {groupedDownloads.map((group) => {
+                        {visibleGroupedDownloads.map((group) => {
                             const isVideo = group.type === 'video';
                             const coverUrl = group.cover ? (isVideo ? getTidalImage(group.cover, 'video', 'small') : getAlbumCover(group.cover, 'small')) : null;
                             const isDownloading = group.status === 'downloading';
@@ -904,6 +983,16 @@ const QueueTab = () => {
 
                             const handleGroupClick = (e: ReactMouseEvent) => {
                                 if (isInteractiveElementTarget(e.target)) return;
+                                if (isSelectionMode && isPendingReorderable) {
+                                    pendingGroupSelection.setSelectedRowIds((current) => {
+                                        const currentIds = current.map((rowId) => String(rowId));
+                                        if (currentIds.includes(group.id)) {
+                                            return current.filter((rowId) => String(rowId) !== group.id);
+                                        }
+                                        return [...current, group.id];
+                                    });
+                                    return;
+                                }
                                 if (groupNavPath) navigate(groupNavPath);
                             };
 
@@ -921,26 +1010,32 @@ const QueueTab = () => {
                                         )}
                                         style={{ opacity: isFailed ? 0.9 : 1, cursor: groupNavPath ? 'pointer' : 'default' }}
                                         onClick={handleGroupClick}
+                                        onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
+                                        onTouchStart={(e) => handleGroupTouchStart(e, group.id)}
+                                        onTouchEnd={handleGroupTouchEnd}
+                                        onTouchMove={handleGroupTouchMove}
                                         onDragOver={isPendingReorderable ? (event) => handleDragOver(event, group.id) : undefined}
                                         onDragLeave={isPendingReorderable ? () => handleDragLeave(group.id) : undefined}
                                         onDrop={isPendingReorderable ? (event) => { void handleDrop(event, group.id); } : undefined}
                                     >
                                         {isPendingReorderable ? (
                                             <div className={styles.downloadSelectionCell} data-queue-control="true" onClick={stopQueueControlEvent}>
-                                                <Checkbox
-                                                    aria-label={`Select ${group.title}`}
-                                                    checked={isGroupSelected}
-                                                    onChange={(_, data) => {
-                                                        pendingGroupSelection.setSelectedRowIds((current) => {
-                                                            const currentIds = current.map((rowId) => String(rowId));
-                                                            if (data.checked) {
-                                                                return currentIds.includes(group.id) ? current : [...current, group.id];
-                                                            }
+                                                {isSelectionMode ? (
+                                                    <Checkbox
+                                                        aria-label={`Select ${group.title}`}
+                                                        checked={isGroupSelected}
+                                                        onChange={(_, data) => {
+                                                            pendingGroupSelection.setSelectedRowIds((current) => {
+                                                                const currentIds = current.map((rowId) => String(rowId));
+                                                                if (data.checked) {
+                                                                    return currentIds.includes(group.id) ? current : [...current, group.id];
+                                                                }
 
-                                                            return current.filter((rowId) => String(rowId) !== group.id);
-                                                        });
-                                                    }}
-                                                />
+                                                                return current.filter((rowId) => String(rowId) !== group.id);
+                                                            });
+                                                        }}
+                                                    />
+                                                ) : null}
                                                 <div
                                                     className={mergeClasses(
                                                         styles.downloadDragHandle,
@@ -965,13 +1060,22 @@ const QueueTab = () => {
                                             </div>
                                         )}
                                         <div className={styles.downloadInfo}>
-                                            <div className={styles.downloadHeaderRow}>
+                                            <div className={mergeClasses(
+                                                styles.downloadHeaderRow,
+                                                (isDownloading || isImportPending) ? styles.downloadHeaderRowInline : '',
+                                            )}>
                                                 <div className={styles.downloadTitleRow}>
                                                     <Text className={styles.downloadTitle} truncate data-queue-group-title={group.title}>{group.title}</Text>
                                                 </div>
-                                                <div className={styles.downloadArtistMetaRow}>
+                                                <div className={mergeClasses(
+                                                    styles.downloadArtistMetaRow,
+                                                    (isDownloading || isImportPending) ? styles.downloadArtistMetaRowInline : '',
+                                                )}>
                                                     <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
-                                                    <div className={styles.downloadBadgeRow}>
+                                                    <div className={mergeClasses(
+                                                        styles.downloadBadgeRow,
+                                                        (isDownloading || isImportPending) ? styles.downloadBadgeRowInline : '',
+                                                    )}>
                                                         <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
                                                         {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
                                                     </div>
@@ -1022,24 +1126,48 @@ const QueueTab = () => {
                                                     </div>
                                                 )
                                         )}
-                                        <div className={styles.downloadActions}>
+                                        <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                             {isPendingReorderable ? (
-                                                <div className={styles.downloadReorderActions} data-queue-control="true" onClick={stopQueueControlEvent}>
+                                                <div className={styles.downloadReorderActions}>
+                                                    <Button
+                                                        size="small"
+                                                        appearance="subtle"
+                                                        icon={<ArrowUpload24Regular />}
+                                                        aria-label={`Move ${group.title} to top`}
+                                                        title="Move to top"
+                                                        disabled={isFirstPendingGroup || isQueueMutationPending}
+                                                        onClick={() => { void handleGroupMove(group.id, 'top'); }}
+                                                        className={styles.reorderDesktopOnly}
+                                                    />
                                                     <Button
                                                         size="small"
                                                         appearance="subtle"
                                                         icon={<ArrowUp24Regular />}
                                                         aria-label={`Move ${group.title} up`}
+                                                        title="Move up"
                                                         disabled={isFirstPendingGroup || isQueueMutationPending}
-                                                        onClick={() => { void handleSingleGroupMove(group.id, 'up'); }}
+                                                        onClick={() => { void handleGroupMove(group.id, 'up'); }}
+                                                        className={styles.reorderDesktopOnly}
                                                     />
                                                     <Button
                                                         size="small"
                                                         appearance="subtle"
                                                         icon={<ArrowDown24Regular />}
                                                         aria-label={`Move ${group.title} down`}
+                                                        title="Move down"
                                                         disabled={isLastPendingGroup || isQueueMutationPending}
-                                                        onClick={() => { void handleSingleGroupMove(group.id, 'down'); }}
+                                                        onClick={() => { void handleGroupMove(group.id, 'down'); }}
+                                                        className={styles.reorderDesktopOnly}
+                                                    />
+                                                    <Button
+                                                        size="small"
+                                                        appearance="subtle"
+                                                        icon={<ArrowDownload24Regular />}
+                                                        aria-label={`Move ${group.title} to bottom`}
+                                                        title="Move to bottom"
+                                                        disabled={isLastPendingGroup || isQueueMutationPending}
+                                                        onClick={() => { void handleGroupMove(group.id, 'bottom'); }}
+                                                        className={styles.reorderDesktopOnly}
                                                     />
                                                     <Menu>
                                                         <MenuTrigger disableButtonEnhancement>
@@ -1047,22 +1175,23 @@ const QueueTab = () => {
                                                                 size="small"
                                                                 appearance="subtle"
                                                                 icon={<MoreHorizontal24Regular />}
-                                                                aria-label={`More queue actions for ${group.title}`}
+                                                                aria-label={`Queue actions for ${group.title}`}
                                                                 disabled={isQueueMutationPending}
+                                                                className={styles.reorderMobileOnly}
                                                             />
                                                         </MenuTrigger>
                                                         <MenuPopover>
                                                             <MenuList>
-                                                                <MenuItem disabled={isFirstPendingGroup || isQueueMutationPending} onClick={() => { void handleSingleGroupMove(group.id, 'top'); }}>
+                                                                <MenuItem disabled={isFirstPendingGroup || isQueueMutationPending} onClick={() => { void handleGroupMove(group.id, 'top'); }}>
                                                                     Move to top
                                                                 </MenuItem>
-                                                                <MenuItem disabled={isFirstPendingGroup || isQueueMutationPending} onClick={() => { void handleSingleGroupMove(group.id, 'up'); }}>
+                                                                <MenuItem disabled={isFirstPendingGroup || isQueueMutationPending} onClick={() => { void handleGroupMove(group.id, 'up'); }}>
                                                                     Move up
                                                                 </MenuItem>
-                                                                <MenuItem disabled={isLastPendingGroup || isQueueMutationPending} onClick={() => { void handleSingleGroupMove(group.id, 'down'); }}>
+                                                                <MenuItem disabled={isLastPendingGroup || isQueueMutationPending} onClick={() => { void handleGroupMove(group.id, 'down'); }}>
                                                                     Move down
                                                                 </MenuItem>
-                                                                <MenuItem disabled={isLastPendingGroup || isQueueMutationPending} onClick={() => { void handleSingleGroupMove(group.id, 'bottom'); }}>
+                                                                <MenuItem disabled={isLastPendingGroup || isQueueMutationPending} onClick={() => { void handleGroupMove(group.id, 'bottom'); }}>
                                                                     Send to bottom
                                                                 </MenuItem>
                                                             </MenuList>
@@ -1155,7 +1284,7 @@ const QueueTab = () => {
                                                         </Text>
                                                     )}
                                                 </div>
-                                                <div className={styles.downloadActions}>
+                                                <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                                     {isItemFailed && (
                                                         <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} />
                                                     )}
@@ -1225,10 +1354,20 @@ const QueueTab = () => {
                                 </div>
                             );
                         })}
+                        {hasMoreActiveGroups ? (
+                            <>
+                                <div ref={activeSentinelRef} aria-hidden="true" />
+                                <div className={styles.loadMoreRow}>
+                                    <Button appearance="subtle" onClick={() => setVisibleActiveLimit(prev => prev + ACTIVE_PAGE_SIZE)}>
+                                        Load more ({groupedDownloads.length - visibleActiveLimit} remaining)
+                                    </Button>
+                                </div>
+                            </>
+                        ) : null}
                     </div>
                 </section>
             ) : (
-                <section className={styles.queueSection} aria-label="Live queue">
+                <section className={styles.queueSection} aria-label="Active">
                     <EmptyState
                         title="No items in queue"
                         description="Browse your library and download albums, or enable monitoring to automate downloads."
@@ -1247,11 +1386,8 @@ const QueueTab = () => {
                     <div className={styles.downloadList}>
                         {queueHistoryItems.map((item) => {
                             const row = mapQueueHistoryItemToRow(item);
-                            const statusTextClassName = item.error || item.status === 'failed'
-                                ? styles.queueHistoryStatusTextDanger
-                                : item.status === 'cancelled'
-                                    ? styles.queueHistoryStatusTextNeutral
-                                    : styles.queueHistoryStatusTextSuccess;
+                            const isVideo = row.isVideo;
+                            const isFailed = item.status === 'failed' || Boolean(item.error);
 
                             const handleHistoryRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
                                 if (!row.navPath || isInteractiveElementTarget(event.target)) {
@@ -1286,19 +1422,14 @@ const QueueTab = () => {
                                     aria-label={row.navPath ? `Open ${row.title}` : undefined}
                                 >
                                     {row.coverUrl ? (
-                                        <img
-                                            src={row.coverUrl}
-                                            alt=""
-                                            className={row.isVideo ? styles.downloadCoverVideo : styles.downloadCover}
-                                        />
+                                        <img src={row.coverUrl} alt="" className={isVideo ? styles.downloadCoverVideo : styles.downloadCover} />
                                     ) : (
-                                        <div className={row.isVideo ? styles.downloadCoverPlaceholderVideo : styles.downloadCoverPlaceholder}>
-                                            {row.mediaBadge?.kind === 'video'
-                                                ? <Video24Regular className={styles.queueHistoryPlaceholderIcon} />
-                                                : <MusicNote224Regular className={styles.queueHistoryPlaceholderIcon} />}
+                                        <div className={isVideo ? styles.downloadCoverPlaceholderVideo : styles.downloadCoverPlaceholder}>
+                                            {isVideo
+                                                ? <Video24Regular style={{ width: 16, height: 16 }} />
+                                                : <MusicNote224Regular style={{ width: 16, height: 16 }} />}
                                         </div>
                                     )}
-
                                     <div className={styles.downloadInfo}>
                                         <div className={styles.downloadHeaderRow}>
                                             <div className={styles.downloadTitleRow}>
@@ -1316,31 +1447,38 @@ const QueueTab = () => {
                                                 </div>
                                             </div>
                                         </div>
-                                        <Text className={styles.downloadMeta}>{row.timeLabel}</Text>
                                         {row.error ? (
                                             <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
                                         ) : null}
                                     </div>
-
-                                    <div className={styles.queueHistoryStatus}>
-                                        {renderHistoryStatusIndicator(styles, item.status, item.error)}
-                                        <Text className={mergeClasses(styles.queueHistoryStatusText, statusTextClassName)}>
-                                            {row.statusLabel}
-                                        </Text>
+                                    <div className={styles.queueHistoryTrailing}>
+                                        <Text className={styles.queueHistoryTime}>{row.timeLabel}</Text>
+                                        <div className={styles.queueHistoryStatus}>
+                                            {renderHistoryStatusIndicator(styles, item.status, item.error)}
+                                        </div>
+                                    </div>
+                                    <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
+                                        {isFailed ? (
+                                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} title="Retry" />
+                                        ) : null}
                                     </div>
                                 </div>
                             );
                         })}
                         {hasMoreQueueHistory ? (
-                            <div className={styles.loadMoreRow}>
-                                <Button appearance="subtle" onClick={() => void loadMoreQueueHistory()} disabled={isLoadingMoreQueueHistory}>
-                                    {isLoadingMoreQueueHistory ? "Loading..." : "Load more"}
-                                </Button>
-                            </div>
+                            <>
+                                <div ref={historySentinelRef} aria-hidden="true" />
+                                <div className={styles.loadMoreRow}>
+                                    <Button appearance="subtle" onClick={() => void loadMoreQueueHistory()} disabled={isLoadingMoreQueueHistory}>
+                                        {isLoadingMoreQueueHistory ? "Loading..." : "Load more"}
+                                    </Button>
+                                </div>
+                            </>
                         ) : null}
                     </div>
                 </section>
             ) : null}
+            </div>
         </div>
     );
 };

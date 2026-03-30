@@ -7,6 +7,8 @@ import {
     MenuList,
     MenuPopover,
     MenuTrigger,
+    Overflow,
+    OverflowItem,
     Tab,
     TabList,
     Text,
@@ -26,7 +28,7 @@ import {
     FolderSearch24Regular,
     Filter24Regular,
     ArrowSortDownLines24Regular,
-    MoreHorizontal24Regular,
+    ArrowDownload24Regular,
 } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
@@ -46,6 +48,8 @@ import ManualImportTab from "./ManualImportTab";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 import { formatCompactNumber } from "@/utils/format";
 import { useSystemTasks } from "@/hooks/useSystemTasks";
+import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import { compactDetailActionButtonStyles, detailActionButtonRadiusStyles } from "@/components/media/detailActionStyles";
 
 const useStyles = makeStyles({
     container: {
@@ -155,50 +159,8 @@ const useStyles = makeStyles({
         color: tokens.colorNeutralForeground3,
     },
     headerActionButton: {
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        flex: "1 1 0",
-        minWidth: 0,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
-        gap: tokens.spacingVerticalXXS,
-        borderRadius: tokens.borderRadiusXLarge,
-        "& .fui-Button__content": {
-            fontSize: tokens.fontSizeBase100,
-            marginLeft: "0 !important",
-            textAlign: "center",
-            whiteSpace: "normal",
-            lineHeight: tokens.lineHeightBase100,
-        },
-        "& .fui-Button__icon": {
-            marginRight: "0",
-            fontSize: tokens.fontSizeBase400,
-        },
-        "@media (min-width: 480px)": {
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-            "& .fui-Button__icon": {
-                fontSize: tokens.fontSizeBase500,
-            },
-        },
-        "@media (min-width: 768px)": {
-            flexDirection: "row",
-            flex: "0 0 auto",
-            minWidth: "auto",
-            gap: tokens.spacingHorizontalNone,
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-            "& .fui-Button__content": {
-                fontSize: tokens.fontSizeBase300,
-                marginTop: "0",
-                marginLeft: tokens.spacingHorizontalS,
-                whiteSpace: "nowrap",
-                lineHeight: tokens.lineHeightBase300,
-                textAlign: "left",
-            },
-            "& .fui-Button__icon": {
-                marginRight: tokens.spacingHorizontalSNudge,
-                fontSize: tokens.fontSizeBase600,
-            },
-        },
+        ...compactDetailActionButtonStyles,
+        ...detailActionButtonRadiusStyles,
     },
     headerActionRow: {
         display: "flex",
@@ -207,15 +169,9 @@ const useStyles = makeStyles({
         flexWrap: "nowrap",
         justifyContent: "center",
         width: "100%",
-        overflowX: "auto",
-        scrollbarWidth: "none",
-        "&::-webkit-scrollbar": {
-            display: "none",
-        },
         "@media (min-width: 768px)": {
             justifyContent: "flex-start",
             gap: tokens.spacingHorizontalM,
-            overflowX: "visible",
             width: "auto",
         },
     },
@@ -256,6 +212,11 @@ const dashboardStatsQueryKey = ["dashboardStats"] as const;
 
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
+
+interface DashboardAction extends OverflowAction {
+    icon?: React.ReactNode;
+    priority: number;
+}
 
 function getInitialDashboardTab(): "queue" | "activity" | "manualImport" {
     if (hasConsumedDashboardReloadState) {
@@ -387,6 +348,7 @@ const Dashboard = () => {
             icon: <ArrowSync24Regular />,
             disabled: refreshBusy,
             onClick: handleScanAll,
+            priority: 1,
         },
         {
             key: 'scan-files',
@@ -394,6 +356,7 @@ const Dashboard = () => {
             icon: <FolderSearch24Regular />,
             disabled: scanRootsBusy,
             onClick: handleScanRootFolders,
+            priority: 2,
         },
         {
             key: 'curate',
@@ -401,17 +364,44 @@ const Dashboard = () => {
             icon: <ArrowSortDownLines24Regular />,
             disabled: curationBusy,
             onClick: handleQueueCuration,
+            priority: 3,
+        },
+        {
+            key: 'download-missing',
+            label: (() => {
+                const task = runnableTasks.find((t) => t.id === 'download-missing');
+                return (isRunningTaskId === 'download-missing') ? 'Downloading Missing...' : (task?.name ?? 'Download Missing');
+            })(),
+            icon: <ArrowDownload24Regular />,
+            disabled: isRunningTaskId === 'download-missing' || (runnableTasks.find((t) => t.id === 'download-missing')?.active ?? false),
+            onClick: () => void runTask('download-missing'),
+            priority: 4,
         },
     ];
 
     const overflowTaskIds = [
-        "download-missing",
+        "check-upgrades",
         "health-check",
         "housekeeping",
         "cleanup-temp-files",
-        "check-upgrades",
-        "update-library-metadata",
     ];
+
+    const systemTaskActions = overflowTaskIds
+        .map((taskId, index) => {
+            const task = runnableTasks.find((t) => t.id === taskId);
+            if (!task) return null;
+            const isRunning = isRunningTaskId === taskId;
+            return {
+                key: taskId,
+                label: task.name,
+                disabled: isRunning || task.active,
+                onClick: () => void runTask(taskId),
+                priority: 5 + index,
+            };
+        })
+        .filter((a): a is NonNullable<typeof a> => a !== null);
+
+    const allActions = [...dashboardActions, ...systemTaskActions];
 
     const statCards = [
         {
@@ -463,42 +453,18 @@ const Dashboard = () => {
                         <Title1 className={styles.brandTitle}>Discogenius</Title1>
                     </div>
                 </div>
-                <div className={styles.headerActionRow}>
-                    {dashboardActions.map((action) => (
-                        <Button key={action.key} appearance="subtle" icon={action.icon} onClick={action.onClick} disabled={action.disabled} className={styles.headerActionButton}>
-                            {action.label}
-                        </Button>
-                    ))}
-                    <Menu>
-                        <MenuTrigger disableButtonEnhancement>
-                            <Button
-                                appearance="subtle"
-                                icon={<MoreHorizontal24Regular />}
-                                className={styles.headerActionButton}
-                            >
-                                More
-                            </Button>
-                        </MenuTrigger>
-                        <MenuPopover>
-                            <MenuList>
-                                {overflowTaskIds.map((taskId) => {
-                                    const task = runnableTasks.find((t) => t.id === taskId);
-                                    if (!task) return null;
-                                    const isRunning = isRunningTaskId === taskId;
-                                    return (
-                                        <MenuItem
-                                            key={taskId}
-                                            disabled={isRunning || task.active}
-                                            onClick={() => void runTask(taskId)}
-                                        >
-                                            {task.name}
-                                        </MenuItem>
-                                    );
-                                })}
-                            </MenuList>
-                        </MenuPopover>
-                    </Menu>
-                </div>
+                <Overflow minimumVisible={2}>
+                    <div className={styles.headerActionRow}>
+                        {allActions.map((action) => (
+                            <OverflowItem key={action.key} id={action.key} priority={allActions.length - (action.priority ?? 0)}>
+                                <Button appearance="subtle" icon={action.icon} onClick={action.onClick} disabled={action.disabled} className={styles.headerActionButton}>
+                                    {action.label}
+                                </Button>
+                            </OverflowItem>
+                        ))}
+                        <ActionOverflowMenu actions={allActions} />
+                    </div>
+                </Overflow>
             </div>
 
             {/* Library Stats */}

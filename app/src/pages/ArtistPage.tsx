@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useContext, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useContext, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,11 +13,8 @@ import {
   SkeletonItem,
   makeStyles,
   tokens,
-  Menu,
-  MenuTrigger,
-  MenuList,
-  MenuItem,
-  MenuPopover,
+  Overflow,
+  OverflowItem,
   mergeClasses,
 } from "@fluentui/react-components";
 import {
@@ -26,7 +23,6 @@ import {
   EyeOff24Regular,
   Filter24Regular,
   ArrowDownload24Regular,
-  MoreHorizontal24Regular,
   LockClosed24Regular,
   Grid24Regular,
   AppsListDetail24Regular,
@@ -34,8 +30,7 @@ import {
   Info24Regular,
   ArrowSortDownLines24Regular,
   FolderSync24Regular,
-} from "@fluentui/react-icons";
-import { api } from "@/services/api";
+} from "@fluentui/react-icons";import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -63,6 +58,7 @@ import {
   compactDetailActionButtonStyles,
   detailActionButtonRadiusStyles,
 } from "@/components/media/detailActionStyles";
+import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import {
   ACTIVITY_REFRESH_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
@@ -213,6 +209,7 @@ const useStyles = makeStyles({
     flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
+    overflow: "hidden",
     marginTop: tokens.spacingVerticalS,
     alignItems: "stretch",
     "@media (min-width: 768px)": {
@@ -220,7 +217,7 @@ const useStyles = makeStyles({
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
-      flexWrap: "wrap",
+      overflow: "visible",
     },
   },
   // Transparent button base style
@@ -233,25 +230,25 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...compactDetailActionButtonStyles,
-  },
-  actionsSpacer: {
-    display: "none",
+    minWidth: "76px",
     "@media (min-width: 768px)": {
-      display: "block",
-      flex: 1,
-      minWidth: "12px",
+      ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
+      minWidth: "auto",
     },
   },
-  /** Items that only show on desktop (≥768px). Hidden on mobile. */
-  desktopOnly: {
+  filterViewDesktop: {
     display: "none",
     "@media (min-width: 768px)": {
       display: "flex",
+      gap: tokens.spacingHorizontalS,
+      alignItems: "center",
+      marginLeft: "auto",
     },
   },
-  /** Overflow "..." trigger — visible only on mobile (<768px). */
-  mobileOverflowTrigger: {
+  filterViewMobile: {
     display: "flex",
+    gap: tokens.spacingHorizontalXS,
+    alignItems: "center",
     "@media (min-width: 768px)": {
       display: "none",
     },
@@ -546,7 +543,6 @@ const ArtistPage = () => {
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
   ));
-  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const queueCtx = useContext(QueueContext);
   const progressMap = queueCtx?.progress;
 
@@ -1044,6 +1040,37 @@ const ArtistPage = () => {
     });
   }, [libraryFilter, statusFilters]);
 
+  const mobileFilterViewRendered = useRef(false);
+
+  const renderMobileFilterView = () => (
+    <div className={styles.filterViewMobile}>
+      <FilterMenu
+        libraryFilter={libraryFilter}
+        onLibraryFilterChange={setLibraryFilter}
+        statusFilters={statusFilters}
+        onStatusFiltersChange={setStatusFilters}
+        showDownloadFilter={true}
+        showLockFilter={true}
+        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+      />
+      <Button
+        appearance="subtle"
+        icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
+        onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
+        title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
+        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+      >
+        View
+      </Button>
+    </div>
+  );
+
+  const claimFirstVisible = () => {
+    if (mobileFilterViewRendered.current) return false;
+    mobileFilterViewRendered.current = true;
+    return true;
+  };
+
   const renderModule = (module: any, index: number) => {
     const items = module.pagedList?.items || module.items || [];
     if (!items || items.length === 0) return null;
@@ -1059,10 +1086,13 @@ const ArtistPage = () => {
         topTracksExpanded ? expandedTrackCount : COLLAPSED_TOP_TRACK_COUNT,
       );
 
+      const isFirst = claimFirstVisible();
+
       return (
-        <div key={index} className={styles.section}>
+        <div key={`${module.type}-${module.title}`} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
+            {isFirst && renderMobileFilterView()}
             {filteredCount > COLLAPSED_TOP_TRACK_COUNT && (
               <Button
                 appearance="subtle"
@@ -1112,10 +1142,13 @@ const ArtistPage = () => {
       if (libraryFilter !== 'all' && libraryFilter !== 'video') return null;
       const rendered = items.map(renderVideoCard).filter(Boolean);
       if (rendered.length === 0) return null;
+      const isFirst = claimFirstVisible();
+
       return (
-        <div key={index} className={styles.section}>
+        <div key={`${module.type}-${module.title}`} className={styles.section}>
           <div className={styles.sectionHeader}>
             <Title2>{module.title}</Title2>
+            {isFirst && renderMobileFilterView()}
           </div>
           <div className={mergeClasses(viewMode === 'grid' ? styles.grid : styles.carousel, styles.videoGrid)}>
             {rendered}
@@ -1132,10 +1165,13 @@ const ArtistPage = () => {
     const rendered = items.map(renderer).filter(Boolean);
     if (rendered.length === 0) return null;
 
+    const isFirst = claimFirstVisible();
+
     return (
-      <div key={index} className={styles.section}>
+      <div key={`${module.type}-${module.title}`} className={styles.section}>
         <div className={styles.sectionHeader}>
           <Title2>{module.title}</Title2>
+          {isFirst && renderMobileFilterView()}
         </div>
         <div className={viewMode === 'grid' ? styles.grid : styles.carousel}>
           {rendered}
@@ -1251,6 +1287,16 @@ const ArtistPage = () => {
       : 'Download missing releases';
   const scanActionTitle = 'Refresh & Scan';
 
+  const artistActions: OverflowAction[] = [
+    { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', onClick: toggleMonitoring },
+    { key: 'refresh-scan', label: isScanBusy ? 'Scanning...' : 'Refresh & Scan', disabled: isScanBusy, onClick: syncArtist },
+    { key: 'curate', label: isCurateBusy ? 'Running...' : 'Curate', disabled: isCurateBusy || isScanBusy || !hasAlbums, onClick: curateArtist },
+    { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
+  ];
+
+  // Reset mobile filter/view tracking each render so it appears on the first visible section
+  mobileFilterViewRendered.current = false;
+
   return (
     <DynamicBrandProvider keyColor={artistBrandColor}>
       <div className={styles.container}>
@@ -1291,142 +1337,93 @@ const ArtistPage = () => {
                 />
               )}
 
-              <div className={styles.actions}>
-                {/* ── Primary buttons (visible everywhere) ── */}
-                <Button
-                  appearance={isMonitored ? "subtle" : "primary"}
-                  icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
-                  onClick={toggleMonitoring}
-                  title={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
-                  className={mergeClasses(
-                    styles.actionButton,
-                    isMonitored ? styles.transparentButton : styles.primaryButton
-                  )}
-                >
-                  {isMonitored ? "Unmonitor" : "Monitor"}
-                </Button>
+              <Overflow minimumVisible={3}>
+                <div className={styles.actions}>
+                  <OverflowItem id="monitor" priority={4}>
+                    <Button
+                      appearance={isMonitored ? "subtle" : "primary"}
+                      icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                      onClick={toggleMonitoring}
+                      title={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
+                      className={mergeClasses(
+                        styles.actionButton,
+                        isMonitored ? styles.transparentButton : styles.primaryButton
+                      )}
+                    >
+                      {isMonitored ? "Unmonitor" : "Monitor"}
+                    </Button>
+                  </OverflowItem>
 
-                <Button
-                  appearance={!hasBeenScanned ? "primary" : "subtle"}
-                  icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                  onClick={syncArtist}
-                  disabled={isScanBusy}
-                  className={mergeClasses(
-                    styles.actionButton,
-                    !hasBeenScanned ? styles.primaryButton : styles.transparentButton
-                  )}
-                  title={isScanBusy ? 'Scanning...' : scanActionTitle}
-                >
-                  {isScanBusy ? "Scanning..." : "Refresh & Scan"}
-                </Button>
+                  <OverflowItem id="refresh-scan" priority={3}>
+                    <Button
+                      appearance={!hasBeenScanned ? "primary" : "subtle"}
+                      icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                      onClick={syncArtist}
+                      disabled={isScanBusy}
+                      className={mergeClasses(
+                        styles.actionButton,
+                        !hasBeenScanned ? styles.primaryButton : styles.transparentButton
+                      )}
+                      title={isScanBusy ? 'Scanning...' : scanActionTitle}
+                    >
+                      {isScanBusy ? "Scanning..." : "Refresh & Scan"}
+                    </Button>
+                  </OverflowItem>
 
-                <Button
-                  appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
-                  icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                  onClick={curateArtist}
-                  disabled={isCurateBusy || isScanBusy || !hasAlbums}
-                  className={mergeClasses(
-                    styles.actionButton,
-                    (hasAlbums && !hasMonitoredAlbums) ? styles.primaryButton : styles.transparentButton
-                  )}
-                  title={!hasAlbums ? "Refresh & Scan first" : (isScanBusy ? "Wait for scan to finish" : "Curate")}
-                >
-                  {isCurateBusy ? "Running..." : "Curate"}
-                </Button>
+                  <OverflowItem id="curate" priority={2}>
+                    <Button
+                      appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
+                      icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                      onClick={curateArtist}
+                      disabled={isCurateBusy || isScanBusy || !hasAlbums}
+                      className={mergeClasses(
+                        styles.actionButton,
+                        (hasAlbums && !hasMonitoredAlbums) ? styles.primaryButton : styles.transparentButton
+                      )}
+                      title={!hasAlbums ? "Refresh & Scan first" : (isScanBusy ? "Wait for scan to finish" : "Curate")}
+                    >
+                      {isCurateBusy ? "Running..." : "Curate"}
+                    </Button>
+                  </OverflowItem>
 
-                {/* ── Mobile overflow "…" menu (< 768px) ── */}
-                <Menu>
-                  <MenuTrigger disableButtonEnhancement>
+                  <OverflowItem id="download-missing" priority={1}>
                     <Button
                       appearance="subtle"
-                      icon={<MoreHorizontal24Regular />}
-                      className={mergeClasses(styles.actionButton, styles.transparentButton, styles.mobileOverflowTrigger)}
-                      title="More actions"
+                      icon={<ArrowDownload24Regular />}
+                      onClick={startDownloads}
+                      disabled={downloadActionDisabled}
+                      title={downloadActionTitle}
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
                     >
-                      More
+                      Download Missing
                     </Button>
-                  </MenuTrigger>
-                  <MenuPopover>
-                    <MenuList>
-                      <MenuItem
-                        icon={<ArrowDownload24Regular />}
-                        onClick={startDownloads}
-                        disabled={downloadActionDisabled}
-                      >
-                        Download Missing
-                      </MenuItem>
-                      <MenuItem
-                        icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
-                        onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
-                      >
-                        {viewMode === 'grid' ? "Carousel View" : "Grid View"}
-                      </MenuItem>
-                      <MenuItem
-                        icon={<Filter24Regular />}
-                        onClick={() => setMobileFilterOpen(true)}
-                      >
-                        Filters
-                      </MenuItem>
-                    </MenuList>
-                  </MenuPopover>
-                </Menu>
+                  </OverflowItem>
 
-                {/* ── Desktop-only extended buttons (≥ 768px) ── */}
-                <Button
-                  appearance="subtle"
-                  icon={<ArrowDownload24Regular />}
-                  onClick={startDownloads}
-                  disabled={downloadActionDisabled}
-                  title={downloadActionTitle}
-                  className={mergeClasses(styles.actionButton, styles.transparentButton, styles.desktopOnly)}
-                >
-                  Download Missing
-                </Button>
+                  <ActionOverflowMenu actions={artistActions} />
 
-                {/* Spacer to push filter/view to right on desktop */}
-                <div className={styles.actionsSpacer} />
+                  <div className={styles.filterViewDesktop}>
+                    <FilterMenu
+                      libraryFilter={libraryFilter}
+                      onLibraryFilterChange={setLibraryFilter}
+                      statusFilters={statusFilters}
+                      onStatusFiltersChange={setStatusFilters}
+                      showDownloadFilter={true}
+                      showLockFilter={true}
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    />
 
-                {/* Filter Menu — desktop only (in overflow menu on mobile) */}
-                <FilterMenu
-                  libraryFilter={libraryFilter}
-                  onLibraryFilterChange={setLibraryFilter}
-                  statusFilters={statusFilters}
-                  onStatusFiltersChange={setStatusFilters}
-                  showDownloadFilter={true}
-                  showLockFilter={true}
-                  className={mergeClasses(styles.actionButton, styles.transparentButton, styles.desktopOnly)}
-                />
-
-                {/* View Mode Toggle — desktop only (in overflow menu on mobile) */}
-                <Button
-                  appearance="subtle"
-                  icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
-                  onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
-                  title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
-                  className={mergeClasses(styles.actionButton, styles.transparentButton, styles.desktopOnly)}
-                >
-                  View
-                </Button>
-              </div>
-
-              {/* Mobile-only controlled FilterMenu (opened via overflow "Filters" item).
-                The trigger is zero‑sized / invisible but still in the DOM so the Fluent
-                portal popover anchors correctly.  pointerEvents:none prevents accidental
-                interaction with the hidden trigger; the popover itself renders in a portal. */}
-              <div style={{ height: 0, overflow: 'visible', position: 'relative' }}>
-                <div style={{ opacity: 0, pointerEvents: 'none', position: 'absolute', top: 0, left: 0 }}>
-                  <FilterMenu
-                    libraryFilter={libraryFilter}
-                    onLibraryFilterChange={setLibraryFilter}
-                    statusFilters={statusFilters}
-                    onStatusFiltersChange={setStatusFilters}
-                    showDownloadFilter={true}
-                    showLockFilter={true}
-                    open={mobileFilterOpen}
-                    onOpenChange={setMobileFilterOpen}
-                  />
+                    <Button
+                      appearance="subtle"
+                      icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
+                      onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
+                      title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      View
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              </Overflow>
             </div>
           </div>
         </div>

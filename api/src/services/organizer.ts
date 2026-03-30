@@ -975,62 +975,56 @@ export class OrganizerService {
         const metrics = await parseAudioFile(destFile);
         const derivedQuality = deriveQuality(ext, metrics);
 
-        let fileFingerprint: string | null = null;
-        if (metadataConfig.enable_fingerprinting) {
-          try {
-            const fp = await generateFingerprint(destFile);
-            fileFingerprint = fp.fingerprint;
-            const mbids = await lookupAcoustId(fp.fingerprint, fp.duration);
-            if (mbids.length > 0) {
-              const trackMbid = mbids[0];
-              const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
-              db.prepare("UPDATE media SET mbid = ? WHERE id = ?").run(trackMbid, mediaIdStr);
-            }
-          } catch (error: any) {
-            console.warn(`[Organizer] Fingerprint logic failed (fpcalc missing or API error) for ${destFile}:`, error.message);
-          }
-        }
+        // Fingerprinting is skipped during download import (Lidarr pattern:
+        // fingerprint only during identification for manual import with poor
+        // matches, never during routine import).  Enrichment can run later
+        // as a background maintenance task.
+        const fileFingerprint: string | null = null;
 
-        const libraryFileId = this.upsertLibraryFile({
-          artistId,
-          albumId: tidalId,
-          mediaId: trackRow?.id ? String(trackRow.id) : trackId,
-          filePath: destFile,
-          libraryRoot: targetRoot,
-          fileType: "track",
-          quality: derivedQuality,
-          namingTemplate: "default",
-          expectedPath: destFile,
-          bitDepth: metrics.bitDepth,
-          sampleRate: metrics.sampleRate,
-          bitrate: metrics.bitrate,
-          codec: metrics.codec,
-          channels: metrics.channels,
-          fingerprint: fileFingerprint,
-        });
-
+        // Batch all per-track DB writes in a single transaction (Lidarr-style).
+        // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
-        try {
-          recordHistoryEvent({
+        db.transaction(() => {
+          const libraryFileId = this.upsertLibraryFile({
             artistId,
             albumId: tidalId,
             mediaId: mediaIdStr,
-            libraryFileId,
-            eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+            filePath: destFile,
+            libraryRoot: targetRoot,
+            fileType: "track",
             quality: derivedQuality,
-            sourceTitle: trackTitle,
-            data: {
-              importedPath: destFile,
-            },
+            namingTemplate: "default",
+            expectedPath: destFile,
+            bitDepth: metrics.bitDepth,
+            sampleRate: metrics.sampleRate,
+            bitrate: metrics.bitrate,
+            codec: metrics.codec,
+            channels: metrics.channels,
+            fingerprint: fileFingerprint,
           });
-        } catch (historyError) {
-          console.warn(`[Organizer] Failed to record track import history for ${mediaIdStr}:`, historyError);
-        }
 
-        if (mediaIdStr) {
-          this.cleanupOldMediaFiles(mediaIdStr, destFile, "track");
-          this.cleanupSiblingMediaVariants(destFile, "track");
-        }
+          try {
+            recordHistoryEvent({
+              artistId,
+              albumId: tidalId,
+              mediaId: mediaIdStr,
+              libraryFileId,
+              eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+              quality: derivedQuality,
+              sourceTitle: trackTitle,
+              data: {
+                importedPath: destFile,
+              },
+            });
+          } catch (historyError) {
+            console.warn(`[Organizer] Failed to record track import history for ${mediaIdStr}:`, historyError);
+          }
+
+          if (mediaIdStr) {
+            this.cleanupOldMediaFiles(mediaIdStr, destFile, "track");
+            this.cleanupSiblingMediaVariants(destFile, "track");
+          }
+        })();
 
         if (metadataConfig.save_lyrics && trackId) {
           try {
@@ -1342,62 +1336,51 @@ export class OrganizerService {
       const metrics = await parseAudioFile(dest);
       const derivedQuality = deriveQuality(ext, metrics);
 
-      const metadataConfig = Config.getMetadataConfig();
+      // Fingerprinting is skipped during download import (Lidarr pattern).
+      const fileFingerprint: string | null = null;
 
-      let fileFingerprint: string | null = null;
-      if (metadataConfig.enable_fingerprinting) {
-        try {
-          const fp = await generateFingerprint(dest);
-          fileFingerprint = fp.fingerprint;
-          const mbids = await lookupAcoustId(fp.fingerprint, fp.duration);
-          if (mbids.length > 0) {
-            const trackMbid = mbids[0];
-            db.prepare("UPDATE media SET mbid = ? WHERE id = ?").run(trackMbid, tidalId);
-          }
-        } catch (e: any) {
-          console.warn(`[Organizer] Fingerprint logic failed (fpcalc missing or API error) for ${dest}:`, e.message);
-        }
-      }
-
-      const libraryFileId = this.upsertLibraryFile({
-        artistId,
-        albumId,
-        mediaId: tidalId,
-        filePath: dest,
-        libraryRoot: targetRoot,
-        fileType: "track",
-        quality: derivedQuality,
-        namingTemplate: "default",
-        expectedPath: dest,
-        bitDepth: metrics.bitDepth,
-        sampleRate: metrics.sampleRate,
-        bitrate: metrics.bitrate,
-        codec: metrics.codec,
-        channels: metrics.channels,
-        fingerprint: fileFingerprint
-      });
-
-      try {
-        recordHistoryEvent({
+      // Batch all per-track DB writes in a single transaction (Lidarr-style).
+      db.transaction(() => {
+        const libraryFileId = this.upsertLibraryFile({
           artistId,
           albumId,
           mediaId: tidalId,
-          libraryFileId,
-          eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+          filePath: dest,
+          libraryRoot: targetRoot,
+          fileType: "track",
           quality: derivedQuality,
-          sourceTitle: trackTitle,
-          data: {
-            importedPath: dest,
-          },
+          namingTemplate: "default",
+          expectedPath: dest,
+          bitDepth: metrics.bitDepth,
+          sampleRate: metrics.sampleRate,
+          bitrate: metrics.bitrate,
+          codec: metrics.codec,
+          channels: metrics.channels,
+          fingerprint: fileFingerprint
         });
-      } catch (historyError) {
-        console.warn(`[Organizer] Failed to record track import history for ${tidalId}:`, historyError);
-      }
 
-      // Keep the track branch aligned with album/video organization so quality
-      // changes replace the previous file instead of leaving duplicates behind.
-      this.cleanupOldMediaFiles(tidalId, dest, "track");
-      this.cleanupSiblingMediaVariants(dest, "track");
+        try {
+          recordHistoryEvent({
+            artistId,
+            albumId,
+            mediaId: tidalId,
+            libraryFileId,
+            eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+            quality: derivedQuality,
+            sourceTitle: trackTitle,
+            data: {
+              importedPath: dest,
+            },
+          });
+        } catch (historyError) {
+          console.warn(`[Organizer] Failed to record track import history for ${tidalId}:`, historyError);
+        }
+
+        // Keep the track branch aligned with album/video organization so quality
+        // changes replace the previous file instead of leaving duplicates behind.
+        this.cleanupOldMediaFiles(tidalId, dest, "track");
+        this.cleanupSiblingMediaVariants(dest, "track");
+      })();
 
       if (metadataConfig.save_lyrics) {
         try {
@@ -1736,43 +1719,46 @@ export class OrganizerService {
       const metrics = await parseAudioFile(dest);
       const derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
 
-      const libraryFileId = this.upsertLibraryFile({
-        artistId,
-        albumId: video.album_id ? String(video.album_id) : null,
-        mediaId: tidalId,
-        filePath: dest,
-        libraryRoot: videoRoot,
-        fileType: "video",
-        quality: derivedVideoQuality,
-        namingTemplate: "default",
-        expectedPath: dest,
-        bitDepth: metrics.bitDepth,
-        sampleRate: metrics.sampleRate,
-        bitrate: metrics.bitrate,
-        codec: metrics.codec,
-        channels: metrics.channels
-      });
-
-      try {
-        recordHistoryEvent({
+      // Batch all per-video DB writes in a single transaction (Lidarr-style).
+      db.transaction(() => {
+        const libraryFileId = this.upsertLibraryFile({
           artistId,
           albumId: video.album_id ? String(video.album_id) : null,
           mediaId: tidalId,
-          libraryFileId,
-          eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+          filePath: dest,
+          libraryRoot: videoRoot,
+          fileType: "video",
           quality: derivedVideoQuality,
-          sourceTitle: video.title,
-          data: {
-            importedPath: dest,
-          },
+          namingTemplate: "default",
+          expectedPath: dest,
+          bitDepth: metrics.bitDepth,
+          sampleRate: metrics.sampleRate,
+          bitrate: metrics.bitrate,
+          codec: metrics.codec,
+          channels: metrics.channels
         });
-      } catch (historyError) {
-        console.warn(`[Organizer] Failed to record video import history for ${tidalId}:`, historyError);
-      }
 
-      // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-      this.cleanupOldMediaFiles(tidalId, dest, "video");
-      this.cleanupSiblingMediaVariants(dest, "video");
+        try {
+          recordHistoryEvent({
+            artistId,
+            albumId: video.album_id ? String(video.album_id) : null,
+            mediaId: tidalId,
+            libraryFileId,
+            eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+            quality: derivedVideoQuality,
+            sourceTitle: video.title,
+            data: {
+              importedPath: dest,
+            },
+          });
+        } catch (historyError) {
+          console.warn(`[Organizer] Failed to record video import history for ${tidalId}:`, historyError);
+        }
+
+        // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
+        this.cleanupOldMediaFiles(tidalId, dest, "video");
+        this.cleanupSiblingMediaVariants(dest, "video");
+      })();
 
       if (metadataConfig.save_video_thumbnail || metadataConfig.embed_video_thumbnail !== false) {
         const persistentCoverPath = metadataConfig.save_video_thumbnail

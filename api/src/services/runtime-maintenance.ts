@@ -30,6 +30,8 @@ export interface RuntimeMaintenanceSummary {
   databaseOptimized: boolean;
   mediaIdentityIndexEnsured: boolean;
   trackedAssetIdentityIndexesEnsured: boolean;
+  /** Finished job_queue rows pruned (Lidarr-aligned: completed > 1 day) */
+  historyJobsPruned: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -209,6 +211,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     databaseOptimized: false,
     mediaIdentityIndexEnsured: false,
     trackedAssetIdentityIndexesEnsured: false,
+    historyJobsPruned: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -250,6 +253,15 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   })();
 
   refreshDownloadState(summary);
+
+  // Prune finished job_queue rows older than 1 day (Lidarr keeps completed commands
+  // 5 min in-memory and trims DB records older than 1 day via CommandRepository.Trim())
+  const pruneResult = db.prepare(`
+    DELETE FROM job_queue
+    WHERE status IN ('completed', 'failed', 'cancelled')
+      AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
+  `).run();
+  summary.historyJobsPruned = pruneResult.changes;
 
   db.exec(`PRAGMA optimize;`);
   db.prepare(`ANALYZE;`).run();

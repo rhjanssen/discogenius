@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db } from "../database.js";
+import { db, batchDelete, batchRun } from "../database.js";
 import { Config } from "./config.js";
 import { getConfigSection } from "./config.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, type NamingContext, type LibraryRoot } from "./naming.js";
@@ -795,6 +795,7 @@ export class LibraryFilesService {
     }));
 
     let removed = 0;
+    const idsToDelete: number[] = [];
     for (const row of remove) {
       const resolvedPath = resolveStoredLibraryPath({
         filePath: row.file_path,
@@ -814,8 +815,12 @@ export class LibraryFilesService {
         console.warn(`[LibraryFiles] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
       }
 
-      db.prepare("DELETE FROM library_files WHERE id = ?").run(row.id);
+      idsToDelete.push(row.id);
       removed += 1;
+    }
+
+    if (idsToDelete.length > 0) {
+      batchDelete("library_files", idsToDelete);
     }
 
     if (removed > 0) {
@@ -868,8 +873,7 @@ export class LibraryFilesService {
       library_root: string | null;
     }>;
 
-    let removed = 0;
-    const deleteRow = db.prepare("DELETE FROM library_files WHERE id = ?");
+    const idsToDelete: number[] = [];
 
     for (const row of rows) {
       const resolvedPath = resolveStoredLibraryPath({
@@ -882,15 +886,15 @@ export class LibraryFilesService {
         continue;
       }
 
-      deleteRow.run(row.id);
-      removed += 1;
+      idsToDelete.push(row.id);
     }
 
-    if (removed > 0) {
-      console.log(`[LibraryFiles] Removed ${removed} stale tracked sidecar row(s).`);
+    if (idsToDelete.length > 0) {
+      batchDelete("library_files", idsToDelete);
+      console.log(`[LibraryFiles] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
     }
 
-    return { removed };
+    return { removed: idsToDelete.length };
   }
 
   private static getRenameRows(options: RenameScopeOptions = {}, includePaging = true): LibraryFileRow[] {
@@ -989,18 +993,16 @@ export class LibraryFilesService {
       };
     });
 
-    // Persist expected_path + needs_rename (best-effort)
-    const update = db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = ? WHERE id = ?");
+    // Persist expected_path + needs_rename and relative_path fixes in a single transaction
     db.transaction(() => {
+      const update = db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = ? WHERE id = ?");
       for (const u of updates) update.run(u.expectedPath, u.needsRename, u.id);
-    })();
 
-    const relUpdate = db.prepare(`
-      UPDATE library_files
-      SET relative_path = ?
-      WHERE id = ?
-    `);
-    db.transaction(() => {
+      const relUpdate = db.prepare(`
+        UPDATE library_files
+        SET relative_path = ?
+        WHERE id = ?
+      `);
       for (const updateRow of relativePathUpdates) {
         relUpdate.run(updateRow.relativePath, updateRow.id);
       }
@@ -1038,6 +1040,15 @@ export class LibraryFilesService {
     const result: RenameApplyResult = { renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
     if (!ids || ids.length === 0) return result;
 
+    // Batch-fetch all rows upfront instead of per-ID SELECT
+    const placeholders = ids.map(() => "?").join(",");
+    const allRows = db.prepare(`
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension
+      FROM library_files
+      WHERE id IN (${placeholders})
+    `).all(...ids) as LibraryFileRow[];
+    const rowMap = new Map(allRows.map(r => [r.id, r]));
+
     const findConflict = db.prepare(`
       SELECT id
       FROM library_files
@@ -1046,13 +1057,13 @@ export class LibraryFilesService {
       LIMIT 1
     `);
 
+    // Accumulate DB writes, apply in single transaction after all file moves
+    const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
+    const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
+
     for (const id of ids) {
       try {
-        const row = db.prepare(`
-          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension
-          FROM library_files
-          WHERE id = ?
-        `).get(id) as LibraryFileRow | undefined;
+        const row = rowMap.get(id);
 
         if (!row) {
           result.skipped++;
@@ -1079,8 +1090,10 @@ export class LibraryFilesService {
         const expectedPath = computed.expectedPath;
         const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
         if (samePath) {
-          db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .run(expectedPath, id);
+          dbUpdates.push({
+            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+            args: [expectedPath, id],
+          });
           result.skipped++;
           continue;
         }
@@ -1088,8 +1101,10 @@ export class LibraryFilesService {
         const dbConflict = findConflict.get(id, expectedPath, expectedPath) as any;
         const fsConflict = fs.existsSync(expectedPath);
         if (dbConflict || fsConflict) {
-          db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = 1 WHERE id = ?")
-            .run(expectedPath, id);
+          dbUpdates.push({
+            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 1 WHERE id = ?",
+            args: [expectedPath, id],
+          });
           result.conflicts++;
           continue;
         }
@@ -1104,45 +1119,33 @@ export class LibraryFilesService {
         const extension = path.extname(expectedPath).replace(".", "");
         const stats = fs.statSync(expectedPath);
 
-        db.prepare(`
-          UPDATE library_files
-          SET file_path = ?,
-              relative_path = ?,
-              library_root = ?,
-              filename = ?,
-              extension = ?,
-              expected_path = ?,
-              needs_rename = 0,
-              modified_at = ?,
-              verified_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(
-          expectedPath,
-          relativePath,
-          root,
-          filename,
-          extension,
-          expectedPath,
-          stats.mtime.toISOString(),
-          id
-        );
+        dbUpdates.push({
+          sql: `UPDATE library_files
+            SET file_path = ?,
+                relative_path = ?,
+                library_root = ?,
+                filename = ?,
+                extension = ?,
+                expected_path = ?,
+                needs_rename = 0,
+                modified_at = ?,
+                verified_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+          args: [expectedPath, relativePath, root, filename, extension, expectedPath, stats.mtime.toISOString(), id],
+        });
 
-        try {
-          recordHistoryEvent({
-            artistId: row.artist_id,
-            albumId: row.album_id,
-            mediaId: row.media_id,
-            libraryFileId: row.id,
-            eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
-            data: {
-              fromPath: resolvedFilePath,
-              toPath: expectedPath,
-              fileType: row.file_type,
-            },
-          });
-        } catch (historyError) {
-          console.warn(`[LibraryFiles] Failed to record rename history for row ${row.id}:`, historyError);
-        }
+        historyEvents.push({
+          artistId: row.artist_id,
+          albumId: row.album_id,
+          mediaId: row.media_id,
+          libraryFileId: row.id,
+          eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
+          data: {
+            fromPath: resolvedFilePath,
+            toPath: expectedPath,
+            fileType: row.file_type,
+          },
+        });
 
         const stopDir = root;
         removeEmptyParents(oldDir, stopDir);
@@ -1151,6 +1154,22 @@ export class LibraryFilesService {
       } catch (e: any) {
         result.errors.push({ id, error: e?.message || String(e) });
       }
+    }
+
+    // Commit all DB writes in a single transaction
+    if (dbUpdates.length > 0 || historyEvents.length > 0) {
+      db.transaction(() => {
+        for (const u of dbUpdates) {
+          db.prepare(u.sql).run(...u.args);
+        }
+        for (const evt of historyEvents) {
+          try {
+            recordHistoryEvent(evt);
+          } catch (historyError) {
+            console.warn(`[LibraryFiles] Failed to record rename history:`, historyError);
+          }
+        }
+      })();
     }
 
     if (result.renamed > 0) {

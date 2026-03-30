@@ -115,6 +115,41 @@ function shouldRefreshVideos(artistId: string, refreshDays: number | undefined):
     return isRefreshDue(oldestScan, refreshDays);
 }
 
+function getTrackRefreshState(albumId: string, refreshDays: number | undefined): {
+    shouldRefresh: boolean;
+    missingTracks: boolean;
+    oldestScanTime: number;
+} {
+    if (!refreshDays || refreshDays <= 0) {
+        return {
+            shouldRefresh: true,
+            missingTracks: false,
+            oldestScanTime: Number.NEGATIVE_INFINITY,
+        };
+    }
+
+    const row = db.prepare(`
+        SELECT
+            COUNT(*) as total_tracks,
+            SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) as missing_scans,
+            MIN(last_scanned) as oldest_scan
+        FROM media
+        WHERE album_id = ? AND type != 'Music Video'
+    `).get(albumId) as any;
+
+    const totalTracks = Number(row?.total_tracks || 0);
+    const missingScans = Number(row?.missing_scans || 0);
+    const oldestScan = row?.oldest_scan as string | null | undefined;
+    const missingTracks = totalTracks === 0 || missingScans > 0 || !oldestScan;
+    const oldestScanTime = oldestScan ? new Date(oldestScan).getTime() : Number.NEGATIVE_INFINITY;
+
+    return {
+        shouldRefresh: missingTracks || isRefreshDue(oldestScan, refreshDays),
+        missingTracks,
+        oldestScanTime: Number.isFinite(oldestScanTime) ? oldestScanTime : Number.NEGATIVE_INFINITY,
+    };
+}
+
 async function storeSimilarArtists(artistId: string, forceUpdate: boolean = false): Promise<string[]> {
     try {
         const similarArtists = await getArtistSimilar(artistId);
@@ -621,16 +656,35 @@ export async function scanArtistDeep(artistId: string, options: ScanOptions = {}
             // Keep nested album-track scans narrower than the scheduler thread pool so
             // the API stays responsive while artists are refreshing.
             const limit = pLimit(ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY);
-            const albumsNeedingTrackScan = albums.filter((album) => {
-                const expectedTracks = album.num_tracks || 0;
-                const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
-                const hasMissingTracks = expectedTracks > 0
-                    ? existingCount.count < expectedTracks
-                    : existingCount.count === 0;
-                return options.forceAlbumUpdate === true ||
-                    hasMissingTracks ||
-                    shouldRefreshTracks(album.tidal_id, monitoringConfig.track_refresh_days);
-            });
+            const albumsNeedingTrackScan = albums
+                .map((album) => {
+                    const expectedTracks = album.num_tracks || 0;
+                    const existingCount = db.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'").get(album.tidal_id) as any;
+                    const hasMissingTracks = expectedTracks > 0
+                        ? existingCount.count < expectedTracks
+                        : existingCount.count === 0;
+                    const refreshState = getTrackRefreshState(album.tidal_id, monitoringConfig.track_refresh_days);
+
+                    return {
+                        album,
+                        shouldRefresh: options.forceAlbumUpdate === true || hasMissingTracks || refreshState.shouldRefresh,
+                        missingTracks: hasMissingTracks || refreshState.missingTracks,
+                        oldestScanTime: refreshState.oldestScanTime,
+                    };
+                })
+                .filter((entry) => entry.shouldRefresh)
+                .sort((left, right) => {
+                    if (left.missingTracks !== right.missingTracks) {
+                        return Number(right.missingTracks) - Number(left.missingTracks);
+                    }
+
+                    if (left.oldestScanTime !== right.oldestScanTime) {
+                        return left.oldestScanTime - right.oldestScanTime;
+                    }
+
+                    return String(left.album.tidal_id).localeCompare(String(right.album.tidal_id));
+                })
+                .map((entry) => entry.album);
 
             if (albumsNeedingTrackScan.length > 0) {
                 console.log(`[Scanner] Scanning tracks for ${albumsNeedingTrackScan.length}/${albums.length} albums inline`);
@@ -914,9 +968,11 @@ export async function scanAlbumDeep(albumId: string, options: ScanOptions = {}):
         const trackCreditsMap = await getAlbumItemsCredits(albumId);
         if (trackCreditsMap.size > 0) {
             const updateTrackCredits = db.prepare('UPDATE media SET credits = ? WHERE id = ? AND album_id = ?');
-            for (const [trackId, credits] of trackCreditsMap) {
-                updateTrackCredits.run(JSON.stringify(credits), trackId, albumId);
-            }
+            db.transaction(() => {
+                for (const [trackId, credits] of trackCreditsMap) {
+                    updateTrackCredits.run(JSON.stringify(credits), trackId, albumId);
+                }
+            })();
         }
     } catch (e) {
         console.warn(`[Scanner] Failed to fetch per-track credits for album ${albumId}:`, e);
@@ -1332,85 +1388,98 @@ async function scanAlbumTracks(albumId: string): Promise<void> {
         WHERE id=? AND album_id=?
     `);
 
+    const selectArtist = db.prepare("SELECT id FROM artists WHERE id = ?");
+    const insertArtist = db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`);
+    const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND album_id = ?");
+
     const cooperateTrackStore = createCooperativeBatcher(25);
+    const trackBatch: any[] = [];
     for (const track of tracks) {
         const trackArtistId = track.artist_id || album.artist_id;
         track.artist_id = trackArtistId;
+        trackBatch.push(track);
 
-        // Ensure track artist exists
-        if (trackArtistId && trackArtistId !== album.artist_id) {
-            const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(trackArtistId);
-            if (!artistExists) {
-                let artistName = 'Unknown Artist';
-                if (track.artists && Array.isArray(track.artists)) {
-                    const found = track.artists.find((a: any) => String(a.id) === String(trackArtistId));
-                    if (found) artistName = found.name;
+        // Flush batch every 25 tracks or at the end
+        if (trackBatch.length >= 25 || track === tracks[tracks.length - 1]) {
+            db.transaction(() => {
+                for (const t of trackBatch) {
+                    const tArtistId = t.artist_id;
+
+                    // Ensure track artist exists
+                    if (tArtistId && tArtistId !== album.artist_id) {
+                        const artistExists = selectArtist.get(tArtistId);
+                        if (!artistExists) {
+                            let artistName = 'Unknown Artist';
+                            if (t.artists && Array.isArray(t.artists)) {
+                                const found = t.artists.find((a: any) => String(a.id) === String(tArtistId));
+                                if (found) artistName = found.name;
+                            }
+                            insertArtist.run(tArtistId, artistName, resolveArtistFolder(artistName));
+                        }
+                    }
+
+                    const exists = selectMedia.get(t.tidal_id, albumId) as any;
+
+                    let shouldMonitor = exists?.monitor || (album?.monitor ? 1 : 0);
+                    if (exists?.monitor_lock) {
+                        shouldMonitor = exists.monitor;
+                    }
+
+                    if (!exists) {
+                        trackInsert.run(
+                            t.tidal_id,
+                            tArtistId,
+                            albumId,
+                            t.title,
+                            t.version || null,
+                            t.release_date || null,
+                            album.type,
+                            t.explicit ? 1 : 0,
+                            t.quality,
+                            t.track_number || 0,
+                            t.volume_number || 1,
+                            t.duration,
+                            t.popularity || 0,
+                            t.bpm || null,
+                            t.key || null,
+                            t.key_scale || null,
+                            t.peak || null,
+                            t.replay_gain || null,
+                            null,
+                            t.copyright || null,
+                            t.isrc || null,
+                            shouldMonitor
+                        );
+                    } else {
+                        trackUpdate.run(
+                            tArtistId,
+                            t.title,
+                            t.version || null,
+                            t.release_date || null,
+                            t.explicit ? 1 : 0,
+                            t.quality,
+                            t.track_number || 0,
+                            t.volume_number || 1,
+                            t.duration,
+                            t.popularity || 0,
+                            t.bpm || null,
+                            t.key || null,
+                            t.key_scale || null,
+                            t.peak || null,
+                            t.replay_gain || null,
+                            null,
+                            t.copyright || null,
+                            t.tidal_id,
+                            albumId
+                        );
+                    }
+
+                    storeTrackArtists(t);
                 }
-                db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`)
-                    .run(trackArtistId, artistName, resolveArtistFolder(artistName));
-            }
+            })();
+            trackBatch.length = 0;
+            await cooperateTrackStore();
         }
-
-        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND album_id = ?")
-            .get(track.tidal_id, albumId) as any;
-
-        let shouldMonitor = exists?.monitor || (album?.monitor ? 1 : 0);
-        if (exists?.monitor_lock) {
-            shouldMonitor = exists.monitor;
-        }
-
-        if (!exists) {
-            trackInsert.run(
-                track.tidal_id,
-                trackArtistId,
-                albumId,
-                track.title,
-                track.version || null,
-                track.release_date || null,
-                album.type,
-                track.explicit ? 1 : 0,
-                track.quality,
-                track.track_number || 0,
-                track.volume_number || 1,
-                track.duration,
-                track.popularity || 0,
-                track.bpm || null,
-                track.key || null,
-                track.key_scale || null,
-                track.peak || null,
-                track.replay_gain || null,
-                null,
-                track.copyright || null,
-                track.isrc || null,
-                shouldMonitor
-            );
-        } else {
-            trackUpdate.run(
-                trackArtistId,
-                track.title,
-                track.version || null,
-                track.release_date || null,
-                track.explicit ? 1 : 0,
-                track.quality,
-                track.track_number || 0,
-                track.volume_number || 1,
-                track.duration,
-                track.popularity || 0,
-                track.bpm || null,
-                track.key || null,
-                track.key_scale || null,
-                track.peak || null,
-                track.replay_gain || null,
-                null,
-                track.copyright || null,
-                track.tidal_id,
-                albumId
-            );
-        }
-
-        // Handle track artists
-        await storeTrackArtists(track);
-        await cooperateTrackStore();
     }
 }
 
@@ -1523,47 +1592,50 @@ async function storeVideos(artistId: string, videos: any[], options: ScanOptions
         WHERE id=? AND type='Music Video'
     `);
 
-    for (const video of videos) {
-        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND type='Music Video'")
-            .get(video.tidal_id) as any;
+    const selectVideo = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND type='Music Video'");
 
-        let shouldMonitor = exists?.monitor || 0;
-        if (exists?.monitor_lock) {
-            shouldMonitor = exists.monitor;
+    db.transaction(() => {
+        for (const video of videos) {
+            const exists = selectVideo.get(video.tidal_id) as any;
+
+            let shouldMonitor = exists?.monitor || 0;
+            if (exists?.monitor_lock) {
+                shouldMonitor = exists.monitor;
+            }
+
+            const quality = video.quality || 'MP4_1080P';
+            const cover = video.image_id || null;
+
+            if (!exists) {
+                videoInsert.run(
+                    video.tidal_id,
+                    artistId,
+                    video.album_id || null,
+                    video.title,
+                    video.duration,
+                    video.release_date,
+                    video.version || null,
+                    video.explicit ? 1 : 0,
+                    quality,
+                    video.popularity || 0,
+                    cover,
+                    shouldMonitor
+                );
+            } else {
+                videoUpdate.run(
+                    video.title,
+                    video.duration,
+                    video.release_date,
+                    video.version || null,
+                    video.explicit ? 1 : 0,
+                    quality,
+                    video.popularity || 0,
+                    cover,
+                    video.tidal_id
+                );
+            }
         }
-
-        const quality = video.quality || 'MP4_1080P';
-        const cover = video.image_id || null;
-
-        if (!exists) {
-            videoInsert.run(
-                video.tidal_id,
-                artistId,
-                video.album_id || null,
-                video.title,
-                video.duration,
-                video.release_date,
-                video.version || null,
-                video.explicit ? 1 : 0,
-                quality,
-                video.popularity || 0,
-                cover,
-                shouldMonitor
-            );
-        } else {
-            videoUpdate.run(
-                video.title,
-                video.duration,
-                video.release_date,
-                video.version || null,
-                video.explicit ? 1 : 0,
-                quality,
-                video.popularity || 0,
-                cover,
-                video.tidal_id
-            );
-        }
-    }
+    })();
 }
 
 /**
@@ -1784,7 +1856,7 @@ async function storeAlbum(
 /**
  * Store track artists in media_artists table
  */
-async function storeTrackArtists(track: any): Promise<void> {
+function storeTrackArtists(track: any): void {
     const mediaId = track?.tidal_id?.toString?.() ?? String(track?.tidal_id ?? '');
     if (!mediaId) return;
 
@@ -1902,8 +1974,9 @@ function getMusicBrainzSecondary(tidalType: string | undefined, module: string |
     if (normalizedModule === 'LIVE' || normalizedModule === 'ARTIST_LIVE_ALBUMS') return 'live';
     if (normalizedModule === 'COMPILATION' || normalizedModule === 'ARTIST_COMPILATIONS') return 'compilation';
     if (normalizedModule === 'DJ_MIXES') return 'dj-mix';
-    // Note: APPEARS_ON is NOT a MusicBrainz secondary type - it's a separate classification
+    // APPEARS_ON is NOT a MusicBrainz secondary type - it's a separate classification
     // (albums where artist is featured on someone else's release, not the artist's own compilation albums)
+    if (normalizedModule === 'APPEARS_ON') return null;
 
     // Title-based detection - REMIX and SOUNDTRACK only via title
     if (lowerTitle.includes('soundtrack') || lowerTitle.includes('o.s.t.') || lowerTitle.includes('original score') || lowerTitle.includes('motion picture')) {

@@ -245,7 +245,7 @@ export function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemCo
         artist: artist || 'Unknown',
         cover: cover ?? null,
         quality: quality ?? null,
-        album_id: album_id ?? null,
+        album_id: album_id != null ? String(album_id) : null,
         album_title: album_title ?? null,
         currentFileNum: downloadState.currentFileNum,
         totalFiles: downloadState.totalFiles,
@@ -288,6 +288,11 @@ router.delete('/remove', async (req: Request, res: Response) => {
             await downloadProcessor.pause();
             TaskQueueService.cancel(jobId);
             await downloadProcessor.resume();
+        } else if (downloadProcessor.isActivelyImporting(jobId)) {
+            // Import is running in the background — mark as cancelled in DB.
+            // The import will finish its current step but the job record
+            // is already cancelled so the result won't matter.
+            TaskQueueService.cancel(jobId);
         } else {
             TaskQueueService.cancel(jobId);
         }

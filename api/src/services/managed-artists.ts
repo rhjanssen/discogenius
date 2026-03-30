@@ -83,5 +83,9 @@ export function getManagedArtists(options: { includeLibraryFiles?: boolean; orde
 
 export function getManagedArtistsDueForRefresh(options: { includeLibraryFiles?: boolean; artistIds?: Array<string | number>; refreshDays?: number; } = {}): ManagedArtistRow[] {
   const artists = getManagedArtists({ includeLibraryFiles: options.includeLibraryFiles, orderByLastScanned: true, artistIds: options.artistIds });
-  return artists.filter((artist) => shouldRefreshArtist({ artistId: artist.id, lastScanned: artist.last_scanned }));
+  return artists.filter((artist) => shouldRefreshArtist({
+    artistId: artist.id,
+    lastScanned: artist.last_scanned,
+    refreshDays: options.refreshDays,
+  }));
 }

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { ArtistWorkflow } from './artist-workflow.js';
+import type { MonitoringPassWorkflowValue } from './job-payloads.js';
 import type { AnyJobPayload, JobStatus, JobType } from './queue.js';
 
 /**
@@ -39,6 +40,7 @@ export interface ArtistScannedEventPayload {
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;
+    monitoringCycle?: MonitoringPassWorkflowValue;
     scanLibrary: boolean;
     forceDownloadQueue: boolean;
     trigger: number;
@@ -48,6 +50,7 @@ export interface RescanCompletedEventPayload {
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;
+    monitoringCycle?: MonitoringPassWorkflowValue;
     skipDownloadQueue: boolean;
     skipCuration: boolean;
     skipMetadataBackfill: boolean;

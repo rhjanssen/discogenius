@@ -51,6 +51,7 @@ const DOWNLOAD_IDLE_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_IDLE_TIMEOUT_M
 const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_MS', 30_000, 0);
 const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1000, 0); // 0 = disabled
 const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
+const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
 
 // Docker: tidal-dl-ng/ffmpeg installed globally via Dockerfile. Local dev uses PATH + buildTidalDlNgEnv.
 
@@ -80,6 +81,9 @@ export class DownloadProcessor {
     private lastBusyLogAt: number = 0;
     private lastStuckCleanupAt: number = 0;
 
+    /** Tracks the active import job (runs in its own slot alongside downloads, Tidarr-style). */
+    private activeImports = new Map<number, { tidalId: string; type: string; promise: Promise<void> }>();
+
     // ── Progress write coalescing ───────────────────────────────────
     // Buffers the latest in-flight progress state per job and flushes
     // to SQLite at most once per PROGRESS_WRITE_INTERVAL_MS, reducing
@@ -94,6 +98,95 @@ export class DownloadProcessor {
                 console.error('[DOWNLOAD-PROCESSOR] Error scheduling next queue item:', error);
             });
         });
+    }
+
+    /**
+     * Fire-and-forget an import job. Runs in a dedicated import slot alongside
+     * the download slot (Lidarr/Tidarr-style: 1 download + 1 import in parallel).
+     */
+    private dispatchImportJob(job: ReturnType<typeof TaskQueueService.getNextJobByTypes> & {}): void {
+        const importPayload = job.payload as ImportDownloadJobPayload;
+        const tidalId = String(importPayload?.tidalId || job.ref_id || '');
+        const type = (importPayload?.type || 'track') as DownloadJobType;
+
+        if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
+            console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid tidalId: ${tidalId}`);
+            TaskQueueService.fail(job.id, 'Invalid tidalId - cannot import');
+            return;
+        }
+
+        const resolved = {
+            title: importPayload?.resolved?.title || (job.payload as any)?.title || 'Unknown',
+            artist: importPayload?.resolved?.artist || (job.payload as any)?.artist || 'Unknown',
+            cover: importPayload?.resolved?.cover ?? (job.payload as any)?.cover ?? null,
+        };
+
+        TaskQueueService.markProcessing(job.id);
+        console.log(`[DOWNLOAD-PROCESSOR] Dispatching import job #${job.id}: ${type} ${tidalId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
+
+        const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
+            this.persistDownloadState(job.id, state);
+            downloadEvents.emitProgress(job.id, {
+                tidalId,
+                type,
+                quality: importPayload?.quality ?? null,
+                title: resolved.title,
+                artist: resolved.artist,
+                cover: resolved.cover,
+                progress: state.progress ?? job.progress ?? 0,
+                currentFileNum: state.currentFileNum,
+                totalFiles: state.totalFiles,
+                currentTrack: state.currentTrack,
+                trackProgress: state.trackProgress,
+                trackStatus: state.trackStatus,
+                statusMessage: state.statusMessage,
+                state: state.state,
+            });
+        };
+
+        const importPromise = (async () => {
+            try {
+                await processImportDownloadJob(job as JobOfType<typeof JobTypes.ImportDownload>, {
+                    updateState: emitImportProgress,
+                });
+
+                TaskQueueService.complete(job.id);
+                downloadEvents.emitCompleted(job.id, {
+                    tidalId,
+                    type,
+                    quality: importPayload?.quality ?? null,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    cover: resolved.cover,
+                });
+                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${tidalId}`);
+            } catch (error: any) {
+                console.error(`[DOWNLOAD-PROCESSOR] Failed to import job #${job.id}:`, error);
+                this.persistDownloadState(job.id, {
+                    progress: job.progress,
+                    description: `ImportDownload: ${error?.message || 'Import failed'}`,
+                    statusMessage: error?.message || 'Import failed',
+                    state: 'importFailed',
+                });
+                TaskQueueService.fail(job.id, error?.message || 'Unknown import error');
+                downloadEvents.emitFailed(job.id, {
+                    tidalId,
+                    type,
+                    quality: importPayload?.quality ?? null,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    cover: resolved.cover,
+                    error: error?.message || 'Unknown import error',
+                    state: 'importFailed',
+                });
+            } finally {
+                this.activeImports.delete(job.id);
+                // An import slot freed up — check for more pending imports/downloads.
+                this.scheduleNext();
+            }
+        })();
+
+        this.activeImports.set(job.id, { tidalId, type, promise: importPromise });
     }
 
     private logBusy(): void {
@@ -115,10 +208,15 @@ export class DownloadProcessor {
         }
         this.lastStuckCleanupAt = now;
 
+        const excludeIds = [
+            ...(this.currentJobId ? [this.currentJobId] : []),
+            ...this.activeImports.keys(),
+        ];
+
         const recovered = TaskQueueService.requeueStaleProcessingJobsByTypes({
             types: DOWNLOAD_OR_IMPORT_JOB_TYPES,
             olderThanMs: STUCK_JOB_MS,
-            excludeIds: this.currentJobId ? [this.currentJobId] : [],
+            excludeIds,
         });
 
         if (recovered > 0) {
@@ -510,14 +608,31 @@ export class DownloadProcessor {
             return;
         }
 
+        this.maybeCleanupStuckJobs();
+
+        // ── Import slot: 1 import runs alongside downloads (Lidarr/Tidarr pattern) ──
+        // Downloads and imports use separate slots so importing never blocks
+        // the next download from starting.
+        while (this.activeImports.size < MAX_CONCURRENT_IMPORTS) {
+            const importJob = TaskQueueService.getNextJobByTypes([JobTypes.ImportDownload]);
+            if (!importJob) break;
+
+            if (importJob.attempts >= MAX_RETRY_ATTEMPTS) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Import job #${importJob.id} exceeded max retries (${importJob.attempts}/${MAX_RETRY_ATTEMPTS}), marking as permanently failed`);
+                TaskQueueService.fail(importJob.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
+                continue;
+            }
+
+            this.dispatchImportJob(importJob);
+        }
+
+        // ── Download slot: only one download at a time ──
         if (this.processing) {
             this.logBusy();
             return;
         }
 
-        this.maybeCleanupStuckJobs();
-
-        const job = TaskQueueService.getNextJobByTypes(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+        const job = TaskQueueService.getNextJobByTypes(DOWNLOAD_JOB_TYPES);
 
         if (!job) {
             return;
@@ -535,22 +650,18 @@ export class DownloadProcessor {
         this.processing = true;
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
-        const isImportJob = job.type === JobTypes.ImportDownload;
-        const importPayload = isImportJob ? job.payload as ImportDownloadJobPayload : null;
-        const tidalId = String(importPayload?.tidalId || job.ref_id || job.payload?.tidalId || '');
-        const type: DownloadJobType = isImportJob
-            ? importPayload?.type as DownloadJobType
-            : job.type === JobTypes.DownloadVideo
-                ? 'video'
-                : job.type === JobTypes.DownloadAlbum
-                    ? 'album'
-                    : job.type === JobTypes.DownloadPlaylist
-                        ? 'playlist'
-                        : 'track';
+        const tidalId = String(job.ref_id || job.payload?.tidalId || '');
+        const type: DownloadJobType = job.type === JobTypes.DownloadVideo
+            ? 'video'
+            : job.type === JobTypes.DownloadAlbum
+                ? 'album'
+                : job.type === JobTypes.DownloadPlaylist
+                    ? 'playlist'
+                    : 'track';
 
         if (!type) {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.type}`);
-            TaskQueueService.fail(job.id, `Invalid job type - cannot ${isImportJob ? 'import' : 'download'}`);
+            TaskQueueService.fail(job.id, `Invalid job type - cannot download`);
             this.processing = false;
             this.currentJobId = undefined;
             this.scheduleNext();
@@ -560,7 +671,7 @@ export class DownloadProcessor {
         // Validate tidalId before processing
         if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid tidalId: ${tidalId}`);
-            TaskQueueService.fail(job.id, `Invalid tidalId - cannot ${isImportJob ? 'import' : 'download'}`);
+            TaskQueueService.fail(job.id, `Invalid tidalId - cannot download`);
             this.processing = false;
             this.currentJobId = undefined;
             // Process next item
@@ -576,78 +687,10 @@ export class DownloadProcessor {
 
         TaskQueueService.markProcessing(job.id);
         let resolved = {
-            title: importPayload?.resolved?.title || payload?.title || 'Unknown',
-            artist: importPayload?.resolved?.artist || payload?.artist || 'Unknown',
-            cover: importPayload?.resolved?.cover ?? payload?.cover ?? null,
+            title: payload?.title || 'Unknown',
+            artist: payload?.artist || 'Unknown',
+            cover: payload?.cover ?? null,
         };
-
-        if (isImportJob) {
-            const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
-                this.persistDownloadState(job.id, state);
-                downloadEvents.emitProgress(job.id, {
-                    tidalId,
-                    type,
-                    quality: importPayload?.quality ?? null,
-                    title: resolved.title,
-                    artist: resolved.artist,
-                    cover: resolved.cover,
-                    progress: state.progress ?? job.progress ?? 0,
-                    currentFileNum: state.currentFileNum,
-                    totalFiles: state.totalFiles,
-                    currentTrack: state.currentTrack,
-                    trackProgress: state.trackProgress,
-                    trackStatus: state.trackStatus,
-                    statusMessage: state.statusMessage,
-                    state: state.state,
-                });
-            };
-
-            try {
-                await processImportDownloadJob(job as JobOfType<typeof JobTypes.ImportDownload>, {
-                    updateState: emitImportProgress,
-                });
-
-                TaskQueueService.complete(job.id);
-                downloadEvents.emitCompleted(job.id, {
-                    tidalId,
-                    type,
-                    quality: importPayload?.quality ?? null,
-                    title: resolved.title,
-                    artist: resolved.artist,
-                    cover: resolved.cover,
-                });
-                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${tidalId}`);
-            } catch (error: any) {
-                console.error(`[DOWNLOAD-PROCESSOR] Failed to import job #${job.id}:`, error);
-                this.persistDownloadState(job.id, {
-                    progress: job.progress,
-                    description: `ImportDownload: ${error?.message || 'Import failed'}`,
-                    statusMessage: error?.message || 'Import failed',
-                    state: 'importFailed',
-                });
-                TaskQueueService.fail(job.id, error?.message || 'Unknown import error');
-                downloadEvents.emitFailed(job.id, {
-                    tidalId,
-                    type,
-                    quality: importPayload?.quality ?? null,
-                    title: resolved.title,
-                    artist: resolved.artist,
-                    cover: resolved.cover,
-                    error: error?.message || 'Unknown import error',
-                    state: 'importFailed',
-                });
-            } finally {
-                this.processing = false;
-                this.currentProcess = undefined;
-                this.currentJobId = undefined;
-                this.currentTidalId = undefined;
-                this.currentType = undefined;
-                this.cancelCurrentDownload = false;
-                this.scheduleNext();
-            }
-
-            return;
-        }
 
         try {
             this.persistDownloadState(job.id, {
@@ -1473,7 +1516,7 @@ export class DownloadProcessor {
     }
 
     isActivelyProcessingJob(jobId: number): boolean {
-        return this.processing && this.currentJobId === jobId;
+        return (this.processing && this.currentJobId === jobId) || this.activeImports.has(jobId);
     }
 
     getStatus(): {
@@ -1482,6 +1525,7 @@ export class DownloadProcessor {
         currentJobId?: number;
         currentTidalId?: string;
         currentType?: string;
+        activeImports: number;
     } {
         return {
             isPaused: this.isPaused,
@@ -1489,7 +1533,12 @@ export class DownloadProcessor {
             currentJobId: this.currentJobId,
             currentTidalId: this.currentTidalId,
             currentType: this.currentType,
+            activeImports: this.activeImports.size,
         };
+    }
+
+    isActivelyImporting(jobId: number): boolean {
+        return this.activeImports.has(jobId);
     }
 }
 

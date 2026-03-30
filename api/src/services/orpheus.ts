@@ -36,7 +36,7 @@ const ORPHEUS_ENTRYPOINT = path.join(ORPHEUS_RUNTIME_DIR, "orpheus.py");
 const ORPHEUS_VENV_DIR = path.join(ORPHEUS_RUNTIME_DIR, ".venv");
 const REPO_VENV_PYTHON = path.join(REPO_ROOT, ".venv", IS_WINDOWS ? "Scripts/python.exe" : "bin/python");
 const ORPHEUS_PYTHON_BIN = process.env.ORPHEUSDL_PYTHON_BIN?.trim()
-    || (IS_DOCKER ? "python3" : path.join(ORPHEUS_VENV_DIR, IS_WINDOWS ? "Scripts/python.exe" : "bin/python"));
+    || (IS_DOCKER ? path.join(DEFAULT_ORPHEUS_RUNTIME_DIR, ".venv", "bin", "python") : path.join(ORPHEUS_VENV_DIR, IS_WINDOWS ? "Scripts/python.exe" : "bin/python"));
 const ORPHEUS_BOOTSTRAP_PYTHON = process.env.ORPHEUSDL_BOOTSTRAP_PYTHON?.trim()
     || (!IS_DOCKER && fs.existsSync(REPO_VENV_PYTHON) ? REPO_VENV_PYTHON : "python3");
 const ORPHEUS_CORE_REPO = process.env.ORPHEUSDL_CORE_REPO?.trim() || "https://github.com/OrfiTeam/OrpheusDL.git";

@@ -1,6 +1,6 @@
 import React, { ReactNode } from "react";
 import { Card, Spinner, Text, Title3, Body1, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
-import { ErrorCircle24Filled } from "@fluentui/react-icons";
+import { ErrorCircle48Color } from "@fluentui/react-icons";
 
 interface ContentStateProps {
   children?: ReactNode;
@@ -127,7 +127,8 @@ const useStyles = makeStyles({
   },
   emptyStateSubtitle: {
     color: tokens.colorNeutralForeground3,
-    maxWidth: "400px",
+    maxWidth: "640px",
+    textAlign: "center",
   },
 });
 
@@ -261,7 +262,7 @@ export const ErrorState = ({
       ariaLive="assertive"
       title={title}
       description={resolvedDescription}
-      icon={<ErrorCircle24Filled />}
+      icon={<ErrorCircle48Color />}
       actions={actions}
     />
   );

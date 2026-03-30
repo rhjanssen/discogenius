@@ -25,7 +25,6 @@ export function useActivityInFlightFeed({ enabled = true }: UseActivityInFlightF
             timeoutMs,
         }),
         getItemId: (item) => item.id,
-        fallbackRefreshMs: false,
         enabled,
     });
 

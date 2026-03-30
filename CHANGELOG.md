@@ -6,17 +6,42 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-30
+
+### Added
+
+- Lidarr-aligned audio tag write policy (`WriteAudioTagsPolicy`: `no`, `new_files`, `all_files`) and tag scrubbing (`scrub_audio_tags`) for clean metadata rewrites.
+- `removeAllTags()` utility for stripping all existing metadata before tag writes (Lidarr's `ScrubAudioTags` equivalent).
+- Structured import rejection types (`ImportRejection` with `permanent`/`temporary` classification) for smarter import decision tracking.
+- Automatic job history pruning: finished queue jobs older than 1 day are cleaned during housekeeping (aligned with Lidarr's `CommandRepository.Trim()`).
+- Database batch operation helpers (`batchRun`, `batchDelete`) for efficient bulk SQL transactions.
+- `GET /api/queue/history` endpoint for dedicated queue history surface.
+- Real `HealthCheck` diagnostics across runtime state, writable paths, tool availability, and downloader capabilities.
+- Browser playback fallback chain: BTS/progressive preferred, DASH segment streaming as fallback.
+- Dolby Atmos browser streaming path for web playback of downloaded Atmos audio.
+- Two-column desktop queue layout: active queue and history side-by-side at ≥960px.
+- Mobile infinite scroll for both active queue and history lists.
+- Bulk queue reorder: per-row reorder buttons apply to entire selection when multiple items are selected.
+
 ### Changed
 
-- Increment 1 control-plane split finalized: `/api/activity` is now the canonical paginated/filterable activity feed, while `/api/status` is summary-only.
-- Removed `/api/status/tasks`; `/api/queue` remains the live queue authority (including reorder invariants).
-- Added `GET /api/queue/history` as the queue-tab history source, with Dashboard queue history now rendered from queue-shaped `QueueItemContract` rows instead of remapped `/api/activity` jobs.
-- Queue SSE/download event contracts now include `quality`, and frontend queue restoration now reconciles SSE progress, authoritative `/api/queue` refreshes, and global queue/job invalidation with a short grace window to avoid reconnect/import-transition flicker.
-- Dashboard activity/status refresh now follows stale-data non-blocking behavior, including explicit activity empty/error semantics.
-- Browser TIDAL playback now prefers BTS/progressive streams but falls back to DASH when that is the only browser-safe source available.
-- Downloaded Dolby Atmos audio now has a browser-compatible backend streaming path for web playback.
-- Scheduler `HealthCheck` now runs real diagnostics across runtime state, writable paths, tool availability, and downloader capability checks instead of acting as a stub.
-- Artist page release modules are now ordered as Albums → EPs → Singles → Live → Compilations → Soundtracks → Demos → Remixes → Appears On.
+- `/api/activity` is now the canonical paginated/filterable activity feed; `/api/status` is summary-only. Removed `/api/status/tasks`.
+- Queue SSE/download events now include `quality` metadata with grace-window reconciliation to prevent flicker.
+- Album/track organization, scanner metadata writes, playlist imports, and manual import now use transaction batching instead of per-row auto-commits.
+- Manual import apply service rewritten to Lidarr-style two-phase collect-then-commit pattern.
+- Artist page release modules ordered: Albums → EPs → Singles → Live → Compilations → Soundtracks → Demos → Remixes → Appears On.
+- Deprecated `write_audio_metadata` boolean in favor of `write_audio_tags_policy` enum.
+- Adopted pure SSE event-driven updates (Tidarr-style); removed all fallback polling intervals.
+- Queue item layout uses stacked title/artist/badge rows for pending items; active/importing items retain inline layout.
+- Queue reorder icons updated to `ArrowUpload`/`ArrowDownload` for move-to-top/bottom.
+- Error display icons use Fluent `ErrorCircle48Color` for richer visual feedback.
+
+### Fixed
+
+- Removed debug `console.log` calls from SSE event stream lifecycle.
+- ArtistPage module sections now use stable React keys instead of array indices.
+- Dashboard activity/status refresh uses stale-data non-blocking semantics with explicit empty/error states.
+- Clicking a queue item in selection mode now toggles selection instead of navigating to the album page.
 
 ## [1.1.0] - 2026-03-22
 

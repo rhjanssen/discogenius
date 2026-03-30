@@ -335,7 +335,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     id: "download-missing",
     kind: "manual",
     commandName: "DownloadMissing",
-    name: "Queue Downloads",
+    name: "Download Missing",
     description: "Queue monitored missing items so download jobs can be processed by the queue.",
     taskName: JobTypes.DownloadMissing,
     category: "downloads",
@@ -448,7 +448,7 @@ const SYSTEM_TASK_DEFINITIONS = [
     taskName: JobTypes.UpdateLibraryMetadata,
     category: "metadata",
     riskLevel: "medium",
-    visibleInSystemTasks: true,
+    visibleInSystemTasks: false,
     run: () => queueUpdateLibraryMetadata({ trigger: 1 }),
   },
   {

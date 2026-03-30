@@ -8,10 +8,9 @@ const TASKS_PAGE_SIZE = 100;
 
 type UseTasksFeedOptions = {
     enabled?: boolean;
-    fallbackRefreshMs?: number | false;
 };
 
-export function useTasksFeed({ enabled = true, fallbackRefreshMs }: UseTasksFeedOptions = {}) {
+export function useTasksFeed({ enabled = true }: UseTasksFeedOptions = {}) {
     const query = useDashboardInfiniteFeed<ActivityJobContract>({
         queryKey: tasksFeedQueryKey,
         pageSize: TASKS_PAGE_SIZE,
@@ -22,7 +21,6 @@ export function useTasksFeed({ enabled = true, fallbackRefreshMs }: UseTasksFeed
             timeoutMs,
         }),
         getItemId: (item) => item.id,
-        fallbackRefreshMs,
         enabled,
     });
 

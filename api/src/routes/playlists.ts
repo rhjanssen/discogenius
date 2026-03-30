@@ -329,41 +329,42 @@ router.post("/import-user", async (req: Request, res: Response) => {
     let imported = 0;
     let skipped = 0;
 
-    for (const playlist of playlists) {
-      const existing = db.prepare(
-        "SELECT uuid FROM playlists WHERE uuid = ?"
-      ).get(playlist.uuid);
+    const selectExisting = db.prepare("SELECT uuid FROM playlists WHERE uuid = ?");
+    const insertPlaylist = db.prepare(`
+      INSERT INTO playlists (
+        uuid, tidal_id, title, description, creator_name, creator_id,
+        cover_id, square_cover_id, num_tracks, num_videos, duration,
+        created, last_updated, type, public_playlist, user_date_added
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
 
-      if (existing) {
-        skipped++;
-        continue;
+    db.transaction(() => {
+      for (const playlist of playlists) {
+        if (selectExisting.get(playlist.uuid)) {
+          skipped++;
+          continue;
+        }
+
+        insertPlaylist.run(
+          playlist.uuid,
+          playlist.uuid,
+          playlist.title,
+          playlist.description,
+          playlist.creator?.name,
+          playlist.creator?.id?.toString(),
+          playlist.image,
+          playlist.squareImage,
+          playlist.numberOfTracks || 0,
+          playlist.numberOfVideos || 0,
+          playlist.duration || 0,
+          playlist.created,
+          playlist.lastUpdated,
+          playlist.type || "USER",
+          playlist.publicPlaylist ? 1 : 0
+        );
+        imported++;
       }
-
-      db.prepare(`
-        INSERT INTO playlists (
-          uuid, tidal_id, title, description, creator_name, creator_id,
-          cover_id, square_cover_id, num_tracks, num_videos, duration,
-          created, last_updated, type, public_playlist, user_date_added
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(
-        playlist.uuid,
-        playlist.uuid,
-        playlist.title,
-        playlist.description,
-        playlist.creator?.name,
-        playlist.creator?.id?.toString(),
-        playlist.image,
-        playlist.squareImage,
-        playlist.numberOfTracks || 0,
-        playlist.numberOfVideos || 0,
-        playlist.duration || 0,
-        playlist.created,
-        playlist.lastUpdated,
-        playlist.type || "USER",
-        playlist.publicPlaylist ? 1 : 0
-      );
-      imported++;
-    }
+    })();
 
     res.json({
       message: `Imported ${imported} playlists, skipped ${skipped} existing`,
