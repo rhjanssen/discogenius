@@ -10,11 +10,13 @@ import {
   requireArtistName,
   setArtistMonitoredState,
 } from "../services/artist-monitoring.js";
+import { MoveArtistService } from "../services/move-artist-service.js";
 import { ArtistQueryService } from "../services/artist-query-service.js";
 import { FollowedArtistsImportService } from "../services/followed-artists-import.js";
 import {
   getObjectBody,
   getOptionalBoolean,
+  getOptionalString,
   getRequiredIdentifier,
   isRequestValidationError,
   rejectUnknownKeys,
@@ -166,6 +168,51 @@ router.post("/:artistId/scan", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Error scanning artist:", error);
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/:artistId/path", (req, res) => {
+  try {
+    const artistId = req.params.artistId;
+    const body = getObjectBody(req.body);
+    const requestedPath = getOptionalString(body, "path");
+    const moveFiles = getOptionalBoolean(body, "moveFiles") ?? false;
+    const applyNamingTemplate = getOptionalBoolean(body, "applyNamingTemplate") ?? false;
+    rejectUnknownKeys(body, ["path", "moveFiles", "applyNamingTemplate"], "Artist path update");
+
+    const result = MoveArtistService.moveArtist({
+      artistId,
+      path: requestedPath,
+      moveFiles,
+      applyNamingTemplate,
+    });
+
+    if (!result) {
+      return res.status(404).json({ detail: "Artist not found" });
+    }
+
+    res.json({
+      success: true,
+      artistId: result.artistId,
+      artistName: result.artistName,
+      path: result.path,
+      oldPath: result.oldPath,
+      changed: result.changed,
+      queued: result.moveFilesQueued,
+      jobId: result.jobId,
+      renameStatus: result.renameStatus,
+      message: result.moveFilesQueued
+        ? "Artist path updated and file move queued"
+        : result.changed
+          ? "Artist path updated"
+          : "Artist path unchanged",
+    });
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    console.error("[artists/path] Error:", error);
     res.status(500).json({ detail: error.message });
   }
 });

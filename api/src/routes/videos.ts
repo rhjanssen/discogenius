@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../database.js";
 import { updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
-import { seedVideo } from "../services/scanner.js";
+import { MediaSeedService } from "../services/media-seed-service.js";
 import { getVideoDetail, listVideos } from "../services/video-query-service.js";
 import {
   getObjectBody,
@@ -84,7 +84,7 @@ router.get("/:videoId", async (req, res) => {
 
     if (!video) {
       try {
-        await seedVideo(req.params.videoId, { monitorArtist: false });
+        await MediaSeedService.seedVideo(req.params.videoId, { monitorArtist: false });
       } catch {
         // Keep response behavior unchanged; return 404 below if still missing.
       }
@@ -106,7 +106,7 @@ router.post("/", async (req, res) => {
     const body = getObjectBody(req.body);
     const tidalId = getRequiredIdentifier(body, "id");
 
-    const videoData = await seedVideo(tidalId, { monitorArtist: true });
+    const videoData = await MediaSeedService.seedVideo(tidalId, { monitorArtist: true });
 
     db.prepare(`
       UPDATE media

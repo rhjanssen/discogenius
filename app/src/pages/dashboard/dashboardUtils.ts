@@ -151,8 +151,9 @@ export function formatJobType(job: JobLike): string {
             return "Check Upgrades";
         case "Housekeeping":
             return "Run Housekeeping";
+        case "RefreshAlbum":
         case "ScanAlbum":
-            return "Scan Album";
+            return "Refresh Album";
         case "ScanPlaylist":
             return "Scan Playlist";
         case "RescanFolders": {
@@ -163,10 +164,18 @@ export function formatJobType(job: JobLike): string {
             return "Curate Artist";
         case "ConfigPrune":
             return "Prune Library Files";
+        case "MoveArtist":
+            return "Move Artist";
+        case "RenameArtist":
+            return "Rename Artist";
+        case "RenameFiles":
         case "ApplyRenames":
-            return "Apply Renames";
+            return "Rename Files";
+        case "RetagArtist":
+            return "Retag Artist";
+        case "RetagFiles":
         case "ApplyRetags":
-            return "Apply Retags";
+            return "Retag Files";
         default:
             return humanizeJobType(type);
     }
@@ -227,6 +236,7 @@ export function formatJobDescription(job: JobLike): string {
             }
             return detail || "Managed library task";
         }
+        case "RefreshAlbum":
         case "ScanAlbum":
             return title ? joinSubject(title, artist) : stripLabel("Album", desc);
         case "ScanPlaylist":
@@ -254,8 +264,14 @@ export function formatJobDescription(job: JobLike): string {
             return "Library maintenance and cleanup";
         case "ConfigPrune":
             return "Pruning stale library file records";
+        case "MoveArtist":
+            return desc || "Moving tracked artist files";
+        case "RenameArtist":
+        case "RenameFiles":
         case "ApplyRenames":
             return desc || "Applying the current library naming plan";
+        case "RetagArtist":
+        case "RetagFiles":
         case "ApplyRetags":
             return desc || "Applying configured audio metadata tags";
         default:
@@ -302,9 +318,15 @@ export function matchesActivityFilter(job: any, filter: string): boolean {
                 'RefreshArtist',
                 'RefreshMetadata',
                 'RescanFolders',
+                'RefreshAlbum',
                 'ScanAlbum',
                 'ScanPlaylist',
+                'MoveArtist',
+                'RenameArtist',
+                'RenameFiles',
                 'ApplyRenames',
+                'RetagArtist',
+                'RetagFiles',
                 'ApplyRetags',
             ].includes(type);
         case 'curation':
@@ -329,7 +351,7 @@ export function getActivityTypeIcon(job: any) {
         }
         return createElement(ArrowDownload24Regular, { style: iconStyle });
     }
-    if (type === 'RefreshArtist' || type === 'ScanAlbum') {
+    if (type === 'RefreshArtist' || type === 'RefreshAlbum' || type === 'ScanAlbum') {
         return createElement(FolderSearch24Regular, { style: iconStyle });
     }
     if (type === 'RescanFolders') {

@@ -10,10 +10,53 @@ export interface MusicBrainzRecording {
     id: string;
     title: string;
     artists: string[];
+    artistCredits?: MusicBrainzArtistCredit[];
     isrcs: string[];
     releaseTitles: string[];
     firstReleaseDate: string | null;
     durationSeconds: number | null;
+}
+
+export interface MusicBrainzArtistCredit {
+    id: string;
+    name: string;
+}
+
+export interface MusicBrainzRelease {
+    id: string;
+    title: string;
+    barcode: string | null;
+    date: string | null;
+    country: string | null;
+    status: string | null;
+    releaseGroupId: string | null;
+    artistCredits: MusicBrainzArtistCredit[];
+}
+
+const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.1 (music metadata enrichment)";
+
+function getMusicBrainzHeaders() {
+    return {
+        "User-Agent": MUSICBRAINZ_USER_AGENT,
+    };
+}
+
+function mapMusicBrainzArtistCredits(rawCredits: unknown): MusicBrainzArtistCredit[] {
+    if (!Array.isArray(rawCredits)) {
+        return [];
+    }
+
+    return rawCredits
+        .map((credit: any) => {
+            const id = String(credit?.artist?.id || "").trim();
+            const name = String(credit?.name || credit?.artist?.name || "").trim();
+            if (!id || !name) {
+                return null;
+            }
+
+            return { id, name };
+        })
+        .filter(Boolean) as MusicBrainzArtistCredit[];
 }
 
 function findWingetFpcalcPath(): string {
@@ -200,16 +243,12 @@ export async function lookupMusicBrainzRecording(recordingId: string): Promise<M
     try {
         const response = await axios.get(url, {
             timeout: 10000,
-            headers: {
-                "User-Agent": "Discogenius/0.1 (alpha import fingerprint resolver)",
-            },
+            headers: getMusicBrainzHeaders(),
         });
 
         const data = response.data || {};
-        const artistCredits = Array.isArray(data["artist-credit"]) ? data["artist-credit"] : [];
-        const artists = artistCredits
-            .map((credit: any) => credit?.name || credit?.artist?.name || null)
-            .filter(Boolean);
+        const artistCredits = mapMusicBrainzArtistCredits(data["artist-credit"]);
+        const artists = artistCredits.map((credit) => credit.name);
         const releaseTitles = Array.isArray(data.releases)
             ? data.releases
                 .map((release: any) => release?.title || null)
@@ -223,6 +262,7 @@ export async function lookupMusicBrainzRecording(recordingId: string): Promise<M
             id: String(data.id || recordingId),
             title: data.title || "",
             artists,
+            artistCredits,
             isrcs: Array.isArray(data.isrcs) ? data.isrcs.filter(Boolean) : [],
             releaseTitles,
             firstReleaseDate: data["first-release-date"] || null,
@@ -236,5 +276,77 @@ export async function lookupMusicBrainzRecording(recordingId: string): Promise<M
 
         console.warn(`[Fingerprint] MusicBrainz lookup failed for ${recordingId}:`, error?.message || error);
         return null;
+    }
+}
+
+export async function lookupMusicBrainzRecordingsByIsrc(isrc: string): Promise<MusicBrainzRecording[]> {
+    const normalized = String(isrc || "").trim().toUpperCase();
+    if (!normalized) {
+        return [];
+    }
+
+    const url = `https://musicbrainz.org/ws/2/recording?fmt=json&limit=10&query=${encodeURIComponent(`isrc:${normalized}`)}`;
+
+    try {
+        const response = await axios.get(url, {
+            timeout: 10000,
+            headers: getMusicBrainzHeaders(),
+        });
+
+        const recordings = Array.isArray(response.data?.recordings) ? response.data.recordings : [];
+        return recordings.map((recording: any) => {
+            const artistCredits = mapMusicBrainzArtistCredits(recording?.["artist-credit"]);
+            const releaseTitles = Array.isArray(recording?.releases)
+                ? recording.releases.map((release: any) => String(release?.title || "").trim()).filter(Boolean)
+                : [];
+            const durationSeconds = typeof recording?.length === "number" && Number.isFinite(recording.length)
+                ? Math.round(recording.length / 1000)
+                : null;
+
+            return {
+                id: String(recording?.id || "").trim(),
+                title: String(recording?.title || "").trim(),
+                artists: artistCredits.map((credit) => credit.name),
+                artistCredits,
+                isrcs: [normalized],
+                releaseTitles,
+                firstReleaseDate: recording?.["first-release-date"] || null,
+                durationSeconds,
+            } satisfies MusicBrainzRecording;
+        }).filter((recording: MusicBrainzRecording) => Boolean(recording.id && recording.title));
+    } catch (error: any) {
+        console.warn(`[Fingerprint] MusicBrainz ISRC lookup failed for ${normalized}:`, error?.message || error);
+        return [];
+    }
+}
+
+export async function lookupMusicBrainzReleasesByBarcode(barcode: string): Promise<MusicBrainzRelease[]> {
+    const normalized = String(barcode || "").trim().replace(/[^0-9]/g, "");
+    if (!normalized) {
+        return [];
+    }
+
+    const url = `https://musicbrainz.org/ws/2/release?fmt=json&limit=10&query=${encodeURIComponent(`barcode:${normalized}`)}`;
+
+    try {
+        const response = await axios.get(url, {
+            timeout: 10000,
+            headers: getMusicBrainzHeaders(),
+        });
+
+        const releases = Array.isArray(response.data?.releases) ? response.data.releases : [];
+        return releases.map((release: any) => ({
+            id: String(release?.id || "").trim(),
+            title: String(release?.title || "").trim(),
+            barcode: String(release?.barcode || "").trim() || null,
+            date: String(release?.date || "").trim() || null,
+            country: String(release?.country || "").trim() || null,
+            status: String(release?.status || "").trim() || null,
+            releaseGroupId: String(release?.["release-group"]?.id || "").trim() || null,
+            artistCredits: mapMusicBrainzArtistCredits(release?.["artist-credit"]),
+        })).filter((release: MusicBrainzRelease) => Boolean(release.id && release.title));
+    } catch (error: any) {
+        console.warn(`[Fingerprint] MusicBrainz barcode lookup failed for ${normalized}:`, error?.message || error);
+        return [];
     }
 }

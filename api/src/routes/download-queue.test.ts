@@ -10,12 +10,12 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
 let queueModule: typeof import("../services/queue.js");
-let downloadQueueRouteModule: typeof import("./download-queue.js");
+let downloadQueueQueryServiceModule: typeof import("../services/download-queue-query-service.js");
 
 before(async () => {
     dbModule = await import("../database.js");
     queueModule = await import("../services/queue.js");
-    downloadQueueRouteModule = await import("./download-queue.js");
+    downloadQueueQueryServiceModule = await import("../services/download-queue-query-service.js");
     dbModule.initDatabase();
 });
 
@@ -59,8 +59,8 @@ test("mapDownloadQueueJob preserves playlist type for playlist download and impo
     assert.ok(downloadPlaylistJob);
     assert.ok(importPlaylistJob);
 
-    const mappedDownloadPlaylist = downloadQueueRouteModule.mapDownloadQueueJob(downloadPlaylistJob);
-    const mappedImportPlaylist = downloadQueueRouteModule.mapDownloadQueueJob(importPlaylistJob);
+    const mappedDownloadPlaylist = downloadQueueQueryServiceModule.DownloadQueueQueryService.mapDownloadQueueJob(downloadPlaylistJob as any);
+    const mappedImportPlaylist = downloadQueueQueryServiceModule.DownloadQueueQueryService.mapDownloadQueueJob(importPlaylistJob as any);
 
     assert.equal(mappedDownloadPlaylist.type, "playlist");
     assert.equal(mappedDownloadPlaylist.stage, "download");

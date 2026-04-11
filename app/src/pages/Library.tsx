@@ -44,7 +44,6 @@ import { MediaCard } from "@/components/cards/MediaCard";
 import { useCardStyles } from "@/components/cards/cardStyles";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
-import { QueueContext } from "@/providers/QueueProvider";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import LibraryTrackList from "@/components/LibraryTrackList";
@@ -53,15 +52,16 @@ import { useLibrary } from "@/hooks/useLibrary";
 import { useTidalSearch } from "@/hooks/useTidalSearch";
 import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
-import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useQueueDetails } from "@/hooks/useQueueDetails";
 import { useToast } from "@/hooks/useToast";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
-import React, { useState, useEffect, useCallback, useMemo, useRef, useContext } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api } from "@/services/api";
 import { getArtistPicture, getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import {
@@ -313,10 +313,8 @@ const Library = () => {
     setSearchQuery,
   } = useLibrary({ activeTab: selectedTab as 'artists' | 'albums' | 'tracks' | 'videos' });
   const { importFollowedArtists } = useTidalSearch();
-  const { addToQueue, queue } = useDownloadQueue();
+  const { addToQueue, getProgressByTidalId } = useQueueStatus();
   const [importing, setImporting] = useState(false);
-  const queueCtx = useContext(QueueContext);
-  const progressMap = queueCtx?.progress;
   const { setArtwork } = useUltraBlurContext();
   const artistSentinelRef = useRef<HTMLDivElement | null>(null);
   const albumSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -436,6 +434,16 @@ const Library = () => {
     search: debouncedSearchQuery,
     enabled: selectedTab === 'videos',
   });
+  const visibleAlbumIds = useMemo(
+    () => selectedTab === "albums"
+      ? albums.map((album: any) => String(album.id))
+      : [],
+    [albums, selectedTab],
+  );
+  const { items: albumQueueDetails } = useQueueDetails({
+    albumIds: visibleAlbumIds,
+    enabled: selectedTab === "albums" && visibleAlbumIds.length > 0,
+  });
 
   // Keep server-side filters/sort in sync (prevents client-side resorting during pagination)
   useEffect(() => {
@@ -489,22 +497,31 @@ const Library = () => {
     clearVideoSelection,
   ]);
 
-  async function runSequentialSelectionAction<T>(
+  async function runSelectionActionWithConcurrency<T>(
     items: T[],
     action: (item: T) => Promise<void>,
+    concurrency: number = 4,
   ) {
     let succeeded = 0;
     let failed = 0;
+    let nextIndex = 0;
 
-    for (const item of items) {
-      try {
-        await action(item);
-        succeeded += 1;
-      } catch (error) {
-        failed += 1;
-        console.error("Bulk action failed:", error);
+    const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+
+        try {
+          await action(item);
+          succeeded += 1;
+        } catch (error) {
+          failed += 1;
+          console.error("Bulk action failed:", error);
+        }
       }
-    }
+    });
+
+    await Promise.all(workers);
 
     return { succeeded, failed };
   }
@@ -527,7 +544,7 @@ const Library = () => {
   }, [toast]);
 
   const queueSelectedArtistScan = async () => {
-    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
       await api.scanArtist(artist.id, { forceUpdate: false });
     });
 
@@ -541,7 +558,7 @@ const Library = () => {
   };
 
   const queueSelectedArtistCurate = async () => {
-    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
       await api.processRedundancy(artist.id);
     });
 
@@ -555,7 +572,7 @@ const Library = () => {
   };
 
   const queueSelectedArtistDownload = async () => {
-    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
       await api.processMonitoredItems(artist.id);
     });
 
@@ -568,7 +585,7 @@ const Library = () => {
   };
 
   const setSelectedArtistMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(artistSelection.selectedItems, async (artist: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
       await api.toggleArtistMonitored(artist.id, monitored);
       dispatchMonitorStateChanged({ type: "artist", tidalId: artist.id, monitored });
     });
@@ -596,7 +613,7 @@ const Library = () => {
       return;
     }
 
-    const { succeeded, failed } = await runSequentialSelectionAction(queueableAlbums, async (album: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableAlbums, async (album: any) => {
       await addToQueue(tidalUrl("album", album.id), "album", album.id);
     });
 
@@ -609,7 +626,7 @@ const Library = () => {
   };
 
   const setSelectedAlbumMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(albumSelection.selectedItems, async (album: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
       await api.updateAlbum(album.id, { monitored });
       dispatchMonitorStateChanged({ type: "album", tidalId: album.id, monitored });
     });
@@ -623,7 +640,7 @@ const Library = () => {
   };
 
   const setSelectedAlbumLockState = async (locked: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(albumSelection.selectedItems, async (album: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
       await api.updateAlbum(album.id, { monitor_lock: locked });
     });
 
@@ -650,7 +667,7 @@ const Library = () => {
       return;
     }
 
-    const { succeeded, failed } = await runSequentialSelectionAction(queueableTracks, async (track: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableTracks, async (track: any) => {
       await addToQueue(tidalUrl("track", track.id), "track", track.id);
     });
 
@@ -663,7 +680,7 @@ const Library = () => {
   };
 
   const setSelectedTrackMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(trackSelection.selectedItems, async (track: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
       await api.updateTrack(track.id, { monitored });
       dispatchMonitorStateChanged({ type: "track", tidalId: track.id, monitored });
     });
@@ -677,7 +694,7 @@ const Library = () => {
   };
 
   const setSelectedTrackLockState = async (locked: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(trackSelection.selectedItems, async (track: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
       await api.updateTrack(track.id, { monitor_lock: locked });
     });
 
@@ -704,7 +721,7 @@ const Library = () => {
       return;
     }
 
-    const { succeeded, failed } = await runSequentialSelectionAction(queueableVideos, async (video: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableVideos, async (video: any) => {
       await addToQueue(tidalUrl("video", video.id), "video", video.id);
     });
 
@@ -717,7 +734,7 @@ const Library = () => {
   };
 
   const setSelectedVideoMonitoring = async (monitored: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(videoSelection.selectedItems, async (video: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(videoSelection.selectedItems, async (video: any) => {
       await api.updateVideo(video.id, { monitored });
       dispatchMonitorStateChanged({ type: "video", tidalId: video.id, monitored });
     });
@@ -731,7 +748,7 @@ const Library = () => {
   };
 
   const setSelectedVideoLockState = async (locked: boolean) => {
-    const { succeeded, failed } = await runSequentialSelectionAction(videoSelection.selectedItems, async (video: any) => {
+    const { succeeded, failed } = await runSelectionActionWithConcurrency(videoSelection.selectedItems, async (video: any) => {
       await api.updateVideo(video.id, { monitor_lock: locked });
     });
 
@@ -745,8 +762,10 @@ const Library = () => {
 
   // Helper to check if album is in queue or downloaded
   const getAlbumDownloadStatus = (album: any) => {
-    const albumUrl = tidalUrl('album', album.id);
-    const inQueue = queue.find(item => item.url === albumUrl);
+    const albumId = String(album.id);
+    const inQueue = albumQueueDetails.find((item) =>
+      item.tidalId === albumId || item.album_id === albumId,
+    );
 
     if (album.is_downloaded) return 'downloaded';
     if (inQueue?.status === 'downloading') return 'downloading';
@@ -882,7 +901,7 @@ const Library = () => {
   const renderArtistCard = (artist: any) => {
     const albumCount = artist.album_count ?? 0;
     const imageUrl = getArtistPicture(artist.picture, 'small') || artist.cover_image_url || null;
-    const itemProgress = progressMap?.get(Number(artist.id));
+    const itemProgress = getProgressByTidalId(String(artist.id));
     return (
       <MediaCard
         key={artist.id}
@@ -1093,7 +1112,7 @@ const Library = () => {
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
     const imageUrl = getAlbumCover(album.cover_id, 'small') || album.cover_art_url || null;
-    const itemProgress = progressMap?.get(Number(album.id));
+    const itemProgress = getProgressByTidalId(String(album.id));
     return (
       <MediaCard
         key={album.id}
@@ -1334,18 +1353,46 @@ const Library = () => {
         return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
       case "videos":
         if (viewMode === "list") {
-          return <DataGridSkeleton rows={10} columns={5} columnTemplate="64px minmax(220px, 1fr) 80px 100px 120px" compact />;
+          return (
+            <DataGridSkeleton
+              rows={10}
+              columns={5}
+              columnTemplate="64px minmax(220px, 1fr) 80px 100px 120px"
+              compact
+              thumbnailColumns={[0]}
+              actionColumns={[4]}
+            />
+          );
         }
         return <CardGridSkeleton cards={10} thumbnailAspect="videoWide" minCardWidth={240} />;
       case "albums":
         if (viewMode === "list") {
-          return <DataGridSkeleton rows={10} columns={6} columnTemplate="40px minmax(220px, 1fr) 72px 64px 96px 120px" compact />;
+          return (
+            <DataGridSkeleton
+              rows={10}
+              columns={6}
+              columnTemplate="40px minmax(220px, 1fr) 72px 64px 96px 120px"
+              compact
+              thumbnailColumns={[0]}
+              actionColumns={[5]}
+            />
+          );
         }
         return <CardGridSkeleton cards={12} minCardWidth={172} />;
       case "artists":
       default:
         if (viewMode === "list") {
-          return <DataGridSkeleton rows={10} columns={6} columnTemplate="40px minmax(220px, 1fr) 72px 72px 132px 140px" compact />;
+          return (
+            <DataGridSkeleton
+              rows={10}
+              columns={6}
+              columnTemplate="40px minmax(220px, 1fr) 72px 72px 132px 140px"
+              compact
+              thumbnailColumns={[0]}
+              circularThumbnailColumns={[0]}
+              actionColumns={[5]}
+            />
+          );
         }
         return <CardGridSkeleton cards={12} minCardWidth={172} />;
     }

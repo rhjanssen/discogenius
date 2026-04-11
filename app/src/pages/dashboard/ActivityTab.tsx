@@ -12,9 +12,10 @@ import {
     Warning24Filled,
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
+import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
 import { useActivityInFlightFeed } from "@/hooks/useActivityInFlightFeed";
-import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
 import CachedRefreshNotice from "./CachedRefreshNotice";
 import { useDashboardStyles } from "./dashboardStyles";
@@ -140,7 +141,7 @@ const ActivityTab = ({
     isActive,
 }: ActivityTabProps) => {
     const styles = useDashboardStyles();
-    const { retryItem } = useDownloadQueue();
+    const { retryItem } = useQueueStatus();
     const {
         activityItems,
         hasMoreActivity,
@@ -324,12 +325,7 @@ const ActivityTab = ({
     if (showInitialLoadingState && !showUnavailableState) {
         return (
             <div className={styles.tabSection}>
-                <div className={styles.activityList}>
-                    <div className={styles.activityLoadingRow}>
-                        <Spinner size="tiny" />
-                        <Text size={200} className={styles.activitySecondaryText}>Loading activity…</Text>
-                    </div>
-                </div>
+                <ActivityListSkeleton rows={6} />
             </div>
         );
     }

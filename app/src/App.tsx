@@ -5,10 +5,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { FluentThemeProvider } from "@/providers/FluentThemeProvider";
 import { AppAuthProvider } from "@/providers/AppAuthProvider";
 import { UltraBlurProvider } from "@/providers/UltraBlurProvider";
-import { QueueProvider } from "@/providers/QueueProvider";
+import { QueueStatusProvider } from "@/providers/QueueStatusProvider";
+import AppBootstrapGate from "@/components/AppBootstrapGate";
 import Layout from "@/components/Layout";
-import ProtectedRoute from "@/components/ProtectedRoute";
-import AppAuthGate from "@/components/AppAuthGate";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import PageErrorBoundary from "@/components/PageErrorBoundary";
 
@@ -60,7 +59,7 @@ const App = () => {
         <FluentThemeProvider defaultTheme="dark" storageKey="discogenius-theme">
           <AppAuthProvider>
             <UltraBlurProvider>
-              <QueueProvider>
+              <QueueStatusProvider>
                 <Toaster />
                 <BrowserRouter future={{ v7_relativeSplatPath: true }}>
                   <Routes>
@@ -73,8 +72,8 @@ const App = () => {
                       }
                     />
 
-                    <Route element={<Layout />}>
-                      <Route element={<AppAuthGate />}>
+                    <Route element={<AppBootstrapGate />}>
+                      <Route element={<Layout />}>
                         <Route
                           path="/auth"
                           element={
@@ -83,66 +82,63 @@ const App = () => {
                             </SuspendedPage>
                           }
                         />
-                        <Route element={<ProtectedRoute />}>
-                          <Route
-                            path="/"
-                            element={
-                              <SuspendedPage pageName="Library">
-                                <Library />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/artist/:artistId"
-                            element={
-                              <SuspendedPage pageName="Artist">
-                                <ArtistPage />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/album/:albumId"
-                            element={
-                              <SuspendedPage pageName="Album">
-                                <AlbumPage />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/video/:videoId"
-                            element={
-                              <SuspendedPage pageName="Video">
-                                <VideoPage />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/search"
-                            element={
-                              <SuspendedPage pageName="Search">
-                                <SearchPage />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/dashboard"
-                            element={
-                              <SuspendedPage pageName="Dashboard">
-                                <Dashboard />
-                              </SuspendedPage>
-                            }
-                          />
-                          <Route
-                            path="/settings"
-                            element={
-                              <SuspendedPage pageName="Settings">
-                                <SettingsPage />
-                              </SuspendedPage>
-                            }
-                          />
-                        </Route>
+                        <Route
+                          path="/"
+                          element={
+                            <SuspendedPage pageName="Library">
+                              <Library />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/artist/:artistId"
+                          element={
+                            <SuspendedPage pageName="Artist">
+                              <ArtistPage />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/album/:albumId"
+                          element={
+                            <SuspendedPage pageName="Album">
+                              <AlbumPage />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/video/:videoId"
+                          element={
+                            <SuspendedPage pageName="Video">
+                              <VideoPage />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/search"
+                          element={
+                            <SuspendedPage pageName="Search">
+                              <SearchPage />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/dashboard"
+                          element={
+                            <SuspendedPage pageName="Dashboard">
+                              <Dashboard />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/settings"
+                          element={
+                            <SuspendedPage pageName="Settings">
+                              <SettingsPage />
+                            </SuspendedPage>
+                          }
+                        />
 
-                        {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                         <Route
                           path="*"
                           element={
@@ -155,7 +151,7 @@ const App = () => {
                     </Route>
                   </Routes>
                 </BrowserRouter>
-              </QueueProvider>
+              </QueueStatusProvider>
             </UltraBlurProvider>
           </AppAuthProvider>
         </FluentThemeProvider>

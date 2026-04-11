@@ -15,7 +15,7 @@ export class AlbumCommandService {
 
         if (!albumExists) {
             if (monitored) {
-                TaskQueueService.addJob(JobTypes.ScanAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
+                TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
                 return { success: true, albumId, monitored, message: 'Album not yet in library; scan queued', status: 202 };
             }
             return { success: false, albumId, monitored, message: 'Album not found', status: 404 };
@@ -58,7 +58,7 @@ export class AlbumCommandService {
 
         const trackInDb = db.prepare("SELECT id FROM media WHERE id = ?").get(trackId) as any;
         if (!trackInDb) {
-            TaskQueueService.addJob(JobTypes.ScanAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
+            TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
             return { success: true, trackId, albumId, message: 'Track not yet in library; album scan queued', status: 202 };
         }
 
@@ -167,7 +167,7 @@ export class AlbumCommandService {
 
         const albumExists = db.prepare("SELECT id FROM albums WHERE id = ?").get(albumId) as any;
         if (!albumExists && monitored === true) {
-            TaskQueueService.addJob(JobTypes.ScanAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
+            TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
             return { success: true, albumId, monitored, status: 202, message: 'Album not yet in library; scan queued' };
         }
         if (!albumExists) {

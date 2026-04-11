@@ -8,8 +8,8 @@ import {
 } from "./command-registry.js";
 
 test("command registry exposes canonical command and task metadata", () => {
-  const healthCheck = getCommandDefinition("HealthCheck");
-  assert.equal(healthCheck.name, "Health Check");
+  const healthCheck = getCommandDefinition("CheckHealth");
+  assert.equal(healthCheck.name, "Check Health");
   assert.equal(healthCheck.isTypeExclusive, true);
   assert.equal(healthCheck.requiresDiskAccess, false);
 
@@ -20,7 +20,7 @@ test("command registry exposes canonical command and task metadata", () => {
 
   assert.ok(PENDING_ACTIVITY_JOB_TYPES.includes("RefreshArtist"));
   assert.ok(getCommandTypesForQueueCategory("downloads").includes("ImportDownload"));
-  assert.ok(getCommandTypesForQueueCategory("other").includes("HealthCheck"));
+  assert.ok(getCommandTypesForQueueCategory("other").includes("CheckHealth"));
 
   const downloadTypes = new Set(getCommandTypesForQueueCategory("downloads"));
   const scanTypes = new Set(getCommandTypesForQueueCategory("scans"));

@@ -23,7 +23,7 @@ export const useTidalAuth = () => {
 
   const disconnectTidal = async () => {
     try {
-      await api.logout();
+      await api.logoutTidal();
       await refetch();
       toast({
         title: "Disconnected",

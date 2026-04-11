@@ -3,13 +3,17 @@ import { createContext, useContext } from "react";
 export const LOCALSTORAGE_APP_AUTH_TOKEN_KEY = "discogenius-app-auth-token";
 export const LOCALSTORAGE_APP_AUTH_REDIRECT_KEY = "discogenius-app-auth-redirect";
 
+export type AppAuthType = "password" | null;
+
 export type AppAuthContextValue = {
   isAuthActive: boolean | undefined;
+  authType: AppAuthType;
   isAccessGranted: boolean;
   token: string | null;
+  bootstrapError: string | null;
   refresh: () => Promise<void>;
   login: (password: string) => Promise<void>;
-  logout: () => void;
+  signOut: () => void;
 };
 
 export const AppAuthContext = createContext<AppAuthContextValue | undefined>(undefined);

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext, useMemo, useLayoutEffect, useRef } from "react";
+import React, { useState, useCallback, useMemo, useLayoutEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
@@ -10,8 +10,6 @@ import {
   Spinner,
   Avatar,
   Tooltip,
-  Skeleton,
-  SkeletonItem,
   makeStyles,
   tokens,
   Overflow,
@@ -32,7 +30,7 @@ import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
-import { TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
+import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -52,7 +50,7 @@ import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
-import { QueueContext } from "@/providers/QueueProvider";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
 import {
@@ -393,8 +391,7 @@ const AlbumPage = () => {
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
-  const queueCtx = useContext(QueueContext);
-  const progressMap = queueCtx?.progress;
+  const { getProgressByTidalId } = useQueueStatus();
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
@@ -559,31 +556,7 @@ const AlbumPage = () => {
 
   /** Open track info dialog */
   if (loading) {
-    return (
-      <div className={styles.container}>
-        <Skeleton animation="wave">
-          <div className={styles.header}>
-            <div className={styles.headerContent}>
-              <SkeletonItem className={styles.coverArt} />
-              <div className={styles.albumInfo}>
-                <SkeletonItem style={{ height: '28px', width: 'min(300px, 70%)', borderRadius: tokens.borderRadiusMedium }} />
-                <SkeletonItem style={{ height: '16px', width: 'min(180px, 40%)', borderRadius: tokens.borderRadiusMedium }} />
-                <div className={styles.metadata}>
-                  <SkeletonItem style={{ height: '14px', width: '60px', borderRadius: tokens.borderRadiusMedium }} />
-                  <SkeletonItem style={{ height: '14px', width: '40px', borderRadius: tokens.borderRadiusMedium }} />
-                  <SkeletonItem style={{ height: '14px', width: '70px', borderRadius: tokens.borderRadiusMedium }} />
-                </div>
-                <div className={styles.actions}>
-                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
-                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </Skeleton>
-        <TrackListSkeleton rows={8} />
-      </div>
-    );
+    return <DetailPageSkeleton artShape="rounded" content="tracks" rows={8} className={styles.container} />;
   }
 
   if (error) {
@@ -838,7 +811,7 @@ const AlbumPage = () => {
                   const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
                   const versionLabel = version.version || (version.explicit ? 'Explicit' : 'Clean');
                   const subtitle = [versionLabel, year].filter(Boolean).join(' · ');
-                  const vProgress = progressMap?.get(Number(version.id));
+                  const vProgress = getProgressByTidalId(String(version.id));
                   return renderMiniAlbumCard(version, subtitle, vProgress);
                 })}
               </div>
@@ -857,7 +830,7 @@ const AlbumPage = () => {
                 {similarAlbums.map((similarAlbum) => {
                   const year = similarAlbum.release_date ? new Date(similarAlbum.release_date).getFullYear() : '';
                   const subtitle = [similarAlbum.artist_name, year].filter(Boolean).join(' · ');
-                  const sProgress = progressMap?.get(Number(similarAlbum.id));
+                  const sProgress = getProgressByTidalId(String(similarAlbum.id));
                   return renderMiniAlbumCard(similarAlbum, subtitle, sProgress);
                 })}
               </div>

@@ -2,35 +2,38 @@ import { db } from "../database.js";
 import type {
     ApplyCurationJobPayload,
     CheckUpgradesJobPayload,
+    CheckHealthJobPayload,
+    BulkRefreshArtistJobPayload,
+    CleanupTempFilesJobPayload,
+    CompactDatabaseJobPayload,
     ConfigPruneJobPayload,
     CurateArtistJobPayload,
     DownloadAlbumJobPayload,
     DownloadMissingJobPayload,
+    DownloadMissingForceJobPayload,
     DownloadPlaylistJobPayload,
     DownloadTrackJobPayload,
     DownloadVideoJobPayload,
     HousekeepingJobPayload,
-    ApplyRenamesJobPayload,
-    ApplyRetagsJobPayload,
     ImportDownloadJobPayload,
+    MoveArtistJobPayload,
     QueuePayloadCommon,
     RefreshArtistJobPayload,
     RefreshMetadataJobPayload,
+    RefreshAlbumJobPayload,
+    RenameArtistJobPayload,
+    RenameFilesJobPayload,
     RescanFoldersJobPayload,
-    ScanAlbumJobPayload,
     ScanPlaylistJobPayload,
-    RefreshAllMonitoredJobPayload,
-    DownloadMissingForceJobPayload,
     RescanAllRootsJobPayload,
-    HealthCheckJobPayload,
-    CompactDatabaseJobPayload,
-    CleanupTempFilesJobPayload,
+    RetagArtistJobPayload,
+    RetagFilesJobPayload,
     UpdateLibraryMetadataJobPayload,
 } from "./job-payloads.js";
 
 export const JobTypes = {
     RefreshArtist: 'RefreshArtist',
-    ScanAlbum: 'ScanAlbum',
+    RefreshAlbum: 'RefreshAlbum',
     ScanPlaylist: 'ScanPlaylist',
     RefreshMetadata: 'RefreshMetadata',
     ApplyCuration: 'ApplyCuration',
@@ -45,12 +48,15 @@ export const JobTypes = {
     RescanFolders: 'RescanFolders',
     ImportDownload: 'ImportDownload',
     ConfigPrune: 'ConfigPrune',
-    ApplyRenames: 'ApplyRenames',
-    ApplyRetags: 'ApplyRetags',
-    RefreshAllMonitored: 'RefreshAllMonitored',
+    MoveArtist: 'MoveArtist',
+    RenameFiles: 'RenameFiles',
+    RenameArtist: 'RenameArtist',
+    RetagFiles: 'RetagFiles',
+    RetagArtist: 'RetagArtist',
+    BulkRefreshArtist: 'BulkRefreshArtist',
     DownloadMissingForce: 'DownloadMissingForce',
     RescanAllRoots: 'RescanAllRoots',
-    HealthCheck: 'HealthCheck',
+    CheckHealth: 'CheckHealth',
     CompactDatabase: 'CompactDatabase',
     CleanupTempFiles: 'CleanupTempFiles',
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
@@ -82,7 +88,7 @@ export const ARTIST_WORKFLOW_JOB_TYPES = [
  */
 export const NON_DOWNLOAD_JOB_TYPES = [
     JobTypes.RefreshArtist,
-    JobTypes.ScanAlbum,
+    JobTypes.RefreshAlbum,
     JobTypes.ScanPlaylist,
     JobTypes.RefreshMetadata,
     JobTypes.ApplyCuration,
@@ -92,12 +98,15 @@ export const NON_DOWNLOAD_JOB_TYPES = [
     JobTypes.CurateArtist,
     JobTypes.RescanFolders,
     JobTypes.ConfigPrune,
-    JobTypes.ApplyRenames,
-    JobTypes.ApplyRetags,
-    JobTypes.RefreshAllMonitored,
+    JobTypes.MoveArtist,
+    JobTypes.RenameFiles,
+    JobTypes.RenameArtist,
+    JobTypes.RetagFiles,
+    JobTypes.RetagArtist,
+    JobTypes.BulkRefreshArtist,
     JobTypes.DownloadMissingForce,
     JobTypes.RescanAllRoots,
-    JobTypes.HealthCheck,
+    JobTypes.CheckHealth,
     JobTypes.CompactDatabase,
     JobTypes.CleanupTempFiles,
     JobTypes.UpdateLibraryMetadata,
@@ -115,7 +124,7 @@ export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'can
 
 export interface JobPayloadMap {
     [JobTypes.RefreshArtist]: RefreshArtistJobPayload;
-    [JobTypes.ScanAlbum]: ScanAlbumJobPayload;
+    [JobTypes.RefreshAlbum]: RefreshAlbumJobPayload;
     [JobTypes.ScanPlaylist]: ScanPlaylistJobPayload;
     [JobTypes.RefreshMetadata]: RefreshMetadataJobPayload;
     [JobTypes.ApplyCuration]: ApplyCurationJobPayload;
@@ -130,12 +139,15 @@ export interface JobPayloadMap {
     [JobTypes.RescanFolders]: RescanFoldersJobPayload;
     [JobTypes.ImportDownload]: ImportDownloadJobPayload;
     [JobTypes.ConfigPrune]: ConfigPruneJobPayload;
-    [JobTypes.ApplyRenames]: ApplyRenamesJobPayload;
-    [JobTypes.ApplyRetags]: ApplyRetagsJobPayload;
-    [JobTypes.RefreshAllMonitored]: RefreshAllMonitoredJobPayload;
+    [JobTypes.MoveArtist]: MoveArtistJobPayload;
+    [JobTypes.RenameFiles]: RenameFilesJobPayload;
+    [JobTypes.RenameArtist]: RenameArtistJobPayload;
+    [JobTypes.RetagFiles]: RetagFilesJobPayload;
+    [JobTypes.RetagArtist]: RetagArtistJobPayload;
+    [JobTypes.BulkRefreshArtist]: BulkRefreshArtistJobPayload;
     [JobTypes.DownloadMissingForce]: DownloadMissingForceJobPayload;
     [JobTypes.RescanAllRoots]: RescanAllRootsJobPayload;
-    [JobTypes.HealthCheck]: HealthCheckJobPayload;
+    [JobTypes.CheckHealth]: CheckHealthJobPayload;
     [JobTypes.CompactDatabase]: CompactDatabaseJobPayload;
     [JobTypes.CleanupTempFiles]: CleanupTempFilesJobPayload;
     [JobTypes.UpdateLibraryMetadata]: UpdateLibraryMetadataJobPayload;

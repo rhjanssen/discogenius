@@ -55,6 +55,12 @@ export const mockQueueHistoryResponse = {
   hasMore: false,
 };
 
+export const mockQueueStatus = {
+  isPaused: false,
+  processing: false,
+  stats: [],
+};
+
 export const mockMonitoringStatus = {
   running: false,
   checking: false,
@@ -165,6 +171,22 @@ export async function stubShellApis(
         ...mockQueueResponse,
         ...(options?.queueResponse || {}),
       }),
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(mockQueueStatus),
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
     });
   });
 

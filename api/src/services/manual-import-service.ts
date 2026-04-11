@@ -12,13 +12,14 @@ import {
     type ImportedDirectoryMapping,
 } from "./import-finalize-service.js";
 
-export class ManualImportApplyService {
+export class ManualImportService {
     async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
         const { db } = await import("../database.js");
         const { getTrack, getArtist, getVideo } = await import("./tidal.js");
-        const { scanAlbumShallow } = await import("./scanner.js");
+        const { RefreshAlbumService } = await import("./refresh-album-service.js");
         const { Config } = await import("./config.js");
-        const { getNamingConfig, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } = await import("./naming.js");
+        const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("./naming.js");
+        const { resolveArtistFolderForPersistence } = await import("./artist-paths.js");
         const { calculateFingerprint } = await import("./audioUtils.js");
 
         const namingConfig = getNamingConfig();
@@ -132,12 +133,12 @@ export class ManualImportApplyService {
                 // Scan album metadata from TIDAL
                 const albumId = (trackData.album?.id || trackData.album_id)?.toString() || null;
                 if (albumId) {
-                    try { await scanAlbumShallow(albumId); } catch {
+                    try { await RefreshAlbumService.scanShallow(albumId); } catch {
                         console.warn(`[Bulk Import] Could not perform shallow scan for album ${albumId}`);
                     }
                 }
 
-                // Read album row for naming (may have been created by scanAlbumShallow)
+                // Read album row for naming (may have been created by RefreshAlbumService.scanShallow)
                 const albumRow = albumId ? db.prepare("SELECT * FROM albums WHERE id = ?").get(albumId) as any : null;
 
                 // Fingerprint + filesystem stats
@@ -242,7 +243,10 @@ export class ManualImportApplyService {
                         c.artistInfo.name,
                         c.artistInfo.picture,
                         c.artistInfo.popularity,
-                        resolveArtistFolder(c.artistInfo.name)
+                        resolveArtistFolderForPersistence({
+                            artistId: c.artistId,
+                            artistName: c.artistInfo.name,
+                        })
                     );
                 }
 
@@ -424,4 +428,4 @@ export class ManualImportApplyService {
     }
 }
 
-export const manualImportApplyService = new ManualImportApplyService();
+export const manualImportService = new ManualImportService();

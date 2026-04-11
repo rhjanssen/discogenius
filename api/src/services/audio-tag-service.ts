@@ -3,6 +3,16 @@ import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "./config.js";
 import { writeMetadata, removeAllTags } from "./audioUtils.js";
+import {
+  type MusicBrainzRecording,
+  type MusicBrainzRelease,
+  generateFingerprint,
+  lookupAcoustId,
+  lookupMusicBrainzRecording,
+  lookupMusicBrainzRecordingsByIsrc,
+  lookupMusicBrainzReleasesByBarcode,
+} from "./fingerprint.js";
+import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 
 type RetagTrackRow = {
@@ -14,9 +24,11 @@ type RetagTrackRow = {
   relative_path: string | null;
   library_root: string | null;
   extension: string;
+  file_fingerprint: string | null;
   primary_artist_name: string;
   media_title: string;
   media_version: string | null;
+  media_duration: number | null;
   media_release_date: string | null;
   media_track_number: number | null;
   media_volume_number: number | null;
@@ -109,7 +121,7 @@ function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
 }
 
 function isRetagMaintenanceEnabled(config: MetadataConfig): boolean {
-  return resolveTagPolicy(config) !== "no" || config.embed_replaygain !== false;
+  return resolveTagPolicy(config) !== "no" || config.embed_replaygain !== false || config.enable_fingerprinting === true;
 }
 
 function normalizeReleaseDate(value: string | null | undefined): string | null {
@@ -207,6 +219,156 @@ function formatReplayPeak(value: number | null | undefined): string | null {
   return numeric.toFixed(6);
 }
 
+function normalizeIdentifier(value: string | null | undefined): string {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+type FingerprintRecordingMatch = {
+  recording: MusicBrainzRecording;
+  titleScore: number;
+  artistScore: number;
+  albumScore: number;
+  durationDelta: number | null;
+  isrcMatch: boolean;
+  score: number;
+};
+
+type MusicBrainzReleaseMatch = {
+  release: MusicBrainzRelease;
+  titleScore: number;
+  artistScore: number;
+  yearScore: number;
+  score: number;
+};
+
+function evaluateFingerprintRecordingMatch(row: RetagTrackRow, recording: MusicBrainzRecording): FingerprintRecordingMatch {
+  const normalizedTrackTitle = normalizeComparableText(row.media_title);
+  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
+  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
+  const normalizedRecordingTitle = normalizeComparableText(recording.title);
+  const recordingArtistScores = recording.artists.map((artistName) => stringSimilarity(
+    normalizedPrimaryArtist,
+    normalizeComparableText(artistName),
+  ));
+  const recordingAlbumScores = recording.releaseTitles.map((releaseTitle) => stringSimilarity(
+    normalizedAlbumTitle,
+    normalizeComparableText(releaseTitle),
+  ));
+  const titleScore = normalizedTrackTitle
+    ? stringSimilarity(normalizedTrackTitle, normalizedRecordingTitle)
+    : 0;
+  const artistScore = normalizedPrimaryArtist && recordingArtistScores.length > 0
+    ? Math.max(...recordingArtistScores)
+    : 0;
+  const albumScore = normalizedAlbumTitle && recordingAlbumScores.length > 0
+    ? Math.max(...recordingAlbumScores)
+    : 0;
+  const normalizedTrackIsrc = normalizeIdentifier(row.media_isrc);
+  const isrcMatch = normalizedTrackIsrc.length > 0
+    && recording.isrcs.some((isrc) => normalizeIdentifier(isrc) === normalizedTrackIsrc);
+
+  const rowDuration = Number(row.media_duration || 0);
+  const recordingDuration = Number(recording.durationSeconds || 0);
+  const durationDelta = rowDuration > 0 && recordingDuration > 0
+    ? Math.abs(rowDuration - recordingDuration)
+    : null;
+
+  let score = 0;
+  if (isrcMatch) {
+    score += 4;
+  }
+
+  score += titleScore * 3;
+  score += artistScore * 2;
+  score += albumScore;
+
+  if (durationDelta !== null) {
+    if (durationDelta <= 2) {
+      score += 1;
+    } else if (durationDelta <= 5) {
+      score += 0.5;
+    } else if (durationDelta > 12) {
+      score -= 1;
+    }
+  }
+
+  return {
+    recording,
+    titleScore,
+    artistScore,
+    albumScore,
+    durationDelta,
+    isrcMatch,
+    score,
+  };
+}
+
+function isAcceptableFingerprintMatch(match: FingerprintRecordingMatch): boolean {
+  if (match.isrcMatch) {
+    return true;
+  }
+
+  if (match.titleScore < 0.9) {
+    return false;
+  }
+
+  if (match.artistScore > 0 && match.artistScore < 0.72) {
+    return false;
+  }
+
+  if (match.durationDelta !== null && match.durationDelta > 10) {
+    return false;
+  }
+
+  return match.score >= 4.1;
+}
+
+function evaluateMusicBrainzReleaseMatch(row: RetagTrackRow, release: MusicBrainzRelease): MusicBrainzReleaseMatch {
+  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
+  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
+  const normalizedReleaseTitle = normalizeComparableText(release.title);
+  const titleScore = normalizedAlbumTitle
+    ? stringSimilarity(normalizedAlbumTitle, normalizedReleaseTitle)
+    : 0;
+  const artistScore = normalizedPrimaryArtist && release.artistCredits.length > 0
+    ? Math.max(...release.artistCredits.map((credit) => stringSimilarity(
+      normalizedPrimaryArtist,
+      normalizeComparableText(credit.name),
+    )))
+    : 0;
+
+  const currentYear = normalizeReleaseDate(row.album_release_date || row.media_release_date)?.slice(0, 4) || "";
+  const releaseYear = String(release.date || "").slice(0, 4);
+  const yearScore = currentYear && releaseYear
+    ? (currentYear === releaseYear ? 1 : 0)
+    : 0;
+
+  let score = titleScore * 3 + artistScore * 2 + yearScore;
+  if (normalizeIdentifier(row.album_upc) && normalizeIdentifier(release.barcode) === normalizeIdentifier(row.album_upc)) {
+    score += 3;
+  }
+
+  return {
+    release,
+    titleScore,
+    artistScore,
+    yearScore,
+    score,
+  };
+}
+
+function isAcceptableReleaseMatch(match: MusicBrainzReleaseMatch): boolean {
+  if (match.titleScore < 0.85) {
+    return false;
+  }
+
+  if (match.artistScore > 0 && match.artistScore < 0.72) {
+    return false;
+  }
+
+  return match.score >= 4.2;
+}
+
 function buildNativeTagAliases(rawId: string): string[] {
   const normalized = rawId.trim().toLowerCase();
   if (!normalized) {
@@ -289,7 +451,7 @@ function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, str
   }
 }
 
-export class AudioTagMaintenanceService {
+export class AudioTagService {
   private static getTrackCount(options: RetagScopeOptions = {}): number {
     const where: string[] = ["lf.file_type = 'track'"];
     const params: Array<string> = [];
@@ -337,9 +499,11 @@ export class AudioTagMaintenanceService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.fingerprint AS file_fingerprint,
         artist.name AS primary_artist_name,
         m.title AS media_title,
         m.version AS media_version,
+        m.duration AS media_duration,
         m.release_date AS media_release_date,
         m.track_number AS media_track_number,
         m.volume_number AS media_volume_number,
@@ -391,9 +555,11 @@ export class AudioTagMaintenanceService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.fingerprint AS file_fingerprint,
         artist.name AS primary_artist_name,
         m.title AS media_title,
         m.version AS media_version,
+        m.duration AS media_duration,
         m.release_date AS media_release_date,
         m.track_number AS media_track_number,
         m.volume_number AS media_volume_number,
@@ -467,6 +633,187 @@ export class AudioTagMaintenanceService {
 
     const count = Number(row?.count || 0);
     return count > 0 ? count : null;
+  }
+
+  private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {
+    let nextRow = { ...row };
+
+    if (nextRow.album_upc && (!nextRow.album_mbid || !nextRow.album_mb_release_group_id || !nextRow.artist_mbid)) {
+      const releases = await lookupMusicBrainzReleasesByBarcode(nextRow.album_upc);
+      let bestReleaseMatch: MusicBrainzReleaseMatch | null = null;
+
+      for (const release of releases) {
+        const candidate = evaluateMusicBrainzReleaseMatch(nextRow, release);
+        if (!isAcceptableReleaseMatch(candidate)) {
+          continue;
+        }
+
+        if (!bestReleaseMatch || candidate.score > bestReleaseMatch.score) {
+          bestReleaseMatch = candidate;
+        }
+      }
+
+      if (bestReleaseMatch) {
+        const primaryArtistCredit = bestReleaseMatch.release.artistCredits[0];
+        db.prepare(`
+          UPDATE albums
+          SET mbid = COALESCE(mbid, ?),
+              mb_release_group_id = COALESCE(mb_release_group_id, ?)
+          WHERE id = ?
+        `).run(bestReleaseMatch.release.id, bestReleaseMatch.release.releaseGroupId, nextRow.album_id);
+
+        if (primaryArtistCredit?.id) {
+          db.prepare(`
+            UPDATE artists
+            SET mbid = COALESCE(mbid, ?)
+            WHERE id = ?
+          `).run(primaryArtistCredit.id, nextRow.artist_id);
+        }
+
+        nextRow = {
+          ...nextRow,
+          album_mbid: nextRow.album_mbid || bestReleaseMatch.release.id,
+          album_mb_release_group_id: nextRow.album_mb_release_group_id || bestReleaseMatch.release.releaseGroupId,
+          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
+        };
+      }
+    }
+
+    if (nextRow.media_isrc && !nextRow.media_mbid) {
+      const recordings = await lookupMusicBrainzRecordingsByIsrc(nextRow.media_isrc);
+      let bestIsrcMatch: FingerprintRecordingMatch | null = null;
+
+      for (const recording of recordings) {
+        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
+        if (!isAcceptableFingerprintMatch(candidate)) {
+          continue;
+        }
+
+        if (!bestIsrcMatch || candidate.score > bestIsrcMatch.score) {
+          bestIsrcMatch = candidate;
+        }
+      }
+
+      if (bestIsrcMatch) {
+        const primaryArtistCredit = bestIsrcMatch.recording.artistCredits?.[0];
+        db.prepare(`
+          UPDATE media
+          SET mbid = COALESCE(mbid, ?)
+          WHERE id = ?
+        `).run(bestIsrcMatch.recording.id, nextRow.media_id);
+
+        if (primaryArtistCredit?.id) {
+          db.prepare(`
+            UPDATE artists
+            SET mbid = COALESCE(mbid, ?)
+            WHERE id = ?
+          `).run(primaryArtistCredit.id, nextRow.artist_id);
+        }
+
+        nextRow = {
+          ...nextRow,
+          media_mbid: bestIsrcMatch.recording.id,
+          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
+        };
+      }
+    }
+
+    if (!config.enable_fingerprinting) {
+      return nextRow;
+    }
+
+    const resolvedPath = resolveStoredLibraryPath({
+      filePath: nextRow.file_path,
+      libraryRoot: nextRow.library_root,
+      relativePath: nextRow.relative_path,
+    });
+
+    if (!fs.existsSync(resolvedPath)) {
+      return nextRow;
+    }
+
+    let fingerprint = nextRow.file_fingerprint;
+    let fingerprintDuration = Number(nextRow.media_duration || 0) || null;
+
+    if (!fingerprint) {
+      try {
+        const fingerprintResult = await generateFingerprint(resolvedPath);
+        fingerprint = fingerprintResult.fingerprint;
+        fingerprintDuration = fingerprintResult.duration || fingerprintDuration;
+
+        db.prepare(`
+          UPDATE library_files
+          SET fingerprint = ?, verified_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(fingerprint, nextRow.id);
+      } catch (error) {
+        console.warn(`[Retag] Failed to fingerprint ${resolvedPath}:`, error);
+        return nextRow;
+      }
+    }
+
+    if (nextRow.media_mbid || !fingerprint || !fingerprintDuration) {
+      return {
+        ...nextRow,
+        file_fingerprint: fingerprint,
+        media_duration: fingerprintDuration ?? nextRow.media_duration,
+      };
+    }
+
+    let bestFingerprintMatch: FingerprintRecordingMatch | null = null;
+    const recordingIds = await lookupAcoustId(fingerprint, fingerprintDuration);
+    for (const recordingId of recordingIds.slice(0, 5)) {
+      const recording = await lookupMusicBrainzRecording(recordingId);
+      if (!recording) {
+        continue;
+      }
+
+      const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
+      if (!isAcceptableFingerprintMatch(candidate)) {
+        continue;
+      }
+
+      if (!bestFingerprintMatch || candidate.score > bestFingerprintMatch.score) {
+        bestFingerprintMatch = candidate;
+      }
+    }
+
+    if (!bestFingerprintMatch) {
+      return {
+        ...nextRow,
+        file_fingerprint: fingerprint,
+        media_duration: fingerprintDuration ?? nextRow.media_duration,
+      };
+    }
+
+    const fallbackIsrc = !nextRow.media_isrc && bestFingerprintMatch.recording.isrcs.length > 0
+      ? bestFingerprintMatch.recording.isrcs[0]
+      : null;
+    const primaryArtistCredit = bestFingerprintMatch.recording.artistCredits?.[0];
+
+    db.prepare(`
+      UPDATE media
+      SET mbid = COALESCE(mbid, ?),
+          isrc = COALESCE(isrc, ?)
+      WHERE id = ?
+    `).run(bestFingerprintMatch.recording.id, fallbackIsrc, nextRow.media_id);
+
+    if (primaryArtistCredit?.id) {
+      db.prepare(`
+        UPDATE artists
+        SET mbid = COALESCE(mbid, ?)
+        WHERE id = ?
+      `).run(primaryArtistCredit.id, nextRow.artist_id);
+    }
+
+    return {
+      ...nextRow,
+      file_fingerprint: fingerprint,
+      media_duration: fingerprintDuration ?? nextRow.media_duration,
+      media_mbid: bestFingerprintMatch.recording.id,
+      media_isrc: nextRow.media_isrc || fallbackIsrc,
+      artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
+    };
   }
 
   private static buildDesiredTags(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
@@ -577,11 +924,17 @@ export class AudioTagMaintenanceService {
 
       if (row.media_mbid) {
         tags.push({
-          key: "musicbrainz_trackid",
+          key: "musicbrainz_recordingid",
           label: "MusicBrainz Recording ID",
-          ffmpegKey: "MUSICBRAINZ_TRACKID",
+          ffmpegKey: "musicbrainz_recordingid",
           targetValue: String(row.media_mbid),
-          aliases: ["musicbrainz_trackid", "musicbrainztrackid", "musicbrainz recording id"],
+          aliases: [
+            "musicbrainz_recordingid",
+            "musicbrainzrecordingid",
+            "musicbrainz recording id",
+            "musicbrainz_trackid",
+            "musicbrainztrackid",
+          ],
         });
       }
 
@@ -589,7 +942,7 @@ export class AudioTagMaintenanceService {
         tags.push({
           key: "musicbrainz_albumid",
           label: "MusicBrainz Release ID",
-          ffmpegKey: "MUSICBRAINZ_ALBUMID",
+          ffmpegKey: "musicbrainz_albumid",
           targetValue: String(row.album_mbid),
           aliases: ["musicbrainz_albumid", "musicbrainzalbumid", "musicbrainz album id"],
         });
@@ -597,9 +950,16 @@ export class AudioTagMaintenanceService {
 
       if (row.artist_mbid) {
         tags.push({
+          key: "musicbrainz_albumartistid",
+          label: "MusicBrainz Album Artist ID",
+          ffmpegKey: "musicbrainz_albumartistid",
+          targetValue: String(row.artist_mbid),
+          aliases: ["musicbrainz_albumartistid", "musicbrainzalbumartistid", "musicbrainz album artist id"],
+        });
+        tags.push({
           key: "musicbrainz_artistid",
           label: "MusicBrainz Artist ID",
-          ffmpegKey: "MUSICBRAINZ_ARTISTID",
+          ffmpegKey: "musicbrainz_artistid",
           targetValue: String(row.artist_mbid),
           aliases: ["musicbrainz_artistid", "musicbrainzartistid", "musicbrainz artist id"],
         });
@@ -609,7 +969,7 @@ export class AudioTagMaintenanceService {
         tags.push({
           key: "musicbrainz_releasegroupid",
           label: "MusicBrainz Release Group ID",
-          ffmpegKey: "MUSICBRAINZ_RELEASEGROUPID",
+          ffmpegKey: "musicbrainz_releasegroupid",
           targetValue: String(row.album_mb_release_group_id),
           aliases: ["musicbrainz_releasegroupid", "musicbrainzreleasegroupid", "musicbrainz release group id"],
         });
@@ -814,7 +1174,7 @@ export class AudioTagMaintenanceService {
   static async apply(ids: number[]): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
     if (!isRetagMaintenanceEnabled(config)) {
-      throw new Error("Enable imported audio tag correction or ReplayGain tagging before applying retag operations.");
+      throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
     }
 
     const result: RetagApplyResult = {
@@ -844,10 +1204,12 @@ export class AudioTagMaintenanceService {
         continue;
       }
 
+      const enrichedRow = await this.enrichMusicBrainzMetadata(row, config);
+
       const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
+        filePath: enrichedRow.file_path,
+        libraryRoot: enrichedRow.library_root,
+        relativePath: enrichedRow.relative_path,
       });
 
       if (!fs.existsSync(resolvedPath)) {
@@ -855,14 +1217,14 @@ export class AudioTagMaintenanceService {
         continue;
       }
 
-      const preview = await this.evaluateRow(row, config);
+      const preview = await this.evaluateRow(enrichedRow, config);
       if (!preview.missing && preview.changes.length === 0) {
         result.skipped++;
         continue;
       }
 
       const desiredTags = Object.fromEntries(
-        this.buildDesiredTags(row, config).map((tag) => [tag.ffmpegKey, tag.targetValue]),
+        this.buildDesiredTags(enrichedRow, config).map((tag) => [tag.ffmpegKey, tag.targetValue]),
       );
 
       // Scrub all existing tags before writing (Lidarr's ScrubAudioTags)
@@ -922,7 +1284,7 @@ export class AudioTagMaintenanceService {
   static async applyByQuery(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
     if (!isRetagMaintenanceEnabled(config)) {
-      throw new Error("Enable imported audio tag correction or ReplayGain tagging before applying retag operations.");
+      throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
     }
 
     const items = await this.evaluateRows(this.getTrackRows(options, false), config);

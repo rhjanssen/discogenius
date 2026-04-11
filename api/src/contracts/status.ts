@@ -74,6 +74,8 @@ export interface QueueListResponseContract {
   hasMore: boolean;
 }
 
+export type QueueDetailsResponseContract = QueueItemContract[];
+
 export interface TaskQueueStatContract {
   type: string;
   status: string;
@@ -323,6 +325,10 @@ function parseActivitySummaryContract(value: unknown): ActivitySummaryContract {
     processing: expectNumber(record.processing, "activity.processing"),
     history: expectNumber(record.history, "activity.history"),
   };
+}
+
+export function parseQueueDetailsResponseContract(value: unknown): QueueDetailsResponseContract {
+  return expectArray(value, "queueDetails", parseQueueItemContract);
 }
 
 export function parseQueueListResponseContract(value: unknown): QueueListResponseContract {

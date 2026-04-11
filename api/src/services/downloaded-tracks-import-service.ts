@@ -5,7 +5,7 @@ import {
     updateAlbumDownloadStatus,
     updateArtistDownloadStatusFromMedia,
 } from "./download-state.js";
-import { AudioTagMaintenanceService } from "./audio-tag-maintenance.js";
+import { AudioTagService } from "./audio-tag-service.js";
 import { getDownloadWorkspacePath } from "./download-routing.js";
 import { getExistingLibraryMediaIds } from "./download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
@@ -144,12 +144,13 @@ function reconcileImportedDownload(type: string, tidalId: string, organizeResult
     }
 }
 
-export async function processImportDownloadJob(
-    job: ImportDownloadJob,
-    options: {
-        updateState: (state: ImportDownloadState) => void;
-    },
-): Promise<void> {
+export class DownloadedTracksImportService {
+    static async process(
+        job: ImportDownloadJob,
+        options: {
+            updateState: (state: ImportDownloadState) => void;
+        },
+    ): Promise<void> {
     const { type, tidalId, resolved, originalJobId, path: payloadPath } = job.payload;
 
     if (!type || !tidalId) {
@@ -274,9 +275,17 @@ export async function processImportDownloadJob(
                 state: "importing",
             });
 
-            void AudioTagMaintenanceService.applyForMediaIds(organizeResult.processedTrackIds).catch((error) => {
+            try {
+                const retagResult = await AudioTagService.applyForMediaIds(organizeResult.processedTrackIds);
+                if (retagResult.errors.length > 0) {
+                    console.warn(
+                        `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${tidalId}:`,
+                        retagResult.errors,
+                    );
+                }
+            } catch (error) {
                 console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${tidalId}:`, error);
-            });
+            }
         }
 
         const historyContext = resolveImportHistoryContext(type, tidalId);
@@ -374,5 +383,6 @@ export async function processImportDownloadJob(
                 // ignore cleanup errors
             }
         }
+    }
     }
 }

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { getAlbum, getVideo } from "./tidal.js";
-import { scanAlbumShallow } from "./scanner.js";
+import { RefreshAlbumService } from "./refresh-album-service.js";
 import { Config } from "./config.js";
 import {
     updateAlbumDownloadStatus,
@@ -9,7 +9,7 @@ import {
 } from "./download-state.js";
 import { getExistingImportedMediaConflictPath } from "./import-decision/conflicts.js";
 import { importMatcherService } from "./import-matcher-service.js";
-import { manualImportApplyService } from "./manual-import-apply-service.js";
+import { manualImportService } from "./manual-import-service.js";
 import type { LibraryRoot } from "./naming.js";
 import {
     collectSiblingSidecarTargets,
@@ -256,7 +256,7 @@ export class ImportService {
      * registering them in the system and cleaning them from the unmapped_files table.
      */
     async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
-        await manualImportApplyService.bulkImportUnmapped(items);
+        await manualImportService.bulkImportUnmapped(items);
     }
 
 
@@ -285,7 +285,8 @@ export class ImportService {
      */
     async importFiles(candidates: ImportCandidate[], isAuto = false, monitorImported = true) {
         const { db } = await import("../database.js");
-        const { getNamingConfig, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } = await import("./naming.js");
+        const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("./naming.js");
+        const { resolveArtistFolderForPersistence } = await import("./artist-paths.js");
         const { deriveQuality, calculateFingerprint } = await import("./audioUtils.js");
 
         const namingConfig = getNamingConfig();
@@ -472,7 +473,10 @@ export class ImportService {
                     || "Unknown Artist";
                 const artistPicture = tidalVideo.artist?.picture || tidalVideo.artists?.[0]?.picture || null;
                 const artistPopularity = videoData.popularity || 0;
-                const resolvedArtistFolder = resolveArtistFolder(artistName);
+                const resolvedArtistFolder = resolveArtistFolderForPersistence({
+                    artistId,
+                    artistName,
+                });
 
                 try {
                     upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);
@@ -598,7 +602,7 @@ export class ImportService {
             if (!albumId) continue;
 
             try {
-                await scanAlbumShallow(albumId);
+                await RefreshAlbumService.scanShallow(albumId);
             } catch (e) {
                 console.error(`[Import] Failed to scan album ${albumId}:`, e);
                 continue;
@@ -621,7 +625,10 @@ export class ImportService {
             const artistName = tidalAlbum.artist?.name || tidalAlbum.artists?.[0]?.name || "Unknown Artist";
             const artistPicture = tidalAlbum.artist?.picture || tidalAlbum.artists?.[0]?.picture || null;
             const artistPopularity = tidalAlbum.popularity || 0;
-            const resolvedArtistFolder = resolveArtistFolder(artistName);
+                const resolvedArtistFolder = resolveArtistFolderForPersistence({
+                    artistId,
+                    artistName,
+                });
 
             try {
                 upsertArtist.run(artistId, artistName, artistPicture, artistPopularity, monitorValue, resolvedArtistFolder);

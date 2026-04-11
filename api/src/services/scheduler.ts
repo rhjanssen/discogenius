@@ -1,8 +1,9 @@
 import { JobTypes, TaskQueueService, Job, NON_DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES } from "./queue.js";
-import { scanAlbumShallow, scanArtistDeep, scanPlaylist } from "./scanner.js";
+import { RefreshArtistService } from "./refresh-artist-service.js";
+import { RefreshAlbumService } from "./refresh-album-service.js";
+import { RefreshPlaylistService } from "./refresh-playlist-service.js";
 import { CurationService } from "./curation-service.js";
 import { CommandManager } from "./command.js";
-import { LibraryFilesService } from "./library-files.js";
 import { DiskScanService } from "./library-scan.js";
 import { readIntEnv } from "../utils/env.js";
 import { UpgraderService } from "./upgrader.js";
@@ -13,8 +14,10 @@ import { queueManagedArtistsWorkflow } from "./artist-workflow.js";
 import { getManagedArtists } from "./managed-artists.js";
 import { queueNextMonitoringPass } from "./task-scheduler.js";
 import { shouldRefreshArtist } from "./refresh-policy.js";
-import { AudioTagMaintenanceService } from "./audio-tag-maintenance.js";
+import { AudioTagService } from "./audio-tag-service.js";
 import { db } from "../database.js";
+import { MoveArtistService } from "./move-artist-service.js";
+import { RenameTrackFileService } from "./rename-track-file-service.js";
 import { runLowCouplingMaintenanceJob } from "./scheduler-maintenance-handlers.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
@@ -223,7 +226,7 @@ export class Scheduler {
                         progress: 5,
                         description: this.formatArtistPhaseDescription(job, "preparing artist refresh"),
                     });
-                    await scanArtistDeep(job.payload.artistId, {
+                    await RefreshArtistService.scanDeep(job.payload.artistId, {
                         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
                         monitorAlbums: job.payload.monitorAlbums,
                         hydrateCatalog: job.payload.hydrateCatalog,
@@ -284,9 +287,9 @@ export class Scheduler {
                         trigger: job.trigger ?? 0
                     });
                     break;
-                case JobTypes.ScanAlbum:
+                case JobTypes.RefreshAlbum:
                     // SCAN_ALBUM means: ensure album SHALLOW metadata (tracks + review + similar)
-                    await scanAlbumShallow(job.payload.albumId, {
+                    await RefreshAlbumService.scanShallow(job.payload.albumId, {
                         forceUpdate: Boolean(job.payload?.forceUpdate),
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
@@ -299,7 +302,7 @@ export class Scheduler {
                             throw new Error('ScanPlaylist job missing tidalId');
                         }
 
-                        await scanPlaylist(String(playlistId), {
+                        await RefreshPlaylistService.scan(String(playlistId), {
                             forceUpdate: Boolean(job.payload?.forceUpdate),
                         });
                         break;
@@ -341,7 +344,7 @@ export class Scheduler {
                         });
 
                         try {
-                            await scanArtistDeep(artistId, {
+                            await RefreshArtistService.scanDeep(artistId, {
                                 monitorArtist: Boolean((artist as any).monitor),
                                 hydrateCatalog: true,
                                 hydrateAlbumTracks: false,
@@ -546,10 +549,10 @@ export class Scheduler {
                     }
                     break;
                 }
-                case JobTypes.RefreshAllMonitored:
+                case JobTypes.BulkRefreshArtist:
                 case JobTypes.DownloadMissingForce:
                 case JobTypes.RescanAllRoots:
-                case JobTypes.HealthCheck:
+                case JobTypes.CheckHealth:
                 case JobTypes.CompactDatabase:
                 case JobTypes.CleanupTempFiles:
                 case JobTypes.UpdateLibraryMetadata:
@@ -559,14 +562,61 @@ export class Scheduler {
                     });
                     break;
                 }
-                case JobTypes.ApplyRenames: {
+                case JobTypes.MoveArtist: {
                     this.updateJobDescription(job, {
                         progress: 5,
-                        description: 'Library files - applying rename plan',
+                        description: 'Move Artist - moving artist folders into the stored artist path',
+                    });
+                    if (!job.payload.artistId) {
+                        throw new Error("MoveArtist job missing artistId");
+                    }
+                    if (!job.payload.sourcePath) {
+                        throw new Error("MoveArtist job missing sourcePath");
+                    }
+                    const result = MoveArtistService.executeMoveArtistJob({
+                        artistId: job.payload.artistId,
+                        sourcePath: job.payload.sourcePath,
+                        destinationPath: job.payload.destinationPath,
+                    });
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Moved artist folders in ${result.movedRoots} root(s), updated ${result.updatedFiles} tracked file(s), cleaned ${result.cleanedDirectories} empty folder(s)`,
+                    });
+                    break;
+                }
+                case JobTypes.RenameArtist: {
+                    this.updateJobDescription(job, {
+                        progress: 5,
+                        description: 'Rename Artist - applying artist-wide rename plan',
+                    });
+                    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
+                        ? job.payload.artistIds
+                        : (job.payload.artistId ? [job.payload.artistId] : []);
+                    let renamed = 0;
+                    let conflicts = 0;
+                    let missing = 0;
+                    let cleanedDirectories = 0;
+                    for (const artistId of artistIds) {
+                        const result = RenameTrackFileService.executeRenameArtist({ artistId });
+                        renamed += result.renamed;
+                        conflicts += result.conflicts;
+                        missing += result.missing;
+                        cleanedDirectories += result.cleanedDirectories;
+                    }
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
+                    });
+                    break;
+                }
+                case JobTypes.RenameFiles: {
+                    this.updateJobDescription(job, {
+                        progress: 5,
+                        description: 'Rename Files - applying rename plan',
                     });
                     const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-                        ? LibraryFilesService.applyRenames(job.payload.ids)
-                        : LibraryFilesService.applyRenamesByQuery({
+                        ? RenameTrackFileService.executeRenameFiles(job.payload.ids)
+                        : RenameTrackFileService.executeRenameFilesByQuery({
                             artistId: job.payload.artistId,
                             albumId: job.payload.albumId,
                             libraryRoot: job.payload.libraryRoot,
@@ -578,14 +628,37 @@ export class Scheduler {
                     });
                     break;
                 }
-                case JobTypes.ApplyRetags: {
+                case JobTypes.RetagArtist: {
                     this.updateJobDescription(job, {
                         progress: 5,
-                        description: 'Library files - applying retag plan',
+                        description: 'Retag Artist - applying artist-wide audio tag plan',
+                    });
+                    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
+                        ? job.payload.artistIds
+                        : (job.payload.artistId ? [job.payload.artistId] : []);
+                    let retagged = 0;
+                    let missing = 0;
+                    const errors: Array<{ id: number; error: string }> = [];
+                    for (const artistId of artistIds) {
+                        const result = await AudioTagService.applyByQuery({ artistId });
+                        retagged += result.retagged;
+                        missing += result.missing;
+                        errors.push(...result.errors);
+                    }
+                    this.updateJobDescription(job, {
+                        progress: 100,
+                        description: `Retagged ${retagged} file(s), ${missing} missing, ${errors.length} error(s)`,
+                    });
+                    break;
+                }
+                case JobTypes.RetagFiles: {
+                    this.updateJobDescription(job, {
+                        progress: 5,
+                        description: 'Retag Files - applying audio tag plan',
                     });
                     const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-                        ? await AudioTagMaintenanceService.apply(job.payload.ids)
-                        : await AudioTagMaintenanceService.applyByQuery({
+                        ? await AudioTagService.apply(job.payload.ids)
+                        : await AudioTagService.applyByQuery({
                             artistId: job.payload.artistId,
                             albumId: job.payload.albumId,
                         });

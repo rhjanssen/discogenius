@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "../database.js";
 import { Config, getConfigSection } from "./config.js";
-import { getNamingConfig, renderRelativePath, type NamingContext } from "./naming.js";
+import { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext } from "./naming.js";
 import {
     downloadAlbumCover,
     downloadAlbumVideoCover,
@@ -29,10 +29,14 @@ class LibraryMetadataBackfillService {
         const naming = getNamingConfig();
         const result: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
 
-        const artist = db.prepare("SELECT name FROM artists WHERE id = ?").get(artistId) as any;
+        const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
         if (!artist) return result;
 
-        const artistFolder = renderRelativePath(naming.artist_folder, { artistName: artist.name });
+        const artistFolder = resolveArtistFolderFromRecord({
+            name: artist.name,
+            mbid: artist.mbid || null,
+            path: artist.path || null,
+        });
 
         await this.fillArtistMetadata(artistId, artistFolder, metadataConfig, result);
         await this.fillAlbumMetadata(artistId, artistFolder, metadataConfig, naming, result);
@@ -158,8 +162,6 @@ class LibraryMetadataBackfillService {
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
     ) {
-        const musicRoot = Config.getMusicPath();
-
         const albums = db.prepare(`
       SELECT DISTINCT a.id, a.title, a.version, a.release_date, a.num_volumes, a.video_cover, a.quality
       FROM albums a
@@ -174,57 +176,97 @@ class LibraryMetadataBackfillService {
     `).all(artistId) as any[];
 
         for (const album of albums) {
-            const albumDir = this.resolveAlbumDir(musicRoot, artistFolder, album, naming);
-            if (!albumDir || !fs.existsSync(albumDir)) continue;
+            const libraryRoots = (db.prepare(`
+      SELECT DISTINCT lf.library_root
+      FROM library_files lf
+      JOIN media m ON m.id = lf.media_id
+      WHERE m.album_id = ?
+        AND lf.file_type = 'track'
+        AND lf.library_root IS NOT NULL
+      ORDER BY lf.library_root ASC
+    `).all(album.id) as Array<{ library_root: string | null }>)
+                .map((row) => String(row.library_root || "").trim())
+                .filter(Boolean);
 
-            if (metadataConfig.save_album_cover) {
-                const coverName = metadataConfig.album_cover_name || "cover.jpg";
-                const coverPath = path.join(albumDir, coverName);
-                if (!fs.existsSync(coverPath)) {
-                    try {
-                        await downloadAlbumCover(
-                            String(album.id),
-                            metadataConfig.album_cover_resolution as any,
-                            coverPath,
-                        );
-                        if (fs.existsSync(coverPath)) {
-                            this.upsertLibraryFile({
-                                artistId,
-                                albumId: String(album.id),
-                                filePath: coverPath,
-                                libraryRoot: musicRoot,
-                                fileType: "cover",
-                                expectedPath: coverPath,
-                            });
-                            result.downloaded++;
-                        } else {
-                            result.failed++;
-                        }
-                    } catch {
-                        result.failed++;
-                    }
-                } else {
-                    result.skipped++;
-                }
+            for (const libraryRoot of libraryRoots) {
+                const albumDir = this.resolveAlbumDir(libraryRoot, artistFolder, album, naming);
+                if (!albumDir || !fs.existsSync(albumDir)) continue;
 
-                if (album.video_cover) {
-                    const videoCoverName = `${path.parse(coverName).name}.mp4`;
-                    const videoCoverPath = path.join(albumDir, videoCoverName);
-                    if (!fs.existsSync(videoCoverPath)) {
+                if (metadataConfig.save_album_cover) {
+                    const coverName = metadataConfig.album_cover_name || "cover.jpg";
+                    const coverPath = path.join(albumDir, coverName);
+                    if (!fs.existsSync(coverPath)) {
                         try {
-                            await downloadAlbumVideoCover(
-                                String(album.video_cover),
+                            await downloadAlbumCover(
+                                String(album.id),
                                 metadataConfig.album_cover_resolution as any,
-                                videoCoverPath,
+                                coverPath,
                             );
-                            if (fs.existsSync(videoCoverPath)) {
+                            if (fs.existsSync(coverPath)) {
                                 this.upsertLibraryFile({
                                     artistId,
                                     albumId: String(album.id),
-                                    filePath: videoCoverPath,
-                                    libraryRoot: musicRoot,
-                                    fileType: "video_cover",
-                                    expectedPath: videoCoverPath,
+                                    filePath: coverPath,
+                                    libraryRoot,
+                                    fileType: "cover",
+                                    expectedPath: coverPath,
+                                });
+                                result.downloaded++;
+                            } else {
+                                result.failed++;
+                            }
+                        } catch {
+                            result.failed++;
+                        }
+                    } else {
+                        result.skipped++;
+                    }
+
+                    if (album.video_cover) {
+                        const videoCoverName = `${path.parse(coverName).name}.mp4`;
+                        const videoCoverPath = path.join(albumDir, videoCoverName);
+                        if (!fs.existsSync(videoCoverPath)) {
+                            try {
+                                await downloadAlbumVideoCover(
+                                    String(album.video_cover),
+                                    metadataConfig.album_cover_resolution as any,
+                                    videoCoverPath,
+                                );
+                                if (fs.existsSync(videoCoverPath)) {
+                                    this.upsertLibraryFile({
+                                        artistId,
+                                        albumId: String(album.id),
+                                        filePath: videoCoverPath,
+                                        libraryRoot,
+                                        fileType: "video_cover",
+                                        expectedPath: videoCoverPath,
+                                    });
+                                    result.downloaded++;
+                                } else {
+                                    result.failed++;
+                                }
+                            } catch {
+                                result.failed++;
+                            }
+                        } else {
+                            result.skipped++;
+                        }
+                    }
+                }
+
+                if (metadataConfig.save_album_review) {
+                    const reviewPath = path.join(albumDir, "review.txt");
+                    if (!fs.existsSync(reviewPath)) {
+                        try {
+                            await saveReviewFile(String(album.id), reviewPath);
+                            if (fs.existsSync(reviewPath)) {
+                                this.upsertLibraryFile({
+                                    artistId,
+                                    albumId: String(album.id),
+                                    filePath: reviewPath,
+                                    libraryRoot,
+                                    fileType: "review",
+                                    expectedPath: reviewPath,
                                 });
                                 result.downloaded++;
                             } else {
@@ -238,32 +280,6 @@ class LibraryMetadataBackfillService {
                     }
                 }
             }
-
-            if (metadataConfig.save_album_review) {
-                const reviewPath = path.join(albumDir, "review.txt");
-                if (!fs.existsSync(reviewPath)) {
-                    try {
-                        await saveReviewFile(String(album.id), reviewPath);
-                        if (fs.existsSync(reviewPath)) {
-                            this.upsertLibraryFile({
-                                artistId,
-                                albumId: String(album.id),
-                                filePath: reviewPath,
-                                libraryRoot: musicRoot,
-                                fileType: "review",
-                                expectedPath: reviewPath,
-                            });
-                            result.downloaded++;
-                        } else {
-                            result.failed++;
-                        }
-                    } catch {
-                        result.failed++;
-                    }
-                } else {
-                    result.skipped++;
-                }
-            }
         }
     }
 
@@ -275,7 +291,7 @@ class LibraryMetadataBackfillService {
         if (!metadataConfig.save_lyrics) return;
 
         const tracks = db.prepare(`
-      SELECT lf.file_path, lf.media_id
+      SELECT lf.file_path, lf.media_id, lf.library_root
       FROM library_files lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
@@ -284,7 +300,7 @@ class LibraryMetadataBackfillService {
           SELECT 1 FROM library_files lf2
           WHERE lf2.media_id = lf.media_id AND lf2.file_type = 'lyrics'
         )
-    `).all(artistId) as Array<{ file_path: string; media_id: number }>;
+    `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null }>;
 
         for (const track of tracks) {
             const ext = path.extname(track.file_path);
@@ -303,7 +319,7 @@ class LibraryMetadataBackfillService {
                         albumId: media?.album_id ? String(media.album_id) : null,
                         mediaId: String(track.media_id),
                         filePath: lrcPath,
-                        libraryRoot: path.dirname(track.file_path).split(path.sep).slice(0, -2).join(path.sep) || Config.getMusicPath(),
+                        libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                         fileType: "lyrics",
                         expectedPath: lrcPath,
                     });

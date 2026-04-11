@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2] - 2026-04-11
+
+### Changed
+- Auth bootstrap now follows the *arr model more closely: app auth gates shell access, TIDAL provider auth no longer blocks the local library shell, and admin-session failures no longer fail open.
+- Artist folder handling is closer to Lidarr: generated artist paths now avoid parent/child collisions, `MoveArtist` performs a real folder move with rollback, and tracked file rows are rebased after successful folder moves.
+- Library scan reliability improved by recalculating download-state invalidation on orphan cleanup and by disabling the top-level prebuilt root index when nested artist-folder templates are in use.
+- Loading and settings UX were tightened with branded boot loading, more faithful skeletons, and clearer separation between `Disconnect TIDAL` and Discogenius `Sign out`.
+
 <!-- markdownlint-disable MD024 MD012 -->
 
 All notable changes to this project are documented in this file.

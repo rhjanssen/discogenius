@@ -42,7 +42,7 @@ export async function runLowCouplingMaintenanceJob(
     context: SchedulerMaintenanceHandlerContext,
 ) {
     switch (job.type) {
-        case JobTypes.RefreshAllMonitored: {
+        case JobTypes.BulkRefreshArtist: {
             context.updateJobDescription({
                 progress: 10,
                 description: 'Queueing metadata refresh for all monitored artists',
@@ -91,7 +91,7 @@ export async function runLowCouplingMaintenanceJob(
             });
             return;
         }
-        case JobTypes.HealthCheck: {
+        case JobTypes.CheckHealth: {
             const snapshot = collectHealthDiagnosticsSnapshot();
             context.updateJobDescription({
                 progress: 100,

@@ -1,11 +1,11 @@
 import express, { Request, Response, Router } from 'express';
-import { db } from '../database.js';
-import { DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
+import { DOWNLOAD_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queue.js';
 import { downloadProcessor } from '../services/download-processor.js';
 import { downloadEvents } from '../services/download-events.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { buildStreamingMediaUrl } from '../services/download-routing.js';
 import { shouldQueueRedownloadForFailedImport } from '../services/download-recovery.js';
+import { DownloadQueueQueryService } from '../services/download-queue-query-service.js';
 import type {
     DownloadAlbumJobPayload,
     DownloadPlaylistJobPayload,
@@ -13,7 +13,6 @@ import type {
     DownloadVideoJobPayload,
     ImportDownloadJobPayload,
 } from '../services/job-payloads.js';
-import type { QueueItemContract, QueueListResponseContract } from '../contracts/status.js';
 
 const router: Router = express.Router();
 
@@ -131,138 +130,6 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
     };
 }
 
-function resolveQueueItemContentType(j: any): QueueItemContract['type'] {
-    if (j.type === JobTypes.DownloadVideo) {
-        return 'video';
-    }
-
-    if (j.type === JobTypes.DownloadAlbum) {
-        return 'album';
-    }
-
-    if (j.type === JobTypes.DownloadPlaylist) {
-        return 'playlist';
-    }
-
-    if (j.type === JobTypes.ImportDownload) {
-        const payloadType = j.payload?.type;
-        return payloadType === 'video' || payloadType === 'album' || payloadType === 'playlist'
-            ? payloadType
-            : 'track';
-    }
-
-    return 'track';
-}
-
-export function mapDownloadQueueJob(j: any, queuePosition?: number): QueueItemContract {
-    const downloadState = j.payload?.downloadState ?? {};
-    const contentType = resolveQueueItemContentType(j);
-    const tidalId = j.ref_id || j.payload?.tidalId || null;
-
-    let title: string | undefined = j.payload?.title || j.payload?.playlistName || j.payload?.resolved?.title;
-    let artist: string | undefined = j.payload?.artist || j.payload?.resolved?.artist;
-    let cover: string | null | undefined = j.payload?.cover ?? j.payload?.resolved?.cover;
-    let album_id: string | null | undefined = j.payload?.album_id ?? j.payload?.albumId ?? j.payload?.resolved?.albumId;
-    let album_title: string | null | undefined = j.payload?.album_title ?? j.payload?.albumTitle ?? j.payload?.resolved?.albumTitle;
-    let quality: string | null | undefined = j.payload?.quality ?? null;
-
-    if (tidalId && (!title || !artist || cover === undefined || album_id === undefined || album_title === undefined)) {
-        try {
-            if (contentType === 'album') {
-                const row = db.prepare(`
-                    SELECT a.title, a.cover, ar.name as artist_name, a.id as album_id, a.quality
-                    FROM albums a
-                    LEFT JOIN artists ar ON ar.id = a.artist_id
-                    WHERE a.id = ?
-                `).get(tidalId) as any;
-                if (!title) title = row?.title;
-                if (!artist) artist = row?.artist_name;
-                if (cover === undefined) cover = row?.cover ?? null;
-                if (album_id === undefined) album_id = row?.album_id ?? null;
-                if (album_title === undefined) album_title = row?.title ?? null;
-                if (quality === undefined || quality === null) quality = row?.quality ?? null;
-            } else if (contentType === 'video') {
-                const row = db.prepare(`
-                    SELECT m.title, ar.name as artist_name, m.cover as video_cover, a.id as album_id, a.title as album_title, m.quality
-                    FROM media m
-                    LEFT JOIN artists ar ON ar.id = m.artist_id
-                    LEFT JOIN albums a ON a.id = m.album_id
-                    WHERE m.id = ? AND m.type = 'Music Video'
-                `).get(tidalId) as any;
-                if (!title) title = row?.title;
-                if (!artist) artist = row?.artist_name;
-                if (cover === undefined) cover = row?.video_cover ?? null;
-                if (album_id === undefined) album_id = row?.album_id ?? null;
-                if (album_title === undefined) album_title = row?.album_title ?? null;
-                if (quality === undefined || quality === null) quality = row?.quality ?? null;
-            } else if (contentType === 'playlist') {
-                const row = db.prepare(`
-                    SELECT p.title, p.square_cover_id, p.cover_id
-                    FROM playlists p
-                    WHERE p.tidal_id = ? OR p.uuid = ?
-                `).get(tidalId, tidalId) as any;
-                if (!title) title = row?.title;
-                if (cover === undefined) cover = row?.square_cover_id ?? row?.cover_id ?? null;
-            } else {
-                const row = db.prepare(`
-                    SELECT m.title, m.version as version, ar.name as artist_name, a.cover as album_cover, a.id as album_id, a.title as album_title, m.quality
-                    FROM media m
-                    LEFT JOIN artists ar ON ar.id = m.artist_id
-                    LEFT JOIN albums a ON a.id = m.album_id
-                    WHERE m.id = ?
-                `).get(tidalId) as any;
-                if (!title) {
-                    const base = row?.title;
-                    const v = (row?.version || '').toString().trim();
-                    title = base && v && !base.toLowerCase().includes(v.toLowerCase()) ? `${base} (${v})` : base;
-                }
-                if (!artist) artist = row?.artist_name;
-                if (cover === undefined) cover = row?.album_cover ?? null;
-                if (album_id === undefined) album_id = row?.album_id ?? null;
-                if (album_title === undefined) album_title = row?.album_title ?? null;
-                if (quality === undefined || quality === null) quality = row?.quality ?? null;
-            }
-        } catch {
-            // ignore lookup failures
-        }
-    }
-
-    return {
-        id: j.id,
-        tidalId,
-        type: contentType,
-        status: j.status,
-        stage: j.type === JobTypes.ImportDownload ? 'import' : 'download',
-        progress: typeof downloadState.progress === 'number' ? downloadState.progress : j.progress,
-        error: j.error,
-        created_at: j.created_at,
-        updated_at: j.updated_at ?? j.created_at,
-        started_at: j.started_at ?? null,
-        completed_at: j.completed_at ?? null,
-        url: j.payload?.url ?? null,
-        path: j.payload?.path ?? null,
-        title: title || 'Unknown',
-        artist: artist || 'Unknown',
-        cover: cover ?? null,
-        quality: quality ?? null,
-        album_id: album_id != null ? String(album_id) : null,
-        album_title: album_title ?? null,
-        currentFileNum: downloadState.currentFileNum,
-        totalFiles: downloadState.totalFiles,
-        currentTrack: downloadState.currentTrack,
-        trackProgress: downloadState.trackProgress,
-        trackStatus: downloadState.trackStatus,
-        statusMessage: downloadState.statusMessage,
-        state: downloadState.state,
-        speed: downloadState.speed,
-        eta: downloadState.eta,
-        size: downloadState.size,
-        sizeleft: downloadState.sizeleft,
-        tracks: downloadState.tracks,
-        queuePosition,
-    };
-}
-
 /**
  * DELETE /api/remove
  * Cancel/Remove item from queue
@@ -372,13 +239,7 @@ router.post('/queue/resume', async (_req: Request, res: Response) => {
  */
 router.get('/queue/status', async (_req: Request, res: Response) => {
     try {
-        const status = downloadProcessor.getStatus();
-        const stats = TaskQueueService.getStats();
-
-        res.json({
-            ...status,
-            stats
-        });
+        res.json(DownloadQueueQueryService.getQueueStatus());
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting status:', error);
         res.status(500).json({ error: 'Failed to get status', message: error.message });
@@ -393,46 +254,35 @@ router.get('/queue', async (req: Request, res: Response) => {
     try {
         const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '100'), 10) || 100));
         const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-
-        const pendingDownloadJobs = TaskQueueService.listJobsByTypesAndStatuses(
-            DOWNLOAD_JOB_TYPES,
-            ['pending'],
-            TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_JOB_TYPES, ['pending']),
-            0,
-            { orderBy: 'queue_order' },
-        );
-
-        const queuePositionById = new Map<number, number>(
-            pendingDownloadJobs.map((job, index) => [job.id, index + 1]),
-        );
-
-        // Queue surfaces only live work.
-        // Completed/failed jobs belong in activity/history, not the live queue.
-        // Include ImportDownload so items remain visible while import/finalization is still running.
-        const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-            DOWNLOAD_OR_IMPORT_JOB_TYPES,
-            ['pending', 'processing'],
-            5000,
-            0,
-            { orderBy: 'queue_order' },
-        );
-
-        const total = jobs.length;
-        const mapped = jobs
-            .slice(offset, offset + limit)
-            .map((job) => mapDownloadQueueJob(job, queuePositionById.get(job.id)));
-
-        const payload: QueueListResponseContract = {
-            items: mapped,
-            total,
-            limit,
-            offset,
-            hasMore: offset + mapped.length < total,
-        };
-        res.json(payload);
+        res.json(DownloadQueueQueryService.getQueue({ limit, offset }));
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue:', error);
         res.status(500).json({ error: 'Failed to get queue', message: error.message });
+    }
+});
+
+router.get('/queue/details', async (req: Request, res: Response) => {
+    try {
+        const artistId = typeof req.query.artistId === 'string'
+            ? req.query.artistId.trim() || undefined
+            : undefined;
+        const albumIds = String(req.query.albumIds || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean);
+        const tidalIds = String(req.query.tidalIds || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean);
+
+        res.json(DownloadQueueQueryService.getQueueDetails({
+            artistId,
+            albumIds,
+            tidalIds,
+        }));
+    } catch (error: any) {
+        console.error('[QUEUE-API] Error getting queue details:', error);
+        res.status(500).json({ error: 'Failed to get queue details', message: error.message });
     }
 });
 
@@ -440,26 +290,7 @@ router.get('/queue/history', async (req: Request, res: Response) => {
     try {
         const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '50'), 10) || 50));
         const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-        const statuses: Array<'completed' | 'failed' | 'cancelled'> = ['completed', 'failed', 'cancelled'];
-
-        const total = TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_OR_IMPORT_JOB_TYPES, statuses);
-        const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-            DOWNLOAD_OR_IMPORT_JOB_TYPES,
-            statuses,
-            limit,
-            offset,
-            { orderBy: 'history' },
-        );
-
-        const payload: QueueListResponseContract = {
-            items: jobs.map((job) => mapDownloadQueueJob(job)),
-            total,
-            limit,
-            offset,
-            hasMore: offset + jobs.length < total,
-        };
-
-        res.json(payload);
+        res.json(DownloadQueueQueryService.getQueueHistory({ limit, offset }));
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue history:', error);
         res.status(500).json({ error: 'Failed to get queue history', message: error.message });
@@ -598,9 +429,12 @@ router.get('/queue/progress-stream', (req: Request, res: Response) => {
     };
 
     // Send initial status
-    const status = downloadProcessor.getStatus();
-    const stats = TaskQueueService.getStats();
-    sendEvent('status', { ...status, stats });
+    sendEvent('status', DownloadQueueQueryService.getQueueStatus());
+
+    const initialProgress = DownloadQueueQueryService.getActiveProgressSnapshots();
+    if (initialProgress.length > 0) {
+        sendEvent('progress-batch', initialProgress);
+    }
 
     // Listen for download events
     const onProgressBatch = (data: any) => sendEvent('progress-batch', data);

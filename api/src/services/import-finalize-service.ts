@@ -46,11 +46,14 @@ export async function finalizeImportedDirectories(params: {
     explicitSidecarTargets?: Map<string, string>;
 }): Promise<void> {
     const { importedFileIds, dirMappings, imageFileType, explicitSidecarTargets } = params;
-    const { LibraryFilesService, removeEmptyParents } = await import("./library-files.js");
+    const [{ LibraryFilesService, removeEmptyParents }, { RenameTrackFileService }] = await Promise.all([
+        import("./library-files.js"),
+        import("./rename-track-file-service.js"),
+    ]);
 
     if (importedFileIds.length > 0) {
         try {
-            LibraryFilesService.applyRenames(importedFileIds);
+            RenameTrackFileService.executeRenameFiles(importedFileIds);
         } catch (error: any) {
             console.error(`[Import] Failed to apply renames for imported items:`, error);
         }

@@ -35,7 +35,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { LibraryStats } from "@/hooks/useLibrary";
 import { useToast } from "@/hooks/useToast";
-import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import {
     ACTIVITY_REFRESH_EVENT,
@@ -243,7 +243,7 @@ const Dashboard = () => {
         isPaused: queueIsPaused,
         pauseQueue,
         resumeQueue,
-    } = useDownloadQueue();
+    } = useQueueStatus();
 
     const [scanningAll, setScanningAll] = useState(false);
     const [scanningRoots, setScanningRoots] = useState(false);

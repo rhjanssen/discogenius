@@ -20,6 +20,7 @@ export type NamingContext = {
   trackFullTitle?: string | null;
   trackArtistName?: string | null;
   trackArtistMbId?: string | null;
+  trackMbId?: string | null;
   trackNumber?: number | null;
   volumeNumber?: number | null;
 
@@ -196,6 +197,7 @@ function buildDerived(context: NamingContext) {
   const trackVersion = context.trackVersion ?? "";
   const trackArtistName = context.trackArtistName || artistName;
   const trackArtistMbId = context.trackArtistMbId || artistMbId;
+  const trackMbId = context.trackMbId || "";
   const trackFullTitle =
     context.trackFullTitle ||
     (trackVersion && !trackTitle.toLowerCase().includes(trackVersion.toLowerCase())
@@ -223,6 +225,7 @@ function buildDerived(context: NamingContext) {
     trackTitle,
     trackArtistName,
     trackArtistMbId,
+    trackMbId,
     trackVersion,
     trackFullTitle,
     trackNumber,
@@ -358,6 +361,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "trackartistmbid":
       baseValue = derived.trackArtistMbId;
+      break;
+    case "trackmbid":
+      baseValue = derived.trackMbId;
       break;
     case "trackid":
       baseValue = derived.trackId;

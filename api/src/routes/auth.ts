@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { AuthStatusContract } from "../contracts/auth.js";
-import { getUserInfo, logout as clearAuthData, loadToken, refreshTidalToken } from "../services/tidal.js";
+import { logout as clearAuthData, loadToken, refreshTidalToken } from "../services/tidal.js";
 import { pollTidalDeviceLogin, startTidalDeviceLogin } from "../services/tidal-auth.js";
 import {
   buildBypassedAuthStatus,
@@ -16,13 +16,13 @@ function buildLiveAuthStatus(
   const connected = overrides.connected && !overrides.refreshTokenExpired;
 
   return {
-    connected: overrides.connected,
+    connected,
     tokenExpired: overrides.tokenExpired,
     refreshTokenExpired: overrides.refreshTokenExpired,
     hoursUntilExpiry: overrides.hoursUntilExpiry,
     mode: "live",
-    canAccessShell: connected,
-    canAccessLocalLibrary: connected,
+    canAccessShell: true,
+    canAccessLocalLibrary: true,
     remoteCatalogAvailable: connected,
     authBypassed: false,
     canAuthenticate: true,
@@ -86,37 +86,38 @@ router.get("/status", async (_, res) => {
   }
 
   try {
-    // Check token expiration
     let token = loadToken();
-
     let tokenExpired = false;
     let refreshTokenExpired = false;
     let hoursUntilExpiry = 0;
 
-    if (token?.expires_at) {
+    if (!token?.access_token) {
+      return res.json(buildLiveAuthStatus({
+        connected: false,
+        tokenExpired: false,
+        refreshTokenExpired: false,
+        hoursUntilExpiry: 0,
+        user: null,
+        message: "Connect your TIDAL account to access remote catalog features.",
+      }));
+    }
+
+    if (token.expires_at) {
       const nowInSeconds = Math.floor(Date.now() / 1000);
       hoursUntilExpiry = (token.expires_at - nowInSeconds) / 3600;
       tokenExpired = hoursUntilExpiry < 0;
 
-      // If token is expired, attempt to refresh it
       if (tokenExpired) {
-        console.log('[AUTH STATUS] Token expired, attempting refresh...');
         await refreshTidalToken(true);
-
-        // Reload token after refresh attempt
         token = loadToken();
-        if (token?.expires_at) {
-          const newHoursUntilExpiry = (token.expires_at - nowInSeconds) / 3600;
 
-          // If still expired after refresh, the refresh token is dead
+        if (token?.expires_at && token.access_token) {
+          const newHoursUntilExpiry = (token.expires_at - nowInSeconds) / 3600;
           if (newHoursUntilExpiry < 0) {
-            console.log('[AUTH STATUS] Token still expired after refresh - refresh token is invalid');
             refreshTokenExpired = true;
           } else {
-            // Refresh succeeded!
             tokenExpired = false;
             hoursUntilExpiry = newHoursUntilExpiry;
-            console.log(`[AUTH STATUS] Token refreshed! New expiry: ${newHoursUntilExpiry.toFixed(1)}h`);
           }
         } else {
           refreshTokenExpired = true;
@@ -124,25 +125,22 @@ router.get("/status", async (_, res) => {
       }
     }
 
-    // Avoid forcing a refresh when just checking status on page load (we already tried above if needed)
-    const userInfo = await getUserInfo({ refreshOn401: false });
-
-    if (userInfo) {
+    if (token?.access_token && !tokenExpired && !refreshTokenExpired) {
       return res.json(buildLiveAuthStatus({
         connected: true,
-        user: { username: userInfo.username },
+        user: token.user?.username ? { username: token.user.username } : null,
         tokenExpired,
         refreshTokenExpired,
         hoursUntilExpiry,
       }));
     }
 
-    // If we failed to get user info, check if it's because refresh token is expired
     res.json(buildLiveAuthStatus({
       connected: false,
       tokenExpired,
       refreshTokenExpired: refreshTokenExpired || !token?.refresh_token,
       hoursUntilExpiry,
+      user: token?.user?.username ? { username: token.user.username } : null,
       message: refreshTokenExpired || !token?.refresh_token
         ? "Your TIDAL session has expired. Reconnect to access remote catalog features."
         : "Connect your TIDAL account to access remote catalog features.",

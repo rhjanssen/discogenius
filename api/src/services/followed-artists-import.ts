@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { getFollowedArtists } from "./tidal.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
-import { resolveArtistFolder } from "./naming.js";
+import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 
 export type FollowedArtistsImportEvent =
     | { type: "status"; message: string }
@@ -29,7 +29,7 @@ type FollowedArtistRow = {
 };
 
 function ensureMonitoredArtist(artist: FollowedArtistRow): "added" | "updated" | "skipped" {
-    const existing = db.prepare("SELECT id, monitor FROM artists WHERE id = ?").get(artist.tidal_id) as { id: string | number; monitor: number } | undefined;
+    const existing = db.prepare("SELECT id, monitor, path FROM artists WHERE id = ?").get(artist.tidal_id) as { id: string | number; monitor: number; path: string | null } | undefined;
 
     if (existing) {
         if (existing.monitor === 1) {
@@ -45,7 +45,11 @@ function ensureMonitoredArtist(artist: FollowedArtistRow): "added" | "updated" |
                 popularity = COALESCE(popularity, ?)
             WHERE id = ?
         `).run(
-            resolveArtistFolder(artist.name),
+            resolveArtistFolderForPersistence({
+                artistId: artist.tidal_id,
+                artistName: artist.name,
+                existingPath: existing.path,
+            }),
             artist.picture || null,
             artist.popularity || 0,
             artist.tidal_id,
@@ -62,7 +66,10 @@ function ensureMonitoredArtist(artist: FollowedArtistRow): "added" | "updated" |
         artist.name,
         artist.picture || null,
         artist.popularity || 0,
-        resolveArtistFolder(artist.name),
+        resolveArtistFolderForPersistence({
+            artistId: artist.tidal_id,
+            artistName: artist.name,
+        }),
     );
 
     return "added";

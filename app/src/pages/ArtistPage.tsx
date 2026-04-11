@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useContext, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -9,8 +9,6 @@ import {
   Spinner,
   Card,
   Badge,
-  Skeleton,
-  SkeletonItem,
   makeStyles,
   tokens,
   Overflow,
@@ -41,7 +39,7 @@ import { useToast } from "@/hooks/useToast";
 import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
-import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
+import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
@@ -52,7 +50,7 @@ import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
-import { QueueContext } from "@/providers/QueueProvider";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import {
@@ -544,8 +542,7 @@ const ArtistPage = () => {
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
   ));
-  const queueCtx = useContext(QueueContext);
-  const progressMap = queueCtx?.progress;
+  const { getProgressByTidalId } = useQueueStatus();
 
   useDebouncedQueryInvalidation({
     queryKeys: [['artist-activity', artistId]],
@@ -854,7 +851,7 @@ const ArtistPage = () => {
     const imageUrl = getAlbumCover(item.cover_id, 'small');
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [item.artist_name || artistName, year || ''].filter(Boolean).join(' · ');
-    const itemProgress = progressMap?.get(Number(tidalId));
+    const itemProgress = getProgressByTidalId(String(tidalId));
     const statusBadge = isLocked ? (
       <Badge appearance="filled" color="informative" icon={<LockClosed24Regular />}>
         Locked
@@ -983,7 +980,7 @@ const ArtistPage = () => {
               )}
             </div>
             {(() => {
-              const progress = progressMap?.get(Number(tidalId));
+              const progress = getProgressByTidalId(String(tidalId));
               if (progress && progress.state !== 'completed') {
                 return (
                   <DownloadOverlay
@@ -1232,32 +1229,7 @@ const ArtistPage = () => {
   }, [pageData]);
 
   if (pageLoading) {
-    return (
-      <div className={styles.container}>
-        <Skeleton animation="wave">
-          <div className={styles.header}>
-            <div className={styles.headerContent}>
-              <SkeletonItem className={styles.artistImage} />
-              <div className={styles.artistInfo}>
-                <SkeletonItem style={{ height: '32px', width: 'min(280px, 60%)', borderRadius: tokens.borderRadiusMedium }} />
-                <SkeletonItem style={{ height: '16px', width: 'min(200px, 40%)', borderRadius: tokens.borderRadiusMedium }} />
-                <div className={styles.actions}>
-                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
-                  <SkeletonItem style={{ height: '32px', width: '100px', borderRadius: tokens.borderRadiusMedium }} />
-                  <SkeletonItem style={{ height: '32px', width: '40px', borderRadius: tokens.borderRadiusMedium }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </Skeleton>
-        <div className={styles.modules}>
-          <Skeleton animation="wave">
-            <SkeletonItem style={{ height: '24px', width: '120px', borderRadius: tokens.borderRadiusMedium, marginBottom: tokens.spacingVerticalS }} />
-          </Skeleton>
-          <CardGridSkeleton cards={6} />
-        </div>
-      </div>
-    );
+    return <DetailPageSkeleton artShape="circle" content="cards" cards={6} className={styles.container} />;
   }
 
   if (pageError) {

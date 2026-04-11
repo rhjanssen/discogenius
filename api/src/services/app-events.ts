@@ -58,6 +58,24 @@ export interface RescanCompletedEventPayload {
     trigger: number;
 }
 
+export interface FileChangeEventPayload {
+    libraryFileId?: number | null;
+    artistId?: string | number | null;
+    albumId?: string | number | null;
+    mediaId?: string | number | null;
+    fileType?: string | null;
+    filePath?: string | null;
+    previousPath?: string | null;
+    previousFilePath?: string | null;
+    previousQuality?: string | null;
+    replacementPath?: string | null;
+    libraryRoot?: string | null;
+    quality?: string | null;
+    missing?: boolean;
+    reason?: string | null;
+    timestamp?: string | null;
+}
+
 export interface AppEventPayloadMap {
     [AppEvent.JOB_ADDED]: JobEventPayload;
     [AppEvent.JOB_UPDATED]: JobEventPayload;
@@ -67,9 +85,9 @@ export interface AppEventPayloadMap {
     [AppEvent.ALBUM_SCANNED]: Record<string, unknown>;
     [AppEvent.RESCAN_COMPLETED]: RescanCompletedEventPayload;
     [AppEvent.CONFIG_UPDATED]: Record<string, unknown>;
-    [AppEvent.FILE_ADDED]: Record<string, unknown>;
-    [AppEvent.FILE_DELETED]: Record<string, unknown>;
-    [AppEvent.FILE_UPGRADED]: Record<string, unknown>;
+    [AppEvent.FILE_ADDED]: FileChangeEventPayload;
+    [AppEvent.FILE_DELETED]: FileChangeEventPayload;
+    [AppEvent.FILE_UPGRADED]: FileChangeEventPayload;
 }
 
 class TypedAppEventEmitter extends EventEmitter {
@@ -96,3 +114,15 @@ class TypedAppEventEmitter extends EventEmitter {
 
 export const appEvents = new TypedAppEventEmitter();
 appEvents.setMaxListeners(50);
+
+export function emitFileAdded(payload: FileChangeEventPayload) {
+    appEvents.emit(AppEvent.FILE_ADDED, payload);
+}
+
+export function emitFileDeleted(payload: FileChangeEventPayload) {
+    appEvents.emit(AppEvent.FILE_DELETED, payload);
+}
+
+export function emitFileUpgraded(payload: FileChangeEventPayload) {
+    appEvents.emit(AppEvent.FILE_UPGRADED, payload);
+}

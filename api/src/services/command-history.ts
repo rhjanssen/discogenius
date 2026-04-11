@@ -280,11 +280,18 @@ function collectDescriptionLookupIds(
             continue;
         }
 
-        if (job.type === JobTypes.RefreshArtist || job.type === JobTypes.CurateArtist || job.type === JobTypes.RescanFolders) {
+        if (
+            job.type === JobTypes.RefreshArtist
+            || job.type === JobTypes.CurateArtist
+            || job.type === JobTypes.RescanFolders
+            || job.type === JobTypes.MoveArtist
+            || job.type === JobTypes.RenameArtist
+            || job.type === JobTypes.RetagArtist
+        ) {
             artistIds.add(refId);
         }
 
-        if (job.type === JobTypes.ScanAlbum || job.type === JobTypes.DownloadAlbum) {
+        if (job.type === JobTypes.RefreshAlbum || job.type === JobTypes.DownloadAlbum) {
             albumIds.add(refId);
         }
 
@@ -334,6 +341,7 @@ export const formatTrackTitle = (title: string, version?: string | null) => {
 
 export const buildDescription = (job: Job, context?: DescriptionLookupContext): string => {
     const payload = job.payload || {};
+    const jobType = String(job.type || "");
     if (payload.description) return payload.description;
 
     const tidalId = job.ref_id || payload?.tidalId || payload?.artistId || payload?.albumId || null;
@@ -366,13 +374,13 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return "";
     };
 
-    if (job.type === "RefreshArtist") {
+    if (jobType === "RefreshArtist") {
         const artistName = resolveArtistName();
         if (artistName) return workflowLabel ? `${workflowLabel}: ${artistName}` : artistName;
         return workflowLabel || "Artist refresh";
     }
 
-    if (job.type === "ScanAlbum") {
+    if (jobType === "RefreshAlbum" || jobType === "ScanAlbum") {
         if (payload.albumTitle && payload.artistName) {
             return `${formatAlbumTitle(payload.albumTitle, payload.albumVersion)} by ${payload.artistName}`;
         }
@@ -407,37 +415,37 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return "Unknown Album";
     }
 
-    if (job.type === "ScanPlaylist") {
+    if (jobType === "ScanPlaylist") {
         return payload.playlistName || "Playlist";
     }
 
-    if (job.type === "RefreshMetadata") {
+    if (jobType === "RefreshMetadata") {
         return payload.expectedArtists
             ? `Metadata refresh for ${payload.expectedArtists} managed artist(s)`
             : (payload.target || "Metadata refresh");
     }
 
-    if (job.type === "ApplyCuration") {
+    if (jobType === "ApplyCuration") {
         return payload.expectedArtists
             ? `Curation for ${payload.expectedArtists} managed artist(s)`
             : "Curation";
     }
 
-    if (job.type === "DownloadMissing") {
+    if (jobType === "DownloadMissing") {
         return "Queueing monitored missing downloads";
     }
 
-    if (job.type === "CheckUpgrades") {
+    if (jobType === "CheckUpgrades") {
         return "Checking monitored library upgrades";
     }
 
-    if (job.type === "CurateArtist") {
+    if (jobType === "CurateArtist") {
         const artistName = resolveArtistName();
         if (artistName) return workflowLabel ? `${workflowLabel}: ${artistName}` : `Curate Artist: ${artistName}`;
         return workflowLabel ? `${workflowLabel}: Curate artist` : "Curate Artist";
     }
 
-    if (job.type === "RescanFolders") {
+    if (jobType === "RescanFolders") {
         if (payload?.addNewArtists) {
             return "Scanning library root folders";
         }
@@ -446,16 +454,29 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return workflowLabel || "Rescan folders";
     }
 
-    if (job.type === "ConfigPrune") {
+    if (jobType === "ConfigPrune") {
         return "Library cleanup";
     }
 
-    if (job.type === "ApplyRenames") {
+    if (jobType === "MoveArtist") {
+        const artistName = resolveArtistName();
+        return artistName ? `Move Artist: ${artistName}` : "Move Artist";
+    }
+
+    if (jobType === "RenameArtist" || jobType === "RenameFiles" || jobType === "ApplyRenames") {
         return "Applying library rename plan";
     }
 
-    if (job.type === "ApplyRetags") {
+    if (jobType === "RetagArtist" || jobType === "RetagFiles" || jobType === "ApplyRetags") {
         return "Applying audio retag plan";
+    }
+
+    if (jobType === "BulkRefreshArtist") {
+        return "Queueing metadata refresh for all monitored artists";
+    }
+
+    if (jobType === "CheckHealth") {
+        return "Check Health";
     }
 
     if (job.type === "Housekeeping") {

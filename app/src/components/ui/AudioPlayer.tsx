@@ -1,9 +1,11 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import {
+    Button,
     Text,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
+import { Pause24Filled, Play24Regular } from "@fluentui/react-icons";
 import { formatDurationSeconds } from "@/utils/format";
 
 interface AudioPlayerProps {
@@ -31,6 +33,9 @@ const useStyles = makeStyles({
         "@media (min-width: 640px)": {
             padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         },
+    },
+    playButton: {
+        flexShrink: 0,
     },
     timeText: {
         fontSize: tokens.fontSizeBase200,
@@ -78,6 +83,9 @@ const useStyles = makeStyles({
             transform: "translate(-50%, -50%) scale(1.2)",
         },
     },
+    audioElement: {
+        display: "none",
+    },
 });
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
@@ -93,7 +101,23 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const [currentTime, setCurrentTime] = useState(0);
     const [audioDuration, setAudioDuration] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
     const playbackErrorHandledRef = useRef(false);
+    const isDraggingRef = useRef(false);
+    const onEndedRef = useRef(onEnded);
+    const onPlaybackErrorRef = useRef(onPlaybackError);
+
+    useEffect(() => {
+        isDraggingRef.current = isDragging;
+    }, [isDragging]);
+
+    useEffect(() => {
+        onEndedRef.current = onEnded;
+    }, [onEnded]);
+
+    useEffect(() => {
+        onPlaybackErrorRef.current = onPlaybackError;
+    }, [onPlaybackError]);
 
     const duration = (() => {
         const hasKnownDuration = Boolean(knownDuration && Number.isFinite(knownDuration) && knownDuration > 0);
@@ -116,37 +140,52 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
     useEffect(() => {
-        const audio = new Audio(src);
-        audioRef.current = audio;
-        audio.preload = "metadata";
+        const audio = audioRef.current;
+        if (!audio) {
+            return;
+        }
+
         playbackErrorHandledRef.current = false;
+        setCurrentTime(0);
+        setAudioDuration(0);
+        setIsPlaying(false);
 
         const onTimeUpdate = () => {
-            if (!isDragging) setCurrentTime(audio.currentTime);
+            if (!isDraggingRef.current) setCurrentTime(audio.currentTime);
         };
         const onLoadedMetadata = () => setAudioDuration(audio.duration);
         const onDurationChange = () => setAudioDuration(audio.duration);
+        const onPlay = () => setIsPlaying(true);
+        const onPause = () => setIsPlaying(false);
         const onError = () => {
             if (playbackErrorHandledRef.current) {
                 return;
             }
 
             playbackErrorHandledRef.current = true;
-            onPlaybackError?.();
+            setIsPlaying(false);
+            onPlaybackErrorRef.current?.();
         };
         const onEndedHandler = () => {
             setCurrentTime(0);
-            onEnded?.();
+            setIsPlaying(false);
+            onEndedRef.current?.();
         };
 
         audio.addEventListener("timeupdate", onTimeUpdate);
         audio.addEventListener("loadedmetadata", onLoadedMetadata);
         audio.addEventListener("ended", onEndedHandler);
         audio.addEventListener("durationchange", onDurationChange);
+        audio.addEventListener("play", onPlay);
+        audio.addEventListener("pause", onPause);
         audio.addEventListener("error", onError);
 
+        audio.load();
+
         if (autoPlay) {
-            audio.play().catch(() => { });
+            void audio.play().catch(() => {
+                setIsPlaying(false);
+            });
         }
 
         return () => {
@@ -155,11 +194,28 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             audio.removeEventListener("loadedmetadata", onLoadedMetadata);
             audio.removeEventListener("ended", onEndedHandler);
             audio.removeEventListener("durationchange", onDurationChange);
+            audio.removeEventListener("play", onPlay);
+            audio.removeEventListener("pause", onPause);
             audio.removeEventListener("error", onError);
-            audio.src = "";
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [onEnded, onPlaybackError, src]);
+    }, [autoPlay, src]);
+
+    const handleTogglePlayback = useCallback(() => {
+        const audio = audioRef.current;
+        if (!audio) {
+            return;
+        }
+
+        if (audio.paused) {
+            void audio.play().catch(() => {
+                setIsPlaying(false);
+                onPlaybackErrorRef.current?.();
+            });
+            return;
+        }
+
+        audio.pause();
+    }, []);
 
     const seekToPosition = useCallback(
         (clientX: number) => {
@@ -174,11 +230,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     );
 
     const handleMouseDown = (e: React.MouseEvent) => {
+        isDraggingRef.current = true;
         setIsDragging(true);
         seekToPosition(e.clientX);
 
         const handleMouseMove = (ev: MouseEvent) => seekToPosition(ev.clientX);
         const handleMouseUp = () => {
+            isDraggingRef.current = false;
             setIsDragging(false);
             window.removeEventListener("mousemove", handleMouseMove);
             window.removeEventListener("mouseup", handleMouseUp);
@@ -189,6 +247,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
 
     const handleTouchStart = (e: React.TouchEvent) => {
+        isDraggingRef.current = true;
         setIsDragging(true);
         seekToPosition(e.touches[0].clientX);
 
@@ -197,6 +256,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             seekToPosition(ev.touches[0].clientX);
         };
         const handleTouchEnd = () => {
+            isDraggingRef.current = false;
             setIsDragging(false);
             window.removeEventListener("touchmove", handleTouchMove);
             window.removeEventListener("touchend", handleTouchEnd);
@@ -207,11 +267,27 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
 
     return (
-        <div className={styles.container}>
+        <div className={styles.container} data-testid="audio-player">
+            <audio
+                ref={audioRef}
+                className={styles.audioElement}
+                src={src}
+                preload="metadata"
+                playsInline
+            />
+            <Button
+                appearance="subtle"
+                aria-label={isPlaying ? "Pause playback" : "Resume playback"}
+                data-testid={isPlaying ? "playback-pause" : "playback-resume"}
+                className={styles.playButton}
+                icon={isPlaying ? <Pause24Filled /> : <Play24Regular />}
+                onClick={handleTogglePlayback}
+            />
             <Text className={styles.timeText}>{formatDurationSeconds(currentTime)}</Text>
             <div
                 ref={scrubberRef}
                 className={styles.scrubberContainer}
+                data-testid="audio-player-scrubber"
                 onMouseDown={handleMouseDown}
                 onTouchStart={handleTouchStart}
             >

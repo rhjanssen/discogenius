@@ -79,7 +79,7 @@ Examples:
 - `api/src/services/command-history.ts` resolves titles by `job.ref_id || payload.tidalId`
 - `api/src/routes/search.ts` checks monitored/in-library state by `id = tidalId`
 - `api/src/utils/url-helpers.ts` is entirely TIDAL-specific
-- `api/src/services/audio-tag-maintenance.ts` writes a `TIDAL_URL` tag directly from `media_id`
+- `api/src/services/audio-tag-service.ts` writes a `TIDAL_URL` tag directly from `media_id`
 
 ### Playlists are closer, but not fully there
 
@@ -266,7 +266,7 @@ Highest-risk code and schema areas that the migration must explicitly cover:
 - `api/src/routes/unmapped.ts`
 - `api/src/routes/playlists.ts`
 - `api/src/utils/url-helpers.ts`
-- `api/src/services/audio-tag-maintenance.ts`
+- `api/src/services/audio-tag-service.ts`
 - `api/src/services/artist-query-service.ts`
 
 ### Planned provider/backend work that depends on this RFC

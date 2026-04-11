@@ -1,6 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import type { TrackListItem as Track } from "@/types/track-list";
 import {
   LIBRARY_UPDATED_EVENT,
@@ -8,152 +14,194 @@ import {
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
 
-export const useTracks = (options?: {
+type TracksPage = {
+  items: Track[];
+  hasMore: boolean;
+  total: number;
+  offset: number;
+};
+
+type UseTracksOptions = {
   monitored?: boolean;
   downloaded?: boolean;
   locked?: boolean;
-  libraryFilter?: 'all' | 'stereo' | 'atmos' | 'video';
+  libraryFilter?: "all" | "stereo" | "atmos" | "video";
   sort?: string;
-  dir?: 'asc' | 'desc';
+  dir?: "asc" | "desc";
   search?: string;
   enabled?: boolean;
-}) => {
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [total, setTotal] = useState(0);
+};
+
+const TRACKS_PAGE_SIZE = 100;
+const TRACKS_GLOBAL_EVENTS = [
+  "artist.scanned",
+  "album.scanned",
+  "rescan.completed",
+  "file.added",
+  "file.deleted",
+  "file.upgraded",
+] as const;
+
+const tracksQueryKey = (options: UseTracksOptions) => [
+  "tracks",
+  {
+    monitored: options.monitored,
+    downloaded: options.downloaded,
+    locked: options.locked,
+    libraryFilter: options.libraryFilter ?? "all",
+    sort: options.sort ?? null,
+    dir: options.dir ?? null,
+    search: options.search ?? "",
+  },
+] as const;
+
+function normalizeTracksPage(response: unknown, offset: number): TracksPage {
+  if (Array.isArray(response)) {
+    return {
+      items: response as Track[],
+      hasMore: false,
+      total: offset + response.length,
+      offset,
+    };
+  }
+
+  const record = (response && typeof response === "object")
+    ? response as {
+      items?: unknown;
+      hasMore?: unknown;
+      total?: unknown;
+    }
+    : null;
+  const items = Array.isArray(record?.items) ? record.items as Track[] : [];
+
+  return {
+    items,
+    hasMore: record?.hasMore === true,
+    total: typeof record?.total === "number" ? record.total : offset + items.length,
+    offset,
+  };
+}
+
+function updateTrackPages(
+  data: InfiniteData<TracksPage> | undefined,
+  updater: (track: Track) => Track,
+): InfiniteData<TracksPage> | undefined {
+  if (!data) {
+    return data;
+  }
+
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.map(updater),
+    })),
+  };
+}
+
+export const useTracks = (options?: UseTracksOptions) => {
   const { toast } = useToast();
-  const toastRef = useRef(toast);
-  const fetchIdRef = useRef(0);
-  const appendInFlightRef = useRef(false);
-
-  const monitored = options?.monitored;
-  const downloaded = options?.downloaded;
-  const locked = options?.locked;
-  const libraryFilter = options?.libraryFilter ?? 'all';
-  const sort = options?.sort;
-  const dir = options?.dir;
-  const search = options?.search;
+  const queryClient = useQueryClient();
   const enabled = options?.enabled ?? true;
+  const queryKey = tracksQueryKey(options ?? {});
+  const lastErrorMessageRef = useRef<string | null>(null);
 
-  const fetchTracksPage = useCallback(async (pageNum: number = 0, append: boolean = false) => {
-    if (!enabled) {
-      fetchIdRef.current += 1;
-      setLoading(false);
+  useDebouncedQueryInvalidation({
+    queryKeys: [queryKey],
+    globalEvents: [...TRACKS_GLOBAL_EVENTS],
+    windowEvents: [LIBRARY_UPDATED_EVENT],
+    debounceMs: 400,
+  });
+
+  const query = useInfiniteQuery({
+    queryKey,
+    queryFn: async ({ pageParam }) => {
+      const offset = Number(pageParam || 0);
+      const response = await api.getTracks({
+        limit: TRACKS_PAGE_SIZE,
+        offset,
+        monitored: options?.monitored,
+        downloaded: options?.downloaded,
+        locked: options?.locked,
+        library_filter: (options?.libraryFilter ?? "all") === "video"
+          ? "all"
+          : (options?.libraryFilter ?? "all"),
+        sort: options?.sort,
+        dir: options?.dir,
+        search: options?.search,
+      });
+
+      return normalizeTracksPage(response, offset);
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => (
+      lastPage.hasMore
+        ? lastPage.offset + lastPage.items.length
+        : undefined
+    ),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+    enabled,
+  });
+
+  const pages = query.data?.pages ?? [];
+  const tracks = enabled ? pages.flatMap((page) => page.items) : [];
+  const hasMore = enabled ? Boolean(query.hasNextPage) : false;
+  const total = enabled ? (pages[pages.length - 1]?.total ?? pages[0]?.total ?? 0) : 0;
+  const loading = enabled ? query.isPending && tracks.length === 0 : false;
+
+  useEffect(() => {
+    if (!query.isError) {
+      lastErrorMessageRef.current = null;
       return;
     }
 
-    const fetchId = ++fetchIdRef.current;
-
-    try {
-      if (!append) {
-        setLoading(true);
-      }
-      const data: any = await api.getTracks({
-        limit: 100,
-        offset: pageNum * 100,
-        monitored,
-        downloaded,
-        locked,
-        library_filter: libraryFilter === 'video' ? 'all' : libraryFilter,
-        sort,
-        dir,
-        search,
-      });
-
-      if (fetchId !== fetchIdRef.current) {
-        return;
-      }
-
-      if (append) {
-        setTracks(prev => [...prev, ...(data.items || data)]);
-      } else {
-        setTracks(data.items || data);
-      }
-
-      setHasMore(data.hasMore !== undefined ? data.hasMore : false);
-      setTotal(data.total || 0);
-      setPage(pageNum);
-    } catch (error: any) {
-      if (fetchId !== fetchIdRef.current) {
-        return;
-      }
-      console.error('Error fetching tracks:', error);
-      toastRef.current({
-        title: "Failed to load tracks",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      if (!append && fetchId === fetchIdRef.current) {
-        setLoading(false);
-      }
+    const message = query.error instanceof Error
+      ? query.error.message
+      : "Could not load tracks";
+    if (message === lastErrorMessageRef.current) {
+      return;
     }
-  }, [enabled, monitored, downloaded, locked, libraryFilter, sort, dir, search]);
 
-  const loadMore = useCallback(async () => {
-    if (!hasMore || loading) return;
-    if (appendInFlightRef.current) return;
-
-    appendInFlightRef.current = true;
-    try {
-      await fetchTracksPage(page + 1, true);
-    } finally {
-      appendInFlightRef.current = false;
-    }
-  }, [page, hasMore, loading, fetchTracksPage]);
-
-  const fetchRef = useRef(fetchTracksPage);
-  fetchRef.current = fetchTracksPage;
+    lastErrorMessageRef.current = message;
+    toast({
+      title: "Failed to load tracks",
+      description: message,
+      variant: "destructive",
+    });
+  }, [query.error, query.isError, toast]);
 
   useEffect(() => {
-    toastRef.current = toast;
-  }, [toast]);
-
-  useEffect(() => {
-    const handleLibraryUpdate = () => {
-      if (!enabled) {
-        return;
-      }
-
-      fetchRef.current(0, false);
-    };
-
     const handleMonitorStateChanged = (event: Event) => {
       const detail = (event as CustomEvent<MonitorStateChangedDetail>).detail;
       if (!detail || detail.type !== "track") {
         return;
       }
 
-      setTracks((prev) => prev.map((track) => (
-        track.id === detail.tidalId
-          ? { ...track, is_monitored: detail.monitored, monitor: detail.monitored }
-          : track
-      )));
+      queryClient.setQueriesData<InfiniteData<TracksPage>>(
+        { queryKey: ["tracks"] },
+        (current) => updateTrackPages(current, (track) => (
+          track.id === detail.tidalId
+            ? { ...track, is_monitored: detail.monitored, monitor: detail.monitored }
+            : track
+        )),
+      );
     };
 
-    window.addEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
     window.addEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
-
     return () => {
-      window.removeEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
       window.removeEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
     };
-  }, [enabled]);
+  }, [queryClient]);
 
-  useEffect(() => {
-    if (!enabled) {
-      fetchIdRef.current += 1;
-      setLoading(false);
+  const loadMore = useCallback(async () => {
+    if (!enabled || !query.hasNextPage || query.isFetchingNextPage) {
       return;
     }
 
-    setTracks([]);
-    setPage(0);
-    setHasMore(true);
-    fetchRef.current(0, false);
-  }, [enabled, monitored, downloaded, locked, libraryFilter, sort, dir, search]);
+    await query.fetchNextPage();
+  }, [enabled, query]);
 
   return {
     tracks,
@@ -161,6 +209,6 @@ export const useTracks = (options?: {
     hasMore,
     total,
     loadMore,
-    refetch: () => fetchTracksPage(0, false),
+    refetch: () => query.refetch(),
   };
 };

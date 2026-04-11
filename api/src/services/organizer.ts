@@ -6,7 +6,8 @@ import { db } from "../database.js";
 import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveBioFile, saveReviewFile, saveLyricsFile } from "./metadata-files.js";
 import { getArtist, getTrack, getVideo } from "./tidal.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolder, resolveArtistFolderFromRecord } from "./naming.js";
+import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
+import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
@@ -839,8 +840,8 @@ export class OrganizerService {
     [musicRoot, spatialRoot, videoRoot].forEach((root) => this.ensureDir(root));
 
     if (type === "album") {
-      const { scanAlbumShallow } = await import("./scanner.js");
-      await scanAlbumShallow(tidalId);
+      const { RefreshAlbumService } = await import("./refresh-album-service.js");
+      await RefreshAlbumService.scanShallow(tidalId);
 
       const album = db.prepare("SELECT * FROM albums WHERE id = ?").get(tidalId) as any;
       if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
@@ -854,7 +855,11 @@ export class OrganizerService {
         const remoteArtist = await getArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
-        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        artistPath = resolveArtistFolderForPersistence({
+          artistId,
+          artistName: fetchedArtistName,
+          artistMbId: artistMbId || null,
+        });
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
@@ -903,6 +908,7 @@ export class OrganizerService {
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
       let sampleRelativeTrackPath: string | null = null;
       const processedEmbeddedVideoIds = new Set<string>();
+      const albumTrackNamingTemplate = path.join(artistFolder, trackTemplate);
 
       for (const srcFile of files) {
         const ext = path.extname(srcFile).toLowerCase();
@@ -954,6 +960,7 @@ export class OrganizerService {
           releaseYear: year,
           trackTitle,
           trackId,
+          trackMbId: trackRow.mbid || null,
           trackArtistName: resolvedTrackArtistName,
           trackArtistMbId,
           trackVersion: trackRow.version || null,
@@ -993,7 +1000,7 @@ export class OrganizerService {
             libraryRoot: targetRoot,
             fileType: "track",
             quality: derivedQuality,
-            namingTemplate: "default",
+            namingTemplate: albumTrackNamingTemplate,
             expectedPath: destFile,
             bitDepth: metrics.bitDepth,
             sampleRate: metrics.sampleRate,
@@ -1261,8 +1268,8 @@ export class OrganizerService {
       if (!albumId) throw new Error(`Track ${tidalId} missing album_id`);
 
       // Ensure album + tracks in DB for naming + review (and to locate track metadata)
-      const { scanAlbumShallow } = await import("./scanner.js");
-      await scanAlbumShallow(albumId);
+      const { RefreshAlbumService } = await import("./refresh-album-service.js");
+      await RefreshAlbumService.scanShallow(albumId);
 
       const album = db.prepare("SELECT * FROM albums WHERE id = ?").get(albumId) as any;
       if (!album) throw new Error(`Album ${albumId} not found in DB after scan`);
@@ -1279,7 +1286,11 @@ export class OrganizerService {
         const remoteArtist = await getArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
-        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        artistPath = resolveArtistFolderForPersistence({
+          artistId,
+          artistName: fetchedArtistName,
+          artistMbId: artistMbId || null,
+        });
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
@@ -1308,6 +1319,7 @@ export class OrganizerService {
       const trackTemplate = Number(album.num_volumes || 1) > 1
         ? naming.album_track_path_multi
         : naming.album_track_path_single;
+      const trackNamingTemplate = path.join(artistFolder, trackTemplate);
 
       const relativeTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
@@ -1321,6 +1333,7 @@ export class OrganizerService {
         releaseYear: year,
         trackTitle,
         trackId: tidalId,
+        trackMbId: trackRow.mbid || null,
         trackArtistName: resolvedTrackArtistName,
         trackArtistMbId,
         trackNumber,
@@ -1349,7 +1362,7 @@ export class OrganizerService {
           libraryRoot: targetRoot,
           fileType: "track",
           quality: derivedQuality,
-          namingTemplate: "default",
+          namingTemplate: trackNamingTemplate,
           expectedPath: dest,
           bitDepth: metrics.bitDepth,
           sampleRate: metrics.sampleRate,
@@ -1617,7 +1630,10 @@ export class OrganizerService {
           try {
             const a = await getArtist(videoArtistId);
             db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
-              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolder(a.name));
+              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
+                artistId: videoArtistId,
+                artistName: a.name,
+              }));
           } catch {
             // ignore
           }
@@ -1676,7 +1692,11 @@ export class OrganizerService {
         const remoteArtist = await getArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
-        artistPath = resolveArtistFolder(fetchedArtistName, artistMbId || null);
+        artistPath = resolveArtistFolderForPersistence({
+          artistId,
+          artistName: fetchedArtistName,
+          artistMbId: artistMbId || null,
+        });
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
@@ -1690,6 +1710,7 @@ export class OrganizerService {
       });
       const targetDir = path.join(videoRoot, artistFolder);
       this.ensureDir(targetDir);
+      const videoNamingTemplate = path.join(artistFolder, naming.video_file);
 
       const ext = path.extname(src);
       const destName = `${renderFileStem(naming.video_file, {
@@ -1729,7 +1750,7 @@ export class OrganizerService {
           libraryRoot: videoRoot,
           fileType: "video",
           quality: derivedVideoQuality,
-          namingTemplate: "default",
+          namingTemplate: videoNamingTemplate,
           expectedPath: dest,
           bitDepth: metrics.bitDepth,
           sampleRate: metrics.sampleRate,
@@ -1770,7 +1791,7 @@ export class OrganizerService {
             libraryRoot: videoRoot,
             fileType: "video_thumbnail",
             quality: derivedVideoQuality,
-            namingTemplate: "default",
+            namingTemplate: videoNamingTemplate,
           })
           : null;
         const transientCoverPath = persistentCoverPath ? null : path.join(path.dirname(dest), `.${path.parse(dest).name}.embed-thumb.jpg`);
@@ -1806,7 +1827,7 @@ export class OrganizerService {
             libraryRoot: videoRoot,
             fileType: "video_thumbnail",
             quality: derivedVideoQuality,
-            namingTemplate: "default",
+            namingTemplate: videoNamingTemplate,
             expectedPath: persistentCoverPath,
           });
         }

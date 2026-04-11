@@ -4,11 +4,11 @@ import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { db } from "../database.js";
-import { LibraryFilesService } from "../services/library-files.js";
 import { listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/library-paths.js";
 import { queueArtistWorkflow } from "../services/artist-workflow.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
+import { RenameTrackFileService } from "../services/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/audioUtils.js";
 import { rootScanRouteService, type RootScanSsePayload } from "../services/root-scan-route-service.js";
 
@@ -55,7 +55,7 @@ router.get("/rename/preview", (req, res) => {
     const limit = parseInt(req.query.limit as string) || 200;
     const offset = parseInt(req.query.offset as string) || 0;
 
-    const items = LibraryFilesService.previewRenames({ artistId, albumId, libraryRoot, fileTypes, limit, offset });
+    const items = RenameTrackFileService.getRenamePreviews({ artistId, albumId, libraryRoot, fileTypes, limit, offset });
     res.json({ items, limit, offset });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -70,7 +70,7 @@ router.get("/rename/status", (req, res) => {
     const fileTypes = parseFileTypes(req.query.fileTypes);
     const sampleLimit = parseInt(req.query.sampleLimit as string) || 10;
 
-    const summary = LibraryFilesService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes }, sampleLimit);
+    const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes }, sampleLimit);
     res.json(summary);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -92,18 +92,31 @@ router.post("/rename/apply", (req, res) => {
     const normalizedIds = ids && Array.isArray(ids)
       ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
       : undefined;
+    const isArtistWideRename = applyAll
+      && Boolean(artistId)
+      && !albumId
+      && !libraryRoot
+      && (!fileTypes || fileTypes.length === 0)
+      && (!normalizedIds || normalizedIds.length === 0);
     const refId = applyAll
-      ? `apply-renames:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`
+      ? (isArtistWideRename
+        ? artistId
+        : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
       : undefined;
 
-    const jobId = TaskQueueService.addJob(JobTypes.ApplyRenames, {
-      ids: normalizedIds,
-      applyAll,
-      artistId,
-      albumId,
-      libraryRoot,
-      fileTypes,
-    }, refId, 1, 1);
+    const jobId = isArtistWideRename
+      ? TaskQueueService.addJob(JobTypes.RenameArtist, {
+        artistId,
+        artistIds: artistId ? [artistId] : undefined,
+      }, refId, 1, 1)
+      : TaskQueueService.addJob(JobTypes.RenameFiles, {
+        ids: normalizedIds,
+        applyAll,
+        artistId,
+        albumId,
+        libraryRoot,
+        fileTypes,
+      }, refId, 1, 1);
 
     res.json({
       success: true,

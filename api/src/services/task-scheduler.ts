@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "./config.js";
 import { CurationService } from "./curation-service.js";
-import { scanArtistDeep } from "./scanner.js";
+import { RefreshArtistService } from "./refresh-artist-service.js";
 import { JobTypes, TaskQueueService, type Job } from "./queue.js";
 import { getManagedArtists, getManagedArtistsDueForRefresh } from "./managed-artists.js";
 import { readIntEnv } from "../utils/env.js";
@@ -672,7 +672,7 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
         try {
             console.log(`  Checking ${artist.name}...`);
             const isMonitored = Boolean(artist.monitor);
-            await scanArtistDeep(artist.id, {
+            await RefreshArtistService.scanDeep(artist.id, {
                 monitorArtist: isMonitored,
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,
@@ -745,7 +745,7 @@ export async function checkNowStreaming(sendEvent: (event: string, data: any) =>
                 total: scanTargets.length,
             });
 
-            await scanArtistDeep(artist.id, {
+            await RefreshArtistService.scanDeep(artist.id, {
                 monitorArtist: isMonitored,
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,
@@ -824,15 +824,17 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
 // Phase 1: Manual Command Queue Functions
 // ============================================================================
 
-export function queueRefreshAllMonitored(options: { trigger?: number } = {}) {
+export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
     return TaskQueueService.addJob(
-        JobTypes.RefreshAllMonitored,
+        JobTypes.BulkRefreshArtist,
         {},
-        'refresh-all-monitored',
+        'bulk-refresh-artist',
         10,  // manual trigger boost
         options.trigger ?? 1,
     );
 }
+
+export const queueRefreshAllMonitored = queueBulkRefreshArtist;
 
 export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
     const skipFlags = true;  // Clear skip_* flags before queueing DownloadMissing
@@ -855,15 +857,17 @@ export function queueRescanAllRoots(options: { trigger?: number } = {}) {
     );
 }
 
-export function queueHealthCheck(options: { trigger?: number } = {}) {
+export function queueCheckHealth(options: { trigger?: number } = {}) {
     return TaskQueueService.addJob(
-        JobTypes.HealthCheck,
+        JobTypes.CheckHealth,
         {},
-        'health-check',
+        'check-health',
         0,
         options.trigger ?? 1,
     );
 }
+
+export const queueHealthCheck = queueCheckHealth;
 
 export function queueCompactDatabase(options: { trigger?: number } = {}) {
     return TaskQueueService.addJob(

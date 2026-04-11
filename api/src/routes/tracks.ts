@@ -116,14 +116,14 @@ router.get("/:trackId/files", (req, res) => {
   }
 });
 
-import { seedTrack } from "../services/scanner.js";
+import { MediaSeedService } from "../services/media-seed-service.js";
 
 router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     const trackId = getRequiredIdentifier(body, "id");
 
-    const trackData = await seedTrack(trackId, { monitorArtist: true });
+    const trackData = await MediaSeedService.seedTrack(trackId, { monitorArtist: true });
     const albumId = String(trackData.album_id);
 
     db.prepare(`

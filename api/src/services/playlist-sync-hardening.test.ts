@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../database.js");
 let queueModule: typeof import("./queue.js");
 let syncModule: typeof import("./playlist-sync.js");
-let scannerModule: typeof import("./scanner.js");
+let refreshPlaylistModule: typeof import("./refresh-playlist-service.js");
 
 before(async () => {
     dbModule = await import("../database.js");
@@ -19,7 +19,7 @@ before(async () => {
 
     queueModule = await import("./queue.js");
     syncModule = await import("./playlist-sync.js");
-    scannerModule = await import("./scanner.js");
+    refreshPlaylistModule = await import("./refresh-playlist-service.js");
 });
 
 beforeEach(() => {
@@ -102,26 +102,26 @@ test("queuePlaylistSyncByUuid returns existing queued/processing job", () => {
 });
 
 test("validatePlaylistTrackPayload classifies empty and malformed states", () => {
-    const empty = scannerModule.validatePlaylistTrackPayload(0, []);
+    const empty = refreshPlaylistModule.validatePlaylistTrackPayload(0, []);
     assert.equal(empty.state, "empty");
     assert.equal(empty.remoteItemCount, 0);
 
-    const malformedShape = scannerModule.validatePlaylistTrackPayload(3, { items: "oops" });
+    const malformedShape = refreshPlaylistModule.validatePlaylistTrackPayload(3, { items: "oops" });
     assert.equal(malformedShape.state, "malformed");
 
-    const malformedNoIds = scannerModule.validatePlaylistTrackPayload(2, [{ foo: "bar" }, { id: null }]);
+    const malformedNoIds = refreshPlaylistModule.validatePlaylistTrackPayload(2, [{ foo: "bar" }, { id: null }]);
     assert.equal(malformedNoIds.state, "malformed");
 });
 
 test("validatePlaylistTrackPayload classifies partial and valid states", () => {
-    const partialParse = scannerModule.validatePlaylistTrackPayload(2, [{ id: 1 }, { foo: "bar" }]);
+    const partialParse = refreshPlaylistModule.validatePlaylistTrackPayload(2, [{ id: 1 }, { foo: "bar" }]);
     assert.equal(partialParse.state, "partial");
     assert.equal(partialParse.tracks.length, 1);
 
-    const partialCount = scannerModule.validatePlaylistTrackPayload(3, [{ id: 1 }, { id: 2 }]);
+    const partialCount = refreshPlaylistModule.validatePlaylistTrackPayload(3, [{ id: 1 }, { id: 2 }]);
     assert.equal(partialCount.state, "partial");
 
-    const valid = scannerModule.validatePlaylistTrackPayload(2, [
+    const valid = refreshPlaylistModule.validatePlaylistTrackPayload(2, [
         { id: 1, album_id: 11 },
         { item: { id: "2", album: { id: "22" } } },
     ]);

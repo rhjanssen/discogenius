@@ -15,7 +15,7 @@ import {
   Library24Regular,
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
-import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useTidalConnection } from "@/hooks/useTidalConnection";
 import GlobalSearch from "./GlobalSearch";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
@@ -369,7 +369,7 @@ const Layout = () => {
   const location = useLocation();
   const { colors } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
-  const { stats } = useDownloadQueue();
+  const { stats } = useQueueStatus();
   const { status } = useTidalConnection();
   const isAuthRoute = location.pathname === "/auth";
 

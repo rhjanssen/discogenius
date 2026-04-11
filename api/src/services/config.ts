@@ -298,7 +298,7 @@ export function readConfig(): DiscoGeniusConfig {
     // Deep merge with defaults to ensure all nested fields exist
     const metadataFromFile: Partial<MetadataConfig> = { ...(parsed.metadata || {}) };
     if (metadataFromFile.enable_fingerprinting === undefined) {
-      metadataFromFile.enable_fingerprinting = false;
+      metadataFromFile.enable_fingerprinting = DEFAULT_CONFIG.metadata.enable_fingerprinting;
     }
 
     const config: DiscoGeniusConfig = {

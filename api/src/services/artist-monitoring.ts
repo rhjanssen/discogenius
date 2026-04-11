@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { invalidateAlbumDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
-import { scanArtistBasic } from "./scanner.js";
+import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueArtistWorkflow } from "./artist-workflow.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -133,7 +133,7 @@ export async function monitorArtistAndQueueIntake(options: {
     priority?: number;
     trigger?: number;
 }) {
-    await scanArtistBasic(options.artistId, { monitorArtist: true });
+    await RefreshArtistService.scanBasic(options.artistId, { monitorArtist: true });
 
     const changes = applyArtistMonitoringState(options.artistId, true);
     if (changes === 0) {
@@ -187,7 +187,7 @@ export async function setArtistMonitoredState(options: {
 export async function queueArtistRefreshScan(artistId: string, options?: { forceUpdate?: boolean }) {
     let artist = loadArtistWithEffectiveMonitor(artistId);
     if (!artist) {
-        await scanArtistBasic(artistId);
+        await RefreshArtistService.scanBasic(artistId);
         artist = loadArtistWithEffectiveMonitor(artistId);
         if (!artist) {
             return null;

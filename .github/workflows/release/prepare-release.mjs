@@ -136,7 +136,7 @@ function main() {
 
   console.log(`Prepared release ${args.version}`);
   console.log("Updated: api/package.json, app/package.json, CHANGELOG.md");
-  console.log("Next: run 'yarn install', 'yarn build', 'yarn lint', commit, tag v<version>, push");
+  console.log("Next: run 'yarn install', 'yarn ci', commit as 'release: <version>', tag v<version>, push");
 }
 
 try {

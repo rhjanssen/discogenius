@@ -1,6 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import {
   LIBRARY_UPDATED_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
@@ -12,192 +18,216 @@ import type { VideoContract as Video } from "@contracts/catalog";
 
 export type { Video };
 
-export const useVideos = (options?: {
+type VideosPage = {
+  items: Video[];
+  hasMore: boolean;
+  total: number;
+  offset: number;
+};
+
+type UseVideosOptions = {
   monitored?: boolean;
   downloaded?: boolean;
   locked?: boolean;
   sort?: string;
-  dir?: 'asc' | 'desc';
+  dir?: "asc" | "desc";
   search?: string;
   enabled?: boolean;
-}) => {
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [total, setTotal] = useState(0);
+};
+
+const VIDEOS_PAGE_SIZE = 50;
+const VIDEOS_GLOBAL_EVENTS = [
+  "artist.scanned",
+  "album.scanned",
+  "rescan.completed",
+  "file.added",
+  "file.deleted",
+  "file.upgraded",
+] as const;
+
+const videosQueryKey = (options: UseVideosOptions) => [
+  "videos",
+  {
+    monitored: options.monitored,
+    downloaded: options.downloaded,
+    locked: options.locked,
+    sort: options.sort ?? null,
+    dir: options.dir ?? null,
+    search: options.search ?? "",
+  },
+] as const;
+
+function updateVideoPages(
+  data: InfiniteData<VideosPage> | undefined,
+  updater: (video: Video) => Video,
+): InfiniteData<VideosPage> | undefined {
+  if (!data) {
+    return data;
+  }
+
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.map(updater),
+    })),
+  };
+}
+
+export const useVideos = (options?: UseVideosOptions) => {
   const { toast } = useToast();
-  const toastRef = useRef(toast);
-  const fetchIdRef = useRef(0);
-  const appendInFlightRef = useRef(false);
-
-  const monitored = options?.monitored;
-  const downloaded = options?.downloaded;
-  const locked = options?.locked;
-  const sort = options?.sort;
-  const dir = options?.dir;
-  const search = options?.search;
+  const queryClient = useQueryClient();
   const enabled = options?.enabled ?? true;
+  const queryKey = videosQueryKey(options ?? {});
+  const lastErrorMessageRef = useRef<string | null>(null);
 
-  const fetchVideosPage = useCallback(async (pageNum: number = 0, append: boolean = false) => {
-    if (!enabled) {
-      fetchIdRef.current += 1;
-      setLoading(false);
+  useDebouncedQueryInvalidation({
+    queryKeys: [queryKey],
+    globalEvents: [...VIDEOS_GLOBAL_EVENTS],
+    windowEvents: [LIBRARY_UPDATED_EVENT],
+    debounceMs: 400,
+  });
+
+  const query = useInfiniteQuery({
+    queryKey,
+    queryFn: async ({ pageParam }) => {
+      const offset = Number(pageParam || 0);
+      const response = await api.getVideos({
+        limit: VIDEOS_PAGE_SIZE,
+        offset,
+        monitored: options?.monitored,
+        downloaded: options?.downloaded,
+        locked: options?.locked,
+        sort: options?.sort,
+        dir: options?.dir,
+        search: options?.search,
+      });
+
+      return {
+        items: response.items,
+        hasMore: response.hasMore,
+        total: response.total,
+        offset,
+      };
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => (
+      lastPage.hasMore
+        ? lastPage.offset + lastPage.items.length
+        : undefined
+    ),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+    enabled,
+  });
+
+  const pages = query.data?.pages ?? [];
+  const videos = enabled ? pages.flatMap((page) => page.items) : [];
+  const hasMore = enabled ? Boolean(query.hasNextPage) : false;
+  const total = enabled ? (pages[pages.length - 1]?.total ?? pages[0]?.total ?? 0) : 0;
+  const loading = enabled ? query.isPending && videos.length === 0 : false;
+
+  useEffect(() => {
+    if (!query.isError) {
+      lastErrorMessageRef.current = null;
       return;
     }
 
-    const fetchId = ++fetchIdRef.current;
-
-    try {
-      if (!append) {
-        setLoading(true);
-      }
-      const data = await api.getVideos({
-        limit: 50,
-        offset: pageNum * 50,
-        monitored,
-        downloaded,
-        locked,
-        sort,
-        dir,
-        search,
-      });
-
-      if (fetchId !== fetchIdRef.current) {
-        return;
-      }
-
-      if (append) {
-        setVideos(prev => [...prev, ...data.items]);
-      } else {
-        setVideos(data.items);
-      }
-
-      setHasMore(data.hasMore);
-      setTotal(data.total);
-      setPage(pageNum);
-    } catch (error: any) {
-      if (fetchId !== fetchIdRef.current) {
-        return;
-      }
-      console.error('Error fetching videos:', error);
-      toastRef.current({
-        title: "Failed to load videos",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      if (!append && fetchId === fetchIdRef.current) {
-        setLoading(false);
-      }
+    const message = query.error instanceof Error
+      ? query.error.message
+      : "Could not load videos";
+    if (message === lastErrorMessageRef.current) {
+      return;
     }
-  }, [enabled, monitored, downloaded, locked, sort, dir, search]);
 
-  const loadMore = useCallback(async () => {
-    if (!hasMore || loading) return;
-    if (appendInFlightRef.current) return;
-
-    appendInFlightRef.current = true;
-    try {
-      await fetchVideosPage(page + 1, true);
-    } finally {
-      appendInFlightRef.current = false;
-    }
-  }, [page, hasMore, loading, fetchVideosPage]);
-
-  const toggleMonitor = useCallback(async (videoId: string, nextState: boolean) => {
-    try {
-      await api.updateVideo(videoId, { monitored: nextState });
-      setVideos(prev =>
-        prev.map(video =>
-          video.id === videoId ? { ...video, is_monitored: nextState } : video
-        )
-      );
-      dispatchMonitorStateChanged({
-        type: 'video',
-        tidalId: videoId,
-        monitored: nextState,
-      });
-      dispatchLibraryUpdated();
-    } catch (error: any) {
-      console.error('Error updating video:', error);
-      toastRef.current({
-        title: "Failed to update video",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  }, []);
-
-  const toggleLock = useCallback(async (videoId: string, nextState: boolean) => {
-    try {
-      await api.updateVideo(videoId, { monitor_lock: nextState });
-      setVideos(prev =>
-        prev.map(video =>
-          video.id === videoId ? { ...video, monitor_lock: nextState, monitor_locked: nextState } : video
-        )
-      );
-      dispatchLibraryUpdated();
-    } catch (error: any) {
-      console.error('Error updating video lock:', error);
-      toastRef.current({
-        title: "Failed to update video lock",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  }, []);
-
-  const fetchRef = useRef(fetchVideosPage);
-  fetchRef.current = fetchVideosPage;
+    lastErrorMessageRef.current = message;
+    toast({
+      title: "Failed to load videos",
+      description: message,
+      variant: "destructive",
+    });
+  }, [query.error, query.isError, toast]);
 
   useEffect(() => {
-    toastRef.current = toast;
-  }, [toast]);
-
-  useEffect(() => {
-    const handleLibraryUpdate = () => {
-      if (!enabled) {
-        return;
-      }
-
-      fetchRef.current(0, false);
-    };
-
     const handleMonitorStateChanged = (event: Event) => {
       const detail = (event as CustomEvent<MonitorStateChangedDetail>).detail;
       if (!detail || detail.type !== "video") {
         return;
       }
 
-      setVideos((prev) => prev.map((video) => (
-        video.id === detail.tidalId
-          ? { ...video, is_monitored: detail.monitored, monitor: detail.monitored }
-          : video
-      )));
+      queryClient.setQueriesData<InfiniteData<VideosPage>>(
+        { queryKey: ["videos"] },
+        (current) => updateVideoPages(current, (video) => (
+          video.id === detail.tidalId
+            ? { ...video, is_monitored: detail.monitored, monitor: detail.monitored }
+            : video
+        )),
+      );
     };
 
-    window.addEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
     window.addEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
-
     return () => {
-      window.removeEventListener(LIBRARY_UPDATED_EVENT, handleLibraryUpdate);
       window.removeEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorStateChanged as EventListener);
     };
-  }, [enabled]);
+  }, [queryClient]);
 
-  useEffect(() => {
-    if (!enabled) {
-      fetchIdRef.current += 1;
-      setLoading(false);
+  const loadMore = useCallback(async () => {
+    if (!enabled || !query.hasNextPage || query.isFetchingNextPage) {
       return;
     }
 
-    setVideos([]);
-    setPage(0);
-    setHasMore(true);
-    fetchRef.current(0, false);
-  }, [enabled, monitored, downloaded, locked, sort, dir, search]);
+    await query.fetchNextPage();
+  }, [enabled, query]);
+
+  const toggleMonitor = useCallback(async (videoId: string, nextState: boolean) => {
+    try {
+      await api.updateVideo(videoId, { monitored: nextState });
+      queryClient.setQueriesData<InfiniteData<VideosPage>>(
+        { queryKey: ["videos"] },
+        (current) => updateVideoPages(current, (video) => (
+          video.id === videoId
+            ? { ...video, is_monitored: nextState, monitor: nextState }
+            : video
+        )),
+      );
+      dispatchMonitorStateChanged({
+        type: "video",
+        tidalId: videoId,
+        monitored: nextState,
+      });
+      dispatchLibraryUpdated();
+    } catch (error) {
+      console.error("Error updating video:", error);
+      toast({
+        title: "Failed to update video",
+        description: error instanceof Error ? error.message : "Could not update video",
+        variant: "destructive",
+      });
+    }
+  }, [queryClient, toast]);
+
+  const toggleLock = useCallback(async (videoId: string, nextState: boolean) => {
+    try {
+      await api.updateVideo(videoId, { monitor_lock: nextState });
+      queryClient.setQueriesData<InfiniteData<VideosPage>>(
+        { queryKey: ["videos"] },
+        (current) => updateVideoPages(current, (video) => (
+          video.id === videoId
+            ? { ...video, monitor_lock: nextState, monitor_locked: nextState }
+            : video
+        )),
+      );
+      dispatchLibraryUpdated();
+    } catch (error) {
+      console.error("Error updating video lock:", error);
+      toast({
+        title: "Failed to update video lock",
+        description: error instanceof Error ? error.message : "Could not update video lock",
+        variant: "destructive",
+      });
+    }
+  }, [queryClient, toast]);
 
   return {
     videos,
@@ -205,7 +235,7 @@ export const useVideos = (options?: {
     hasMore,
     total,
     loadMore,
-    refetch: () => fetchVideosPage(0, false),
+    refetch: () => query.refetch(),
     toggleMonitor,
     toggleLock,
   };

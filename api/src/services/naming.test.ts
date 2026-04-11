@@ -33,6 +33,7 @@ test("normalized filename variants resolve correctly", () => {
       "{Release Year}",
       "{Track Title}",
       "{Track FullTitle}",
+      "{Track MbId}",
       "{Track ArtistName}",
       "{Track ArtistMbId}",
     ].join(" ; "),
@@ -44,6 +45,7 @@ test("normalized filename variants resolve correctly", () => {
       albumMbId: "album-mbid-1",
       releaseYear: "1968",
       trackTitle: "Helter Skelter",
+      trackMbId: "recording-mbid-1",
       trackArtistName: "The Beatles",
       trackArtistMbId: "artist-mbid-1",
     }
@@ -51,7 +53,7 @@ test("normalized filename variants resolve correctly", () => {
 
   assert.equal(
     rendered,
-    "The Beatles ; The Beatles ; The Beatles ; The Beatles ; The White Album ; ALBUM ; album-mbid-1 ; 1968 ; Helter Skelter ; Helter Skelter ; The Beatles ; artist-mbid-1"
+    "The Beatles ; The Beatles ; The Beatles ; The Beatles ; The White Album ; ALBUM ; album-mbid-1 ; 1968 ; Helter Skelter ; Helter Skelter ; recording-mbid-1 ; The Beatles ; artist-mbid-1"
   );
 });
 

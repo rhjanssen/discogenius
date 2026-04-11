@@ -29,7 +29,7 @@ import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
-import { useDownloadQueue } from "@/hooks/useDownloadQueue";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import type { Artist } from "@/hooks/useLibrary";
@@ -248,7 +248,7 @@ const VideoPage = () => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { toast } = useToast();
-    const { addToQueue } = useDownloadQueue();
+    const { addToQueue } = useQueueStatus();
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [remoteStreamUrl, setRemoteStreamUrl] = useState<string | null>(null);

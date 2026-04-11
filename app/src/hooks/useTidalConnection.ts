@@ -7,7 +7,8 @@ export function useTidalConnection() {
     queryKey: ["tidalAuthStatus"],
     queryFn: () => api.getAuthStatus(),
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
     retry: 1,
   });
 

@@ -1,12 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun } from "../database.js";
-import { Config } from "./config.js";
 import { getConfigSection } from "./config.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, type NamingContext, type LibraryRoot } from "./naming.js";
+import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type LibraryRoot } from "./naming.js";
 import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
-import { normalizeResolvedPath } from "./path-utils.js";
+import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
+import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
 
 type LibraryFileRow = {
   id: number;
@@ -34,6 +34,18 @@ type TrackedAssetRow = LibraryFileRow & {
   verified_at: string | null;
   modified_at: string | null;
   created_at: string | null;
+};
+
+type ExistingLibraryFileIdentity = {
+  id: number;
+  artist_id: number;
+  album_id: number | null;
+  media_id: number | null;
+  file_path: string;
+  relative_path: string | null;
+  library_root: string | null;
+  file_type: string;
+  quality: string | null;
 };
 
 const TRACKED_ASSET_FILE_TYPES = new Set([
@@ -86,6 +98,21 @@ export type RenameStatusSummary = {
   sample: RenamePreviewItem[];
 };
 
+type LibraryFileEventInput = {
+  libraryFileId?: number | null;
+  artistId: string | number;
+  albumId?: string | number | null;
+  mediaId?: string | number | null;
+  fileType: string;
+  filePath: string;
+  libraryRoot?: string | null;
+  quality?: string | null;
+  previousPath?: string | null;
+  previousQuality?: string | null;
+  reason?: string | null;
+  missing?: boolean;
+};
+
 export type LibraryFileUpsertParams = {
   artistId: string;
   albumId?: string | null;
@@ -111,6 +138,18 @@ type ResolvableLibraryFileRow = {
   library_root?: string | null;
 };
 
+type RebaseLibraryFileRow = {
+  id: number;
+  artist_id: number;
+  album_id: number | null;
+  media_id: number | null;
+  file_path: string;
+  relative_path: string | null;
+  library_root: string | null;
+  file_type: string;
+  quality: string | null;
+};
+
 function toTimestamp(value: string | null | undefined): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
@@ -123,14 +162,55 @@ function getReleaseYear(releaseDate: string | null | undefined): string | null {
   return match ? match[1] : null;
 }
 
-function moveFileCrossDevice(sourcePath: string, destPath: string) {
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  try {
-    fs.renameSync(sourcePath, destPath);
-  } catch {
-    fs.copyFileSync(sourcePath, destPath);
-    fs.rmSync(sourcePath, { force: true });
+function splitPathSegments(value: string | null | undefined): string[] {
+  return String(value || "")
+    .split(/[\\/]+/g)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function rebaseRelativePathPrefix(relativePath: string, sourcePrefix: string, destinationPrefix: string): string | null {
+  const relativeSegments = splitPathSegments(relativePath);
+  const sourceSegments = splitPathSegments(sourcePrefix);
+  const destinationSegments = splitPathSegments(destinationPrefix);
+
+  if (sourceSegments.length === 0 || relativeSegments.length < sourceSegments.length) {
+    return null;
   }
+
+  for (let index = 0; index < sourceSegments.length; index += 1) {
+    if (normalizeComparablePath(relativeSegments[index]) !== normalizeComparablePath(sourceSegments[index])) {
+      return null;
+    }
+  }
+
+  const suffix = relativeSegments.slice(sourceSegments.length);
+  return destinationSegments.length > 0 ? path.join(...destinationSegments, ...suffix) : path.join(...suffix);
+}
+
+function hasMeaningfulLibraryFileChange(
+  existing: ExistingLibraryFileIdentity,
+  next: {
+    artistId: string;
+    albumId?: string | null;
+    mediaId?: string | null;
+    filePath: string;
+    relativePath: string | null;
+    libraryRoot: string | null;
+    fileType: string;
+    quality?: string | null;
+  },
+): boolean {
+  return (
+    existing.artist_id !== Number(next.artistId) ||
+    (existing.album_id ?? null) !== (next.albumId ? Number(next.albumId) : null) ||
+    (existing.media_id ?? null) !== (next.mediaId ? Number(next.mediaId) : null) ||
+    normalizeResolvedPath(existing.file_path) !== normalizeResolvedPath(next.filePath) ||
+    (existing.relative_path ?? null) !== (next.relativePath ?? null) ||
+    (existing.library_root ?? null) !== (next.libraryRoot ?? null) ||
+    existing.file_type !== next.fileType ||
+    (existing.quality ?? null) !== (next.quality ?? null)
+  );
 }
 
 export function removeEmptyParents(startDir: string, stopDir: string) {
@@ -150,6 +230,36 @@ export function removeEmptyParents(startDir: string, stopDir: string) {
 }
 
 export class LibraryFilesService {
+  private static buildFileEventPayload(input: LibraryFileEventInput) {
+    return {
+      libraryFileId: input.libraryFileId ?? null,
+      artistId: String(input.artistId),
+      albumId: input.albumId == null ? null : String(input.albumId),
+      mediaId: input.mediaId == null ? null : String(input.mediaId),
+      fileType: input.fileType,
+      filePath: input.filePath,
+      libraryRoot: input.libraryRoot ?? null,
+      quality: input.quality ?? null,
+      previousPath: input.previousPath ?? null,
+      previousQuality: input.previousQuality ?? null,
+      reason: input.reason ?? null,
+      missing: input.missing === true,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  static emitFileAdded(input: LibraryFileEventInput) {
+    emitFileAdded(this.buildFileEventPayload(input));
+  }
+
+  static emitFileDeleted(input: LibraryFileEventInput) {
+    emitFileDeleted(this.buildFileEventPayload(input));
+  }
+
+  static emitFileUpgraded(input: LibraryFileEventInput) {
+    emitFileUpgraded(this.buildFileEventPayload(input));
+  }
+
   static isTrackedAssetFileType(fileType: string): boolean {
     return TRACKED_ASSET_FILE_TYPES.has(fileType as typeof TRACKED_ASSET_FILE_TYPES extends Set<infer T> ? T : never);
   }
@@ -185,6 +295,86 @@ export class LibraryFilesService {
     return resolvedRows;
   }
 
+  static rebaseArtistPathsAfterMove(options: {
+    artistId: string;
+    sourcePath: string;
+    destinationPath: string;
+  }): { updated: number } {
+    const rows = db.prepare(`
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+      FROM library_files
+      WHERE artist_id = ?
+    `).all(options.artistId) as RebaseLibraryFileRow[];
+
+    let updated = 0;
+
+    const update = db.prepare(`
+      UPDATE library_files
+      SET file_path = ?,
+          relative_path = ?,
+          expected_path = ?,
+          needs_rename = 0,
+          verified_at = CURRENT_TIMESTAMP,
+          modified_at = CASE
+            WHEN ? IS NOT NULL THEN ?
+            ELSE modified_at
+          END
+      WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      const currentRoot = resolveLibraryRootPath(row.library_root, row.file_path);
+      if (!currentRoot) {
+        continue;
+      }
+
+      const currentRelativePath = row.relative_path || path.relative(currentRoot, row.file_path);
+      const rebasedRelativePath = rebaseRelativePathPrefix(
+        currentRelativePath,
+        options.sourcePath,
+        options.destinationPath,
+      );
+
+      if (!rebasedRelativePath) {
+        continue;
+      }
+
+      const nextFilePath = path.join(currentRoot, rebasedRelativePath);
+      let modifiedAt: string | null = null;
+      try {
+        modifiedAt = fs.statSync(nextFilePath).mtime.toISOString();
+      } catch {
+        modifiedAt = null;
+      }
+
+      update.run(
+        nextFilePath,
+        rebasedRelativePath,
+        nextFilePath,
+        modifiedAt,
+        modifiedAt,
+        row.id,
+      );
+
+      this.emitFileUpgraded({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: nextFilePath,
+        libraryRoot: row.library_root,
+        quality: row.quality,
+        previousPath: row.file_path,
+        reason: "artist-folder-move",
+      });
+
+      updated += 1;
+    }
+
+    return { updated };
+  }
+
   static computeExpectedPath(row: LibraryFileRow): { expectedPath: string | null; reason?: string } {
     const libraryRootKey = resolveLibraryRootKey(row.library_root, row.file_path);
     if (!libraryRootKey) return { expectedPath: null, reason: `unsupported_library_root:${row.library_root}` };
@@ -194,9 +384,14 @@ export class LibraryFilesService {
     const naming = getNamingConfig();
     const metadataConfig = getConfigSection("metadata");
 
-    const artist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(row.artist_id) as any;
+    const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(row.artist_id) as any;
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
+    const artistFolder = resolveArtistFolderFromRecord({
+      name: artistName,
+      mbid: artistMbId,
+      path: artist?.path || null,
+    });
 
     const contextBase: NamingContext = {
       artistName,
@@ -217,7 +412,6 @@ export class LibraryFilesService {
         explicit: video?.explicit === 1,
       };
 
-      const artistFolder = renderRelativePath(naming.artist_folder, context);
       const fileStem = renderFileStem(naming.video_file, context);
       const fileName = `${fileStem}.${ext}`;
 
@@ -238,7 +432,6 @@ export class LibraryFilesService {
         explicit: video?.explicit === 1,
       };
 
-      const artistFolder = renderRelativePath(naming.artist_folder, context);
       const fileStem = renderFileStem(naming.video_file, context);
       const fileName = `${fileStem}.${ext}`;
 
@@ -251,12 +444,10 @@ export class LibraryFilesService {
     if (!row.album_id) {
       // Artist-scoped types (bio, artist picture cover)
       if (row.file_type === "bio") {
-        const artistFolder = renderRelativePath(naming.artist_folder, contextBase);
         return { expectedPath: path.join(libraryRootPath, artistFolder, "bio.txt") };
       }
 
       if (row.file_type === "cover") {
-        const artistFolder = renderRelativePath(naming.artist_folder, contextBase);
         const name = metadataConfig.artist_picture_name || "folder.jpg";
         return { expectedPath: path.join(libraryRootPath, artistFolder, name) };
       }
@@ -278,8 +469,6 @@ export class LibraryFilesService {
       releaseYear,
       explicit: album.explicit === 1,
     };
-
-    const artistFolder = renderRelativePath(naming.artist_folder, albumContext);
 
     const pickTrackTemplate = (numVolumes: number) =>
       numVolumes > 1 ? naming.album_track_path_multi : naming.album_track_path_single;
@@ -324,7 +513,7 @@ export class LibraryFilesService {
 
     if (row.file_type === "track") {
       if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM media WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
 
       const trackArtist = track.artist_id != null
@@ -336,6 +525,7 @@ export class LibraryFilesService {
         ...albumContext,
         trackTitle: track.title,
         trackId: String(track.id ?? row.media_id),
+        trackMbId: track.mbid || null,
         trackVersion: track.version || null,
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
@@ -369,7 +559,7 @@ export class LibraryFilesService {
         LIMIT 1
       `).get(row.media_id) as any;
 
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM media WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
 
       const trackArtist = track.artist_id != null
@@ -381,6 +571,7 @@ export class LibraryFilesService {
         ...albumContext,
         trackTitle: track.title,
         trackId: String(track.id ?? row.media_id),
+        trackMbId: track.mbid || null,
         trackVersion: track.version || null,
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
@@ -467,6 +658,12 @@ export class LibraryFilesService {
     const relativePath = path.relative(params.libraryRoot, params.filePath);
     const filename = path.basename(params.filePath);
     const extension = path.extname(params.filePath).replace(".", "");
+    const existingPathRow = db.prepare(`
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+      FROM library_files
+      WHERE file_path = ?
+      LIMIT 1
+    `).get(params.filePath) as ExistingLibraryFileIdentity | undefined;
 
     let fileSize: number | null = null;
     let modifiedAt: string | null = null;
@@ -483,12 +680,12 @@ export class LibraryFilesService {
 
     if (params.mediaId && (params.fileType === "track" || params.fileType === "video")) {
       const existingRow = db.prepare(`
-        SELECT id
+        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
         FROM library_files
         WHERE media_id = ? AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
         LIMIT 1
-      `).get(params.mediaId, params.fileType, params.filePath) as { id: number } | undefined;
+      `).get(params.mediaId, params.fileType, params.filePath) as ExistingLibraryFileIdentity | undefined;
 
       if (existingRow) {
         db.prepare(`
@@ -551,6 +748,31 @@ export class LibraryFilesService {
         if (params.removeFromUnmapped !== false) {
           db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(params.filePath);
         }
+
+        if (hasMeaningfulLibraryFileChange(existingRow, {
+          artistId: params.artistId,
+          albumId: params.albumId || null,
+          mediaId: params.mediaId || null,
+          filePath: params.filePath,
+          relativePath,
+          libraryRoot: params.libraryRoot,
+          fileType: params.fileType,
+          quality: params.quality || null,
+        })) {
+          this.emitFileUpgraded({
+            libraryFileId: existingRow.id,
+            artistId: params.artistId,
+            albumId: params.albumId || null,
+            mediaId: params.mediaId || null,
+            fileType: params.fileType,
+            filePath: params.filePath,
+            libraryRoot: params.libraryRoot,
+            quality: params.quality || null,
+            previousPath: existingRow.file_path,
+            previousQuality: existingRow.quality || null,
+          });
+        }
+
         return existingRow.id;
       }
     }
@@ -565,6 +787,13 @@ export class LibraryFilesService {
       });
 
       if (existingTrackedAssetId !== null) {
+        const existingTrackedAsset = db.prepare(`
+          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+          FROM library_files
+          WHERE id = ?
+          LIMIT 1
+        `).get(existingTrackedAssetId) as ExistingLibraryFileIdentity | undefined;
+
         db.prepare(`
           UPDATE library_files
           SET artist_id = ?,
@@ -627,6 +856,33 @@ export class LibraryFilesService {
           mediaId: params.mediaId || null,
           fileType: params.fileType,
         });
+
+        if (
+          existingTrackedAsset
+          && hasMeaningfulLibraryFileChange(existingTrackedAsset, {
+            artistId: params.artistId,
+            albumId: params.albumId || null,
+            mediaId: params.mediaId || null,
+            filePath: params.filePath,
+            relativePath,
+            libraryRoot: params.libraryRoot,
+            fileType: params.fileType,
+            quality: params.quality || null,
+          })
+        ) {
+          this.emitFileUpgraded({
+            libraryFileId: existingTrackedAsset.id,
+            artistId: params.artistId,
+            albumId: params.albumId || null,
+            mediaId: params.mediaId || null,
+            fileType: params.fileType,
+            filePath: params.filePath,
+            libraryRoot: params.libraryRoot,
+            quality: params.quality || null,
+            previousPath: existingTrackedAsset.file_path,
+            previousQuality: existingTrackedAsset.quality || null,
+          });
+        }
 
         return existingTrackedAssetId;
       }
@@ -711,7 +967,44 @@ export class LibraryFilesService {
       });
     }
 
-    return Number(info.lastInsertRowid || 0);
+    const insertedId = Number(info.lastInsertRowid || existingPathRow?.id || 0);
+
+    if (!existingPathRow) {
+      this.emitFileAdded({
+        libraryFileId: insertedId || null,
+        artistId: params.artistId,
+        albumId: params.albumId || null,
+        mediaId: params.mediaId || null,
+        fileType: params.fileType,
+        filePath: params.filePath,
+        libraryRoot: params.libraryRoot,
+        quality: params.quality || null,
+      });
+    } else if (hasMeaningfulLibraryFileChange(existingPathRow, {
+      artistId: params.artistId,
+      albumId: params.albumId || null,
+      mediaId: params.mediaId || null,
+      filePath: params.filePath,
+      relativePath,
+      libraryRoot: params.libraryRoot,
+      fileType: params.fileType,
+      quality: params.quality || null,
+    })) {
+      this.emitFileUpgraded({
+        libraryFileId: existingPathRow.id,
+        artistId: params.artistId,
+        albumId: params.albumId || null,
+        mediaId: params.mediaId || null,
+        fileType: params.fileType,
+        filePath: params.filePath,
+        libraryRoot: params.libraryRoot,
+        quality: params.quality || null,
+        previousPath: existingPathRow.file_path,
+        previousQuality: existingPathRow.quality || null,
+      });
+    }
+
+    return insertedId;
   }
 
   private static compareTrackedAssets(left: TrackedAssetRow, right: TrackedAssetRow): number {
@@ -816,6 +1109,17 @@ export class LibraryFilesService {
       }
 
       idsToDelete.push(row.id);
+      this.emitFileDeleted({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: resolvedPath,
+        libraryRoot: row.library_root,
+        reason: "duplicate-tracked-asset",
+        missing: !fs.existsSync(resolvedPath),
+      });
       removed += 1;
     }
 
@@ -861,16 +1165,21 @@ export class LibraryFilesService {
 
   static pruneStaleTrackedAssets(artistId?: string): { removed: number } {
     const rows = db.prepare(`
-      SELECT id, file_path, relative_path, library_root
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
       FROM library_files
       WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
       ORDER BY id ASC
     `).all(...(artistId ? [artistId] : [])) as Array<{
       id: number;
+      artist_id: number;
+      album_id: number | null;
+      media_id: number | null;
       file_path: string;
       relative_path: string | null;
       library_root: string | null;
+      file_type: string;
+      quality: string | null;
     }>;
 
     const idsToDelete: number[] = [];
@@ -887,6 +1196,18 @@ export class LibraryFilesService {
       }
 
       idsToDelete.push(row.id);
+      this.emitFileDeleted({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: resolvedPath,
+        libraryRoot: row.library_root,
+        quality: row.quality,
+        reason: "stale-tracked-asset",
+        missing: true,
+      });
     }
 
     if (idsToDelete.length > 0) {
@@ -895,288 +1216,6 @@ export class LibraryFilesService {
     }
 
     return { removed: idsToDelete.length };
-  }
-
-  private static getRenameRows(options: RenameScopeOptions = {}, includePaging = true): LibraryFileRow[] {
-    const limit = options.limit ?? 200;
-    const offset = options.offset ?? 0;
-
-    const where: string[] = [];
-    const params: any[] = [];
-
-    if (options.artistId) {
-      where.push("artist_id = ?");
-      params.push(options.artistId);
-    }
-    if (options.albumId) {
-      where.push("album_id = ?");
-      params.push(options.albumId);
-    }
-    if (options.libraryRoot) {
-      where.push("library_root = ?");
-      params.push(options.libraryRoot);
-    }
-    if (options.fileTypes && options.fileTypes.length > 0) {
-      where.push(`file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
-      params.push(...options.fileTypes);
-    }
-
-    const sql = `
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-      FROM library_files
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY created_at DESC
-      ${includePaging ? "LIMIT ? OFFSET ?" : ""}
-    `;
-    if (includePaging) {
-      params.push(limit, offset);
-    }
-
-    return db.prepare(sql).all(...params) as LibraryFileRow[];
-  }
-
-  private static evaluateRenameRows(rows: LibraryFileRow[]): RenamePreviewItem[] {
-    const updates: Array<{ id: number; expectedPath: string | null; needsRename: number }> = [];
-    const relativePathUpdates: Array<{ id: number; relativePath: string }> = [];
-    const findConflict = db.prepare(`
-      SELECT id
-      FROM library_files
-      WHERE id != ?
-        AND (file_path = ? OR expected_path = ?)
-      LIMIT 1
-    `);
-
-    const results: RenamePreviewItem[] = rows.map((row) => {
-      const resolvedFilePath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-      const missing = !fs.existsSync(resolvedFilePath);
-
-      const { expectedPath, reason } = this.computeExpectedPath(row);
-      const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
-
-      let conflict = false;
-      if (expectedPath) {
-        conflict = normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath)
-          && (fs.existsSync(expectedPath) || Boolean(findConflict.get(row.id, expectedPath, expectedPath)));
-      }
-
-      updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
-
-      try {
-        const root = resolveLibraryRootPath(row.library_root, resolvedFilePath);
-        if (root) {
-          relativePathUpdates.push({
-            id: row.id,
-            relativePath: path.relative(root, resolvedFilePath),
-          });
-        }
-      } catch {
-        // ignore relative path drift until the next successful scan
-      }
-
-      return {
-        id: row.id,
-        file_type: row.file_type,
-        library_root: row.library_root || "",
-        artist_id: row.artist_id,
-        album_id: row.album_id,
-        media_id: row.media_id,
-        file_path: resolvedFilePath,
-        expected_path: expectedPath,
-        needs_rename: needsRename,
-        conflict,
-        missing,
-        reason,
-      };
-    });
-
-    // Persist expected_path + needs_rename and relative_path fixes in a single transaction
-    db.transaction(() => {
-      const update = db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = ? WHERE id = ?");
-      for (const u of updates) update.run(u.expectedPath, u.needsRename, u.id);
-
-      const relUpdate = db.prepare(`
-        UPDATE library_files
-        SET relative_path = ?
-        WHERE id = ?
-      `);
-      for (const updateRow of relativePathUpdates) {
-        relUpdate.run(updateRow.relativePath, updateRow.id);
-      }
-    })();
-
-    return results;
-  }
-
-  static previewRenames(options: RenameScopeOptions = {}): RenamePreviewItem[] {
-    return this.evaluateRenameRows(this.getRenameRows(options, true));
-  }
-
-  static getRenameStatus(options: RenameScopeOptions = {}, sampleLimit = 10): RenameStatusSummary {
-    const results = this.evaluateRenameRows(this.getRenameRows(options, false));
-    const actionable = results.filter((item) => item.needs_rename || item.conflict || item.missing);
-
-    return {
-      total: results.length,
-      renameNeeded: results.filter((item) => item.needs_rename).length,
-      conflicts: results.filter((item) => item.conflict).length,
-      missing: results.filter((item) => item.missing).length,
-      sample: actionable.slice(0, Math.max(0, sampleLimit)),
-    };
-  }
-
-  static applyRenamesByQuery(options: RenameScopeOptions = {}): RenameApplyResult {
-    const ids = this.evaluateRenameRows(this.getRenameRows(options, false))
-      .filter((item) => item.needs_rename)
-      .map((item) => item.id);
-
-    return this.applyRenames(ids);
-  }
-
-  static applyRenames(ids: number[]): RenameApplyResult {
-    const result: RenameApplyResult = { renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
-    if (!ids || ids.length === 0) return result;
-
-    // Batch-fetch all rows upfront instead of per-ID SELECT
-    const placeholders = ids.map(() => "?").join(",");
-    const allRows = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension
-      FROM library_files
-      WHERE id IN (${placeholders})
-    `).all(...ids) as LibraryFileRow[];
-    const rowMap = new Map(allRows.map(r => [r.id, r]));
-
-    const findConflict = db.prepare(`
-      SELECT id
-      FROM library_files
-      WHERE id != ?
-        AND (file_path = ? OR expected_path = ?)
-      LIMIT 1
-    `);
-
-    // Accumulate DB writes, apply in single transaction after all file moves
-    const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
-    const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
-
-    for (const id of ids) {
-      try {
-        const row = rowMap.get(id);
-
-        if (!row) {
-          result.skipped++;
-          continue;
-        }
-
-        const resolvedFilePath = resolveStoredLibraryPath({
-          filePath: row.file_path,
-          libraryRoot: row.library_root,
-          relativePath: row.relative_path,
-        });
-
-        if (!fs.existsSync(resolvedFilePath)) {
-          result.missing++;
-          continue;
-        }
-
-        const computed = this.computeExpectedPath(row);
-        if (!computed.expectedPath) {
-          result.skipped++;
-          continue;
-        }
-
-        const expectedPath = computed.expectedPath;
-        const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
-        if (samePath) {
-          dbUpdates.push({
-            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
-            args: [expectedPath, id],
-          });
-          result.skipped++;
-          continue;
-        }
-
-        const dbConflict = findConflict.get(id, expectedPath, expectedPath) as any;
-        const fsConflict = fs.existsSync(expectedPath);
-        if (dbConflict || fsConflict) {
-          dbUpdates.push({
-            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 1 WHERE id = ?",
-            args: [expectedPath, id],
-          });
-          result.conflicts++;
-          continue;
-        }
-
-        const oldDir = path.dirname(resolvedFilePath);
-        moveFileCrossDevice(resolvedFilePath, expectedPath);
-
-        const root = resolveLibraryRootPath(row.library_root, resolvedFilePath) || path.dirname(expectedPath);
-
-        const relativePath = root ? path.relative(root, expectedPath) : path.basename(expectedPath);
-        const filename = path.basename(expectedPath);
-        const extension = path.extname(expectedPath).replace(".", "");
-        const stats = fs.statSync(expectedPath);
-
-        dbUpdates.push({
-          sql: `UPDATE library_files
-            SET file_path = ?,
-                relative_path = ?,
-                library_root = ?,
-                filename = ?,
-                extension = ?,
-                expected_path = ?,
-                needs_rename = 0,
-                modified_at = ?,
-                verified_at = CURRENT_TIMESTAMP
-            WHERE id = ?`,
-          args: [expectedPath, relativePath, root, filename, extension, expectedPath, stats.mtime.toISOString(), id],
-        });
-
-        historyEvents.push({
-          artistId: row.artist_id,
-          albumId: row.album_id,
-          mediaId: row.media_id,
-          libraryFileId: row.id,
-          eventType: HISTORY_EVENT_TYPES.TrackFileRenamed,
-          data: {
-            fromPath: resolvedFilePath,
-            toPath: expectedPath,
-            fileType: row.file_type,
-          },
-        });
-
-        const stopDir = root;
-        removeEmptyParents(oldDir, stopDir);
-
-        result.renamed++;
-      } catch (e: any) {
-        result.errors.push({ id, error: e?.message || String(e) });
-      }
-    }
-
-    // Commit all DB writes in a single transaction
-    if (dbUpdates.length > 0 || historyEvents.length > 0) {
-      db.transaction(() => {
-        for (const u of dbUpdates) {
-          db.prepare(u.sql).run(...u.args);
-        }
-        for (const evt of historyEvents) {
-          try {
-            recordHistoryEvent(evt);
-          } catch (historyError) {
-            console.warn(`[LibraryFiles] Failed to record rename history:`, historyError);
-          }
-        }
-      })();
-    }
-
-    if (result.renamed > 0) {
-      result.cleanedDirectories = this.cleanEmptyDirectories();
-    }
-
-    return result;
   }
 
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
@@ -1272,6 +1311,19 @@ export class LibraryFilesService {
       } catch (historyError) {
         console.warn(`[LibraryFiles] Failed to record prune history for row ${row.id}:`, historyError);
       }
+
+      this.emitFileDeleted({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: resolvedFilePath,
+        libraryRoot: row.library_root,
+        quality: row.quality,
+        reason: "prune-unmonitored",
+        missing: !exists,
+      });
 
       deleted += exists ? 1 : 0;
 
@@ -1390,6 +1442,19 @@ export class LibraryFilesService {
         console.warn(`[LibraryFiles] Failed to record disabled metadata prune history for row ${row.id}:`, historyError);
       }
 
+      this.emitFileDeleted({
+        libraryFileId: row.id,
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        filePath: resolvedFilePath,
+        libraryRoot: row.library_root,
+        quality: row.quality,
+        reason: "prune-disabled-metadata",
+        missing: !exists,
+      });
+
       const root = resolveLibraryRootPath(row.library_root, row.file_path);
 
       if (root) {
@@ -1404,53 +1469,4 @@ export class LibraryFilesService {
     return { deleted, missing, errors };
   }
 
-  /**
-   * Remove all empty directories under each library root.
-   * Walks bottom-up so nested empty dirs are cleaned in a single pass.
-   */
-  static cleanEmptyDirectories(): number {
-    const roots = [
-      Config.getMusicPath(),
-      Config.getVideoPath(),
-    ].filter(Boolean);
-
-    try {
-      const atmosPath = Config.getAtmosPath();
-      if (atmosPath) roots.push(atmosPath);
-    } catch { /* atmos path may not be configured */ }
-
-    let removed = 0;
-
-    for (const root of roots) {
-      if (!fs.existsSync(root)) continue;
-      removed += this.removeEmptyDirsRecursive(root, root);
-    }
-
-    if (removed > 0) {
-      console.log(`[LibraryFiles] Cleaned ${removed} empty director${removed === 1 ? 'y' : 'ies'}`);
-    }
-
-    return removed;
-  }
-
-  private static removeEmptyDirsRecursive(dir: string, root: string): number {
-    let removed = 0;
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          removed += this.removeEmptyDirsRecursive(path.join(dir, entry.name), root);
-        }
-      }
-      // Re-read after recursion — children may have been removed
-      if (dir !== root) {
-        const remaining = fs.readdirSync(dir);
-        if (remaining.length === 0) {
-          fs.rmdirSync(dir);
-          removed++;
-        }
-      }
-    } catch { /* permission error or race — skip */ }
-    return removed;
-  }
 }

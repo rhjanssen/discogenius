@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
-import { scanAlbumShallow } from "./scanner.js";
+import { RefreshAlbumService } from "./refresh-album-service.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 
@@ -173,7 +173,7 @@ export class AlbumQueryService {
 
         if (!album) {
             try {
-                await scanAlbumShallow(albumId, {
+                await RefreshAlbumService.scanShallow(albumId, {
                     includeSimilarAlbums: true,
                     seedSimilarAlbums: false,
                 });
@@ -196,7 +196,7 @@ export class AlbumQueryService {
 
         if (!album) {
             try {
-                await scanAlbumShallow(albumId, {
+                await RefreshAlbumService.scanShallow(albumId, {
                     includeSimilarAlbums: true,
                     seedSimilarAlbums: false,
                 });

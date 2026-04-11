@@ -66,8 +66,8 @@ function getGetHandler(router: any, pathName: string): (req: any, res: any) => v
 test("/api/tasks defaults to pending+processing+completed+failed+cancelled and supports explicit status override", () => {
     const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "playlist-pending" }, "playlist-pending");
     const processingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "library" });
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAllMonitored, {});
+    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
+    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.BulkRefreshArtist, {});
     const cancelledId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RescanAllRoots, {});
 
     queueModule.TaskQueueService.markProcessing(processingId);
@@ -127,14 +127,14 @@ test("/api/tasks rejects unsupported filters", () => {
     assert.equal(invalidTypeRes.statusCode, 400);
 
     const categoryTypeMismatchRes = createMockResponse();
-    tasksHandler({ query: { category: "scans", type: "HealthCheck" } }, categoryTypeMismatchRes);
+    tasksHandler({ query: { category: "scans", type: "CheckHealth" } }, categoryTypeMismatchRes);
     assert.equal(categoryTypeMismatchRes.statusCode, 400);
 });
 
 test("/api/activity defaults to completed+failed+cancelled and supports explicit status override", () => {
     const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ApplyCuration, { expectedArtists: 1 });
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAllMonitored, {});
+    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
+    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.BulkRefreshArtist, {});
     const cancelledId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ConfigPrune, {});
 
     queueModule.TaskQueueService.complete(completedId);
@@ -196,7 +196,7 @@ test("/api/activity rejects unsupported filters", () => {
 
 test("/api/activity/events returns merged event log sorted newest-first with pagination metadata", () => {
     const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "playlist-events" }, "playlist-events");
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
+    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.fail(failedId, "health failed");
 
     const historyInfoId = historyEventsModule.recordHistoryEvent({

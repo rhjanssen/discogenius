@@ -57,12 +57,16 @@ import {
 } from '@contracts/media';
 import type {
   ActivityListResponseContract,
+  QueueDetailsResponseContract,
   QueueListResponseContract,
+  QueueStatusContract,
   StatusOverviewContract,
 } from '@contracts/status';
 import {
   parseActivityListResponseContract,
+  parseQueueDetailsResponseContract,
   parseQueueListResponseContract,
+  parseQueueStatusContract,
   parseStatusOverviewContract,
 } from '@contracts/status';
 import type {
@@ -82,6 +86,25 @@ import {
   parseSystemTaskContract,
   parseSystemTaskListContract,
 } from '@contracts/system-task';
+
+type AppAuthStatusContract = {
+  isAuthActive: boolean;
+  authType: 'password' | null;
+};
+
+function parseAppAuthStatusContract(value: unknown): AppAuthStatusContract {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid app auth status response');
+  }
+
+  const record = value as Record<string, unknown>;
+  const authType = record.authType;
+
+  return {
+    isAuthActive: Boolean(record.isAuthActive),
+    authType: authType === 'password' ? 'password' : null,
+  };
+}
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
@@ -218,8 +241,8 @@ class ApiClient {
   }
 
   // App authentication (optional ADMIN_PASSWORD protection)
-  async isAppAuthActive() {
-    return this.request('/app-auth/is-auth-active');
+  async isAppAuthActive(): Promise<AppAuthStatusContract> {
+    return this.request('/app-auth/is-auth-active', {}, parseAppAuthStatusContract);
   }
 
   async verifyAppAuth() {
@@ -238,7 +261,7 @@ class ApiClient {
     return this.request('/auth/status', {}, parseAuthStatusContract);
   }
 
-  async logout() {
+  async logoutTidal() {
     return this.request('/auth/logout', { method: 'POST' });
   }
 
@@ -806,6 +829,17 @@ class ApiClient {
     });
   }
 
+  async updateArtistPath(artistId: string, updates: {
+    path?: string;
+    moveFiles?: boolean;
+    applyNamingTemplate?: boolean;
+  }) {
+    return this.request(`/artists/${artistId}/path`, {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    });
+  }
+
   async processRedundancy(artistId: string) {
     return this.request(`/artists/${artistId}/redundancy`, { method: 'POST' });
   }
@@ -829,6 +863,23 @@ class ApiClient {
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
     return this.request(`/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
+  }
+
+  async getQueueDetails(params?: {
+    artistId?: string;
+    albumIds?: string[];
+    tidalIds?: string[];
+  }): Promise<QueueDetailsResponseContract> {
+    const queryParams = new URLSearchParams();
+    if (params?.artistId) queryParams.set('artistId', params.artistId);
+    if (params?.albumIds && params.albumIds.length > 0) queryParams.set('albumIds', params.albumIds.join(','));
+    if (params?.tidalIds && params.tidalIds.length > 0) queryParams.set('tidalIds', params.tidalIds.join(','));
+    const query = queryParams.toString();
+    return this.request(`/queue/details${query ? `?${query}` : ''}`, {}, parseQueueDetailsResponseContract);
+  }
+
+  async getQueueStatus(): Promise<QueueStatusContract> {
+    return this.request('/queue/status', {}, parseQueueStatusContract);
   }
 
   async getQueueHistory(params?: { limit?: number; offset?: number; timeoutMs?: number | null }): Promise<QueueListResponseContract> {
@@ -1156,7 +1207,7 @@ class ApiClient {
 
     const knownEvents = [
       'job.added', 'job.updated', 'job.deleted', 'queue.cleared',
-      'artist.scanned', 'album.scanned', 'config.updated',
+      'artist.scanned', 'album.scanned', 'rescan.completed', 'config.updated',
       'file.added', 'file.deleted', 'file.upgraded'
     ];
 
@@ -1189,7 +1240,7 @@ class ApiClient {
   /**
    * Execute a system command (Phase 1 scheduler commands)
    * POST /api/command
-   * Examples: RefreshAllMonitored, DownloadMissingForce, RescanAllRoots, HealthCheck,
+   * Examples: BulkRefreshArtist, DownloadMissingForce, RescanAllRoots, CheckHealth,
    * CompactDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune
    */
   async executeCommand(commandName: string): Promise<{ id: number }> {

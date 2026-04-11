@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
 import { getCurrentAppReleaseInfo } from "./services/app-release.js";
+import { resolveUniqueArtistFolder } from "./services/naming.js";
 
 console.log(`📁 Database path: ${DB_PATH}`);
 
@@ -75,14 +76,25 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-export function backfillArtistPaths(resolveFolder: (name: string, mbid?: string | null) => string): number {
+export function backfillArtistPaths(): number {
   const artists = db.prepare("SELECT id, name, mbid FROM artists WHERE path IS NULL").all() as Array<{ id: number; name: string; mbid: string | null }>;
   if (artists.length === 0) return 0;
 
   const update = db.prepare("UPDATE artists SET path = ? WHERE id = ? AND path IS NULL");
   const tx = db.transaction(() => {
     for (const artist of artists) {
-      update.run(resolveFolder(artist.name, artist.mbid), artist.id);
+      update.run(
+        resolveUniqueArtistFolder(
+          artist.name,
+          artist.id,
+          artist.mbid,
+          (candidatePath) => {
+            const existing = db.prepare("SELECT id FROM artists WHERE path = ? LIMIT 1").get(candidatePath) as { id: number } | undefined;
+            return Boolean(existing && existing.id !== artist.id);
+          }
+        ),
+        artist.id
+      );
     }
   });
   tx();
@@ -485,6 +497,49 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       if (!columnExists("artists", "path")) {
         db.exec("ALTER TABLE artists ADD COLUMN path TEXT");
       }
+    },
+  },
+  {
+    version: 5,
+    description: "rename legacy job_queue command types to Lidarr-aligned names",
+    up: () => {
+      if (!tableExists("job_queue")) {
+        return;
+      }
+
+      db.exec(`
+        UPDATE job_queue
+        SET type = 'RefreshAlbum'
+        WHERE type = 'ScanAlbum';
+
+        UPDATE job_queue
+        SET type = 'BulkRefreshArtist'
+        WHERE type = 'RefreshAllMonitored';
+
+        UPDATE job_queue
+        SET type = 'CheckHealth'
+        WHERE type = 'HealthCheck';
+
+        UPDATE job_queue
+        SET type = CASE
+          WHEN COALESCE(json_array_length(payload, '$.ids'), 0) > 0
+            OR json_extract(COALESCE(payload, '{}'), '$.albumId') IS NOT NULL
+            OR json_extract(COALESCE(payload, '{}'), '$.libraryRoot') IS NOT NULL
+            OR COALESCE(json_array_length(payload, '$.fileTypes'), 0) > 0
+          THEN 'RenameFiles'
+          ELSE 'RenameArtist'
+        END
+        WHERE type = 'ApplyRenames';
+
+        UPDATE job_queue
+        SET type = CASE
+          WHEN COALESCE(json_array_length(payload, '$.ids'), 0) > 0
+            OR json_extract(COALESCE(payload, '{}'), '$.albumId') IS NOT NULL
+          THEN 'RetagFiles'
+          ELSE 'RetagArtist'
+        END
+        WHERE type = 'ApplyRetags';
+      `);
     },
   },
 ];

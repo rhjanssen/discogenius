@@ -56,6 +56,8 @@ export function TrackRowActions({
       <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
         <Button
           appearance="subtle"
+          aria-label={isPlaying ? "Stop track" : "Play track"}
+          data-testid={isPlaying ? "track-stop" : "track-play"}
           icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
           size="small"
           onClick={onPlay}

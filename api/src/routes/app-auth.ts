@@ -64,7 +64,10 @@ router.post("/", async (req: Request, res: Response) => {
  */
 router.get("/is-auth-active", (_req: Request, res: Response) => {
   const isActive = !!process.env.ADMIN_PASSWORD;
-  res.status(200).json({ isAuthActive: isActive });
+  res.status(200).json({
+    isAuthActive: isActive,
+    authType: isActive ? "password" : null,
+  });
 });
 
 /**

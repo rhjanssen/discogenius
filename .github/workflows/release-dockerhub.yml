@@ -36,22 +36,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
-
-      - name: Install Yarn
-        run: npm install -g yarn@1.22.22
+          node-version: "22"
+          cache: yarn
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build frontend
-        run: yarn --cwd app build
-
-      - name: Build backend
-        run: yarn --cwd api build
+      - name: Validate release
+        run: yarn ci
 
       - name: Derive release metadata
         id: release

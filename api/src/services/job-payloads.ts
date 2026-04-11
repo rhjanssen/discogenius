@@ -121,7 +121,7 @@ export interface RefreshArtistJobPayload extends QueuePayloadCommon {
   forceUpdate: boolean;
 }
 
-export interface ScanAlbumJobPayload extends QueuePayloadCommon {
+export interface RefreshAlbumJobPayload extends QueuePayloadCommon {
   albumId: string;
   forceUpdate?: boolean;
 }
@@ -196,7 +196,14 @@ export interface ImportDownloadJobPayload extends QueuePayloadCommon {
 
 export type ConfigPruneJobPayload = QueuePayloadCommon;
 
-export interface ApplyRenamesJobPayload extends QueuePayloadCommon {
+export interface MoveArtistJobPayload extends QueuePayloadCommon {
+  artistId: string;
+  sourcePath?: string | null;
+  destinationPath: string;
+  moveFiles: boolean;
+}
+
+export interface RenameFilesJobPayload extends QueuePayloadCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
@@ -205,7 +212,12 @@ export interface ApplyRenamesJobPayload extends QueuePayloadCommon {
   applyAll?: boolean;
 }
 
-export type RefreshAllMonitoredJobPayload = QueuePayloadCommon;
+export interface RenameArtistJobPayload extends QueuePayloadCommon {
+  artistId?: string;
+  artistIds?: string[];
+}
+
+export type BulkRefreshArtistJobPayload = QueuePayloadCommon;
 
 export interface DownloadMissingForceJobPayload extends QueuePayloadCommon {
   skipFlags?: boolean;
@@ -215,7 +227,7 @@ export interface RescanAllRootsJobPayload extends QueuePayloadCommon {
   addNewArtists?: boolean;
 }
 
-export type HealthCheckJobPayload = QueuePayloadCommon;
+export type CheckHealthJobPayload = QueuePayloadCommon;
 
 export type CompactDatabaseJobPayload = QueuePayloadCommon;
 
@@ -223,10 +235,15 @@ export type CleanupTempFilesJobPayload = QueuePayloadCommon;
 
 export type UpdateLibraryMetadataJobPayload = QueuePayloadCommon;
 
-export interface ApplyRetagsJobPayload extends QueuePayloadCommon {
+export interface RetagFilesJobPayload extends QueuePayloadCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
   applyAll?: boolean;
+}
+
+export interface RetagArtistJobPayload extends QueuePayloadCommon {
+  artistId?: string;
+  artistIds?: string[];
 }
 

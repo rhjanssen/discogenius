@@ -943,7 +943,13 @@ const ManualImportTab = () => {
     if (isLoading) {
         return (
             <div className={styles.emptyState}>
-                <DataGridSkeleton rows={8} columns={5} columnTemplate="minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr) 80px" compact />
+                <DataGridSkeleton
+                  rows={8}
+                  columns={5}
+                  columnTemplate="minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr) 80px"
+                  compact
+                  actionColumns={[4]}
+                />
             </div>
         );
     }

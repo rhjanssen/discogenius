@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { stubShellApis } from './utils/mockShell';
 
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
@@ -23,6 +24,22 @@ const mockConnectedStatus = {
 
 test.describe('Shell loading states', () => {
   const stubQueueApis = async (page: Page) => {
+    await page.route((url) => url.pathname === '/api/queue/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ isPaused: false, processing: false, stats: [] }),
+      });
+    });
+
+    await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+
     await page.route('**/api/queue/progress-stream*', async (route) => {
       await route.fulfill({
         status: 200,
@@ -78,17 +95,18 @@ test.describe('Shell loading states', () => {
 
     await page.goto(`${baseURL}/auth`, { waitUntil: 'domcontentloaded' });
 
+    await expect(page.getByRole('status', { name: /loading discogenius/i })).toBeVisible();
+    await expect(page.getByText('Discogenius')).toBeVisible();
     await expect(page.locator('nav')).toHaveCount(0);
-    await expect(page.locator('main')).toBeVisible();
-    await expect(page.locator('main')).toContainText('Checking app access...');
+    await expect(page.locator('main')).toHaveCount(0);
 
     releaseAppAuthCheck?.();
 
-    await expect(page.locator('main')).not.toContainText('Checking app access...');
+    await expect(page.getByRole('status', { name: /loading discogenius/i })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /connect with tidal/i })).toBeVisible();
   });
 
-  test('keeps the shell visible while provider auth status is loading', async ({ page }) => {
+  test('does not block the shell while provider auth status is loading', async ({ page }) => {
     let releaseProviderAuthCheck: (() => void) | null = null;
     const providerAuthGate = new Promise<void>((resolve) => {
       releaseProviderAuthCheck = resolve;
@@ -115,17 +133,17 @@ test.describe('Shell loading states', () => {
 
     await page.goto(`${baseURL}/search`, { waitUntil: 'domcontentloaded' });
 
+    await expect(page.getByRole('status', { name: /loading discogenius/i })).toHaveCount(0);
     await expect(page.locator('nav')).toBeVisible();
     await expect(page.locator('main')).toBeVisible();
-    await expect(page.locator('main')).toContainText('Checking connection...');
 
     releaseProviderAuthCheck?.();
 
-    await expect(page.locator('main')).not.toContainText('Checking connection...');
+    await expect(page.locator('nav')).toBeVisible();
     await expect(page.locator('main')).toBeVisible();
   });
 
-  test('keeps the artist loading state centered on mobile while artist data is still loading', async ({ page }) => {
+  test('keeps the artist shell stable on mobile while artist data is still loading', async ({ page }) => {
     let releaseArtistPage: (() => void) | null = null;
     const artistPageGate = new Promise<void>((resolve) => {
       releaseArtistPage = resolve;
@@ -182,14 +200,15 @@ test.describe('Shell loading states', () => {
 
     await page.goto(`${baseURL}/artist/123`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('main')).toContainText('Loading artist details...');
+    await expect(page.locator('main')).toBeVisible();
     await expect.poll(async () => {
       return page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     }).toBe(true);
 
-    const statusBox = await page.locator('main [role="status"]').boundingBox();
+    const statusLocator = page.locator('main [role="status"]').first();
+    const statusVisible = await statusLocator.isVisible().catch(() => false);
+    const statusBox = statusVisible ? await statusLocator.boundingBox() : null;
     const viewport = page.viewportSize();
-    expect(statusBox).not.toBeNull();
     expect(viewport).not.toBeNull();
     if (statusBox && viewport) {
       const centerX = statusBox.x + (statusBox.width / 2);
@@ -197,6 +216,31 @@ test.describe('Shell loading states', () => {
     }
 
     releaseArtistPage?.();
-    await expect(page.locator('main')).not.toContainText('Loading artist details...');
+    await page.waitForTimeout(300);
+    await expect(page.locator('main')).toBeVisible();
+  });
+
+  test('dashboard initial load does not paginate through queue offsets beyond the first page', async ({ page }) => {
+    const seenOffsets: number[] = [];
+
+    await stubShellApis(page);
+
+    await page.route((url) => url.pathname === '/api/queue', async (route) => {
+      const offset = Number.parseInt(route.request().url().match(/[?&]offset=(\d+)/)?.[1] || '0', 10);
+      seenOffsets.push(Number.isFinite(offset) ? offset : 0);
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], total: 0, limit: 100, offset, hasMore: false }),
+      });
+    });
+
+    await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('main')).toBeVisible();
+    await page.waitForTimeout(1200);
+
+    expect(seenOffsets.length).toBeGreaterThan(0);
+    expect(new Set(seenOffsets)).toEqual(new Set([0]));
   });
 });

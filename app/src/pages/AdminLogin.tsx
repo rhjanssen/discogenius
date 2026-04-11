@@ -11,6 +11,8 @@ import {
 } from "@fluentui/react-components";
 import { LockClosed24Regular } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
+import { BootLoadingPage } from "@/components/shell/BootLoadingPage";
+import { ErrorState } from "@/components/ui/ContentState";
 import {
   LOCALSTORAGE_APP_AUTH_REDIRECT_KEY,
   useAppAuth,
@@ -61,7 +63,7 @@ export default function AdminLogin() {
   const styles = useStyles();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { isAuthActive, isAccessGranted, login } = useAppAuth();
+  const { isAuthActive, isAccessGranted, login, bootstrapError, refresh } = useAppAuth();
 
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -114,12 +116,23 @@ export default function AdminLogin() {
     }
   };
 
-  if (isAuthActive === undefined) {
+  if (bootstrapError) {
     return (
-      <div className={styles.loading}>
-        <Text>Loading…</Text>
-      </div>
+      <ErrorState
+        title="Discogenius could not verify app access"
+        description={bootstrapError}
+        actions={(
+          <Button appearance="primary" onClick={() => { void refresh().catch(() => undefined); }}>
+            Retry
+          </Button>
+        )}
+        minHeight="100vh"
+      />
     );
+  }
+
+  if (isAuthActive === undefined) {
+    return <BootLoadingPage />;
   }
 
   if (isAuthActive === false) return null;

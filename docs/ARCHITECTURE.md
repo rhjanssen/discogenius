@@ -135,7 +135,11 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 ### Metadata, Scan, and Import
 
-- api/src/services/scanner.ts: TIDAL metadata scan tiers (BASIC/SHALLOW/DEEP)
+- api/src/services/refresh-artist-service.ts: Lidarr-style artist metadata orchestration (basic/shallow/deep refresh)
+- api/src/services/refresh-album-service.ts: Lidarr-style album metadata orchestration
+- api/src/services/refresh-playlist-service.ts: playlist metadata and membership refresh
+- api/src/services/refresh-video-service.ts: video upsert/refresh helpers for artist catalog scans
+- api/src/services/media-seed-service.ts: small targeted metadata seed flows for single track/video intake
 - api/src/services/library-scan.ts: disk reconciliation/import coordination
 - api/src/services/import-service.ts + import-* services: manual import discovery/matching/apply/finalize pipeline
 - api/src/services/identification-service.ts + fingerprint.ts: local-file identification support
@@ -218,7 +222,7 @@ Operationally important semantics:
 - Dashboard activity and status reads keep previous data during refresh (`placeholderData`) and use short staleness windows so polling updates are non-blocking.
 - Refresh failures with cached data are presented as "showing cached" notices instead of blocking the view.
 - Dashboard queue history uses [app/src/hooks/useQueueHistoryFeed.ts](app/src/hooks/useQueueHistoryFeed.ts) against `GET /api/queue/history`, so queue history is rendered from `QueueItemContract` rows instead of remapped `/api/activity` jobs.
-- Queue restoration in [app/src/providers/QueueProvider.tsx](app/src/providers/QueueProvider.tsx) reconciles queue SSE progress events, authoritative `/api/queue` refreshes, and global queue/job invalidation events. Active/importing rows are kept through a short 15 s grace window to avoid disappearing during reconnect or download-to-import handoff races.
+- Queue shell status in [app/src/providers/QueueStatusProvider.tsx](app/src/providers/QueueStatusProvider.tsx) reconciles queue-status SSE, progress batches, and global queue/job invalidation events, while full paged queue reads stay local to queue-focused views instead of the global shell.
 - Activity retry suppression in [app/src/pages/dashboard/ActivityTab.tsx](app/src/pages/dashboard/ActivityTab.tsx) now checks in-flight `/api/activity` results first (pending/processing). If that feed reports `hasMore`, retry stays suppressed conservatively to avoid duplicate/redundant retries while newer in-flight work may exist off-page.
 - Activity tab empty/error behavior is explicit:
   - "Activity unavailable" when initial load fails and there is no cached activity.

@@ -79,13 +79,13 @@ test("RescanAllRoots delegates to queueRescanFoldersPass and queues a RescanFold
     assert.equal(queuedRootScans.length, 1);
 });
 
-test("HealthCheck collects a real diagnostics snapshot and reports issue counts", async () => {
+test("CheckHealth collects a real diagnostics snapshot and reports issue counts", async () => {
     const expectedDescription = schedulerModule.formatHealthCheckDescription(
         healthModule.collectHealthDiagnosticsSnapshot(),
     );
 
     const jobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.HealthCheck,
+        queueModule.JobTypes.CheckHealth,
         {},
     );
 
@@ -99,14 +99,14 @@ test("HealthCheck collects a real diagnostics snapshot and reports issue counts"
     assert.equal((completed?.payload as Record<string, unknown>)?.description, expectedDescription);
 });
 
-test("RefreshAllMonitored delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {
+test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {
     dbModule.db.prepare(`
         INSERT INTO artists (id, name, monitor)
         VALUES (?, ?, ?), (?, ?, ?)
     `).run(101, "Monitored Artist", 1, 202, "Ignored Artist", 0);
 
     const jobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.RefreshAllMonitored,
+        queueModule.JobTypes.BulkRefreshArtist,
         {},
     );
 

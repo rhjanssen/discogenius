@@ -30,13 +30,15 @@ import {
     ArrowDown24Regular,
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
-import { useDownloadQueue, type QueueItem } from "@/hooks/useDownloadQueue";
+import { useQueue } from "@/hooks/useQueue";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
+import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState } from "@/components/ui/ContentState";
-import { TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
+import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import { useDashboardStyles } from "./dashboardStyles";
@@ -466,14 +468,16 @@ const QueueTab = () => {
     const styles = useDashboardStyles();
     const navigate = useNavigate();
     const {
-        queue: downloadQueue,
-        loading,
+        queueItems: downloadQueue,
+        isQueueInitialLoading: loading,
+        refetch: refreshQueue,
+    } = useQueue();
+    const {
         getProgress,
         retryItem,
         deleteItem,
         reorderItems,
-        refreshQueue,
-    } = useDownloadQueue();
+    } = useQueueStatus();
     const {
         queueHistoryItems,
         hasMoreQueueHistory,
@@ -954,7 +958,7 @@ const QueueTab = () => {
     if ((loading && !hasQueueRows) || (!hasQueueRows && isQueueHistoryInitialLoading)) {
         return (
             <div className={styles.tabSection}>
-                <TrackListSkeleton rows={6} />
+                <QueueListSkeleton rows={6} />
             </div>
         );
     }

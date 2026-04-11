@@ -27,7 +27,8 @@ import {
     syncOrpheusSettings,
     syncTokenToOrpheusSession,
 } from './orpheus.js';
-import { scanAlbumShallow, seedTrack, seedVideo } from './scanner.js';
+import { MediaSeedService } from './media-seed-service.js';
+import { RefreshAlbumService } from "./refresh-album-service.js";
 import { loadStoredTidalToken } from './tidal-auth.js';
 import type {
     DownloadAlbumJobPayload,
@@ -38,7 +39,7 @@ import type {
     DownloadVideoJobPayload,
     ResolvedDownloadMetadata,
 } from './job-payloads.js';
-import { processImportDownloadJob } from './import-download-service.js';
+import { DownloadedTracksImportService } from './downloaded-tracks-import-service.js';
 
 type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload | DownloadPlaylistJobPayload;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album' | 'playlist'>;
@@ -146,7 +147,7 @@ export class DownloadProcessor {
 
         const importPromise = (async () => {
             try {
-                await processImportDownloadJob(job as JobOfType<typeof JobTypes.ImportDownload>, {
+                await DownloadedTracksImportService.process(job as JobOfType<typeof JobTypes.ImportDownload>, {
                     updateState: emitImportProgress,
                 });
 
@@ -329,7 +330,7 @@ export class DownloadProcessor {
             case 'album':
                 if (!this.hasAlbumMetadataReady(tidalId)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Album ${tidalId} is missing complete metadata; running album scan before download`);
-                    await scanAlbumShallow(tidalId, {
+                    await RefreshAlbumService.scanShallow(tidalId, {
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
                     });
@@ -338,7 +339,7 @@ export class DownloadProcessor {
             case 'track':
                 if (!this.hasTrackMetadataReady(tidalId)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Track ${tidalId} is missing metadata; seeding track before download`);
-                    await seedTrack(tidalId, {
+                    await MediaSeedService.seedTrack(tidalId, {
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,
@@ -349,7 +350,7 @@ export class DownloadProcessor {
             case 'video':
                 if (!this.hasVideoMetadataReady(tidalId)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Video ${tidalId} is missing metadata; seeding video before download`);
-                    await seedVideo(tidalId, {
+                    await MediaSeedService.seedVideo(tidalId, {
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,

@@ -46,7 +46,6 @@ import {
 } from "./services/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/runtime-maintenance.js";
 import { collectHealthDiagnosticsSnapshot } from "./services/health.js";
-import { resolveArtistFolder } from "./services/naming.js";
 import { Scheduler } from "./services/scheduler.js";
 import { readIntEnv } from "./utils/env.js";
 
@@ -151,7 +150,7 @@ app.use(cors({
 
 initDatabase();
 
-const backfilled = backfillArtistPaths(resolveArtistFolder);
+const backfilled = backfillArtistPaths();
 if (backfilled > 0) {
   console.log(`📁 Backfilled path for ${backfilled} existing artist(s)`);
 }

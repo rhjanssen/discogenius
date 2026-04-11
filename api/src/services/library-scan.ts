@@ -148,6 +148,19 @@ type LibraryRootKey = "music" | "spatial_music" | "music_videos";
 /** Pre-built file index from a single-pass root walk, keyed by lowercased folder name. */
 type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folderKey → files)
 
+function usesNestedArtistFolders(): boolean {
+    const row = db.prepare(`
+        SELECT 1
+        FROM artists
+        WHERE path IS NOT NULL
+          AND TRIM(path) != ''
+          AND (path LIKE '%/%' OR path LIKE '%\\%')
+        LIMIT 1
+    `).get();
+
+    return Boolean(row);
+}
+
 // ============================================================================
 // Disk Scan Service
 // ============================================================================
@@ -402,16 +415,20 @@ export class DiskScanService {
         let totalFlagsReset = 0;
         let unmappedOrphans = 0;
 
-        // Build file index once per root (single-pass)
+        // The prebuilt root index only works when artist folders are single-segment.
+        // Nested artist-folder templates should scan exact artist paths instead.
+        const usePrebuiltRootIndex = !usesNestedArtistFolders();
         const fileIndex: RootFileIndex = new Map();
         const musicPath = Config.getMusicPath();
         const videoPath = Config.getVideoPath();
         const atmosPath = Config.getAtmosPath();
 
-        fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
-        fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
-        if (atmosPath) {
-            fileIndex.set(atmosPath, await this.buildRootFileIndex(atmosPath));
+        if (usePrebuiltRootIndex) {
+            fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
+            fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
+            if (atmosPath) {
+                fileIndex.set(atmosPath, await this.buildRootFileIndex(atmosPath));
+            }
         }
 
         for (let index = 0; index < artists.length; index += 1) {
@@ -442,7 +459,7 @@ export class DiskScanService {
                         message: label,
                     });
                 },
-                fileIndex,
+                fileIndex: usePrebuiltRootIndex ? fileIndex : undefined,
                 trackUnmappedFiles: options?.trackUnmappedFiles,
             });
             totalOrphans += result.orphansRemoved;
@@ -492,6 +509,10 @@ export class DiskScanService {
         }>;
 
         let removed = 0;
+        let flagsReset = 0;
+        const affectedAlbumIds = new Set<string>();
+        const affectedMediaIds = new Set<string>();
+
         for (const row of rows) {
             const resolvedPath = resolveStoredLibraryPath({
                 filePath: row.file_path,
@@ -502,10 +523,38 @@ export class DiskScanService {
 
             // File is gone — remove DB record
             db.prepare("DELETE FROM library_files WHERE id = ?").run(row.id);
+            LibraryFilesService.emitFileDeleted({
+                libraryFileId: row.id,
+                artistId,
+                albumId: row.album_id,
+                mediaId: row.media_id,
+                fileType: row.file_type,
+                filePath: resolvedPath,
+                libraryRoot: row.library_root,
+                reason: "scan-orphaned-record",
+                missing: true,
+            });
             removed++;
+
+            if (row.album_id) {
+                affectedAlbumIds.add(String(row.album_id));
+            }
+            if (row.media_id) {
+                affectedMediaIds.add(String(row.media_id));
+            }
         }
 
-        return { removed, flagsReset: 0 };
+        for (const albumId of affectedAlbumIds) {
+            updateAlbumDownloadStatus(albumId);
+            flagsReset += 1;
+        }
+
+        for (const mediaId of affectedMediaIds) {
+            updateArtistDownloadStatusFromMedia(mediaId);
+            flagsReset += 1;
+        }
+
+        return { removed, flagsReset };
     }
 
     /**
@@ -796,7 +845,7 @@ export class DiskScanService {
      */
     private static updateChangedFiles(artistId: string): { updated: number } {
         const rows = db.prepare(`
-      SELECT id, file_path, relative_path, library_root, file_size, modified_at
+      SELECT id, file_path, relative_path, library_root, file_size, modified_at, file_type
       FROM library_files
       WHERE artist_id = ?
     `).all(artistId) as Array<{
@@ -806,6 +855,7 @@ export class DiskScanService {
             library_root: string;
             file_size: number | null;
             modified_at: string | null;
+            file_type: string;
         }>;
 
         let updated = 0;
@@ -828,6 +878,14 @@ export class DiskScanService {
           SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(stats.size, currentMtime, row.id);
+                LibraryFilesService.emitFileUpgraded({
+                    libraryFileId: row.id,
+                    artistId,
+                    fileType: row.file_type,
+                    filePath: resolvedPath,
+                    libraryRoot: row.library_root,
+                    reason: "scan-file-changed",
+                });
                 updated++;
             } else {
                 // Just update verified_at timestamp

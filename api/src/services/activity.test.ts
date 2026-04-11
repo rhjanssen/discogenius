@@ -46,7 +46,7 @@ test("activity page supports pagination and category/status filters", () => {
         { target: "library" },
     );
     const healthCheckId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.HealthCheck,
+        queueModule.JobTypes.CheckHealth,
         {},
     );
     const downloadTrackId = queueModule.TaskQueueService.addJob(
@@ -106,7 +106,7 @@ test("activity summary returns command-surface counts without download queue dup
     const metadataId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "all" });
     queueModule.TaskQueueService.markProcessing(metadataId);
 
-    const healthId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
+    const healthId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.fail(healthId, "failed health check");
 
     queueModule.TaskQueueService.addJob(
@@ -127,7 +127,7 @@ test("activity page computes absolute pending queue positions without scanning t
     queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-1" }, "qp-1");
     queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-2" }, "qp-2");
     const pendingThirdId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-3" }, "qp-3");
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
+    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.complete(completedId);
 
     const mixedPage = commandHistoryModule.getActivityPage({
@@ -187,7 +187,7 @@ test("activity page prioritizes processing downloads ahead of newer pending down
 
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {
     const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "events-playlist" }, "events-playlist");
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.HealthCheck, {});
+    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.complete(completedId);
 
     const historyImportedId = historyEventsModule.recordHistoryEvent({

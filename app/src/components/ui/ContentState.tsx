@@ -1,5 +1,5 @@
 import React, { ReactNode } from "react";
-import { Card, Spinner, Text, Title3, Body1, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Card, Text, Title3, Body1, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { ErrorCircle48Color } from "@fluentui/react-icons";
 
 interface ContentStateProps {
@@ -14,14 +14,6 @@ interface ContentStateProps {
   align?: "center" | "left";
   role?: "status" | "alert";
   ariaLive?: "polite" | "assertive";
-}
-
-export interface LoadingStateProps {
-  label?: string;
-  size?: "extra-tiny" | "tiny" | "extra-small" | "small" | "medium" | "large" | "huge";
-  className?: string;
-  panelClassName?: string;
-  minHeight?: string | number;
 }
 
 export type EmptyStateProps = ContentStateProps;
@@ -86,15 +78,6 @@ const useStyles = makeStyles({
   },
   descriptionLeft: {
     maxWidth: "100%",
-  },
-  loadingRow: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: tokens.spacingVerticalM,
-  },
-  loadingLabel: {
-    color: tokens.colorNeutralForeground2,
   },
   actions: {
     display: "flex",
@@ -178,27 +161,6 @@ function StateFrame({
     </div>
   );
 }
-
-export const LoadingState = ({
-  label = "Loading...",
-  size = "large",
-  className,
-  panelClassName,
-  minHeight = "180px",
-}: LoadingStateProps) => {
-  const styles = useStyles();
-
-  return (
-    <StateFrame className={className} panelClassName={panelClassName} minHeight={minHeight} role="status" ariaLive="polite">
-      <div className={styles.loadingRow}>
-        <Spinner size={size} />
-        <Text className={styles.loadingLabel} size={300}>
-          {label}
-        </Text>
-      </div>
-    </StateFrame>
-  );
-};
 
 export const EmptyState = ({
   title,

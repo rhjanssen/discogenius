@@ -11,7 +11,8 @@ import { hydrateTrackRows } from "./track-query-service.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "./library-files.js";
-import { ScanLevel, getArtistScanLevel, scanArtistBasic } from "./scanner.js";
+import { RefreshArtistService } from "./refresh-artist-service.js";
+import { ScanLevel } from "./scan-types.js";
 import { shouldRefreshArtist } from "./refresh-policy.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
 
@@ -100,7 +101,7 @@ function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId:
         return true;
     }
 
-    if (getArtistScanLevel(artistId) < ScanLevel.DEEP) {
+    if (RefreshArtistService.getScanLevel(artistId) < ScanLevel.DEEP) {
         return true;
     }
 
@@ -210,7 +211,7 @@ export class ArtistQueryService {
         // — staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await scanArtistBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.scanBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed — fall through to 404 */ }
         }
@@ -270,7 +271,7 @@ export class ArtistQueryService {
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
       INNER JOIN albums a ON a.id = jq.ref_id
-      WHERE a.artist_id = ? AND jq.type = 'ScanAlbum' AND jq.status IN ('pending', 'processing')
+      WHERE a.artist_id = ? AND jq.type IN ('RefreshAlbum', 'ScanAlbum') AND jq.status IN ('pending', 'processing')
     `).all(artistId) as any[];
 
         const albumDownloadJobs = db.prepare(`
@@ -311,7 +312,7 @@ export class ArtistQueryService {
         const jobs = Array.from(allJobs.values());
 
         return {
-            scanning: jobs.some((job) => job.type === "RefreshArtist" || job.type === "ScanAlbum"),
+            scanning: jobs.some((job) => job.type === "RefreshArtist" || job.type === "RefreshAlbum" || job.type === "ScanAlbum"),
             curating: jobs.some((job) => job.type === "CurateArtist"),
             downloading: jobs.some((job) => job.type.startsWith("Download") || job.type === "ImportDownload"),
             libraryScan: jobs.some((job) => job.type === "RescanFolders"),
@@ -325,7 +326,7 @@ export class ArtistQueryService {
 
         if (!existing) {
             try {
-                await scanArtistBasic(id, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.scanBasic(id, { includeSimilarArtists: false, seedSimilarArtists: false });
                 existing = loadArtistWithEffectiveMonitor(id);
             } catch { /* TIDAL lookup failed */ }
         }
@@ -402,7 +403,7 @@ export class ArtistQueryService {
         // staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await scanArtistBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.scanBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed */ }
         }

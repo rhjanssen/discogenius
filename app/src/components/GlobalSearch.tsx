@@ -636,14 +636,14 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         const renderLoadingResults = () => {
             switch (activeTab) {
                 case 'artists':
-                    return <CardGridSkeleton cards={6} />;
+                    return <CardGridSkeleton cards={6} variant="artistSearch" />;
                 case 'albums':
                     return <CardGridSkeleton cards={6} />;
                 case 'tracks':
                 case 'videos':
                 case 'top':
                 default:
-                    return <TrackListSkeleton rows={5} />;
+                    return <TrackListSkeleton rows={5} showCover showNumber={false} />;
             }
         };
 

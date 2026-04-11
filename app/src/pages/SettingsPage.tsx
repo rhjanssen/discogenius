@@ -38,6 +38,7 @@ import {
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useTidalAuth } from "@/hooks/useTidalAuth";
+import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "@/services/api";
@@ -918,6 +919,7 @@ const SettingsPage = () => {
         accountSettings,
     } = useUserSettings();
     const { tidalConnected, loading: tidalLoading } = useTidalAuth();
+    const { isAuthActive, signOut } = useAppAuth();
     const { theme, setTheme } = useTheme();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
     const [monitoringStatus, setMonitoringStatus] = useState<Pick<MonitoringStatusResponseContract, "running" | "checking">>({
@@ -940,7 +942,10 @@ const SettingsPage = () => {
     const [retagApplying, setRetagApplying] = useState(false);
 
     const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
-    const audioRetaggingEnabled = metadataSettings?.write_audio_metadata === true || metadataSettings?.embed_replaygain !== false;
+    const audioRetaggingEnabled =
+        metadataSettings?.enable_fingerprinting === true
+        || metadataSettings?.write_audio_metadata === true
+        || metadataSettings?.embed_replaygain !== false;
 
     useEffect(() => {
         if (namingSettings) {
@@ -1299,13 +1304,18 @@ const SettingsPage = () => {
         }
     };
 
-    const handleLogout = async () => {
+    const handleDisconnectTidal = async () => {
         try {
-            await api.logout();
+            await api.logoutTidal();
             navigate("/auth");
         } catch (error) {
-            console.error('Error logging out:', error);
+            console.error('Error disconnecting TIDAL:', error);
         }
+    };
+
+    const handleSignOut = () => {
+        signOut();
+        navigate("/login");
     };
 
     const handleImportFollowed = async () => {
@@ -1535,16 +1545,28 @@ const SettingsPage = () => {
                                     </div>
                                 </div>
                                 <div className={styles.profileActions}>
-                                    <Tooltip content="Disconnect your Tidal account" relationship="label">
+                                    <Tooltip content="Disconnect your TIDAL account" relationship="label">
                                         <Button
                                             appearance="outline"
                                             className={styles.signOutButton}
                                             icon={<DoorArrowLeft24Regular />}
-                                            onClick={handleLogout}
+                                            onClick={handleDisconnectTidal}
                                         >
-                                            Sign Out
+                                            Disconnect TIDAL
                                         </Button>
                                     </Tooltip>
+                                    {isAuthActive ? (
+                                        <Tooltip content="Sign out of Discogenius app access" relationship="label">
+                                            <Button
+                                                appearance="subtle"
+                                                className={styles.signOutButton}
+                                                icon={<DoorArrowLeft24Regular />}
+                                                onClick={handleSignOut}
+                                            >
+                                                Sign out
+                                            </Button>
+                                        </Tooltip>
+                                    ) : null}
                                 </div>
                             </div>
                             <div className={styles.row}>
@@ -1567,6 +1589,34 @@ const SettingsPage = () => {
                         </div>
                     </SettingsSection>
                 )}
+
+                {!accountSettings && isAuthActive ? (
+                    <SettingsSection
+                        id="app-access"
+                        title="App Access"
+                        description="Discogenius admin-session controls."
+                        className={styles.section}
+                    >
+                        <div className={styles.card}>
+                            <div className={styles.row}>
+                                <div className={styles.rowContent}>
+                                    <Text weight="semibold">Sign Out Of Discogenius</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        Clear the admin-password session on this browser.
+                                    </Text>
+                                </div>
+                                <Button
+                                    appearance="outline"
+                                    className={styles.signOutButton}
+                                    icon={<DoorArrowLeft24Regular />}
+                                    onClick={handleSignOut}
+                                >
+                                    Sign out
+                                </Button>
+                            </div>
+                        </div>
+                    </SettingsSection>
+                ) : null}
 
                 {/* Audio Quality */}
                 <SettingsSection
@@ -2163,7 +2213,7 @@ const SettingsPage = () => {
                                 ) : retagStatus && !retagStatusLoading && audioRetaggingEnabled ? (
                                     <Text size={200} className={styles.mutedText}>No retag work detected.</Text>
                                 ) : !audioRetaggingEnabled ? (
-                                    <Text size={200} className={styles.mutedText}>Enable audio tag correction or ReplayGain to generate a retag plan.</Text>
+                                    <Text size={200} className={styles.mutedText}>Enable fingerprinting, audio tag correction, or ReplayGain to generate a retag plan.</Text>
                                 ) : null}
                             </div>
                             <div className={styles.namingActionGroup}>
