@@ -10,7 +10,6 @@ import { ErrorState } from "@/components/ui/ContentState";
 export default function AppBootstrapGate() {
   const { isAuthActive, isAccessGranted, bootstrapError, refresh } = useAppAuth();
   const location = useLocation();
-  const isAuthRoute = location.pathname === "/auth";
 
   if (bootstrapError) {
     return (
@@ -42,10 +41,6 @@ export default function AppBootstrapGate() {
     }
 
     return <Navigate to="/login" replace />;
-  }
-
-  if (isAuthRoute) {
-    return <Outlet />;
   }
 
   return <Outlet />;

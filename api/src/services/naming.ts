@@ -506,42 +506,6 @@ export function resolveArtistFolder(artistName: string, artistMbId?: string | nu
   return renderRelativePath(naming.artist_folder, { artistName, artistMbId });
 }
 
-/**
- * Resolve a unique artist folder name, disambiguating if needed.
- * Mirrors Lidarr's SetPropertiesAndValidate disambiguation logic.
- * @param pathExists - function that checks if an artist.path already exists in DB
- */
-export function resolveUniqueArtistFolder(
-  artistName: string,
-  artistId?: number | string | null,
-  artistMbId?: string | null,
-  pathExists?: (path: string) => boolean
-): string {
-  const basePath = resolveArtistFolder(artistName, artistMbId);
-
-  if (!pathExists || !pathExists(basePath)) {
-    return basePath;
-  }
-
-  // Try disambiguation with TIDAL artist ID (like Lidarr uses MusicBrainz disambiguation)
-  if (artistId) {
-    const disambiguated = `${basePath} (${artistId})`;
-    if (!pathExists(disambiguated)) {
-      return disambiguated;
-    }
-  }
-
-  // Fall back to numeric suffix (like Lidarr's numeric fallback)
-  let i = 1;
-  let candidate: string;
-  do {
-    candidate = `${basePath} (${i})`;
-    i++;
-  } while (pathExists(candidate) && i < 100);
-
-  return candidate;
-}
-
 export function resolveArtistFolderFromRecord(artist: { name: string; mbid?: string | null; path?: string | null }): string {
   const stored = String(artist.path || "").trim();
   if (stored) return stored;

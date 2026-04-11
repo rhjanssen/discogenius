@@ -36,8 +36,8 @@ import {
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { useTidalConnection } from "@/hooks/useTidalConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { useTidalAuth } from "@/hooks/useTidalAuth";
 import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
 import React, { useState, useEffect, useCallback } from "react";
@@ -918,7 +918,7 @@ const SettingsPage = () => {
         updateNamingSettings,
         accountSettings,
     } = useUserSettings();
-    const { tidalConnected, loading: tidalLoading } = useTidalAuth();
+    const { isConnected: tidalConnected, isLoading: tidalLoading } = useTidalConnection();
     const { isAuthActive, signOut } = useAppAuth();
     const { theme, setTheme } = useTheme();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);

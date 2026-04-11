@@ -21,7 +21,7 @@ Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it 
 - **Task Queue**: SQLite-backed queue with `DownloadProcessor` (exact media downloads only) and `Scheduler` (all control, scan, import, and maintenance jobs)
 - **Command Manager**: Handles job exclusivity (type-exclusive, disk-intensive, globally exclusive)
 - **Organization**: Downloaded files are staged, then organized into library with metadata, optional fingerprints, and library file tracking
-- **Manual Import**: Dashboard-based manual import flow is backed by unmapped file tracking, `import-discovery.ts`, `import-matcher-service.ts`, `manual-import-apply-service.ts`, `import-finalize-service.ts`, `import-service.ts`, and `identification-service.ts`
+- **Manual Import**: Dashboard-based manual import flow is backed by unmapped file tracking, `import-discovery.ts`, `import-matcher-service.ts`, `manual-import-service.ts`, `import-finalize-service.ts`, `import-service.ts`, and `identification-service.ts`
 
 ## Hard Rules
 - **TypeScript**: Use TypeScript for runtime code in `api/src` and `app/src`, and keep Playwright tests in `e2e/` in TypeScript. Use JavaScript only where tooling or external config conventions make it the better fit.
@@ -64,24 +64,28 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `tidal-dl-ng.ts` | tidal-dl-ng CLI wrapper for video downloads, environment setup, progress parsing |
 | `orpheus.ts` | Orpheus runtime bootstrap, TIDAL session sync, and music download spawning |
 | `download-processor.ts` | Handles exact media download jobs: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist` |
-| `scheduler.ts` | Handles non-download jobs: `DownloadMissing`, `RefreshMetadata`, `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ApplyRenames`, `ApplyRetags` and Phase 1 commands: `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` |
-| `health.ts` | Collects runtime/path/tool/backend diagnostics used by startup preflight and the real `HealthCheck` scheduler command |
+| `scheduler.ts` | Handles non-download jobs: `DownloadMissing`, `RefreshMetadata`, `CurateArtist`, `RescanFolders`, `ImportDownload`, `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, `RetagFiles` and operator commands: `BulkRefreshArtist`, `DownloadMissingForce`, `RescanAllRoots`, `CheckHealth`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` |
+| `health.ts` | Collects runtime/path/tool/backend diagnostics used by startup preflight and the real `CheckHealth` scheduler command |
 | `playback.ts` / `playback-segment-worker.ts` | Provides signed browser-safe playback, preferring BTS/progressive and falling back to DASH segment streaming when needed |
 | `command.ts` | Defines command types and exclusivity rules (Lidarr-style) |
 | `command-history.ts` | Builds `/api/status` activity from queued jobs, including pending command-style work |
 | `queue.ts` | `TaskQueueService` and job type definitions for the persistent task queue |
 | `organizer.ts` | Moves downloaded files to library with proper naming |
-| `scanner.ts` | Fetches metadata from TIDAL API (tiered: BASIC → SHALLOW → DEEP) |
+| `refresh-artist-service.ts` | Lidarr-style artist metadata orchestration (basic/shallow/deep refresh) |
+| `refresh-album-service.ts` | Lidarr-style album metadata orchestration and track hydration |
+| `refresh-playlist-service.ts` | Playlist metadata and membership refresh |
+| `refresh-video-service.ts` | Video upsert/refresh helpers for artist catalog scans |
+| `media-seed-service.ts` | Targeted metadata seed flows for single track/video intake |
 | `tidal.ts` | TIDAL API client for metadata and search |
 | `import-discovery.ts` | Scans local/root folders into grouped local import candidates and derives common tags |
 | `import-matcher-service.ts` | Resolves TIDAL candidates (direct IDs, search, fingerprint evidence), scores matches, and applies auto-import policy |
-| `manual-import-apply-service.ts` | Applies strict manual import mappings and updates artists/albums/media/library_files with dedup safeguards |
+| `manual-import-service.ts` | Applies strict manual import mappings and updates artists/albums/media/library_files with dedup safeguards |
 | `import-finalize-service.ts` | Finalizes imported directory moves, sidecar reconciliation, and post-import rename hooks |
 | `import-service.ts` | Orchestrates root-folder scan/import flows and delegates matching/apply/finalize services |
 | `library-media-metrics.ts` | Shared unmapped-media metric extraction used by scan/import review persistence |
 | `library-scan-root-review.ts` | Handles root-folder review cleanup and unmapped review-candidate persistence |
 | `library-scan-relink.ts` | Repairs unresolved `library_files` rows by relinking to known media via injected scan dependencies |
-| `task-scheduler.ts` | Orchestrates scheduled task passes (Lidarr-aligned per-artist pipeline), queue lifecycle, and compatibility exports |
+| `task-scheduler.ts` | Orchestrates scheduled task passes (Lidarr-aligned per-artist pipeline) and queue lifecycle |
 | `task-state.ts` | Persists scheduled-task runtime progress and resolves active-workflow state from queue/runtime |
 | `schedule-policy.ts` | Schedule normalization, staleness/due policy helpers, and include-decision helpers |
 | `curation-service.ts` | Artist-level curation engine: category filtering, version-group selection, ISRC/subset dedup, monitor propagation, download candidate generation |

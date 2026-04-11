@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { db } from "../database.js";
-import { TidalService } from "../services/tidal.js";
+import { getPlaylist, getUserPlaylists } from "../services/tidal.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { queuePlaylistSyncByUuid, PlaylistSyncServiceError } from "../services/playlist-sync.js";
 
@@ -117,7 +117,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     // Fetch from Tidal
-    const tidalPlaylist = await TidalService.getPlaylist(playlistId);
+    const tidalPlaylist = await getPlaylist(playlistId);
 
     if (!tidalPlaylist) {
       return res.status(404).json({ error: "Playlist not found on Tidal" });
@@ -319,7 +319,7 @@ router.post("/:playlistId/download", async (req: Request, res: Response) => {
 // Import user's playlists from Tidal
 router.post("/import-user", async (req: Request, res: Response) => {
   try {
-    const playlistsResponse = await TidalService.getUserPlaylists();
+    const playlistsResponse = await getUserPlaylists();
 
     // Handle both array and paginated response formats
     const playlists = Array.isArray(playlistsResponse)

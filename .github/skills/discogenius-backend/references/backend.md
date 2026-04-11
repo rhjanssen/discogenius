@@ -43,7 +43,7 @@
 - artists: artist metadata, monitoring status, biography
 - albums: album metadata with monitoring/lock mechanism, library categorization
 - media: unified table for tracks and videos (distinguish via type)
-- job_queue: unified persistent task queue for exact download jobs, monitoring/control jobs like DownloadMissing and RootFolderScan, and maintenance jobs like ApplyRenames/ApplyRetags
+- job_queue: unified persistent task queue for exact download jobs, monitoring/control jobs like DownloadMissing and RescanAllRoots, and maintenance jobs like MoveArtist/RenameFiles/RetagFiles
 - library_files: local file tracking for tracks, videos, covers, etc.
 - unmapped_files: pre-existing local files awaiting Manual Import mapping
 
@@ -72,7 +72,7 @@
 - `api/src/services/unmapped-files.ts`: shared service boundary for unmapped file flows
 - `api/src/services/import-discovery.ts`: root/library folder traversal, grouping, and local metadata rollups
 - `api/src/services/import-matcher-service.ts`: direct-ID, search, and fingerprint-backed candidate resolution + scoring
-- `api/src/services/manual-import-apply-service.ts`: strict manual map/apply flow with dedup-safe DB writes
+- `api/src/services/manual-import-service.ts`: strict manual map/apply flow with dedup-safe DB writes
 - `api/src/services/import-finalize-service.ts`: sidecar/finalize helpers and post-import rename reconciliation
 - `api/src/services/identification-service.ts`: release/track matching used by Manual Import and scan-time auto-import
 - `api/src/services/import-service.ts`: orchestration layer for root-folder/manual flows delegating matcher/apply/finalize services

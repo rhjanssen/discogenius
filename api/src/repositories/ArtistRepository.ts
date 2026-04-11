@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { BaseRepository } from "./BaseRepository.js";
-import { resolveUniqueArtistFolder } from "../services/naming.js";
+import { resolveArtistFolderForPersistence } from "../services/artist-paths.js";
 
 /**
  * Artist entity matching the new schema
@@ -74,23 +74,13 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
     }
 
     /**
-     * Check if an artist path already exists in the database.
-     */
-    pathExists(p: string): boolean {
-        const row = this.prepare("SELECT 1 FROM artists WHERE path = ? LIMIT 1").get(p);
-        return row !== undefined;
-    }
-
-    /**
      * Insert or ignore artist (useful for featured artists)
      */
     insertOrIgnore(artist: ArtistInsert): void {
-        const artistPath = artist.path || resolveUniqueArtistFolder(
-            artist.name,
-            artist.id,
-            undefined,
-            (p) => this.pathExists(p)
-        );
+        const artistPath = artist.path || resolveArtistFolderForPersistence({
+            artistId: artist.id,
+            artistName: artist.name,
+        });
         this.prepare(`
             INSERT OR IGNORE INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 
@@ -116,12 +106,10 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
      * Insert artist (will error if already exists)
      */
     insert(artist: ArtistInsert): void {
-        const artistPath = artist.path || resolveUniqueArtistFolder(
-            artist.name,
-            artist.id,
-            undefined,
-            (p) => this.pathExists(p)
-        );
+        const artistPath = artist.path || resolveArtistFolderForPersistence({
+            artistId: artist.id,
+            artistName: artist.name,
+        });
         this.prepare(`
             INSERT INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 

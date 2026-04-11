@@ -354,7 +354,8 @@ function useQueueStatusContextValue(): QueueStatusContextType {
 
   const processItem = useCallback(async (id: number) => {
     try {
-      await api.processQueueItem(id);
+      void id;
+      await api.resumeQueue();
       scheduleStatusRefresh(0);
       invalidateQueueQueries();
       dispatchActivityRefresh();

@@ -45,7 +45,7 @@ Use this skill when changes touch one or more of:
 
 ## Scan/import/curation boundaries
 
-- scanner.ts: TIDAL metadata fetch and scan tiers.
+- refresh-artist-service.ts + refresh-album-service.ts + refresh-playlist-service.ts + refresh-video-service.ts + media-seed-service.ts: TIDAL metadata refresh and targeted intake boundaries.
 - library-scan.ts + import services: disk/import reconciliation and apply/finalize workflow.
 - curation-service.ts + artist-workflow.ts: curation and dedup decisions plus queue coupling.
 - task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline).

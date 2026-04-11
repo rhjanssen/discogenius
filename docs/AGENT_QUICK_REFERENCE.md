@@ -22,11 +22,10 @@ Is it a visual status/badge/alert?
 ### Am I handling loading/empty/error states?
 ```
 YES → Use ContentState components:
-  - LoadingState: spinner + label
   - EmptyState: icon + title + description + actions
   - ErrorState: error icon + message
-  
-  Import from @/components/ui/ContentState
+
+  For full-page/list loading use LoadingSkeletons or BootLoadingPage instead of a generic loading card.
 ```
 
 ### Am I fetching or paginating data?
@@ -149,7 +148,8 @@ Format: Raw data (no wrapper)
 ```typescript
 import { Badge, Text, Button, Card, tokens, makeStyles, mergeClasses } from "@fluentui/react-components";
 import { Icon24Filled, Icon24Regular } from "@fluentui/react-icons";
-import { LoadingState, EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge, MissingBadge } from "@/components/ui/StatusBadges";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 ```
@@ -183,7 +183,7 @@ import { TaskQueueService } from "@/services/queue";
 
 ### Frontend 🚩
 - ❌ `style={{ color: "blue" }}` → use `tokens.colorBlueBackground2`
-- ❌ `content === "loading" ? <Spinner /> : content` → use `<LoadingState />`
+- ❌ Full-page `content === "loading" ? <Spinner /> : content` → use matching skeletons or `BootLoadingPage`
 - ❌ Third-party UI library import → use Fluent UI only
 - ❌ `const lock = item.monitor_lock ?? item.monitor_locked` → use `isMonitorLocked(item)`
 - ❌ Same intersectionObserver code 2+ times → extract to hook
@@ -253,7 +253,7 @@ import { TaskQueueService } from "@/services/queue";
 | Base repository | `api/src/repositories/BaseRepository.ts` |
 | Task queue | `api/src/services/queue.ts` |
 | Download processor | `api/src/services/download-processor.ts` |
-| Scanner | `api/src/services/scanner.ts` |
+| Metadata refresh services | `api/src/services/refresh-artist-service.ts`, `api/src/services/refresh-album-service.ts`, `api/src/services/refresh-playlist-service.ts`, `api/src/services/refresh-video-service.ts`, `api/src/services/media-seed-service.ts` |
 | Organizer | `api/src/services/organizer.ts` |
 
 ---
@@ -275,8 +275,9 @@ if (isMonitorLocked(item)) { /* intentionally excluded */ }
 
 ### Show loading/empty/error state
 ```typescript
-import { LoadingState, EmptyState } from "@/components/ui/ContentState";
-{loading ? <LoadingState /> : items.length === 0 ? <EmptyState /> : <ItemList />}
+import { EmptyState } from "@/components/ui/ContentState";
+import { TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
+{loading ? <TrackTableSkeleton rows={8} /> : items.length === 0 ? <EmptyState /> : <ItemList />}
 ```
 
 ### Validate HTTP request input

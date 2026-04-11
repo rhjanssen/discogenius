@@ -1689,38 +1689,3 @@ export async function getUserFavoritePlaylists() {
   }
 }
 
-// TidalService class wrapper for cleaner API in routes
-export class TidalService {
-  static async getPlaylist(playlistId: string) {
-    return getPlaylist(playlistId);
-  }
-
-  static async getPlaylistTracks(playlistId: string) {
-    return getPlaylistTracks(playlistId);
-  }
-
-  static async getUserPlaylists() {
-    return getUserPlaylists();
-  }
-
-  static async getUserFavoritePlaylists() {
-    return getUserFavoritePlaylists();
-  }
-
-  static async getArtist(artistId: string) {
-    return getArtist(artistId);
-  }
-
-  static async getAlbum(albumId: string) {
-    return getAlbum(albumId);
-  }
-
-  static async getTrack(trackId: string) {
-    return getTrack(trackId);
-  }
-
-  static async getVideo(videoId: string) {
-    return getVideo(videoId);
-  }
-}
-

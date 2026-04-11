@@ -26,9 +26,9 @@ description: Backend workflow for Discogenius (Express + TypeScript) covering Or
 Discogenius follows Lidarr-style patterns:
 - **Command System** (`api/src/services/command.ts`): Defines command exclusivity rules (type-exclusive, disk-intensive, globally exclusive)
 - **Download Processor**: Handles exact media download jobs only: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist`
-- **Scheduler**: Handles all non-download jobs including `DownloadMissing`, `RefreshMetadata`, `RefreshArtist`, `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ConfigPrune`, `ApplyRenames`, and `ApplyRetags`
+- **Scheduler**: Handles all non-download jobs including `DownloadMissing`, `RefreshMetadata`, `RefreshArtist`, `RefreshAlbum`, `CurateArtist`, `RescanFolders`, `ImportDownload`, `ConfigPrune`, `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, and `RetagFiles`
 - **Task Queue Service** (`api/src/services/queue.ts`): Persistent task queue in SQLite
-- **Manual Import Flow**: `import-discovery.ts` + `import-matcher-service.ts` + `manual-import-apply-service.ts` + `import-finalize-service.ts` + `import-service.ts` + unmapped routes + `identification-service.ts`
+- **Manual Import Flow**: `import-discovery.ts` + `import-matcher-service.ts` + `manual-import-service.ts` + `import-finalize-service.ts` + `import-service.ts` + unmapped routes + `identification-service.ts`
 - **Fingerprinting Flow**: `fingerprint.ts` / `audioUtils.ts` + MusicBrainz/AcoustID data for local-file enrichment and identification
 
 ### Command Types and Exclusivity
@@ -37,12 +37,11 @@ Discogenius follows Lidarr-style patterns:
 | DownloadTrack / DownloadVideo | No | No | Small media downloads |
 | DownloadAlbum / DownloadPlaylist | No | No | Larger media downloads |
 | RefreshArtist | Yes | No | Only one artist refresh at a time |
-| ScanAlbum / ScanPlaylist | No | No | Metadata scans can run in parallel |
+| RefreshAlbum / ScanPlaylist | No | No | Metadata scans can run in parallel |
 | CurateArtist | Yes | No | Per-artist curation pass |
-| RescanFolders | No | Yes | Disk reconciliation for an artist |
-| RootFolderScan | Yes | Yes | Fully exclusive root scan |
-| ApplyRenames / ApplyRetags | Yes | Yes | Queue maintenance work instead of running it inline |
-| ConfigPrune / Housekeeping | Yes | Yes | Cleanup and maintenance passes |
+| RescanFolders / RescanAllRoots | No / Yes | Yes | Disk reconciliation for artist or full-library passes |
+| MoveArtist / RenameArtist / RenameFiles / RetagArtist / RetagFiles | Yes | Yes | Queue maintenance work instead of running it inline |
+| ConfigPrune / Housekeeping / CheckHealth | Yes | Yes | Cleanup and maintenance passes |
 
 ## Download backends
 - Use Orpheus for music downloads (`album`, `track`, `playlist`) and tidal-dl-ng for `video` downloads.
@@ -73,11 +72,11 @@ Discogenius follows Lidarr-style patterns:
 ## Import + organization
 - Local file scanning/grouping uses `api/src/services/import-discovery.ts`.
 - Candidate resolution and match scoring use `api/src/services/import-matcher-service.ts`.
-- Manual apply writes use `api/src/services/manual-import-apply-service.ts`.
+- Manual apply writes use `api/src/services/manual-import-service.ts`.
 - Import finalization helpers (sidecars/rename hooks) use `api/src/services/import-finalize-service.ts`.
 - Import orchestration and root-folder coordination use `api/src/services/import-service.ts`.
 - Download organization uses `api/src/services/organizer.ts`.
-- Metadata fetch: prefer `scanAlbumShallow` and helpers in `api/src/services/tidal.ts`.
+- Metadata fetch: prefer `RefreshAlbumService.scanShallow()` / `RefreshArtistService.scan*()` plus helpers in `api/src/services/tidal.ts`.
 - Keep `library_files` paths relative to the configured library roots in `Config`.
 - For manual import and locally added files, prefer the existing fingerprint + AcoustID/MusicBrainz path over adding ad hoc matching logic.
 
@@ -103,10 +102,11 @@ Discogenius follows Lidarr-style patterns:
 
 ## Job Types
 - `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist`
-- `RefreshArtist`, `ScanAlbum`, `ScanPlaylist`, `RefreshMetadata`
+- `RefreshArtist`, `RefreshAlbum`, `ScanPlaylist`, `RefreshMetadata`
 - `ApplyCuration`, `DownloadMissing`, `CheckUpgrades`, `Housekeeping`
-- `CurateArtist`, `RescanFolders`, `RootFolderScan`, `ImportDownload`, `ConfigPrune`
-- `ApplyRenames`, `ApplyRetags`
+- `CurateArtist`, `RescanFolders`, `RescanAllRoots`, `ImportDownload`, `ConfigPrune`
+- `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, `RetagFiles`
+- `BulkRefreshArtist`, `DownloadMissingForce`, `CheckHealth`
 
 ## Validation
 - Minimum validation for backend changes: `yarn --cwd api build`

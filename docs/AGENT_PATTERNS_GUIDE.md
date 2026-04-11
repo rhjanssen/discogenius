@@ -10,7 +10,7 @@
 
 | Task | Primary Pattern | Key Files | Example |
 |------|-----------------|-----------|---------|
-| Add status display (loading/empty/error) | ContentState + LoadingSkeletons | `app/src/components/ui/{ContentState,LoadingSkeletons}.tsx` | LoadingState/EmptyState/ErrorState + CardGridSkeleton/DataGridSkeleton |
+| Add status display (loading/empty/error) | ContentState + LoadingSkeletons | `app/src/components/ui/{ContentState,LoadingSkeletons}.tsx` | EmptyState/ErrorState + CardGridSkeleton/DataGridSkeleton |
 | Add a badge (quality, downloaded, explicit) | Badge library in ui/ | `app/src/components/ui/{QualityBadge,StatusBadges,ExplicitBadge}.tsx` | Always use Fluent props + tokens |
 | Extract duplicated UI check | Utility function | `app/src/utils/monitoringUtils.ts` | `isMonitorLocked()`, `isMonitored()` |
 | Paginate/scroll through lists | useInfiniteScroll hook | `app/src/hooks/useInfiniteScroll.ts` | Set up containerRef, sentinelRef, onLoadMore |
@@ -39,8 +39,8 @@
 - **QualityBadge.tsx**: LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
 - **StatusBadges.tsx**: DownloadedBadge, MissingBadge
 - **ExplicitBadge.tsx**: Explicit label badge
-- **ContentState.tsx**: LoadingState, EmptyState, ErrorState
-- **LoadingSkeletons.tsx**: CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton, MediaDetailSkeleton
+- **ContentState.tsx**: EmptyState, ErrorState
+- **LoadingSkeletons.tsx**: CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton, DetailPageSkeleton
 - **ExplicitBadge.tsx, MediaTypeBadge.tsx, WarningBadge.tsx**
 
 **Pattern Rules**:
@@ -78,14 +78,15 @@ export const NewStatusBadge = () => (
 **Purpose**: Standardized fallback states for pages/sections
 
 **Components**:
-- `LoadingState`: spinner + label
 - `EmptyState`: icon + title + description + actions
 - `ErrorState`: error icon + error message (extractable to text)
 - `LoadingSkeletons`: shape-preserving loading placeholders for list/detail surfaces
+- `BootLoadingPage`: branded shell bootstrap loading state
 
 **When to Use Which**:
-- Use `LoadingState` for simple blocking states where preserving list/detail layout is not important.
-- Use `LoadingSkeletons` (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `MediaDetailSkeleton`) for library grids/tables, detail pages, and suspense fallbacks where layout continuity matters.
+- Use `BootLoadingPage` only for app/bootstrap auth handoff where the shell is not ready yet.
+- Use `LoadingSkeletons` (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `DetailPageSkeleton`) for library grids/tables, detail pages, and suspense fallbacks where layout continuity matters.
+- Use inline Fluent `Spinner` states only for small in-card or action-level loading, not full-page placeholders.
 
 **Required Props**:
 - To all: `minHeight` (default 240px), `className`, `panelClassName`, `align` ("center"|"left")
@@ -95,7 +96,7 @@ export const NewStatusBadge = () => (
 **Example Usage**:
 ```typescript
 {loading ? (
-  <LoadingState label="Loading tracks..." />
+  <TrackTableSkeleton rows={8} />
 ) : tracks.length === 0 ? (
   <EmptyState 
     icon={<EmptySvg />}
@@ -566,18 +567,18 @@ this.transaction(() => {
 - **command.ts**: Command exclusivity (Lidarr-style)
   - Pattern: Type-exclusive vs disk-intensive vs globally exclusive
 - **scheduler.ts**: Non-download orchestration
-  - Jobs: DownloadMissing, RefreshMetadata, CurateArtist, RescanFolders, ApplyRenames, ApplyRetags
+  - Jobs: DownloadMissing, RefreshMetadata, CurateArtist, RescanFolders, MoveArtist, RenameArtist, RenameFiles, RetagArtist, RetagFiles
 
 #### Scanning & Import
-- **scanner.ts**: TIDAL metadata fetching
-  - Exports: `scanAlbumShallow()`, `seedTrack()`, `seedVideo()`
+- **refresh-artist-service.ts / refresh-album-service.ts / refresh-playlist-service.ts / refresh-video-service.ts / media-seed-service.ts**: TIDAL metadata refresh and targeted intake
+  - Exports: focused refresh/seed entry points such as `RefreshArtistService.scanDeep()`, `RefreshAlbumService.scanShallow()`, and `MediaSeedService.seedTrack()`
   - Tiers: BASIC (IDs only) → SHALLOW (metadata) → DEEP (full scan)
 - **import-discovery.ts**: Local file scanning
   - Exports: Group unmapped files into import candidates
 - **import-matcher-service.ts**: TIDAL candidate scoring
   - Exports: Score candidates via fuzzy matching, fingerprinting, or direct ID
 - **import-service.ts**: Orchestrate discovery → match → apply → finalize
-- **manual-import-apply-service.ts**: Apply strict manual mappings
+- **manual-import-service.ts**: Apply strict manual mappings
 - **import-finalize-service.ts**: Move staged files, update library metadata
 
 #### File Organization
@@ -593,7 +594,7 @@ this.transaction(() => {
 - **curation.listener.ts**: Listen to curation events, queue downloads
 - **artist-monitoring.ts**: Artist-specific monitoring decisions
 
-**Pattern**: Service exports concrete functions, not a class constructor
+**Pattern**: Service files expose focused domain entry points, whether that owner is a function set or a small service class
 
 **Example Service**:
 ```typescript

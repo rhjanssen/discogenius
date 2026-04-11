@@ -834,8 +834,6 @@ export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
     );
 }
 
-export const queueRefreshAllMonitored = queueBulkRefreshArtist;
-
 export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
     const skipFlags = true;  // Clear skip_* flags before queueing DownloadMissing
     return TaskQueueService.addJob(
@@ -866,8 +864,6 @@ export function queueCheckHealth(options: { trigger?: number } = {}) {
         options.trigger ?? 1,
     );
 }
-
-export const queueHealthCheck = queueCheckHealth;
 
 export function queueCompactDatabase(options: { trigger?: number } = {}) {
     return TaskQueueService.addJob(

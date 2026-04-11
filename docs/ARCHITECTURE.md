@@ -87,10 +87,10 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
-| `RefreshAllMonitored` | Refresh metadata for all monitored artists | Type-exclusive |
+| `BulkRefreshArtist` | Refresh metadata for all monitored artists | Type-exclusive |
 | `DownloadMissingForce` | Reset skip flags and requeue missing downloads for all monitored media | Type-exclusive |
 | `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
-| `HealthCheck` | System health diagnostics (runtime, writable paths, tool availability, backend capability checks) | Globally exclusive |
+| `CheckHealth` | System health diagnostics (runtime, writable paths, tool availability, backend capability checks) | Globally exclusive |
 | `CompactDatabase` | SQLite VACUUM + ANALYZE for maintenance | Globally exclusive |
 | `CleanupTempFiles` | Remove orphaned staging files | Globally exclusive |
 | `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
@@ -227,13 +227,13 @@ Operationally important semantics:
 - Activity tab empty/error behavior is explicit:
   - "Activity unavailable" when initial load fails and there is no cached activity.
   - "No recent activity" when load succeeds but there are no activity or audit entries.
-- Loading UX now prefers layout-matching skeletons (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `MediaDetailSkeleton`) for library/detail/suspense fallbacks where preserving layout structure improves perceived responsiveness.
+- Loading UX now prefers layout-matching skeletons (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `DetailPageSkeleton`) for library/detail/suspense fallbacks where preserving layout structure improves perceived responsiveness, while app bootstrap uses the branded `BootLoadingPage`.
 
 ## Auth and Connection Model
 
-- Discogenius requires an active TIDAL connection. All protected routes redirect to `/auth` when not connected.
-- Auth state is polled via `useTidalConnection` (TanStack Query, 30 s stale time) and gate-kept by `ProtectedRoute`.
-- Search and metadata endpoints return 401 when no TIDAL token is present. No local/disconnected fallback modes exist.
+- App access and provider access are separate concerns. `AppBootstrapGate` blocks the shell only for Discogenius app auth; missing TIDAL auth no longer blocks local-library navigation.
+- Provider auth state is polled via `useTidalConnection` (TanStack Query, 30 s stale time). It controls remote catalog and login-required provider features, not shell access.
+- Search and metadata endpoints still require a live TIDAL session where remote catalog access is necessary, but disconnected or mock provider modes can still load the local library shell.
 - The TIDAL API layer now emits canonical `id` values across both search mappers (`mapArtist`, `mapTrack`, `mapVideo`) and core getter responses (`getArtist`, `getTrack`, `getArtistVideos`, `getVideo`) in `tidal.ts`, while retaining `tidal_id` for compatibility where still consumed.
 - Internal matching paths that previously depended on `tidal_id` fallbacks (for example in `import-matcher-service.ts` candidate keys and fingerprint track loops) now key on canonical `id`.
 

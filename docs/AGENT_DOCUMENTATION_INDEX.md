@@ -97,7 +97,7 @@ This index organizes all agent-facing documentation created during the v1.0.6 co
 📄 **Reference**: [AGENT_PATTERNS_GUIDE.md](AGENT_PATTERNS_GUIDE.md) - Frontend Patterns section
 
 - **Component Library**: StatusBadges, QualityBadge, ExplicitBadge → `app/src/components/ui/`
-- **Content States**: LoadingState, EmptyState, ErrorState → `app/src/components/ui/ContentState.tsx`
+- **Content States**: EmptyState, ErrorState, skeleton/boot loading patterns → `app/src/components/ui/ContentState.tsx`, `app/src/components/ui/LoadingSkeletons.tsx`, `app/src/components/shell/BootLoadingPage.tsx`
 - **Custom Hooks**: useInfiniteScroll, useLibrary, useArtistPage → `app/src/hooks/`
 - **Global Events**: Dispatch-based communication → `app/src/utils/appEvents.ts`
 - **Theme**: Fluent v9 integration, token usage → `app/src/theme/theme.ts`

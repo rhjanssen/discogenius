@@ -3,7 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
 import { getCurrentAppReleaseInfo } from "./services/app-release.js";
-import { resolveUniqueArtistFolder } from "./services/naming.js";
+import { resolveArtistFolderForPersistence } from "./services/artist-paths.js";
 
 console.log(`📁 Database path: ${DB_PATH}`);
 
@@ -83,18 +83,11 @@ export function backfillArtistPaths(): number {
   const update = db.prepare("UPDATE artists SET path = ? WHERE id = ? AND path IS NULL");
   const tx = db.transaction(() => {
     for (const artist of artists) {
-      update.run(
-        resolveUniqueArtistFolder(
-          artist.name,
-          artist.id,
-          artist.mbid,
-          (candidatePath) => {
-            const existing = db.prepare("SELECT id FROM artists WHERE path = ? LIMIT 1").get(candidatePath) as { id: number } | undefined;
-            return Boolean(existing && existing.id !== artist.id);
-          }
-        ),
-        artist.id
-      );
+      update.run(resolveArtistFolderForPersistence({
+        artistId: artist.id,
+        artistName: artist.name,
+        artistMbId: artist.mbid,
+      }), artist.id);
     }
   });
   tx();

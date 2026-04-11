@@ -973,12 +973,6 @@ class ApiClient {
     });
   }
 
-  async processQueueItem(id: number) {
-    // Downloads are processed automatically; keep this as a safe "nudge" to resume processing.
-    // (Endpoint exists in tidarr-style queue router.)
-    return this.request('/queue/resume', { method: 'POST' });
-  }
-
   async retryQueueItem(id: number) {
     return this.request<{
       action?: 'retry-download' | 'retry-import' | 'queue-redownload';
