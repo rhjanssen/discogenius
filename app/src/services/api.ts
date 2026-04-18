@@ -242,7 +242,7 @@ class ApiClient {
 
   // App authentication (optional ADMIN_PASSWORD protection)
   async isAppAuthActive(): Promise<AppAuthStatusContract> {
-    return this.request('/app-auth/is-auth-active', {}, parseAppAuthStatusContract);
+    return this.request('/app-auth/is-auth-active', { timeoutMs: 10000 }, parseAppAuthStatusContract);
   }
 
   async verifyAppAuth() {

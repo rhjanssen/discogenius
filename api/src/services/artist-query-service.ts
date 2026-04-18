@@ -530,7 +530,7 @@ export class ArtistQueryService {
             DEMO: "ARTIST_DEMOS",
         };
 
-        transformedAlbums.forEach((album) => {
+        transformedAlbums.filter(a => !a.redundant_of).forEach((album) => {
             const moduleValue = album.aa_module?.toUpperCase();
             if (moduleValue && moduleToBucket[moduleValue]) {
                 modules[moduleToBucket[moduleValue]].push(album);

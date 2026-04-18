@@ -735,6 +735,13 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
                 aria-label="Search artists, albums, tracks, or videos"
                 value={searchQuery}
                 onChange={(_e, data) => setSearchQuery(data.value)}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                        if (!searchQuery.trim()) return;
+                        setIsOpen(false);
+                        navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+                    }
+                }}
                 onFocus={() => {
                     if (searchQuery) setIsOpen(true);
                 }}
