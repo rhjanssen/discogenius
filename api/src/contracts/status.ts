@@ -333,8 +333,28 @@ export function parseQueueDetailsResponseContract(value: unknown): QueueDetailsR
 
 export function parseQueueListResponseContract(value: unknown): QueueListResponseContract {
   const record = expectRecord(value, "queue");
+  const rawItems = record.items;
+  let items: QueueItemContract[];
+
+  if (!Array.isArray(rawItems)) {
+    items = [];
+  } else {
+    items = [];
+    for (let i = 0; i < rawItems.length; i++) {
+      try {
+        items.push(parseQueueItemContract(rawItems[i], i));
+      } catch (err) {
+        // Skip malformed items instead of crashing the entire parse.
+        // This prevents a single bad row from hiding the entire queue.
+        if (typeof process !== "undefined" && process.env?.NODE_ENV !== "production") {
+          console.warn(`[parseQueueListResponseContract] skipping queue.items[${i}]:`, err);
+        }
+      }
+    }
+  }
+
   return {
-    items: expectArray(record.items, "queue.items", parseQueueItemContract),
+    items,
     total: expectNumber(record.total, "queue.total"),
     limit: expectNumber(record.limit, "queue.limit"),
     offset: expectNumber(record.offset, "queue.offset"),

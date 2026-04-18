@@ -157,8 +157,11 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
       gap: tokens.spacingHorizontalM,
     },
+    "@media (min-width: 768px)": {
+      gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))",
+    },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fill, minmax(196px, 1fr))",
     },
   },
   mediaCard: {
@@ -760,9 +763,9 @@ export function DataGridSkeleton({
   const gridTemplateColumns = columnTemplate || `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))`;
   const rowPaddingStyle = compact
     ? {
-        paddingTop: tokens.spacingVerticalXS,
-        paddingBottom: tokens.spacingVerticalXS,
-      }
+      paddingTop: tokens.spacingVerticalXS,
+      paddingBottom: tokens.spacingVerticalXS,
+    }
     : undefined;
 
   return (

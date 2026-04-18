@@ -96,8 +96,8 @@ function getJobTidalId(job: QueueJobRow): string | null {
 function getJobAlbumId(job: QueueJobRow): string | null {
   const payloadAlbumId = getOptionalString(
     job.payload?.album_id
-      ?? job.payload?.albumId
-      ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
+    ?? job.payload?.albumId
+    ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
   );
   if (payloadAlbumId) {
     return payloadAlbumId;
@@ -130,8 +130,8 @@ function getJobAlbumId(job: QueueJobRow): string | null {
 function getJobArtistId(job: QueueJobRow): string | null {
   const payloadArtistId = getOptionalString(
     job.payload?.artist_id
-      ?? job.payload?.artistId
-      ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.artistId,
+    ?? job.payload?.artistId
+    ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.artistId,
   );
   if (payloadArtistId) {
     return payloadArtistId;
@@ -369,13 +369,13 @@ export class DownloadQueueQueryService {
       ?? getOptionalString((job.payload?.resolved as Record<string, unknown> | undefined)?.cover);
     let albumId = getOptionalString(
       job.payload?.album_id
-        ?? job.payload?.albumId
-        ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
+      ?? job.payload?.albumId
+      ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
     );
     let albumTitle = getOptionalString(
       job.payload?.album_title
-        ?? job.payload?.albumTitle
-        ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumTitle,
+      ?? job.payload?.albumTitle
+      ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumTitle,
     );
     let quality = getOptionalString(job.payload?.quality);
 
@@ -478,10 +478,12 @@ export class DownloadQueueQueryService {
       type: contentType,
       status: job.status as QueueItemContract["status"],
       stage: job.type === JobTypes.ImportDownload ? "import" : "download",
-      progress: typeof downloadState.progress === "number" ? downloadState.progress : (job.progress ?? 0),
+      progress: (typeof downloadState.progress === "number" && Number.isFinite(downloadState.progress))
+        ? downloadState.progress
+        : (typeof job.progress === "number" && Number.isFinite(job.progress) ? job.progress : 0),
       error: getOptionalString(job.error) ?? null,
-      created_at: job.created_at,
-      updated_at: job.updated_at ?? job.created_at,
+      created_at: job.created_at || new Date().toISOString(),
+      updated_at: job.updated_at || job.created_at || new Date().toISOString(),
       started_at: job.started_at ?? null,
       completed_at: job.completed_at ?? null,
       url: getOptionalString(job.payload?.url) ?? null,
