@@ -13,7 +13,9 @@ import {
   lookupMusicBrainzReleasesByBarcode,
 } from "./fingerprint.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import { shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
+import { MoveArtistService } from "./move-artist-service.js";
 
 type RetagTrackRow = {
   id: number;
@@ -452,6 +454,38 @@ function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, str
 }
 
 export class AudioTagService {
+  private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
+    const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+      id: number | string;
+      name: string | null;
+      mbid: string | null;
+      path: string | null;
+    } | undefined;
+
+    if (!artist) {
+      return;
+    }
+
+    if (!shouldReapplyArtistPathTemplate({
+      artistId: artist.id,
+      artistName: String(artist.name || "Unknown Artist"),
+      artistMbId: artist.mbid || null,
+      existingPath: artist.path || null,
+    })) {
+      return;
+    }
+
+    try {
+      MoveArtistService.moveArtist({
+        artistId: String(artist.id),
+        applyNamingTemplate: true,
+        moveFiles: true,
+      });
+    } catch (error) {
+      console.warn(`[Retag] Failed to reapply artist path template for ${artistId}:`, error);
+    }
+  }
+
   private static getTrackCount(options: RetagScopeOptions = {}): number {
     const where: string[] = ["lf.file_type = 'track'"];
     const params: Array<string> = [];
@@ -668,6 +702,7 @@ export class AudioTagService {
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
+          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
         }
 
         nextRow = {
@@ -708,6 +743,7 @@ export class AudioTagService {
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
+          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
         }
 
         nextRow = {
@@ -804,6 +840,7 @@ export class AudioTagService {
         SET mbid = COALESCE(mbid, ?)
         WHERE id = ?
       `).run(primaryArtistCredit.id, nextRow.artist_id);
+      this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
     }
 
     return {

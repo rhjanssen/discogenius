@@ -314,11 +314,12 @@ type TabType = 'top' | 'artists' | 'albums' | 'tracks' | 'videos';
 
 interface GlobalSearchProps {
     autoFocus?: boolean;
+    initialQuery?: string;
 }
 
-const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
+const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) => {
     const styles = useStyles();
-    const [searchQuery, setSearchQuery] = useState("");
+    const [searchQuery, setSearchQuery] = useState(initialQuery.trim());
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<TabType>('top');
     const { searchResults, isSearching, search, addItem, removeItem } = useSearch();
@@ -331,6 +332,10 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
     const searchActivityLabel = "Searching TIDAL...";
 
     useEffect(() => {
+        setSearchQuery(initialQuery.trim());
+    }, [initialQuery]);
+
+    useEffect(() => {
         const debounceTimer = setTimeout(() => {
             if (searchQuery.length >= 2) {
                 search(searchQuery);
@@ -341,6 +346,10 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
         }, 300);
         return () => clearTimeout(debounceTimer);
     }, [searchQuery, search]);
+
+    useEffect(() => {
+        setActiveTab('top');
+    }, [searchQuery]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -784,7 +793,6 @@ const GlobalSearch = ({ autoFocus }: GlobalSearchProps = {}) => {
 };
 
 export default GlobalSearch;
-
 
 
 

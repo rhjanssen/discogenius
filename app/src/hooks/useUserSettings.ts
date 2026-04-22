@@ -71,6 +71,18 @@ export const useUserSettings = () => {
     };
   }, []);
 
+  const saveNamingSettings = useCallback(async (toSave: NamingSettings, notifySuccess: boolean) => {
+    await api.updateNamingConfig(toSave);
+    pendingNamingRef.current = null;
+
+    if (notifySuccess) {
+      toast({
+        title: "Naming saved",
+        description: "Naming templates updated.",
+      });
+    }
+  }, [toast]);
+
   const updateQualitySettings = async (updates: Partial<QualitySettings>) => {
     try {
       if (!qualitySettings) return;
@@ -172,12 +184,7 @@ export const useUserSettings = () => {
       if (!toSave) return;
 
       try {
-        await api.updateNamingConfig(toSave);
-        pendingNamingRef.current = null;
-        toast({
-          title: "Naming saved",
-          description: "Naming templates updated.",
-        });
+        await saveNamingSettings(toSave, true);
       } catch (error: any) {
         toast({
           variant: "destructive",
@@ -187,6 +194,26 @@ export const useUserSettings = () => {
       }
     }, 600);
   };
+
+  const flushNamingSettings = useCallback(async () => {
+    if (namingSaveTimeoutRef.current) {
+      clearTimeout(namingSaveTimeoutRef.current);
+      namingSaveTimeoutRef.current = null;
+    }
+
+    const toSave = pendingNamingRef.current;
+    if (!toSave) {
+      return namingSettings;
+    }
+
+    try {
+      await saveNamingSettings(toSave, false);
+      return toSave;
+    } catch (error) {
+      pendingNamingRef.current = toSave;
+      throw error;
+    }
+  }, [namingSettings, saveNamingSettings]);
 
   const updateAccountSettings = async (updates: Partial<AccountSettings>) => {
     try {
@@ -215,6 +242,7 @@ export const useUserSettings = () => {
     updateMetadataSettings,
     updatePathSettings,
     updateNamingSettings,
+    flushNamingSettings,
     updateAccountSettings,
     reload: loadSettings,
   };

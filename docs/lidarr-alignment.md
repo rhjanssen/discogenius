@@ -36,7 +36,7 @@ This document tracks the Discogenius backend surfaces that intentionally mirror 
 | --- | --- | --- |
 | `MediaFileService` | `LibraryFilesService` | Discogenius service owns rename previews, expected paths, tracked assets, and cleanup, not only file-row CRUD. |
 | `FileNameBuilder` | `naming.ts` | Function-based builder today; needs a deeper extraction if we want a true class-level match. |
-| `ArtistPathBuilder` | `artist-paths.ts` + `naming.ts` | Same reasoning as `FileNameBuilder`. |
+| `ArtistPathBuilder` | `artist-path-builder.ts` | Lidarr-style builder surface now exists; low-level conflict helpers still live in `artist-paths.ts`. |
 | `DownloadedAlbumsCommandService` | `download-processor.ts` + `downloaded-tracks-import-service.ts` | Discogenius folds downloader orchestration and import dispatch differently. |
 | no direct Lidarr analogue | `RefreshPlaylistService` | TIDAL playlist syncing is Discogenius-specific but now follows the same explicit refresh-service boundary. |
 | no direct Lidarr analogue | `RefreshVideoService` | Lidarr has no music-video domain; Discogenius keeps it as a dedicated child refresh service. |

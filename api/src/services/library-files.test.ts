@@ -135,6 +135,19 @@ test("resolveArtistFolderForPersistence avoids nested folder collisions for gene
   assert.equal(resolved, path.join("Artists (2)", "Air"));
 });
 
+test("shouldReapplyArtistPathTemplate detects legacy generated folders once artist MBIDs exist", () => {
+  writeTestConfig({ artistFolder: "{artistName} [{artistMbId}]" });
+
+  const shouldReapply = artistPathsModule.shouldReapplyArtistPathTemplate({
+    artistId: 1,
+    artistName: "Queen",
+    artistMbId: "artist-mbid-1",
+    existingPath: "Queen",
+  });
+
+  assert.equal(shouldReapply, true);
+});
+
 test("backfillArtistPaths assigns unique folders when multiple legacy artists are missing paths", () => {
   writeTestConfig({ artistFolder: "{artistName}" });
 

@@ -151,6 +151,25 @@ test("moveArtist queues MoveArtist when moveFiles is requested", () => {
   assert.equal(job.refId, "1");
 });
 
+test("moveArtist can rebuild the artist path from the current naming template", () => {
+  seedArtistTrack({ artistPath: "Artist One" });
+  const config = configModule.readConfig();
+  config.naming.artist_folder = "{artistName} [{artistMbId}]";
+  configModule.writeConfig(config);
+  dbModule.db.prepare("UPDATE artists SET mbid = ? WHERE id = ?").run("artist-mbid-1", 1);
+
+  const result = moveArtistServiceModule.MoveArtistService.moveArtist({
+    artistId: "1",
+    applyNamingTemplate: true,
+    moveFiles: true,
+  });
+
+  assert.ok(result);
+  assert.equal(result?.path, "Artist One [artist-mbid-1]");
+  assert.equal(result?.moveFilesQueued, true);
+  assert.ok(result?.jobId);
+});
+
 test("executeMoveArtistJob moves the artist folder and rebases tracked file paths", () => {
   const seeded = seedArtistTrack();
 

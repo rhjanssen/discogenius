@@ -129,3 +129,48 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   assert.equal(path.resolve(trackedFile.expectedPath), path.resolve(seeded.expectedPath));
   assert.equal(trackedFile.needsRename, 0);
 });
+
+test("RenameTrackFileService keeps the stored artist path canonical until path updates are applied explicitly", () => {
+  writeTestConfig();
+  const musicRoot = configModule.Config.getMusicPath();
+  const legacyPath = path.join(musicRoot, "Artist One", "Album One", "01 - Track One.flac");
+  fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+  fs.writeFileSync(legacyPath, "test-audio");
+
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(1, "Artist One", "artist-mbid-1", "Artist One", 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO albums (
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(10, 1, "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO media (
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(100, 1, 10, "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: legacyPath,
+    libraryRoot: musicRoot,
+    fileType: "track",
+  });
+
+  const config = configModule.readConfig();
+  config.naming.artist_folder = "{artistName} [{artistMbId}]";
+  configModule.writeConfig(config);
+
+  const status = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1" }, 10);
+  const artist = dbModule.db.prepare("SELECT path FROM artists WHERE id = ?").get(1) as { path: string };
+
+  assert.equal(artist.path, "Artist One");
+  assert.equal(status.renameNeeded, 0);
+  assert.equal(status.sample.length, 0);
+});

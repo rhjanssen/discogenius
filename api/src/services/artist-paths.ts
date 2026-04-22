@@ -175,3 +175,27 @@ export function resolveArtistFolderForPersistence(seed: ArtistFolderSeed): strin
 
   return resolveArtistFolderFromTemplate(seed);
 }
+
+export function shouldReapplyArtistPathTemplate(seed: ArtistFolderSeed): boolean {
+  const existingPath = String(seed.existingPath || "").trim();
+  if (!existingPath || !seed.artistMbId) {
+    return false;
+  }
+
+  const currentTemplatePath = resolveArtistFolderFromTemplate({
+    ...seed,
+    existingPath: null,
+  });
+
+  if (normalizeComparablePath(existingPath) === normalizeComparablePath(currentTemplatePath)) {
+    return false;
+  }
+
+  const legacyTemplatePath = resolveArtistFolderFromTemplate({
+    ...seed,
+    artistMbId: null,
+    existingPath: null,
+  });
+
+  return normalizeComparablePath(existingPath) === normalizeComparablePath(legacyTemplatePath);
+}

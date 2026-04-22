@@ -7,13 +7,14 @@ import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveBioFile, saveReviewFile, saveLyricsFile } from "./metadata-files.js";
 import { getArtist, getTrack, getVideo } from "./tidal.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
-import { resolveArtistFolderForPersistence } from "./artist-paths.js";
+import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { getDownloadWorkspacePath } from "./download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
+import { MoveArtistService } from "./move-artist-service.js";
 
 
 type OrganizeType = "album" | "track" | "video" | "playlist";
@@ -81,6 +82,38 @@ export class OrganizerService {
     ".webm",
     ".ts",
   ]);
+
+  private static refreshArtistPathFromTemplateIfNeeded(artistId: string) {
+    const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+      id: string | number;
+      name: string | null;
+      mbid: string | null;
+      path: string | null;
+    } | undefined;
+
+    if (!artist) {
+      return;
+    }
+
+    if (!shouldReapplyArtistPathTemplate({
+      artistId: artist.id,
+      artistName: String(artist.name || "Unknown Artist"),
+      artistMbId: artist.mbid || null,
+      existingPath: artist.path || null,
+    })) {
+      return;
+    }
+
+    try {
+      MoveArtistService.moveArtist({
+        artistId: String(artist.id),
+        applyNamingTemplate: true,
+        moveFiles: true,
+      });
+    } catch (error) {
+      console.warn(`[Organizer] Failed to reapply artist path template for ${artistId}:`, error);
+    }
+  }
 
   private static sanitizeFilename(name: string): string {
     return (name || "Unknown").replace(/[<>:"/\\|?*]/g, "").trim();
@@ -863,6 +896,8 @@ export class OrganizerService {
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
+      this.refreshArtistPathFromTemplateIfNeeded(artistId);
+      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
 
       const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistName || "Unknown Artist";
@@ -1294,6 +1329,8 @@ export class OrganizerService {
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
+      this.refreshArtistPathFromTemplateIfNeeded(artistId);
+      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
 
       const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistName || "Unknown Artist";
@@ -1700,6 +1737,8 @@ export class OrganizerService {
         db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
+      this.refreshArtistPathFromTemplateIfNeeded(artistId);
+      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
@@ -1862,5 +1901,3 @@ export class OrganizerService {
     throw new Error(`[Organizer] Unhandled type: ${type}`);
   }
 }
-
-

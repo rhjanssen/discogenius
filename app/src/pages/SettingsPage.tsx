@@ -916,6 +916,7 @@ const SettingsPage = () => {
         updatePathSettings,
         namingSettings,
         updateNamingSettings,
+        flushNamingSettings,
         accountSettings,
     } = useUserSettings();
     const { isConnected: tidalConnected, isLoading: tidalLoading } = useTidalConnection();
@@ -970,6 +971,7 @@ const SettingsPage = () => {
     const loadRenameStatus = useCallback(async () => {
         setRenameStatusLoading(true);
         try {
+            await flushNamingSettings();
             const status = await api.getLibraryRenameStatus({ sampleLimit: 4 });
             setRenameStatus(status as NamingRenameStatus);
         } catch (error: any) {
@@ -982,11 +984,12 @@ const SettingsPage = () => {
             setRenameStatusLoading(false);
             setRenameStatusInitialized(true);
         }
-    }, [toast]);
+    }, [flushNamingSettings, toast]);
 
     const handleApplyLibraryNaming = async () => {
         setRenameApplying(true);
         try {
+            await flushNamingSettings();
             const result: any = await api.applyLibraryRenames({ applyAll: true });
             toast({
                 title: "Rename queued",
@@ -1383,24 +1386,29 @@ const SettingsPage = () => {
 
     const insertNamingToken = (token: string) => {
         if (!namingHelpField || !namingSettings) return;
-        const current = (namingSettings as any)[namingHelpField] || "";
+        const current = (localNaming as any)[namingHelpField] || "";
+        setLocalNaming((prev) => ({ ...prev, [namingHelpField]: `${current}${token}` }));
         updateNamingSettings({ [namingHelpField]: `${current}${token}` } as any);
     };
 
-    const namingExamples = namingSettings ? (() => {
-        const artistFolder = renderNamingRelativePath(namingSettings.artist_folder, {
+    const effectiveNamingSettings = namingSettings
+        ? { ...namingSettings, ...localNaming }
+        : null;
+
+    const namingExamples = effectiveNamingSettings ? (() => {
+        const artistFolder = renderNamingRelativePath(effectiveNamingSettings.artist_folder, {
             ...SAMPLE_NAMING,
         });
 
-        const trackPathSingle = renderNamingRelativePath(namingSettings.album_track_path_single, {
+        const trackPathSingle = renderNamingRelativePath(effectiveNamingSettings.album_track_path_single, {
             ...SAMPLE_NAMING,
         });
 
-        const trackPathMulti = renderNamingRelativePath(namingSettings.album_track_path_multi, {
+        const trackPathMulti = renderNamingRelativePath(effectiveNamingSettings.album_track_path_multi, {
             ...SAMPLE_NAMING,
         });
 
-        const videoFile = renderNamingFileStem(namingSettings.video_file, {
+        const videoFile = renderNamingFileStem(effectiveNamingSettings.video_file, {
             ...SAMPLE_NAMING,
         });
 
@@ -2648,7 +2656,6 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
-
 
 
 

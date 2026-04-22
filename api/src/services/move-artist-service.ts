@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import { db } from "../database.js";
 import { RequestValidationError } from "../utils/request-validation.js";
-import { findArtistPathConflict, normalizeArtistFolderInput, resolveArtistFolderFromTemplate } from "./artist-paths.js";
+import { findArtistPathConflict, normalizeArtistFolderInput } from "./artist-paths.js";
+import { ArtistPathBuilder } from "./artist-path-builder.js";
 import { Config } from "./config.js";
 import { LibraryFilesService, removeEmptyParents, type RenameStatusSummary } from "./library-files.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
@@ -60,11 +61,12 @@ function resolveRequestedArtistPath(artist: ArtistPathRow, options: MoveArtistOp
   }
 
   if (applyNamingTemplate) {
-    return resolveArtistFolderFromTemplate({
-      artistId: artist.id,
-      artistName: String(artist.name || "Unknown Artist"),
-      artistMbId: artist.mbid || null,
-    });
+    return ArtistPathBuilder.buildPath({
+      id: artist.id,
+      name: artist.name,
+      mbid: artist.mbid,
+      path: artist.path,
+    }, false);
   }
 
   try {

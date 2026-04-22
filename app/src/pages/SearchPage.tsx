@@ -1,5 +1,6 @@
 import React from "react";
 import { Body1, makeStyles, tokens, Title1 } from "@fluentui/react-components";
+import { useSearchParams } from "react-router-dom";
 import GlobalSearch from "@/components/GlobalSearch";
 import { useTidalConnection } from "@/hooks/useTidalConnection";
 
@@ -33,7 +34,9 @@ const useStyles = makeStyles({
 
 const SearchPage = () => {
   const styles = useStyles();
+  const [searchParams] = useSearchParams();
   const { remoteCatalogAvailable, providerAuthMode } = useTidalConnection();
+  const query = searchParams.get("q")?.trim() ?? "";
   const localOnlyMessage = providerAuthMode === "mock"
     ? "Provider auth is mocked in this environment. Search results are limited to your indexed local library."
     : "Disconnected mode is active. Search results are limited to your indexed local library.";
@@ -46,7 +49,7 @@ const SearchPage = () => {
           <Body1 className={styles.note}>{localOnlyMessage}</Body1>
         ) : null}
         <div className={styles.searchWrapper}>
-          <GlobalSearch autoFocus />
+          <GlobalSearch key={query} autoFocus initialQuery={query} />
         </div>
       </div>
     </div>

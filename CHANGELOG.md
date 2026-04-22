@@ -1,5 +1,14 @@
 # Changelog
 
+All notable changes to this project are documented in this file.
+
+## [1.2.5] - 2026-04-22
+
+### Changed
+- Aligned artist path rebuild/move flow more closely with Lidarr by introducing `ArtistPathBuilder` and keeping artist path changes on the explicit `MoveArtistService` path.
+- Organizer and audio-tag MBID enrichment now reapply artist folder naming through the move workflow when a legacy generated folder should be rebuilt with `{artistMbId}`.
+- Search submissions now hydrate the dedicated search page correctly, and naming settings flush before rename preview/apply so library rename actions do not run against stale templates.
+
 ## [1.2.2] - 2026-04-11
 
 ### Changed
@@ -7,12 +16,6 @@
 - Artist folder handling is closer to Lidarr: generated artist paths now avoid parent/child collisions, `MoveArtist` performs a real folder move with rollback, and tracked file rows are rebased after successful folder moves.
 - Library scan reliability improved by recalculating download-state invalidation on orphan cleanup and by disabling the top-level prebuilt root index when nested artist-folder templates are in use.
 - Loading and settings UX were tightened with branded boot loading, more faithful skeletons, and clearer separation between `Disconnect TIDAL` and Discogenius `Sign out`.
-
-<!-- markdownlint-disable MD024 MD012 -->
-
-All notable changes to this project are documented in this file.
-
-## [Unreleased]
 
 ## [1.2.1] - 2026-03-30
 
