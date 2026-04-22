@@ -4,7 +4,8 @@ import type { QueueItemContract } from "@contracts/status";
 
 export const queueFeedQueryKey = ["queue"] as const;
 
-const QUEUE_PAGE_SIZE = 100;
+const QUEUE_PAGE_SIZE = 50;
+const QUEUE_FEED_TIMEOUT_MS = 45_000;
 
 type UseQueueOptions = {
   enabled?: boolean;
@@ -14,6 +15,7 @@ export function useQueue({ enabled = true }: UseQueueOptions = {}) {
   const query = useDashboardInfiniteFeed<QueueItemContract>({
     queryKey: queueFeedQueryKey,
     pageSize: QUEUE_PAGE_SIZE,
+    timeoutMs: QUEUE_FEED_TIMEOUT_MS,
     refreshErrorFallbackMessage: "Failed to refresh queue.",
     fetchPage: ({ limit, offset }) => api.getQueue({ limit, offset }),
     getItemId: (item) => item.id,

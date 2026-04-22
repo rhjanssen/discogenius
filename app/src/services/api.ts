@@ -55,6 +55,8 @@ import {
   parseSimilarAlbumsContract,
   parseVideoDetailContract,
 } from '@contracts/media';
+import type { AlbumPageContract } from '@contracts/pages';
+import { parseAlbumPageContract } from '@contracts/pages';
 import type {
   ActivityListResponseContract,
   QueueDetailsResponseContract,
@@ -115,6 +117,7 @@ type ApiRequestOptions = RequestInit & {
 
 type RequestControlOptions = {
   timeoutMs?: number | null;
+  signal?: AbortSignal;
 };
 
 class ApiClient {
@@ -403,6 +406,8 @@ class ApiClient {
     sort?: string;
     dir?: 'asc' | 'desc';
     includeDownloadStats?: boolean;
+    timeoutMs?: number | null;
+    signal?: AbortSignal;
   }): Promise<ArtistsListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
@@ -413,11 +418,15 @@ class ApiClient {
     if (params?.dir) queryParams.set('dir', params.dir);
     if (params?.includeDownloadStats !== undefined) queryParams.set('includeDownloadStats', params.includeDownloadStats ? 'true' : 'false');
     const query = queryParams.toString();
-    return this.request(`/artists${query ? `?${query}` : ''}`, {}, parseArtistsListResponseContract);
+    return this.request(
+      `/artists${query ? `?${query}` : ''}`,
+      { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
+      parseArtistsListResponseContract,
+    );
   }
 
-  async getStats(): Promise<LibraryStatsContract> {
-    return this.request('/stats', {}, parseLibraryStatsContract);
+  async getStats(options: RequestControlOptions = {}): Promise<LibraryStatsContract> {
+    return this.request('/stats', options, parseLibraryStatsContract);
   }
 
   async getArtist<T = unknown>(artistId: string) {
@@ -428,8 +437,8 @@ class ApiClient {
     return this.request(`/artists/${artistId}/page`);
   }
 
-  async getArtistPageDB(artistId: string) {
-    return this.request(`/artists/${artistId}/page-db`);
+  async getArtistPageDB(artistId: string, options: RequestControlOptions = {}) {
+    return this.request(`/artists/${artistId}/page-db`, options);
   }
 
   async getArtistDetail(artistId: string) {
@@ -473,7 +482,19 @@ class ApiClient {
 
 
 
-  async getAlbums(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }): Promise<AlbumsListResponseContract> {
+  async getAlbums(params?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    monitored?: boolean;
+    downloaded?: boolean;
+    locked?: boolean;
+    library_filter?: string;
+    sort?: string;
+    dir?: 'asc' | 'desc';
+    timeoutMs?: number | null;
+    signal?: AbortSignal;
+  }): Promise<AlbumsListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -485,11 +506,19 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/albums${query ? `?${query}` : ''}`, {}, parseAlbumsListResponseContract);
+    return this.request(
+      `/albums${query ? `?${query}` : ''}`,
+      { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
+      parseAlbumsListResponseContract,
+    );
   }
 
-  async getAlbum<T = unknown>(albumId: string) {
-    return this.request<T>(`/albums/${albumId}`);
+  async getAlbum<T = unknown>(albumId: string, options: RequestControlOptions = {}) {
+    return this.request<T>(`/albums/${albumId}`, options);
+  }
+
+  async getAlbumPage(albumId: string, options: RequestControlOptions = {}): Promise<AlbumPageContract> {
+    return this.request(`/albums/${albumId}/page`, options, parseAlbumPageContract);
   }
 
   async addAlbum(tidalId: string) {
@@ -510,19 +539,31 @@ class ApiClient {
     return this.request(`/albums/${albumId}`, { method: 'DELETE' });
   }
 
-  async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
-    return this.request(`/albums/${albumId}/tracks`, {}, parseAlbumTracksContract);
+  async getAlbumTracks(albumId: string, options: RequestControlOptions = {}): Promise<AlbumTrackContract[]> {
+    return this.request(`/albums/${albumId}/tracks`, options, parseAlbumTracksContract);
   }
 
-  async getAlbumSimilar(albumId: string): Promise<SimilarAlbumContract[]> {
-    return this.request(`/albums/${albumId}/similar`, {}, parseSimilarAlbumsContract);
+  async getAlbumSimilar(albumId: string, options: RequestControlOptions = {}): Promise<SimilarAlbumContract[]> {
+    return this.request(`/albums/${albumId}/similar`, options, parseSimilarAlbumsContract);
   }
 
-  async getAlbumVersions(albumId: string): Promise<AlbumVersionContract[]> {
-    return this.request(`/albums/${albumId}/versions`, {}, parseAlbumVersionsContract);
+  async getAlbumVersions(albumId: string, options: RequestControlOptions = {}): Promise<AlbumVersionContract[]> {
+    return this.request(`/albums/${albumId}/versions`, options, parseAlbumVersionsContract);
   }
 
-  async getTracks(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; library_filter?: string; sort?: string; dir?: 'asc' | 'desc' }) {
+  async getTracks(params?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    monitored?: boolean;
+    downloaded?: boolean;
+    locked?: boolean;
+    library_filter?: string;
+    sort?: string;
+    dir?: 'asc' | 'desc';
+    timeoutMs?: number | null;
+    signal?: AbortSignal;
+  }) {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -534,7 +575,10 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/tracks${query ? `?${query}` : ''}`);
+    return this.request(`/tracks${query ? `?${query}` : ''}`, {
+      timeoutMs: params?.timeoutMs ?? null,
+      signal: params?.signal,
+    });
   }
 
   async getTrackFiles(trackId: string) {
@@ -563,7 +607,18 @@ class ApiClient {
     return this.request(`/tracks/${trackId}`, { method: 'DELETE' });
   }
 
-  async getVideos(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean; downloaded?: boolean; locked?: boolean; sort?: string; dir?: 'asc' | 'desc' }): Promise<VideosListResponseContract> {
+  async getVideos(params?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    monitored?: boolean;
+    downloaded?: boolean;
+    locked?: boolean;
+    sort?: string;
+    dir?: 'asc' | 'desc';
+    timeoutMs?: number | null;
+    signal?: AbortSignal;
+  }): Promise<VideosListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.offset) queryParams.set('offset', params.offset.toString());
@@ -574,7 +629,11 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/videos${query ? `?${query}` : ''}`, {}, parseVideosListResponseContract);
+    return this.request(
+      `/videos${query ? `?${query}` : ''}`,
+      { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
+      parseVideosListResponseContract,
+    );
   }
 
   async getVideo(videoId: string): Promise<VideoDetailContract> {
@@ -818,8 +877,8 @@ class ApiClient {
     });
   }
 
-  async getArtistActivity(artistId: string) {
-    return this.request(`/artists/${artistId}/activity`);
+  async getArtistActivity(artistId: string, options: RequestControlOptions = {}) {
+    return this.request(`/artists/${artistId}/activity`, options);
   }
 
   async updateArtist(artistId: string, updates: any) {
@@ -1157,7 +1216,7 @@ class ApiClient {
 
     const eventSource = new EventSource(url, { withCredentials: false });
 
-    const eventTypes = ['status', 'progress-batch', 'started', 'completed', 'failed', 'queue-status', 'heartbeat'];
+    const eventTypes = ['status', 'progress', 'progress-batch', 'started', 'completed', 'failed', 'queue-status', 'heartbeat'];
 
     eventTypes.forEach(eventType => {
       eventSource.addEventListener(eventType, (e: MessageEvent) => {
@@ -1248,4 +1307,3 @@ class ApiClient {
 }
 
 export const api = new ApiClient(API_BASE_URL);
-

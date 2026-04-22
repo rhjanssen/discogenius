@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import {
   type InfiniteData,
-  useInfiniteQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import type { ArtistContract as Artist } from "@contracts/catalog";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import { useCatalogInfiniteResource, type CatalogPage } from "@/hooks/useCatalogInfiniteResource";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import {
   LIBRARY_UPDATED_EVENT,
@@ -18,12 +18,7 @@ import {
 
 export type { Artist };
 
-type ArtistsPage = {
-  items: Artist[];
-  hasMore: boolean;
-  total: number;
-  offset: number;
-};
+type ArtistsPage = CatalogPage<Artist>;
 
 type UseArtistsOptions = {
   monitored?: boolean;
@@ -77,7 +72,6 @@ export const useArtists = (options?: UseArtistsOptions) => {
   const queryClient = useQueryClient();
   const enabled = options?.enabled ?? true;
   const queryKey = artistsQueryKey(options ?? {});
-  const lastErrorMessageRef = useRef<string | null>(null);
 
   useDebouncedQueryInvalidation({
     queryKeys: [queryKey],
@@ -86,65 +80,22 @@ export const useArtists = (options?: UseArtistsOptions) => {
     debounceMs: 400,
   });
 
-  const query = useInfiniteQuery({
+  const query = useCatalogInfiniteResource<Artist, Awaited<ReturnType<typeof api.getArtists>>>({
     queryKey,
-    queryFn: async ({ pageParam }) => {
-      const offset = Number(pageParam || 0);
-      const response = await api.getArtists({
-        limit: ARTISTS_PAGE_SIZE,
+    pageSize: ARTISTS_PAGE_SIZE,
+    fetchPage: ({ limit, offset, signal, timeoutMs }) => api.getArtists({
+        limit,
         offset,
         monitored: options?.monitored,
         sort: options?.sort,
         dir: options?.dir,
         search: options?.search,
         includeDownloadStats: options?.includeDownloadStats ?? false,
-      });
-
-      return {
-        items: response.items,
-        hasMore: response.hasMore,
-        total: response.total,
-        offset,
-      };
-    },
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => (
-      lastPage.hasMore
-        ? lastPage.offset + lastPage.items.length
-        : undefined
-    ),
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-    placeholderData: (previousData) => previousData,
+        signal,
+        timeoutMs,
+      }),
     enabled,
   });
-
-  const pages = query.data?.pages ?? [];
-  const artists = enabled ? pages.flatMap((page) => page.items) : [];
-  const hasMore = enabled ? Boolean(query.hasNextPage) : false;
-  const total = enabled ? (pages[pages.length - 1]?.total ?? pages[0]?.total ?? 0) : 0;
-  const loading = enabled ? query.isPending && artists.length === 0 : false;
-
-  useEffect(() => {
-    if (!query.isError) {
-      lastErrorMessageRef.current = null;
-      return;
-    }
-
-    const message = query.error instanceof Error
-      ? query.error.message
-      : "Could not load artists";
-    if (message === lastErrorMessageRef.current) {
-      return;
-    }
-
-    lastErrorMessageRef.current = message;
-    toast({
-      title: "Failed to load artists",
-      description: message,
-      variant: "destructive",
-    });
-  }, [query.error, query.isError, toast]);
 
   useEffect(() => {
     const handleMonitorStateChanged = (event: Event) => {
@@ -213,12 +164,15 @@ export const useArtists = (options?: UseArtistsOptions) => {
   }, [queryClient, toast]);
 
   return {
-    artists,
-    loading,
-    hasMore,
-    total,
+    artists: query.items,
+    loading: query.loading,
+    isPopulated: query.isPopulated,
+    hasMore: query.hasMore,
+    total: query.total,
     loadMore,
     refetch: () => query.refetch(),
     toggleMonitor,
+    hasRefreshError: query.hasRefreshError,
+    refreshErrorMessage: query.refreshErrorMessage,
   };
 };

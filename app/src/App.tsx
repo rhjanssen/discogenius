@@ -10,7 +10,7 @@ import AppBootstrapGate from "@/components/AppBootstrapGate";
 import Layout from "@/components/Layout";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import PageErrorBoundary from "@/components/PageErrorBoundary";
-import { BootLoadingPage } from "@/components/shell/BootLoadingPage";
+import RouteLoadingFallback from "@/components/loading/RouteLoadingFallback";
 
 // Lazy-loaded pages for code splitting
 const Auth = lazy(() => import("@/pages/Auth"));
@@ -35,7 +35,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const PageFallback = () => <BootLoadingPage />;
+const PageFallback = () => <RouteLoadingFallback />;
 
 const SuspendedPage = ({
   children,

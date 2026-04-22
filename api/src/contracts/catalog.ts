@@ -159,7 +159,7 @@ function parseArtistContract(value: unknown, index: number): ArtistContract {
   };
 }
 
-function parseAlbumContract(value: unknown, index: number): AlbumContract {
+export function parseAlbumContract(value: unknown, index: number): AlbumContract {
   const label = `albums[${index}]`;
   const record = expectRecord(value, label);
   return {
@@ -326,7 +326,6 @@ export function parseSearchResponseContract(value: unknown): SearchResponseContr
 }
 
 export {
-  parseAlbumContract,
   parseArtistContract,
   parseSearchResultContract,
   parseVideoContract,

@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import type { Album } from '@/hooks/useLibrary';
-import type { Artist } from '@/hooks/useLibrary';
 import { api } from '@/services/api';
 import { useDebouncedQueryInvalidation } from '@/hooks/useDebouncedQueryInvalidation';
 import {
@@ -41,35 +40,31 @@ export function useAlbumPage(albumId: string | undefined) {
 
     return useQuery({
         queryKey: albumPageQueryKey(albumId),
-        queryFn: async (): Promise<AlbumPageData> => {
+        queryFn: async ({ signal }): Promise<AlbumPageData> => {
             if (!albumId) {
                 throw new Error('Album ID is required');
             }
 
-            const album = await api.getAlbum<Album>(albumId);
-            const [tracks, artistData, otherVersionsResult, similarAlbumsResult] = await Promise.all([
-                api.getAlbumTracks(albumId),
-                album.artist_id ? api.getArtist<Artist>(album.artist_id).catch(() => null) : Promise.resolve(null),
-                api.getAlbumVersions(albumId).catch(() => []),
-                api.getAlbumSimilar(albumId).catch(() => []),
-            ]);
+            const response = await api.getAlbumPage(albumId, {
+                signal,
+                timeoutMs: 15_000,
+            });
 
-            const artistImage = artistData?.picture
-                ? getArtistPicture(artistData.picture, 'tiny')
-                : artistData?.cover_image_url ?? null;
+            const artistImage = response.artistPicture
+                ? getArtistPicture(response.artistPicture, 'tiny')
+                : response.artistCoverImageUrl ?? null;
 
             return {
-                album,
-                tracks,
-                otherVersions: otherVersionsResult,
-                similarAlbums: similarAlbumsResult,
+                album: response.album as Album,
+                tracks: response.tracks,
+                otherVersions: response.otherVersions,
+                similarAlbums: response.similarAlbums,
                 artistImage,
             };
         },
         enabled: !!albumId,
-        refetchOnMount: 'always',
         refetchOnWindowFocus: false,
         staleTime: 30_000,
-        placeholderData: (previousData) => previousData,
+        retry: 1,
     });
 }

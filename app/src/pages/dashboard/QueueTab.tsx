@@ -37,10 +37,11 @@ import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { EmptyState } from "@/components/ui/ContentState";
+import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
+import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
 
@@ -351,6 +352,188 @@ type QueueGroup = {
     sortIndex: number;
 };
 
+function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"] {
+    switch (progress.state) {
+        case "failed":
+        case "importFailed":
+            return "failed";
+        case "queued":
+        case "importPending":
+            return "pending";
+        case "importing":
+            return "processing";
+        case "completed":
+            return "completed";
+        default:
+            return "downloading";
+    }
+}
+
+function getLiveQueueItemStage(progress: DownloadProgress): QueueItem["stage"] | undefined {
+    switch (progress.state) {
+        case "importPending":
+        case "importing":
+        case "importFailed":
+            return "import";
+        case "queued":
+        case "downloading":
+        case "failed":
+        case "paused":
+            return "download";
+        default:
+            return undefined;
+    }
+}
+
+function mergeQueueItemsWithProgress(
+    downloadQueue: QueueItem[],
+    progressByJobId: Map<number, DownloadProgress>,
+): QueueItem[] {
+    const mergedQueue = downloadQueue.map((item) => {
+        const progress = progressByJobId.get(item.id);
+        if (!progress) {
+            return item;
+        }
+
+        const liveStatus = getLiveQueueItemStatus(progress);
+        const liveStage = getLiveQueueItemStage(progress);
+
+        return {
+            ...item,
+            status: liveStatus,
+            stage: liveStage ?? item.stage,
+            progress: progress.progress ?? item.progress,
+            error: liveStatus === "failed"
+                ? progress.statusMessage ?? item.error ?? null
+                : item.error ?? null,
+            quality: progress.quality ?? item.quality ?? null,
+            title: progress.title ?? item.title,
+            artist: progress.artist ?? item.artist,
+            cover: progress.cover ?? item.cover ?? null,
+            currentFileNum: progress.currentFileNum ?? item.currentFileNum,
+            totalFiles: progress.totalFiles ?? item.totalFiles,
+            currentTrack: progress.currentTrack ?? item.currentTrack,
+            trackProgress: progress.trackProgress ?? item.trackProgress,
+            trackStatus: progress.trackStatus ?? item.trackStatus,
+            statusMessage: progress.statusMessage ?? item.statusMessage,
+            speed: progress.speed ?? item.speed,
+            eta: progress.eta ?? item.eta,
+            size: progress.size ?? item.size,
+            sizeleft: progress.sizeleft ?? item.sizeleft,
+            state: progress.state ?? item.state,
+            tracks: progress.tracks ?? item.tracks,
+        };
+    });
+
+    const existingJobIds = new Set(mergedQueue.map((item) => item.id));
+
+    for (const progress of progressByJobId.values()) {
+        if (existingJobIds.has(progress.jobId)) {
+            continue;
+        }
+
+        const status = getLiveQueueItemStatus(progress);
+        if (status === "completed") {
+            continue;
+        }
+
+        const timestamp = new Date().toISOString();
+        mergedQueue.push({
+            id: progress.jobId,
+            url: null,
+            type: progress.type,
+            queuePosition: undefined,
+            quality: progress.quality ?? null,
+            stage: getLiveQueueItemStage(progress),
+            tidalId: progress.tidalId,
+            path: null,
+            status,
+            progress: progress.progress ?? 0,
+            error: status === "failed" ? progress.statusMessage ?? null : null,
+            created_at: timestamp,
+            updated_at: timestamp,
+            started_at: timestamp,
+            completed_at: null,
+            title: progress.title,
+            artist: progress.artist,
+            cover: progress.cover ?? null,
+            album_id: progress.type === "album" ? progress.tidalId : null,
+            album_title: progress.type === "album" ? progress.title : null,
+            currentFileNum: progress.currentFileNum,
+            totalFiles: progress.totalFiles,
+            currentTrack: progress.currentTrack,
+            trackProgress: progress.trackProgress,
+            trackStatus: progress.trackStatus,
+            statusMessage: progress.statusMessage,
+            speed: progress.speed,
+            eta: progress.eta,
+            size: progress.size,
+            sizeleft: progress.sizeleft,
+            state: progress.state,
+            tracks: progress.tracks,
+        });
+    }
+
+    return mergedQueue;
+}
+
+function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | undefined {
+    if (!item || !item.tidalId) {
+        return undefined;
+    }
+
+    const hasInlineProgress = item.currentFileNum !== undefined
+        || item.totalFiles !== undefined
+        || item.currentTrack !== undefined
+        || item.trackProgress !== undefined
+        || item.trackStatus !== undefined
+        || item.statusMessage !== undefined
+        || item.speed !== undefined
+        || item.eta !== undefined
+        || item.size !== undefined
+        || item.sizeleft !== undefined
+        || item.state !== undefined
+        || (item.tracks?.length ?? 0) > 0;
+
+    if (!hasInlineProgress) {
+        return undefined;
+    }
+
+    const inferredState = item.state
+        ?? (item.status === "processing"
+            ? (item.stage === "import" ? "importing" : "downloading")
+            : item.status === "downloading"
+                ? "downloading"
+                : item.status === "pending"
+                    ? "queued"
+                    : item.status === "failed"
+                        ? "failed"
+                        : undefined);
+
+    return {
+        jobId: item.id,
+        tidalId: item.tidalId,
+        type: item.type,
+        quality: item.quality ?? null,
+        title: item.title,
+        artist: item.artist,
+        cover: item.cover ?? null,
+        progress: item.progress,
+        speed: item.speed,
+        eta: item.eta,
+        totalFiles: item.totalFiles,
+        currentFileNum: item.currentFileNum,
+        currentTrack: item.currentTrack,
+        trackProgress: item.trackProgress,
+        trackStatus: item.trackStatus,
+        statusMessage: item.statusMessage,
+        state: inferredState,
+        tracks: item.tracks,
+        size: item.size,
+        sizeleft: item.sizeleft,
+    };
+}
+
 type GroupMoveAction = 'top' | 'up' | 'down' | 'bottom';
 type DropPosition = 'before' | 'after';
 type DropTarget = {
@@ -470,10 +653,13 @@ const QueueTab = () => {
     const {
         queueItems: downloadQueue,
         isQueueInitialLoading: loading,
+        hasQueueRefreshError,
+        queueRefreshErrorMessage,
         refetch: refreshQueue,
     } = useQueue();
     const {
         getProgress,
+        progressByJobId,
         retryItem,
         deleteItem,
         reorderItems,
@@ -484,6 +670,9 @@ const QueueTab = () => {
         isLoadingMoreQueueHistory,
         loadMoreQueueHistory,
         isQueueHistoryInitialLoading,
+        hasQueueHistoryRefreshError,
+        queueHistoryRefreshErrorMessage,
+        refetch: refreshQueueHistory,
     } = useQueueHistoryFeed();
     const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -494,10 +683,15 @@ const QueueTab = () => {
     const activeSentinelRef = useRef<HTMLDivElement | null>(null);
     const historySentinelRef = useRef<HTMLDivElement | null>(null);
 
+    const liveQueueItems = useMemo(
+        () => mergeQueueItemsWithProgress(downloadQueue, progressByJobId),
+        [downloadQueue, progressByJobId],
+    );
+
     const groupedDownloads = useMemo(() => {
-        const activeDownloads = downloadQueue.filter(i => i.status === 'downloading' || i.status === 'processing');
-        const pendingDownloads = downloadQueue.filter(i => i.status === 'pending');
-        const failedDownloads = downloadQueue.filter(i => i.status === 'failed');
+        const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'processing');
+        const pendingDownloads = liveQueueItems.filter(i => i.status === 'pending');
+        const failedDownloads = liveQueueItems.filter(i => i.status === 'failed');
         const filteredQueue = [...activeDownloads, ...pendingDownloads, ...failedDownloads];
 
         const albumTrackCounts = new Map<string, number>();
@@ -574,7 +768,7 @@ const QueueTab = () => {
             if (rankDiff !== 0) return rankDiff;
             return a.sortIndex - b.sortIndex;
         });
-    }, [downloadQueue]);
+    }, [liveQueueItems]);
 
     const ACTIVE_PAGE_SIZE = 25;
     const [visibleActiveLimit, setVisibleActiveLimit] = useState(ACTIVE_PAGE_SIZE);
@@ -954,8 +1148,16 @@ const QueueTab = () => {
 
     const hasQueueRows = groupedDownloads.length > 0;
     const hasHistoryRows = queueHistoryItems.length > 0;
+    const isInitialLoading = (loading && !hasQueueRows) || (!hasQueueRows && isQueueHistoryInitialLoading && !hasQueueRefreshError);
 
-    if ((loading && !hasQueueRows) || (!hasQueueRows && isQueueHistoryInitialLoading)) {
+    const handleRetryQueueFeeds = async () => {
+        await Promise.all([
+            refreshQueue(),
+            refreshQueueHistory(),
+        ]);
+    };
+
+    if (isInitialLoading) {
         return (
             <div className={styles.tabSection}>
                 <QueueListSkeleton rows={6} />
@@ -1004,7 +1206,11 @@ const QueueTab = () => {
 
                                 const activeItem = group.items.find(i => i.status === 'downloading' || i.status === 'processing');
                                 const firstItem = group.items[0];
-                                const prog = activeItem ? getProgress(activeItem.id) : firstItem ? getProgress(firstItem.id) : undefined;
+                                const prog = activeItem
+                                    ? getProgress(activeItem.id) ?? getEmbeddedQueueItemProgress(activeItem)
+                                    : firstItem
+                                        ? getProgress(firstItem.id) ?? getEmbeddedQueueItemProgress(firstItem)
+                                        : undefined;
                                 const activeStage = activeItem?.stage || firstItem?.stage;
                                 const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing');
                                 const isImportPending = !isDownloading && !isFailed && activeStage === 'import';
@@ -1259,7 +1465,7 @@ const QueueTab = () => {
                                         </div>
 
                                         {shouldRenderGroupedTrackRows && group.items.map(item => {
-                                            const itemProg = getProgress(item.id);
+                                            const itemProg = getProgress(item.id) ?? getEmbeddedQueueItemProgress(item);
                                             const matchedTrack = group.type === 'album' ? findProgressTrackState(item.title, prog?.tracks) : undefined;
                                             const albumTrackIndex = group.type === 'album'
                                                 ? (prog?.tracks?.findIndex((track) => matchesActiveTrack(track.title, item.title)) ?? -1)
@@ -1418,11 +1624,24 @@ const QueueTab = () => {
                     </section>
                 ) : (
                     <section className={styles.queueSection} aria-label="Active">
-                        <EmptyState
-                            title="No items in queue"
-                            description="Browse your library and download albums, or enable monitoring to automate downloads."
-                            icon={<ArrowDownload24Regular />}
-                        />
+                        {hasQueueRefreshError ? (
+                            <ErrorState
+                                title="Queue unavailable"
+                                description={queueRefreshErrorMessage ?? "The queue feed did not finish loading."}
+                                minHeight="220px"
+                                actions={(
+                                    <Button appearance="primary" onClick={() => { void handleRetryQueueFeeds(); }}>
+                                        Retry
+                                    </Button>
+                                )}
+                            />
+                        ) : (
+                            <EmptyState
+                                title="No items in queue"
+                                description="Browse your library and download albums, or enable monitoring to automate downloads."
+                                icon={<ArrowDownload24Regular />}
+                            />
+                        )}
                     </section>
                 )}
 
@@ -1526,6 +1745,24 @@ const QueueTab = () => {
                                 </>
                             ) : null}
                         </div>
+                    </section>
+                ) : hasQueueHistoryRefreshError ? (
+                    <section className={styles.queueSection} aria-label="Queue history">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+                            </div>
+                        </div>
+                        <ErrorState
+                            title="Queue history unavailable"
+                            description={queueHistoryRefreshErrorMessage ?? "The queue history feed did not finish loading."}
+                            minHeight="220px"
+                            actions={(
+                                <Button appearance="primary" onClick={() => { void handleRetryQueueFeeds(); }}>
+                                    Retry
+                                </Button>
+                            )}
+                        />
                     </section>
                 ) : null}
             </div>

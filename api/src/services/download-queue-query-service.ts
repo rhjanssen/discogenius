@@ -211,6 +211,47 @@ function buildQueuePositionById(): Map<number, number> {
   );
 }
 
+function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<number, number> {
+  const queuePositionById = new Map<number, number>();
+  if (jobIds.length === 0) {
+    return queuePositionById;
+  }
+
+  const typePlaceholders = DOWNLOAD_JOB_TYPES.map(() => "?").join(",");
+  const idPlaceholders = jobIds.map(() => "?").join(",");
+  const rows = db.prepare(`
+    SELECT
+      target.id,
+      1 + (
+        SELECT COUNT(*)
+        FROM job_queue candidate
+        WHERE candidate.status = 'pending'
+          AND candidate.type IN (${typePlaceholders})
+          AND (
+            COALESCE(candidate.queue_order, 2147483647) < COALESCE(target.queue_order, 2147483647)
+            OR (
+              COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
+              AND candidate.created_at < target.created_at
+            )
+            OR (
+              COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
+              AND candidate.created_at = target.created_at
+              AND candidate.id < target.id
+            )
+          )
+      ) AS queuePosition
+    FROM job_queue target
+    WHERE target.status = 'pending'
+      AND target.id IN (${idPlaceholders})
+  `).all(...DOWNLOAD_JOB_TYPES, ...jobIds) as Array<{ id: number; queuePosition: number }>;
+
+  for (const row of rows) {
+    queuePositionById.set(Number(row.id), Number(row.queuePosition));
+  }
+
+  return queuePositionById;
+}
+
 function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressContract | null {
   const derivedState = item.state
     ?? (item.status === "failed"
@@ -278,26 +319,31 @@ export class DownloadQueueQueryService {
   }
 
   static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
+    const total = TaskQueueService.countJobsByTypesAndStatuses(
+      DOWNLOAD_OR_IMPORT_JOB_TYPES,
+      ["pending", "processing"],
+    );
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
       ["pending", "processing"],
-      5000,
-      0,
-      { orderBy: "queue_order" },
+      params.limit,
+      params.offset,
+      { orderBy: "live_activity" },
     ) as unknown as QueueJobRow[];
 
-    const queuePositionById = buildQueuePositionById();
-    const total = jobs.length;
-    const items = jobs
-      .slice(params.offset, params.offset + params.limit)
-      .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
+    const queuePositionById = getPendingDownloadQueuePositionsForIds(
+      jobs
+        .filter((job) => job.status === "pending" && DOWNLOAD_JOB_TYPES.includes(job.type as typeof DOWNLOAD_JOB_TYPES[number]))
+        .map((job) => job.id),
+    );
+    const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
 
     return {
       items,
       total,
       limit: params.limit,
       offset: params.offset,
-      hasMore: params.offset + items.length < total,
+      hasMore: params.offset + jobs.length < total,
     };
   }
 

@@ -219,36 +219,35 @@ test.describe('Content state surfaces', () => {
   test('album page shows the shared empty state when there are no tracks', async ({ page }) => {
     await stubShellApis(page);
 
-    await page.route('**/api/albums/album-empty', async (route) => {
+    await page.route('**/api/albums/album-empty/page', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          id: 'album-empty',
-          title: 'Empty Album',
-          artist_id: null,
-          artist_name: 'Quiet Artist',
-          cover_id: null,
-          vibrant_color: null,
-          is_monitored: true,
-          monitor_locked: false,
-          num_tracks: 0,
-          last_scanned: null,
-          quality: null,
+          album: {
+            id: 'album-empty',
+            title: 'Empty Album',
+            artist_id: 'artist-empty',
+            artist_name: 'Quiet Artist',
+            is_downloaded: false,
+            downloaded: 0,
+            cover_id: null,
+            vibrant_color: null,
+            is_monitored: true,
+            monitor_locked: false,
+            num_tracks: 0,
+            last_scanned: null,
+            quality: null,
+            release_date: '2024-01-01',
+            files: [],
+          },
+          tracks: [],
+          otherVersions: [],
+          similarAlbums: [],
+          artistPicture: null,
+          artistCoverImageUrl: null,
         }),
       });
-    });
-
-    await page.route('**/api/albums/album-empty/tracks', async (route) => {
-      await route.fulfill({ json: [] });
-    });
-
-    await page.route('**/api/albums/album-empty/versions', async (route) => {
-      await route.fulfill({ json: [] });
-    });
-
-    await page.route('**/api/albums/album-empty/similar', async (route) => {
-      await route.fulfill({ json: [] });
     });
 
     await page.goto(`${baseURL}/album/album-empty`, { waitUntil: 'domcontentloaded' });
@@ -332,4 +331,3 @@ test.describe('Content state surfaces', () => {
     await expect(page.getByRole('button', { name: /Import Followed Artists/i })).toBeVisible();
   });
 });
-

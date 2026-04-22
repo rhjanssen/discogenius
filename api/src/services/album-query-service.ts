@@ -4,6 +4,7 @@ import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
+import type { AlbumPageContract } from "../contracts/pages.js";
 
 const albumDownloadedPredicate = `
   EXISTS (
@@ -51,7 +52,11 @@ function normalizeAlbumRow(album: any, downloadedPercent: number, isDownloaded: 
 
 function queryAlbumRow(albumId: string): any | null {
     return db.prepare(`
-      SELECT albums.*, artists.name as artist_name
+      SELECT
+        albums.*,
+        artists.name as artist_name,
+        artists.picture as artist_picture,
+        artists.cover_image_url as artist_cover_image_url
       FROM albums
       LEFT JOIN artists ON albums.artist_id = artists.id
       WHERE albums.id = ?
@@ -74,6 +79,25 @@ function getAlbumTrackRows(albumId: string): TrackRow[] {
 }
 
 export class AlbumQueryService {
+    private static async ensureAlbumRow(albumId: string): Promise<any | null> {
+        let album = queryAlbumRow(albumId);
+
+        if (album) {
+            return album;
+        }
+
+        try {
+            await RefreshAlbumService.scanShallow(albumId, {
+                includeSimilarAlbums: true,
+                seedSimilarAlbums: false,
+            });
+        } catch {
+            // Cold-load fallback only; return null below if the album still isn't available.
+        }
+
+        return queryAlbumRow(albumId);
+    }
+
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
         const limit = input.limit;
         const offset = input.offset;
@@ -169,19 +193,7 @@ export class AlbumQueryService {
     }
 
     static async getAlbum(albumId: string): Promise<any | null> {
-        let album = queryAlbumRow(albumId);
-
-        if (!album) {
-            try {
-                await RefreshAlbumService.scanShallow(albumId, {
-                    includeSimilarAlbums: true,
-                    seedSimilarAlbums: false,
-                });
-                album = queryAlbumRow(albumId);
-            } catch {
-                // Cold-load fallback only; return null below if the album still isn't available.
-            }
-        }
+        const album = await this.ensureAlbumRow(albumId);
 
         if (!album) {
             return null;
@@ -192,19 +204,7 @@ export class AlbumQueryService {
     }
 
     static async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
-        let album = queryAlbumRow(albumId);
-
-        if (!album) {
-            try {
-                await RefreshAlbumService.scanShallow(albumId, {
-                    includeSimilarAlbums: true,
-                    seedSimilarAlbums: false,
-                });
-                album = queryAlbumRow(albumId);
-            } catch {
-                // Cold-load fallback only; return [] below if the album still isn't available.
-            }
-        }
+        const album = await this.ensureAlbumRow(albumId);
 
         if (!album) {
             return [];
@@ -213,6 +213,30 @@ export class AlbumQueryService {
         const tracks = getAlbumTrackRows(albumId);
 
         return hydrateTrackRows(tracks);
+    }
+
+    static async getAlbumPage(albumId: string): Promise<AlbumPageContract | null> {
+        const albumRow = await this.ensureAlbumRow(albumId);
+
+        if (!albumRow) {
+            return null;
+        }
+
+        const downloadStats = getAlbumDownloadStats(albumId);
+        const album = normalizeAlbumRow(
+            albumRow,
+            downloadStats.downloadedPercent,
+            downloadStats.isDownloaded,
+        );
+
+        return {
+            album,
+            tracks: hydrateTrackRows(getAlbumTrackRows(albumId)),
+            similarAlbums: this.getSimilarAlbums(albumId),
+            otherVersions: this.getAlbumVersions(albumId),
+            artistPicture: albumRow.artist_picture != null ? String(albumRow.artist_picture) : null,
+            artistCoverImageUrl: albumRow.artist_cover_image_url ?? null,
+        };
     }
 
     static getSimilarAlbums(albumId: string): SimilarAlbumContract[] {

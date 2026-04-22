@@ -222,15 +222,18 @@ const useStyles = makeStyles({
   },
   carousel: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalS,
     width: "100%",
-    "@media (min-width: 480px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
-    },
     "@media (min-width: 640px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))",
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
       gap: tokens.spacingHorizontalM,
+    },
+    "@media (min-width: 900px)": {
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+    },
+    "@media (min-width: 1200px)": {
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
   albumCard: {
@@ -397,7 +400,7 @@ const AlbumPage = () => {
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
-  const { data: pageData, isLoading: loading, error } = useAlbumPage(albumId);
+  const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
   const showTrackArtists = useMemo(
@@ -556,7 +559,15 @@ const AlbumPage = () => {
 
   /** Open track info dialog */
   if (loading) {
-    return <DetailPageSkeleton artShape="rounded" content="tracks" rows={8} className={styles.container} />;
+    return (
+      <DetailPageSkeleton
+        artShape="rounded"
+        content="tracks"
+        rows={8}
+        className={styles.container}
+        label="Loading album details..."
+      />
+    );
   }
 
   if (error) {
@@ -566,7 +577,7 @@ const AlbumPage = () => {
           title="Failed to load album"
           error={error as Error}
           minHeight="320px"
-          actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+          actions={<Button onClick={() => void refetch()}>Retry</Button>}
         />
       </div>
     );

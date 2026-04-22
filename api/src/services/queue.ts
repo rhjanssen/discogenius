@@ -378,6 +378,22 @@ function buildLiveActivityOrderClause(alias?: string): string {
             `;
 }
 
+function buildHistoryOrderClause(alias?: string): string {
+    const completedAt = buildColumnName("completed_at", alias);
+    const updatedAt = buildColumnName("updated_at", alias);
+    const startedAt = buildColumnName("started_at", alias);
+    const createdAt = buildColumnName("created_at", alias);
+    const id = buildColumnName("id", alias);
+
+    return `
+                ${completedAt} DESC,
+                ${updatedAt} DESC,
+                ${startedAt} DESC,
+                ${createdAt} DESC,
+                ${id} DESC
+            `;
+}
+
 function hydrateJobRow(row: { type: string; payload: unknown; id: number } & Record<string, unknown>): Job | null {
     if (!isJobType(row.type)) {
         console.warn(`[TaskQueue] Encountered unknown job type ${String(row.type)} for job ${row.id}; skipping typed hydration`);
@@ -521,7 +537,7 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
             : options.orderBy === 'history'
-                ? 'COALESCE(completed_at, updated_at, started_at, created_at) DESC, id DESC'
+                ? buildHistoryOrderClause()
                 : options.orderBy === 'live_activity'
                     ? buildLiveActivityOrderClause()
                     : options.orderBy === 'queue_order'
@@ -555,7 +571,7 @@ LIMIT ? OFFSET ?
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
             : options.orderBy === 'history'
-                ? 'COALESCE(completed_at, updated_at, started_at, created_at) DESC, id DESC'
+                ? buildHistoryOrderClause()
                 : options.orderBy === 'live_activity'
                     ? buildLiveActivityOrderClause()
                     : options.orderBy === 'queue_order'
@@ -1095,4 +1111,3 @@ ${buildExecutionOrderClause()}
         if (job) appEvents.emit(AppEvent.JOB_DELETED, { id, type: job.type, status: job.status, progress: job.progress } as JobEventPayload);
     }
 }
-

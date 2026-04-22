@@ -86,6 +86,21 @@ router.get("/:albumId", async (req, res) => {
   }
 });
 
+router.get("/:albumId/page", async (req, res) => {
+  try {
+    const albumId = req.params.albumId;
+    const albumPage = await AlbumQueryService.getAlbumPage(albumId);
+
+    if (!albumPage) {
+      return res.status(404).json({ detail: "Album not found" });
+    }
+
+    res.json(albumPage);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.get("/:albumId/tracks", async (req, res) => {
   try {
     const albumId = req.params.albumId;

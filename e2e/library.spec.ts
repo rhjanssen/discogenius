@@ -1,6 +1,206 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
+
+async function stubPopulatedLibraryShell(page: Page) {
+  await page.route('**/api/app-auth/is-auth-active', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ isAuthActive: false }),
+    });
+  });
+
+  await page.route('**/api/auth/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        connected: false,
+        refreshTokenExpired: false,
+        tokenExpired: false,
+        hoursUntilExpiry: 0,
+        mode: 'mock',
+        canAccessShell: true,
+        canAccessLocalLibrary: true,
+        remoteCatalogAvailable: false,
+        authBypassed: true,
+        canAuthenticate: false,
+        message: 'Mock provider auth mode is active.',
+      }),
+    });
+  });
+
+  await page.route('**/api/stats', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        artists: { total: 1, monitored: 1, downloaded: 0 },
+        albums: { total: 1, monitored: 1, downloaded: 0 },
+        tracks: { total: 1, monitored: 1, downloaded: 0 },
+        videos: { total: 1, monitored: 0, downloaded: 0 },
+      }),
+    });
+  });
+
+  await page.route('**/api/artists**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            id: 'artist-1',
+            name: 'Test Artist',
+            picture: null,
+            cover_image_url: null,
+            is_monitored: true,
+            last_scanned: null,
+            album_count: 1,
+            downloaded: 0,
+            is_downloaded: false,
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        total: 1,
+      }),
+    });
+  });
+
+  await page.route('**/api/albums**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            id: 'album-1',
+            title: 'Test Album',
+            artist_id: 'artist-1',
+            artist_name: 'Test Artist',
+            cover_id: null,
+            quality: 'FLAC',
+            is_monitored: true,
+            is_downloaded: false,
+            downloaded: 0,
+            release_date: '2024-01-01',
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        total: 1,
+      }),
+    });
+  });
+
+  await page.route('**/api/tracks**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            id: 'track-1',
+            title: 'Test Track',
+            artist_name: 'Test Artist',
+            album_title: 'Test Album',
+            album_id: 'album-1',
+            duration: 180,
+            quality: 'FLAC',
+            track_number: 1,
+            volume_number: 1,
+            downloaded: false,
+            is_downloaded: false,
+            is_monitored: true,
+            files: [],
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        total: 1,
+      }),
+    });
+  });
+
+  await page.route('**/api/videos**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            id: 'video-1',
+            title: 'Test Video',
+            artist_id: 'artist-1',
+            artist_name: 'Test Artist',
+            duration: 240,
+            cover_id: null,
+            quality: null,
+            is_monitored: false,
+            is_downloaded: false,
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+        total: 1,
+      }),
+    });
+  });
+
+  await page.route('**/api/queue/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ isPaused: false, processing: false, stats: [] }),
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], limit: 50, offset: 0, hasMore: false, total: 0 }),
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/queue/details', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.route('**/api/queue/progress-stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: status\ndata: {"isPaused":false,"processing":false,"stats":[]}\n\n',
+    });
+  });
+
+  await page.route((url) => url.pathname === '/api/events', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+      body: 'event: ready\ndata: {"ok":true}\n\n',
+    });
+  });
+}
 
 test.describe('Library page tabs & filtering', () => {
   test('library landing does not fetch paged queue data for the shell badge', async ({ page }) => {
@@ -118,19 +318,19 @@ test.describe('Library page tabs & filtering', () => {
   });
 
   test('library loads with Artists tab by default', async ({ page }) => {
-    // Clear localStorage so default tab is used
-    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
-    await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
-    await page.evaluate(() => localStorage.removeItem('discogenius_library_settings'));
+    await stubPopulatedLibraryShell(page);
+    await page.addInitScript(() => {
+      localStorage.removeItem('discogenius_library_settings');
+    });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
 
-    // Wait for main content
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByRole('tablist')).toBeVisible();
     await expect(page.getByRole('tablist')).toContainText('Artists');
   });
 
   test('library tab switching works (desktop)', async ({ page }) => {
+    await stubPopulatedLibraryShell(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
@@ -144,7 +344,7 @@ test.describe('Library page tabs & filtering', () => {
       const button = page.getByRole('button', { name: new RegExp(`^${name}$`) }).first();
 
       if (await tab.isVisible().catch(() => false)) {
-        await tab.click();
+        await tab.click({ force: true });
         await expect(tab).toHaveAttribute('aria-selected', 'true');
         continue;
       }
@@ -156,6 +356,7 @@ test.describe('Library page tabs & filtering', () => {
   });
 
   test('sort menu opens and selections persist', async ({ page }) => {
+    await stubPopulatedLibraryShell(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
@@ -179,6 +380,7 @@ test.describe('Library page tabs & filtering', () => {
   });
 
   test('view mode toggle between grid and list', async ({ page }) => {
+    await stubPopulatedLibraryShell(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);

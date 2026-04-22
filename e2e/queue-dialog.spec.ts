@@ -1068,8 +1068,8 @@ test.describe('Dashboard queue and activity tabs', () => {
       mockEvents: [
         { type: 'status', data: { isPaused: false, stats: [] } },
         {
-          type: 'progress',
-          data: {
+          type: 'progress-batch',
+          data: [{
             jobId: 501,
             tidalId: 'album-501',
             type: 'album',
@@ -1091,7 +1091,7 @@ test.describe('Dashboard queue and activity tabs', () => {
               { title: "Bakermat - Don't Wait", trackNum: 9, status: 'queued' },
               { title: 'Bakermat - Phenomenal', trackNum: 10, status: 'queued' },
             ],
-          },
+          }],
         },
         {
           type: 'failed',
@@ -1175,8 +1175,8 @@ test.describe('Dashboard queue and activity tabs', () => {
           },
         },
         {
-          type: 'progress',
-          data: {
+          type: 'progress-batch',
+          data: [{
             jobId: 901,
             tidalId: 'album-901',
             type: 'album',
@@ -1186,7 +1186,7 @@ test.describe('Dashboard queue and activity tabs', () => {
             currentFileNum: 3,
             totalFiles: 14,
             state: 'downloading',
-          },
+          }],
         },
       ],
     });
@@ -1216,42 +1216,40 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('Discovery')).toBeVisible();
     await expect(page.getByText('Daft Punk')).toBeVisible();
     await expect(page.getByRole('button', { name: /Move Discovery up/i })).toBeVisible();
-    await expect(page.getByRole('checkbox', { name: /Select Discovery/i })).toBeVisible();
   });
 
   test('queue history row navigates to the album page when track history includes album context', async ({ page }) => {
     await stubDashboardApis(page, createQueueHistoryNavigationFixture());
 
-    await page.route('**/api/albums/album-history-1', async (route) => {
+    await page.route('**/api/albums/album-history-1/page', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          id: 'album-history-1',
-          title: 'Discovery',
-          artist_id: null,
-          artist_name: 'Daft Punk',
-          cover_id: null,
-          vibrant_color: null,
-          is_monitored: true,
-          monitor_locked: false,
-          num_tracks: 0,
-          last_scanned: null,
-          quality: null,
+          album: {
+            id: 'album-history-1',
+            title: 'Discovery',
+            artist_id: 'artist-history-1',
+            artist_name: 'Daft Punk',
+            is_downloaded: false,
+            downloaded: 0,
+            cover_id: null,
+            vibrant_color: null,
+            is_monitored: true,
+            monitor_locked: false,
+            num_tracks: 0,
+            last_scanned: null,
+            quality: null,
+            release_date: '2001-03-13',
+            files: [],
+          },
+          tracks: [],
+          otherVersions: [],
+          similarAlbums: [],
+          artistPicture: null,
+          artistCoverImageUrl: null,
         }),
       });
-    });
-
-    await page.route('**/api/albums/album-history-1/tracks', async (route) => {
-      await route.fulfill({ json: [] });
-    });
-
-    await page.route('**/api/albums/album-history-1/versions', async (route) => {
-      await route.fulfill({ json: [] });
-    });
-
-    await page.route('**/api/albums/album-history-1/similar', async (route) => {
-      await route.fulfill({ json: [] });
     });
 
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
@@ -1276,15 +1274,10 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await expect(page.getByText('Discovery')).toBeVisible();
     await expect(page.getByText('Homework')).toBeVisible();
-    await expect(page.getByRole('checkbox', { name: /Select Discovery/i })).toBeVisible();
-    await expect(page.getByRole('checkbox', { name: /Select Homework/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Move Discovery up/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Move Discovery down/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /More queue actions for Discovery/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Move Homework up/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Move Homework down/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Select all visible/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Remove selected/i })).toBeVisible();
   });
 
   test('queue tab keeps active and pending live queue groups visible in a stable list', async ({ page }) => {
@@ -1292,7 +1285,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    const liveQueue = page.locator('section[aria-label="Live queue"]');
+    const liveQueue = page.locator('section[aria-label="Active"]');
     const liveGroups = liveQueue.locator('[data-queue-group-id]');
 
     await expect(liveQueue.getByText('From A Bakermat Point Of View')).toBeVisible();
@@ -1336,16 +1329,15 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    const liveQueue = page.locator('section[aria-label="Live queue"]');
+    const liveQueue = page.locator('section[aria-label="Active"]');
     const liveGroups = liveQueue.locator('[data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Alpha pending');
-    await expect(liveGroups.nth(1)).toContainText('Bravo importing');
-    await expect(liveGroups.nth(2)).toContainText('Charlie downloading');
+    await expect(liveGroups.nth(0)).toContainText('Bravo importing');
+    await expect(liveGroups.nth(1)).toContainText('Charlie downloading');
+    await expect(liveGroups.nth(2)).toContainText('Alpha pending');
     await expect(liveQueue.getByRole('button', { name: /Move Alpha pending up/i })).toBeVisible();
-    await expect(liveQueue.getByRole('checkbox', { name: /Select Alpha pending/i })).toBeVisible();
-    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
   });
 
   test('queue tab keeps an importing row in place when a later item starts downloading', async ({ page }) => {
@@ -1396,8 +1388,8 @@ test.describe('Dashboard queue and activity tabs', () => {
         { delayMs: 0, type: 'status', data: { isPaused: false, stats: [] } },
         {
           delayMs: 150,
-          type: 'progress',
-          data: {
+          type: 'progress-batch',
+          data: [{
             jobId: 1302,
             tidalId: 'album-1302',
             type: 'album',
@@ -1406,7 +1398,7 @@ test.describe('Dashboard queue and activity tabs', () => {
             progress: 100,
             state: 'importing',
             statusMessage: 'Waiting to import',
-          },
+          }],
         },
         {
           delayMs: 200,
@@ -1422,8 +1414,8 @@ test.describe('Dashboard queue and activity tabs', () => {
         },
         {
           delayMs: 240,
-          type: 'progress',
-          data: {
+          type: 'progress-batch',
+          data: [{
             jobId: 1303,
             tidalId: 'album-1303',
             type: 'album',
@@ -1431,7 +1423,7 @@ test.describe('Dashboard queue and activity tabs', () => {
             artist: 'Queue Order',
             progress: 14,
             state: 'downloading',
-          },
+          }],
         },
       ],
     });
@@ -1440,18 +1432,18 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    const liveGroups = page.locator('section[aria-label="Live queue"] [data-queue-group-id]');
+    const liveGroups = page.locator('section[aria-label="Active"] [data-queue-group-id]');
 
     await expect(liveGroups).toHaveCount(3);
-    await expect(liveGroups.nth(0)).toContainText('Anchor download');
-    await expect(liveGroups.nth(1)).toContainText('Import stays second');
+    await expect(liveGroups.nth(0)).toContainText('Import stays second');
+    await expect(liveGroups.nth(1)).toContainText('Anchor download');
     await expect(liveGroups.nth(2)).toContainText('Next download');
 
     await page.waitForTimeout(500);
 
-    await expect(liveGroups.nth(0)).toContainText('Anchor download');
-    await expect(liveGroups.nth(1)).toContainText('Import stays second');
-    await expect(liveGroups.nth(1).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(0)).toContainText('Import stays second');
+    await expect(liveGroups.nth(0).getByText(/^importing$/i)).toBeVisible();
+    await expect(liveGroups.nth(1)).toContainText('Anchor download');
     await expect(liveGroups.nth(2)).toContainText('Next download');
   });
 
@@ -1461,7 +1453,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     const importTrackRow = page
-      .locator('section[aria-label="Live queue"] [data-queue-subitem-row="true"]')
+      .locator('section[aria-label="Active"] [data-queue-subitem-row="true"]')
       .filter({ hasText: 'Import track alpha' })
       .first();
     const importStatus = importTrackRow.locator('[data-queue-track-status="importing"]');

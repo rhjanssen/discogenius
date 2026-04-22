@@ -291,7 +291,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
   if (loading) {
     return (
       <div className={styles.container}>
-        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" minCardWidth={240} />
+        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" className={styles.grid} />
       </div>
     );
   }
@@ -398,5 +398,4 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
 };
 
 export default VideoGrid;
-
 

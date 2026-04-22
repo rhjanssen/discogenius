@@ -1,6 +1,7 @@
 import {
   Skeleton,
   SkeletonItem,
+  Text,
   makeStyles,
   mergeClasses,
   tokens,
@@ -61,6 +62,8 @@ interface DetailPageSkeletonProps {
   rows?: number;
   cards?: number;
   className?: string;
+  cardsClassName?: string;
+  label?: string;
 }
 
 const useStyles = makeStyles({
@@ -153,15 +156,15 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalS,
-    "@media (min-width: 480px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 768px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))",
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(196px, 1fr))",
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+      gap: tokens.spacingHorizontalM,
+    },
+    "@media (min-width: 1200px)": {
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
   mediaCard: {
@@ -629,6 +632,9 @@ const useStyles = makeStyles({
     width: "140px",
     borderRadius: tokens.borderRadiusSmall,
   },
+  detailLoadingLabel: {
+    color: tokens.colorNeutralForeground3,
+  },
 });
 
 function range(count: number) {
@@ -971,11 +977,22 @@ export function DetailPageSkeleton({
   rows = 8,
   cards = 6,
   className,
+  cardsClassName,
+  label = "Loading page details...",
 }: DetailPageSkeletonProps) {
   const styles = useStyles();
 
   return (
-    <div className={mergeClasses(styles.detailPage, className)} aria-busy="true" aria-label="Loading page">
+    <div
+      className={mergeClasses(styles.detailPage, className)}
+      aria-busy="true"
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    >
+      <Text size={300} className={styles.detailLoadingLabel}>
+        {label}
+      </Text>
       <Skeleton animation="wave">
         <div className={styles.detailHeader}>
           <div className={styles.detailHeaderContent}>
@@ -1008,7 +1025,7 @@ export function DetailPageSkeleton({
           <SkeletonItem className={styles.detailSectionTitle} />
         </Skeleton>
         {content === "cards" ? (
-          <CardGridSkeleton cards={cards} />
+          <CardGridSkeleton cards={cards} className={cardsClassName} />
         ) : (
           <TrackListSkeleton rows={rows} />
         )}

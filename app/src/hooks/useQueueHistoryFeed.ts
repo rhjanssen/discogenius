@@ -4,7 +4,8 @@ import type { QueueItemContract } from "@contracts/status";
 
 export const queueHistoryFeedQueryKey = ["queueHistoryFeed"] as const;
 
-const QUEUE_HISTORY_PAGE_SIZE = 25;
+const QUEUE_HISTORY_PAGE_SIZE = 10;
+const QUEUE_HISTORY_FEED_TIMEOUT_MS = 45_000;
 
 type UseQueueHistoryFeedOptions = {
     enabled?: boolean;
@@ -14,6 +15,7 @@ export function useQueueHistoryFeed({ enabled = true }: UseQueueHistoryFeedOptio
     const query = useDashboardInfiniteFeed<QueueItemContract>({
         queryKey: queueHistoryFeedQueryKey,
         pageSize: QUEUE_HISTORY_PAGE_SIZE,
+        timeoutMs: QUEUE_HISTORY_FEED_TIMEOUT_MS,
         refreshErrorFallbackMessage: "Failed to refresh queue history.",
         fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({ limit, offset, timeoutMs }),
         getItemId: (item) => item.id,

@@ -84,7 +84,10 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
 
   const statsQuery = useQuery<LibraryStats>({
     queryKey: LIBRARY_STATS_QUERY_KEY,
-    queryFn: () => api.getStats(),
+    queryFn: ({ signal }) => api.getStats({
+      signal,
+      timeoutMs: 8_000,
+    }),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     retry: 1,
@@ -92,7 +95,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   });
 
   useEffect(() => {
-    if (!statsQuery.isError) {
+    if (!statsQuery.isError || statsQuery.data) {
       lastStatsErrorMessageRef.current = null;
       return;
     }
@@ -110,7 +113,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
       description: message,
       variant: "destructive",
     });
-  }, [statsQuery.error, statsQuery.isError, toast]);
+  }, [statsQuery.data, statsQuery.error, statsQuery.isError, toast]);
 
   const fetchLibrary = useCallback(async (
     monitored?: boolean,
@@ -242,11 +245,15 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     albums: albumsQuery.albums,
     loading: activeTab === "artists" ? artistsQuery.loading : activeTab === "albums" ? albumsQuery.loading : false,
     stats: statsQuery.data ?? null,
+    artistsIsPopulated: artistsQuery.isPopulated,
+    albumsIsPopulated: albumsQuery.isPopulated,
     sort: listSort,
     hasMoreArtists: artistsQuery.hasMore,
     hasMoreAlbums: albumsQuery.hasMore,
     loadMoreArtists: artistsQuery.loadMore,
     loadMoreAlbums: albumsQuery.loadMore,
+    refetchArtists: () => artistsQuery.refetch(),
+    refetchAlbums: () => albumsQuery.refetch(),
     fetchLibrary: safeFetchLibrary,
     setArtistFilter: setArtistMonitoredFilter,
     setAlbumFilter: setAlbumMonitoredFilter,
@@ -257,6 +264,10 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     setSearchQuery,
     syncArtist,
     toggleArtistMonitored: artistsQuery.toggleMonitor,
+    artistsHasRefreshError: artistsQuery.hasRefreshError,
+    artistsRefreshErrorMessage: artistsQuery.refreshErrorMessage,
+    albumsHasRefreshError: albumsQuery.hasRefreshError,
+    albumsRefreshErrorMessage: albumsQuery.refreshErrorMessage,
     addArtist,
     deleteArtist,
     updateArtist,

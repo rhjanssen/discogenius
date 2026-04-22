@@ -35,6 +35,7 @@ type QueueProgressEvent = Partial<DownloadProgress> & {
   tidalId?: string;
   type?: DownloadProgress["type"];
   state?: DownloadProgress["state"];
+  error?: string | null;
 };
 
 const DEFAULT_STATS: QueueStatsSummary = {
@@ -109,7 +110,7 @@ function buildProgressSnapshot(
     currentTrack: data.currentTrack ?? existing?.currentTrack,
     trackProgress: data.trackProgress ?? existing?.trackProgress,
     trackStatus: data.trackStatus ?? existing?.trackStatus,
-    statusMessage: data.statusMessage ?? existing?.statusMessage,
+    statusMessage: data.statusMessage ?? (typeof data.error === "string" ? data.error : existing?.statusMessage),
     state: data.state ?? existing?.state ?? "downloading",
     tracks: data.tracks ?? existing?.tracks,
     size: data.size ?? existing?.size,
@@ -145,11 +146,9 @@ function useQueueStatusContextValue(): QueueStatusContextType {
   }, [queryClient]);
 
   const updateProgressState = useCallback((updater: (previous: ProgressState) => ProgressState) => {
-    setProgressState((previous) => {
-      const next = updater(previous);
-      progressStateRef.current = next;
-      return next;
-    });
+    const next = updater(progressStateRef.current);
+    progressStateRef.current = next;
+    setProgressState(next);
   }, []);
 
   const applyQueueStatus = useCallback((value: Awaited<ReturnType<typeof api.getQueueStatus>>) => {
@@ -233,7 +232,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
             return;
           }
 
-          if (event === "progress-batch") {
+          if (event === "progress" || event === "progress-batch") {
             const batch = (Array.isArray(data) ? data : [data])
               .map((item) => buildProgressSnapshot(item))
               .filter((item): item is DownloadProgress => item !== null);

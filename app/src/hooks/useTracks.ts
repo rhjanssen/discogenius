@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import {
   type InfiniteData,
-  useInfiniteQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@/services/api";
-import { useToast } from "@/hooks/useToast";
+import { useCatalogInfiniteResource, type CatalogPage } from "@/hooks/useCatalogInfiniteResource";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import type { TrackListItem as Track } from "@/types/track-list";
 import {
@@ -14,12 +13,7 @@ import {
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
 
-type TracksPage = {
-  items: Track[];
-  hasMore: boolean;
-  total: number;
-  offset: number;
-};
+type TracksPage = CatalogPage<Track>;
 
 type UseTracksOptions = {
   monitored?: boolean;
@@ -32,7 +26,7 @@ type UseTracksOptions = {
   enabled?: boolean;
 };
 
-const TRACKS_PAGE_SIZE = 100;
+const TRACKS_PAGE_SIZE = 50;
 const TRACKS_GLOBAL_EVENTS = [
   "artist.scanned",
   "album.scanned",
@@ -100,11 +94,9 @@ function updateTrackPages(
 }
 
 export const useTracks = (options?: UseTracksOptions) => {
-  const { toast } = useToast();
   const queryClient = useQueryClient();
   const enabled = options?.enabled ?? true;
   const queryKey = tracksQueryKey(options ?? {});
-  const lastErrorMessageRef = useRef<string | null>(null);
 
   useDebouncedQueryInvalidation({
     queryKeys: [queryKey],
@@ -113,12 +105,11 @@ export const useTracks = (options?: UseTracksOptions) => {
     debounceMs: 400,
   });
 
-  const query = useInfiniteQuery({
+  const query = useCatalogInfiniteResource<Track, Awaited<ReturnType<typeof api.getTracks>>>({
     queryKey,
-    queryFn: async ({ pageParam }) => {
-      const offset = Number(pageParam || 0);
-      const response = await api.getTracks({
-        limit: TRACKS_PAGE_SIZE,
+    pageSize: TRACKS_PAGE_SIZE,
+    fetchPage: ({ limit, offset, signal, timeoutMs }) => api.getTracks({
+        limit,
         offset,
         monitored: options?.monitored,
         downloaded: options?.downloaded,
@@ -129,48 +120,12 @@ export const useTracks = (options?: UseTracksOptions) => {
         sort: options?.sort,
         dir: options?.dir,
         search: options?.search,
-      });
-
-      return normalizeTracksPage(response, offset);
-    },
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => (
-      lastPage.hasMore
-        ? lastPage.offset + lastPage.items.length
-        : undefined
-    ),
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-    placeholderData: (previousData) => previousData,
+        signal,
+        timeoutMs,
+      }),
+    normalizePage: normalizeTracksPage,
     enabled,
   });
-
-  const pages = query.data?.pages ?? [];
-  const tracks = enabled ? pages.flatMap((page) => page.items) : [];
-  const hasMore = enabled ? Boolean(query.hasNextPage) : false;
-  const total = enabled ? (pages[pages.length - 1]?.total ?? pages[0]?.total ?? 0) : 0;
-  const loading = enabled ? query.isPending && tracks.length === 0 : false;
-
-  useEffect(() => {
-    if (!query.isError) {
-      lastErrorMessageRef.current = null;
-      return;
-    }
-
-    const message = query.error instanceof Error
-      ? query.error.message
-      : "Could not load tracks";
-    if (message === lastErrorMessageRef.current) {
-      return;
-    }
-
-    lastErrorMessageRef.current = message;
-    toast({
-      title: "Failed to load tracks",
-      description: message,
-      variant: "destructive",
-    });
-  }, [query.error, query.isError, toast]);
 
   useEffect(() => {
     const handleMonitorStateChanged = (event: Event) => {
@@ -204,11 +159,14 @@ export const useTracks = (options?: UseTracksOptions) => {
   }, [enabled, query]);
 
   return {
-    tracks,
-    loading,
-    hasMore,
-    total,
+    tracks: query.items,
+    loading: query.loading,
+    isPopulated: query.isPopulated,
+    hasMore: query.hasMore,
+    total: query.total,
     loadMore,
     refetch: () => query.refetch(),
+    hasRefreshError: query.hasRefreshError,
+    refreshErrorMessage: query.refreshErrorMessage,
   };
 };

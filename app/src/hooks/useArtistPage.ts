@@ -13,16 +13,19 @@ export function useArtistPage(artistId: string | undefined) {
 
     return useQuery({
         queryKey: ["artistPage", artistId],
-        queryFn: async () => {
+        queryFn: async ({ signal }) => {
             if (!artistId) throw new Error("Artist ID is required");
 
             // Database-backed endpoint stays DB-first and only seeds core artist metadata when needed.
             // Full enrichment remains an explicit scan/refresh action so page navigation stays responsive.
-            return api.getArtistPageDB(artistId);
+            return api.getArtistPageDB(artistId, {
+                signal,
+                timeoutMs: 15_000,
+            });
         },
         enabled: !!artistId,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
-        placeholderData: (previousData) => previousData,
+        retry: 1,
     });
 }

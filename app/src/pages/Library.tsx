@@ -36,7 +36,7 @@ import {
   LockClosed24Regular,
   LockOpen24Regular,
 } from "@fluentui/react-icons";
-import { EmptyState } from "@/components/ui/ContentState";
+import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
@@ -171,21 +171,20 @@ const useStyles = makeStyles({
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalXS,
     width: "100%",
     boxSizing: "border-box",
-    "@media (min-width: 480px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
       gap: tokens.spacingHorizontalS,
     },
-    "@media (min-width: 640px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(172px, 1fr))",
+    "@media (min-width: 900px)": {
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
       gap: tokens.spacingHorizontalM,
     },
-    "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(196px, 1fr))",
-      gap: tokens.spacingHorizontalL,
+    "@media (min-width: 1200px)": {
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
   tabContent: {
@@ -304,6 +303,8 @@ const Library = () => {
     hasMoreAlbums,
     loadMoreArtists,
     loadMoreAlbums,
+    refetchArtists,
+    refetchAlbums,
     setArtistFilter,
     setAlbumFilter,
     setAlbumDownloadFilter,
@@ -311,6 +312,12 @@ const Library = () => {
     setAlbumQualityFilter,
     setSortOptions,
     setSearchQuery,
+    artistsIsPopulated,
+    albumsIsPopulated,
+    artistsHasRefreshError,
+    artistsRefreshErrorMessage,
+    albumsHasRefreshError,
+    albumsRefreshErrorMessage,
   } = useLibrary({ activeTab: selectedTab as 'artists' | 'albums' | 'tracks' | 'videos' });
   const { importFollowedArtists } = useTidalSearch();
   const { addToQueue, getProgressByTidalId } = useQueueStatus();
@@ -408,7 +415,16 @@ const Library = () => {
     return undefined;
   }, [statusFilters]);
 
-  const { tracks, loading: tracksLoading, hasMore: hasMoreTracks, loadMore: loadMoreTracks } = useTracks({
+  const {
+    tracks,
+    loading: tracksLoading,
+    isPopulated: tracksIsPopulated,
+    hasMore: hasMoreTracks,
+    loadMore: loadMoreTracks,
+    refetch: refetchTracks,
+    hasRefreshError: tracksHasRefreshError,
+    refreshErrorMessage: tracksRefreshErrorMessage,
+  } = useTracks({
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
     locked: lockedFilter,
@@ -421,10 +437,14 @@ const Library = () => {
   const {
     videos,
     loading: videosLoading,
+    isPopulated: videosIsPopulated,
     hasMore: hasMoreVideos,
     loadMore: loadMoreVideos,
+    refetch: refetchVideos,
     toggleMonitor: toggleVideoMonitor,
     toggleLock: toggleVideoLock,
+    hasRefreshError: videosHasRefreshError,
+    refreshErrorMessage: videosRefreshErrorMessage,
   } = useVideos({
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
@@ -1323,8 +1343,25 @@ const Library = () => {
     },
   ], [addToQueue, dgCell, styles.compactIcon, toggleVideoLock, toggleVideoMonitor]);
 
-  // Empty state - only show when not loading and truly no artists exist
-  if (!loading && artists.length === 0 && stats?.artists?.total === 0) {
+  const isLibraryEmpty = Boolean(
+    stats
+    && stats.artists.total === 0
+    && stats.albums.total === 0
+    && stats.tracks.total === 0
+    && stats.videos.total === 0,
+  );
+
+  // Empty state - only show when not loading and the overall library is truly empty.
+  if (
+    isLibraryEmpty
+    && !loading
+    && !tracksLoading
+    && !videosLoading
+    && !artistsHasRefreshError
+    && !albumsHasRefreshError
+    && !tracksHasRefreshError
+    && !videosHasRefreshError
+  ) {
     return (
       <EmptyState
         title="Your library is empty"
@@ -1364,7 +1401,7 @@ const Library = () => {
             />
           );
         }
-        return <CardGridSkeleton cards={10} thumbnailAspect="videoWide" minCardWidth={240} />;
+        return <VideoGrid videos={[]} loading />;
       case "albums":
         if (viewMode === "list") {
           return (
@@ -1378,7 +1415,7 @@ const Library = () => {
             />
           );
         }
-        return <CardGridSkeleton cards={12} minCardWidth={172} />;
+        return <CardGridSkeleton cards={12} className={styles.grid} />;
       case "artists":
       default:
         if (viewMode === "list") {
@@ -1394,7 +1431,7 @@ const Library = () => {
             />
           );
         }
-        return <CardGridSkeleton cards={12} minCardWidth={172} />;
+        return <CardGridSkeleton cards={12} className={styles.grid} />;
     }
   };
 
@@ -1404,6 +1441,19 @@ const Library = () => {
       description={`No ${mediaLabel} match your current filters or search.`}
       icon={<Search24Regular />}
       minHeight="220px"
+    />
+  );
+
+  const renderErrorContent = (
+    title: string,
+    message: string | null,
+    onRetry: () => void,
+  ) => (
+    <ErrorState
+      title={title}
+      description={message ?? "Could not refresh this view."}
+      minHeight="220px"
+      actions={<Button onClick={onRetry}>Retry</Button>}
     />
   );
 
@@ -1825,7 +1875,13 @@ const Library = () => {
               sentinelRef: artistSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : artists.length === 0 ? (
+            }) : artistsHasRefreshError && (artists.length === 0 || !artistsIsPopulated) ? (
+              renderErrorContent(
+                "Failed to load artists",
+                artistsRefreshErrorMessage,
+                () => { void refetchArtists(); },
+              )
+            ) : artists.length === 0 ? (
               renderNoResultsContent("artists")
             ) : (
               renderPane({
@@ -1861,7 +1917,13 @@ const Library = () => {
               sentinelRef: albumSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : albums.length === 0 ? (
+            }) : albumsHasRefreshError && (albums.length === 0 || !albumsIsPopulated) ? (
+              renderErrorContent(
+                "Failed to load albums",
+                albumsRefreshErrorMessage,
+                () => { void refetchAlbums(); },
+              )
+            ) : albums.length === 0 ? (
               renderNoResultsContent("albums")
             ) : (
               renderPane({
@@ -1897,7 +1959,13 @@ const Library = () => {
               sentinelRef: trackSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : tracks.length === 0 ? (
+            }) : tracksHasRefreshError && (tracks.length === 0 || !tracksIsPopulated) ? (
+              renderErrorContent(
+                "Failed to load tracks",
+                tracksRefreshErrorMessage,
+                () => { void refetchTracks(); },
+              )
+            ) : tracks.length === 0 ? (
               renderNoResultsContent("tracks")
             ) : (
               renderPane({
@@ -1924,7 +1992,13 @@ const Library = () => {
               sentinelRef: videoSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
-            }) : videos.length === 0 ? (
+            }) : videosHasRefreshError && (videos.length === 0 || !videosIsPopulated) ? (
+              renderErrorContent(
+                "Failed to load videos",
+                videosRefreshErrorMessage,
+                () => { void refetchVideos(); },
+              )
+            ) : videos.length === 0 ? (
               renderNoResultsContent("videos")
             ) : (
               renderPane({
@@ -1962,8 +2036,4 @@ const Library = () => {
 };
 
 export default Library;
-
-
-
-
 

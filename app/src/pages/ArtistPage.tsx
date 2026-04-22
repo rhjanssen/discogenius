@@ -264,15 +264,18 @@ const useStyles = makeStyles({
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalS,
     width: "100%",
-    "@media (min-width: 480px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
       gap: tokens.spacingHorizontalM,
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+    },
+    "@media (min-width: 1200px)": {
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
   carousel: {
@@ -557,11 +560,13 @@ const ArtistPage = () => {
   // Poll server for active jobs related to this artist (scanning, curating, downloading)
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', artistId],
-    queryFn: () => artistId ? api.getArtistActivity(artistId) : null,
+    queryFn: ({ signal }) => artistId
+      ? api.getArtistActivity(artistId, { signal, timeoutMs: 8_000 })
+      : null,
     enabled: Boolean(artistId) && !pageLoading && !pageError,
     refetchOnWindowFocus: false,
     staleTime: 10_000,
-    placeholderData: (previousData) => previousData,
+    retry: 1,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
 
   // Combined busy states: local action flags OR server-side activity
@@ -1229,7 +1234,16 @@ const ArtistPage = () => {
   }, [pageData]);
 
   if (pageLoading) {
-    return <DetailPageSkeleton artShape="circle" content="cards" cards={6} className={styles.container} />;
+    return (
+      <DetailPageSkeleton
+        artShape="circle"
+        content="cards"
+        cards={6}
+        className={styles.container}
+        cardsClassName={styles.grid}
+        label="Loading artist details..."
+      />
+    );
   }
 
   if (pageError) {
@@ -1239,7 +1253,7 @@ const ArtistPage = () => {
           title="Failed to load artist"
           error={pageError as Error}
           minHeight="320px"
-          actions={<Button onClick={() => window.location.reload()}>Retry</Button>}
+          actions={<Button onClick={() => void refetchPage()}>Retry</Button>}
         />
       </div>
     );
