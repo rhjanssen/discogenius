@@ -40,7 +40,7 @@ The current app has useful working parts, but too many of them overlap:
 - frontend pages are very large and mix control-plane state, presentation, and workflow actions.
 - the current `albums` table still mixes Lidarr's album concept, exact release, and provider candidate roles.
 
-The repair strategy is not a rewrite. It is a sequence of compatibility-preserving extractions that make the product model explicit, keep existing installations usable, and move high-risk behavior behind smaller services.
+The repair strategy is now a breaking domain migration. Existing installations may need to start with a fresh database. New implementation work should move toward the canonical MusicBrainz/Lidarr-style model instead of preserving TIDAL-primary tables as the source of truth.
 
 ## Core Architecture
 
@@ -65,7 +65,7 @@ Inputs:
 - monitored artist state,
 - release type settings,
 - stereo/spatial/video library settings,
-- standard/deluxe/anniversary/bonus edition separation,
+- Lidarr-style release-group selection with one selected exact release,
 - explicit/clean preference,
 - redundancy rules,
 - manual monitor locks.
@@ -77,9 +77,9 @@ Outputs:
 - wanted items,
 - explainable skip/unavailable states.
 
-MusicBrainz release groups are useful for grouping the album concept, but they are too broad for redundancy decisions. Exact MB releases, UPC, ISRC sets, and tracklist comparison are the curation-level keys.
+MusicBrainz release groups define the album concept, matching Lidarr. Discogenius selects one exact MusicBrainz release beneath that group, normally preferring the existing selection and then the largest track count, with provider availability only as a tie-breaker. Redundancy filtering then works across selected releases by recording/ISRC/title coverage so singles can be suppressed when a wanted album already covers them.
 
-Core music curation should choose releases, not individual tracks. Track-level wanted items are compatibility/manual targets until the schema separates album concepts from exact releases.
+Core music curation chooses releases, not individual tracks.
 
 ### 3. Wanted List
 
@@ -128,12 +128,12 @@ Stereo, spatial, and video playback need explicit capability handling rather tha
 
 ## Release Repair Rules
 
-1. Keep the currently working TIDAL-first path alive while extracting services.
-2. Do not change primary IDs in one step; add compatibility layers first.
-3. Do not let provider availability decide curation.
+1. Prefer the canonical MusicBrainz/Lidarr-style tables over legacy TIDAL-primary tables for all new work.
+2. Do not model track monitoring as core discography curation.
+3. Do not let provider availability define the canonical catalog.
 4. Do not let queueing duplicate wanted/missing logic.
 5. Do not add frontend controls without a backend contract that explains state.
-6. Every release candidate must pass API build, API tests, lint, and at least one real TIDAL acquisition smoke test.
+6. Every release candidate must pass API build, API tests, lint, build, and smoke tests before release.
 7. Playback changes must be tested with local files first, provider playback second.
 
 ## Execution TODOs
@@ -142,29 +142,29 @@ Stereo, spatial, and video playback need explicit capability handling rather tha
 
 - [x] Document standalone-first architecture and defer Lidarr/Kometa sidecars.
 - [x] Document Lidarr's actual artist/album/release monitoring model.
-- [x] Add a first-class wanted-list read model over existing tables.
+- [x] Add a first-class wanted-list read model over canonical release/video tables.
 - [x] Make curation download queueing consume wanted state instead of duplicating missing-item discovery.
 - [x] Preserve locked monitored items as wanted user intent.
 - [x] Avoid requeueing albums with imported files but missing track rows.
-- [x] Label wanted items by monitor scope so release targets and manual track targets are not conflated.
-- [ ] Add provider-resolution status to wanted items: unresolved, matched, unavailable, blocked, stale.
+- [x] Label wanted items by monitor scope so release and video targets are not conflated.
+- [x] Add provider-resolution status to wanted items: matched/missing vs unavailable provider candidate.
 - [ ] Add a wanted-page/frontend surface that explains curation and queue state.
 
 ### Batch 2: Make Metadata MusicBrainz-First
 
 - [x] Add exact MusicBrainz release cache and UPC/barcode matching foundation.
 - [x] Keep exact-release identity out of broad release-group dedup keys.
-- [ ] Add artist/release-group/release catalog tables that can represent MusicBrainz data without TIDAL IDs as the model.
-- [ ] Split current provider-album rows into album concepts and exact releases, matching Lidarr's `Album`/`AlbumRelease` separation.
+- [x] Add artist/release-group/release catalog tables that can represent MusicBrainz data without TIDAL IDs as the model.
+- [x] Split provider candidates from album concepts and exact releases, matching Lidarr's `Album`/`AlbumRelease` separation.
 - [ ] Move refresh flows toward DB-first metadata reads.
-- [ ] Add provider candidate tables for TIDAL albums/tracks/videos mapped to canonical releases/recordings.
+- [x] Add provider candidate tables for TIDAL albums/tracks/videos mapped to canonical releases/recordings.
 - [ ] Add low-priority MusicBrainz enrichment jobs for UPC and ISRC lookups.
 
 ### Batch 3: Formalize Discography Curation
 
 - [x] Extract curation decision building from `curation-service.ts` DB mutation.
-- [ ] Persist curation decisions with reason codes and timestamps.
-- [ ] Stop treating track monitor state as core curation output; keep it derived/manual until migration is complete.
+- [x] Persist curation decisions with reason codes.
+- [x] Stop treating track monitor state as core curation output.
 - [ ] Add deterministic edition grouping tests for standard, deluxe, anniversary, remaster, clean/explicit, and Atmos variants.
 - [ ] Add redundancy tests for ISRC subsets, track-title fallback subsets, missing ISRCs, and multi-disc editions.
 - [ ] Add a manual override model that cleanly separates locked wanted, locked skipped, and automatic decisions.
@@ -202,4 +202,4 @@ Stereo, spatial, and video playback need explicit capability handling rather tha
 
 ## Current Execution Batch
 
-The active batch is Batch 1. The immediate implementation goal is to make wanted state the single backend read model for queueing monitored missing music/videos, then use that surface for the UI and provider-resolution work.
+The active batch is the breaking Lidarr-domain migration. The immediate implementation goal is to move refresh/search/UI pages off legacy `artists`/`albums`/`media` provider-primary rows and onto `artist_metadata`, `managed_artists`, `release_groups`, `album_releases`, `tracks`, provider candidate tables, and release/video wanted state.

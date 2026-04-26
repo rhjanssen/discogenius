@@ -62,11 +62,11 @@ Discogenius should align to Lidarr like this:
 
 | Product level | Lidarr concept | Discogenius target |
 | --- | --- | --- |
-| Artist | `Artist.Monitored` | `artists.monitor` |
-| Album concept | `Album.Monitored` | canonical release group / album concept row |
-| Exact edition | `AlbumRelease.Monitored` | selected exact MusicBrainz/provider release |
+| Artist | `Artist.Monitored` | `managed_artists.monitored` |
+| Album concept | `Album.Monitored` | `release_groups.monitored` |
+| Exact edition | `AlbumRelease.Monitored` | `release_group_monitoring.selected_release_id` and `album_releases.monitored` |
 | Track | no monitor flag | derived expected track/file state from selected release |
-| Music video | no Lidarr equivalent | Discogenius video monitor |
+| Music video | no Lidarr equivalent | `videos.monitored` |
 
 ## Wanted Semantics
 
@@ -75,15 +75,14 @@ The normal wanted units should be:
 - release/album targets for music,
 - video targets for music videos.
 
-Track targets should be treated as manual or legacy partial-track targets, not as the default discography model.
+Track targets should not be part of default discography curation.
 
 This matters because redundancy filtering is a release-selection problem, not a track-monitoring problem. A single should become unwatched because its recording is covered by a selected album release; individual tracks should not become first-class curation targets unless the user explicitly asked for a track-only item.
 
 ## Migration Direction
 
-1. Keep existing `artists.monitor`, `albums.monitor`, and `media.monitor` working for compatibility.
-2. Treat `media.monitor` as derived/manual in new backend contracts.
-3. Introduce a canonical album-concept layer separate from exact provider releases.
-4. Store selected exact release per album concept, equivalent to Lidarr's monitored `AlbumRelease`.
-5. Make wanted/redundancy UI explain whether an item is wanted because of artist, album, exact release, manual track, or music-video state.
-6. Once compatibility is stable, stop writing track monitor state from curation except as a derived cache or migration bridge.
+1. Treat legacy `artists`, `albums`, and `media` as migration debt, not source-of-truth tables.
+2. Use canonical MusicBrainz/Lidarr-style tables for curation, wanted state, and queueing.
+3. Store selected exact release per album concept, equivalent to Lidarr's monitored `AlbumRelease`.
+4. Keep stereo and Atmos as Discogenius library-type rows under the same release-group model.
+5. Make wanted/redundancy UI explain whether an item is wanted, redundant, missing provider availability, queued, or imported.

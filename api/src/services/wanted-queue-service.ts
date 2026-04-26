@@ -2,7 +2,6 @@ import { buildStreamingMediaUrl } from "./download-routing.js";
 import { getConfigSection } from "./config.js";
 import type {
   DownloadAlbumJobPayload,
-  DownloadTrackJobPayload,
   DownloadVideoJobPayload,
 } from "./job-payloads.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
@@ -21,6 +20,7 @@ export interface QueueWantedItemsOptions {
 
 export interface QueueWantedItemsResult {
   albums: number;
+  /** Lidarr-style wanted state is release-level; retained as a zero counter until callers stop displaying it. */
   tracks: number;
   videos: number;
 }
@@ -50,6 +50,10 @@ export class WantedQueueService {
           continue;
         }
 
+        if (!item.providerItemId) {
+          continue;
+        }
+
         if (item.type === "video" && !includeVideos) {
           continue;
         }
@@ -64,7 +68,6 @@ export class WantedQueueService {
         }
 
         if (item.type === "album") counts.albums++;
-        if (item.type === "track") counts.tracks++;
         if (item.type === "video") counts.videos++;
       }
 
@@ -95,15 +98,7 @@ function queueWantedItem(
       return TaskQueueService.addJob(
         JobTypes.DownloadAlbum,
         buildAlbumPayload(item),
-        item.sourceId,
-        options.priority ?? 0,
-        options.trigger ?? 0,
-      );
-    case "track":
-      return TaskQueueService.addJob(
-        JobTypes.DownloadTrack,
-        buildTrackPayload(item),
-        item.sourceId,
+        item.providerItemId || item.sourceId,
         options.priority ?? 0,
         options.trigger ?? 0,
       );
@@ -111,7 +106,7 @@ function queueWantedItem(
       return TaskQueueService.addJob(
         JobTypes.DownloadVideo,
         buildVideoPayload(item),
-        item.sourceId,
+        item.providerItemId || item.sourceId,
         options.priority ?? 0,
         options.trigger ?? 0,
       );
@@ -121,31 +116,20 @@ function queueWantedItem(
 function buildCommonPayload(item: WantedItem) {
   const artist = item.artistName || "Unknown";
   const title = item.title || "Unknown";
+  const providerItemId = item.providerItemId || item.sourceId;
 
   return {
-    url: buildStreamingMediaUrl(item.type, item.sourceId),
-    tidalId: item.sourceId,
+    url: buildStreamingMediaUrl(item.type, providerItemId),
+    tidalId: providerItemId,
+    provider: item.provider || "tidal",
+    providerItemId,
+    libraryType: item.libraryType,
+    albumReleaseId: item.albumReleaseId || undefined,
     title,
     artist,
     cover: item.cover || null,
     quality: item.quality || null,
     artists: artist === "Unknown" ? [] : [artist],
-  };
-}
-
-function buildTrackPayload(item: WantedItem): DownloadTrackJobPayload {
-  const common = buildCommonPayload(item);
-  const title = common.title || "Unknown";
-  const artist = common.artist || "Unknown";
-
-  return {
-    ...common,
-    type: "track",
-    albumId: item.albumId || undefined,
-    albumTitle: item.albumTitle || undefined,
-    description: item.albumTitle
-      ? `${title} on ${item.albumTitle} by ${artist}`
-      : `${title} by ${artist}`,
   };
 }
 

@@ -8,6 +8,10 @@ Lidarr, Tidarr, Jellyfin, and Kometa are useful references or future integration
 
 > Lidarr-like library automation, but with streaming-service availability and Discogenius curation rules.
 
+The current implementation direction is intentionally breaking: new work should move code to the
+MusicBrainz/Lidarr-style domain and should not preserve TIDAL-primary IDs or track-monitoring behavior
+for upgrade compatibility.
+
 ## What Standalone Means
 
 Discogenius owns these domains internally:
@@ -59,6 +63,21 @@ Streaming providers may enrich this data, but provider catalog payloads should n
 
 The target monitoring model follows Lidarr's artist -> album concept -> exact release shape. Tracks are expected from the selected exact release; they are not the default curation monitor unit.
 
+Current canonical tables:
+
+- `artist_metadata`
+- `managed_artists`
+- `release_groups`
+- `album_releases`
+- `tracks`
+- `release_group_monitoring`
+- `track_files`
+- `provider_releases`
+- `provider_tracks`
+- `videos`
+- `provider_videos`
+- `video_files`
+
 ### 2. Curation
 
 Discogenius decides what the library wants before provider lookup.
@@ -97,7 +116,7 @@ Discogenius needs a clearer first-class wanted concept.
 
 The wanted list should contain curation output plus provider resolution status:
 
-- wanted release/track,
+- wanted release/video,
 - curation reason,
 - selected exact release,
 - selected provider candidate, if any,
@@ -106,7 +125,7 @@ The wanted list should contain curation output plus provider resolution status:
 
 This lets the UI explain why something is monitored, skipped, redundant, missing, queued, downloading, imported, or unavailable.
 
-Normal music wanted items should be release-level. Track-level wanted rows are a compatibility/manual-track surface until the schema split between album concepts and exact releases is complete. Music-video wanted rows are Discogenius-specific.
+Normal music wanted items are release-level. Track-level wanted rows are not part of core discography curation; tracks are derived from the selected exact release. Music-video wanted rows are Discogenius-specific.
 
 ### 5. Acquisition And Import
 
@@ -124,11 +143,11 @@ Provider playback can exist as preview/fallback, but it should not be the core l
 
 ## Immediate Refactor Direction
 
-1. Extract curation decision building from DB mutation in `curation-service.ts`.
-2. Add a queryable wanted-list service over existing tables before changing schema.
-3. Move provider-specific search/download assumptions behind provider-resolution interfaces.
-4. Keep release identity MusicBrainz-first: exact release MBID/UPC first, release group only for album-concept grouping.
-5. Preserve manual locks and make automated decisions explainable.
+1. Move all new curation/wanted work to the canonical MusicBrainz/Lidarr-style tables.
+2. Stop writing track monitor state from curation.
+3. Keep provider-specific search/download assumptions behind provider-resolution interfaces.
+4. Keep release identity MusicBrainz-first: release group for album concepts, exact release for selected editions, recordings/ISRCs for redundancy.
+5. Preserve manual locks and make automated decisions explainable in the new model only.
 
 ## Deferred Integrations
 

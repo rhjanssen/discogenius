@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
 import { getCurrentAppReleaseInfo } from "./services/app-release.js";
 import { resolveArtistFolderForPersistence } from "./services/artist-paths.js";
+import { createLidarrDomainTables } from "./services/lidarr-domain-schema.js";
 
 console.log(`📁 Database path: ${DB_PATH}`);
 
@@ -585,6 +586,13 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
           FOREIGN KEY (musicbrainz_release_mbid) REFERENCES musicbrainz_releases(mbid) ON DELETE SET NULL
         );
       `);
+    },
+  },
+  {
+    version: 7,
+    description: "add Lidarr-style MusicBrainz catalog and provider candidate schema",
+    up: () => {
+      createLidarrDomainTables(db);
     },
   },
 ];
