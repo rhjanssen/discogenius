@@ -29,6 +29,14 @@ beforeEach(() => {
     db.prepare("DELETE FROM albums").run();
     db.prepare("DELETE FROM artists").run();
     db.prepare("DELETE FROM library_files").run();
+    db.prepare("DELETE FROM provider_releases").run();
+    db.prepare("DELETE FROM track_files").run();
+    db.prepare("DELETE FROM release_group_monitoring").run();
+    db.prepare("DELETE FROM tracks").run();
+    db.prepare("DELETE FROM album_releases").run();
+    db.prepare("DELETE FROM release_groups").run();
+    db.prepare("DELETE FROM managed_artists").run();
+    db.prepare("DELETE FROM artist_metadata").run();
 });
 
 after(() => {
@@ -66,6 +74,50 @@ function seedLibrary() {
         INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(10, 1, "Artist One", 0, "main", "ALBUMS", "ALBUM");
+
+    dbModule.db.prepare(`
+        INSERT INTO artist_metadata (id, foreign_artist_id, name, sort_name)
+        VALUES (?, ?, ?, ?)
+    `).run(1, "mb-artist-1", "Artist One", "Artist One");
+
+    dbModule.db.prepare(`
+        INSERT INTO managed_artists (id, artist_metadata_id, monitored, monitor_new_items, path)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(1, 1, 1, "all", "/music/Artist One");
+
+    dbModule.db.prepare(`
+        INSERT INTO release_groups (
+            id, artist_metadata_id, foreign_release_group_id, title, album_type,
+            monitored, clean_title
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(10, 1, "mb-rg-10", "Album One", "album", 1, "album one");
+
+    dbModule.db.prepare(`
+        INSERT INTO album_releases (
+            id, release_group_id, foreign_release_id, title, status,
+            release_date, media, track_count, monitored
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(100, 10, "mb-release-100", "Album One", "Official", "2024-01-01", JSON.stringify([{ format: "Digital Media" }]), 1, 1);
+
+    dbModule.db.prepare(`
+        INSERT INTO tracks (
+            id, foreign_track_id, foreign_recording_id, album_release_id,
+            artist_metadata_id, track_number, absolute_track_number, title, isrcs
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(1000, "mb-track-1000", "mb-recording-1000", 100, 1, "1", 1, "Track One", JSON.stringify(["USABC1000"]));
+
+    dbModule.db.prepare(`
+        INSERT INTO release_group_monitoring (
+            release_group_id, library_type, monitored, selected_release_id, redundancy_state
+        ) VALUES (?, ?, ?, ?, ?)
+    `).run(10, "stereo", 1, 100, "selected");
+
+    dbModule.db.prepare(`
+        INSERT INTO provider_releases (
+            provider, provider_release_id, release_group_id, album_release_id,
+            library_type, title, artist_name, quality, track_count, confidence, score
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("tidal", "tidal-album-10", 10, 100, "stereo", "Album One", "Artist One", "LOSSLESS", 1, 1, 100);
 }
 
 test("artist monitor bulk updates related rows and queues intake", async () => {

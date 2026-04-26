@@ -55,6 +55,7 @@ const TRACKED_ASSET_FILE_TYPES = new Set([
   "bio",
   "review",
   "lyrics",
+  "nfo",
 ] as const);
 
 export type RenamePreviewItem = {
@@ -119,7 +120,7 @@ export type LibraryFileUpsertParams = {
   mediaId?: string | null;
   filePath: string;
   libraryRoot: string;
-  fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics" | string;
+  fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics" | "nfo" | string;
   quality?: string | null;
   namingTemplate?: string | null;
   expectedPath?: string | null;
@@ -440,9 +441,13 @@ export class LibraryFilesService {
       };
     }
 
-    // Album-scoped types (track, lyrics, cover, review)
+    // Album-scoped types (track, lyrics, cover, NFO)
     if (!row.album_id) {
-      // Artist-scoped types (bio, artist picture cover)
+      // Artist-scoped types (artist NFO, legacy bio, artist picture cover)
+      if (row.file_type === "nfo") {
+        return { expectedPath: path.join(libraryRootPath, artistFolder, "artist.nfo") };
+      }
+
       if (row.file_type === "bio") {
         return { expectedPath: path.join(libraryRootPath, artistFolder, "bio.txt") };
       }
@@ -509,6 +514,10 @@ export class LibraryFilesService {
 
     if (row.file_type === "review") {
       return { expectedPath: path.join(albumDir, "review.txt") };
+    }
+
+    if (row.file_type === "nfo") {
+      return { expectedPath: path.join(albumDir, "album.nfo") };
     }
 
     if (row.file_type === "track") {
@@ -614,14 +623,14 @@ export class LibraryFilesService {
       };
     }
 
-    if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "review")) {
+    if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "review" || fileType === "nfo")) {
       return {
         sql: "album_id = ? AND media_id IS NULL AND file_type = ?",
         values: [albumId, fileType],
       };
     }
 
-    if (!albumId && !mediaId && (fileType === "cover" || fileType === "bio")) {
+    if (!albumId && !mediaId && (fileType === "cover" || fileType === "bio" || fileType === "nfo")) {
       return {
         sql: "artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ?",
         values: [artistId, fileType],
@@ -1138,7 +1147,7 @@ export class LibraryFilesService {
     const groups = db.prepare(`
       SELECT artist_id, album_id, media_id, file_type, COUNT(*) AS count
       FROM library_files
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics')
+      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics', 'nfo')
         ${artistId ? "AND artist_id = ?" : ""}
       GROUP BY artist_id, album_id, media_id, file_type
       HAVING COUNT(*) > 1
@@ -1167,7 +1176,7 @@ export class LibraryFilesService {
     const rows = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
       FROM library_files
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics')
+      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics', 'nfo')
         ${artistId ? "AND artist_id = ?" : ""}
       ORDER BY id ASC
     `).all(...(artistId ? [artistId] : [])) as Array<{
@@ -1367,12 +1376,12 @@ export class LibraryFilesService {
     if (!metadataConfig.save_lyrics) {
       selectors.push({ sql: "artist_id = ? AND file_type = 'lyrics'", params: [artistId] });
     }
-    if (!metadataConfig.save_album_review) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'review'", params: [artistId] });
+    if (!metadataConfig.save_nfo) {
+      selectors.push({ sql: "artist_id = ? AND file_type = 'nfo'", params: [artistId] });
     }
-    if (!metadataConfig.save_artist_bio) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'bio'", params: [artistId] });
-    }
+    // Always prune legacy .txt bio and review files
+    selectors.push({ sql: "artist_id = ? AND file_type = 'review'", params: [artistId] });
+    selectors.push({ sql: "artist_id = ? AND file_type = 'bio'", params: [artistId] });
 
     if (selectors.length === 0) {
       return { deleted: 0, missing: 0, errors: 0 };

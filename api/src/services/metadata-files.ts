@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { tidalApiRequest, getCountryCode, getAlbumReview, getArtistBio } from './tidal.js';
+import { db } from '../database.js';
+import { tidalApiRequest, getCountryCode, getAlbumReview, getArtistBio, getArtist, getAlbum } from './tidal.js';
 
 /**
  * Clean Tidal text by removing [wimpLink] tags and normalizing line breaks.
@@ -15,6 +16,20 @@ function cleanTidalText(text: string): string {
         .replace(/\[wimpLink\b[^\]]*\]/gi, '')
         .replace(/\[\/wimpLink\]/gi, '')
         .trim();
+}
+
+function escapeXml(value: unknown): string {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function xmlElement(name: string, value: unknown): string | null {
+    const text = String(value ?? "").trim();
+    return text ? `  <${name}>${escapeXml(text)}</${name}>` : null;
 }
 
 /**
@@ -253,47 +268,80 @@ export async function saveLyricsFile(
 }
 
 /**
- * Save album review to review.txt file
- * @param albumId - Tidal album ID
- * @param outputPath - Full path where to save the review.txt file
- */
-export async function saveReviewFile(
-    albumId: string,
-    outputPath: string
-): Promise<void> {
-    const review = await getAlbumReview(albumId);
-    const reviewText = review?.text ?? null;
-
-    if (!reviewText) {
-        throw new Error(`No review available for album ${albumId}`);
-    }
-
-    const cleanedReview = cleanTidalText(reviewText);
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, cleanedReview, 'utf-8');
-
-    console.log(`✅ [METADATA] Review saved: ${outputPath}`);
-}
-
-/**
- * Save artist bio to bio.txt file
+ * Save artist NFO file for Jellyfin/Kodi
  * @param artistId - Tidal artist ID
- * @param outputPath - Full path where to save the bio.txt file
+ * @param outputPath - Full path where to save the artist.nfo file
  */
-export async function saveBioFile(
+export async function saveArtistNfoFile(
     artistId: string,
     outputPath: string
 ): Promise<void> {
+    const artist = await getArtist(artistId);
+    if (!artist) throw new Error(`Artist ${artistId} not found`);
+
     const bio = await getArtistBio(artistId);
-    const bioText = bio?.text ?? null;
+    const bioText = bio?.text ? cleanTidalText(bio.text) : "";
 
-    if (!bioText) {
-        throw new Error(`No bio available for artist ${artistId}`);
-    }
+    const localArtist = db.prepare("SELECT mbid FROM artists WHERE id = ?").get(artistId) as { mbid: string | null } | undefined;
+    const elements = [
+        xmlElement("title", artist.name),
+        xmlElement("name", artist.name),
+        xmlElement("biography", bioText),
+        xmlElement("outline", bioText),
+        xmlElement("musicbrainzartistid", localArtist?.mbid),
+    ].filter((element): element is string => element !== null);
 
-    const cleanedBio = cleanTidalText(bioText);
+    const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<artist>
+${elements.join("\n")}
+</artist>
+`;
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, cleanedBio, 'utf-8');
+    fs.writeFileSync(outputPath, xml, 'utf-8');
+    console.log(`✅ [METADATA] Artist NFO saved: ${outputPath}`);
+}
 
-    console.log(`✅ [METADATA] Bio saved: ${outputPath}`);
+/**
+ * Save album NFO file for Jellyfin/Kodi
+ * @param albumId - Tidal album ID
+ * @param outputPath - Full path where to save the album.nfo file
+ */
+export async function saveAlbumNfoFile(
+    albumId: string,
+    outputPath: string
+): Promise<void> {
+    const album = await getAlbum(albumId);
+    if (!album) throw new Error(`Album ${albumId} not found`);
+
+    const review = await getAlbumReview(albumId);
+    const reviewText = review?.text ? cleanTidalText(review.text) : "";
+
+    const localAlbum = db.prepare("SELECT mbid, mb_release_group_id FROM albums WHERE id = ?").get(albumId) as { mbid: string | null, mb_release_group_id: string | null } | undefined;
+    const year = album.releaseDate ? album.releaseDate.substring(0, 4) : "";
+    const artists = Array.isArray(album.artists) && album.artists.length > 0
+        ? album.artists
+            .map((artist: { name?: unknown }) => artist?.name)
+            .filter((name: unknown) => String(name ?? "").trim().length > 0)
+        : [album.artist_name || album.artist?.name || "Unknown"];
+
+    const elements = [
+        xmlElement("title", album.title),
+        xmlElement("review", reviewText),
+        xmlElement("outline", reviewText),
+        xmlElement("year", year),
+        xmlElement("releasedate", album.releaseDate),
+        ...artists.map((artistName: unknown) => xmlElement("artist", artistName)),
+        xmlElement("musicbrainzalbumid", localAlbum?.mbid),
+        xmlElement("musicbrainzreleasegroupid", localAlbum?.mb_release_group_id),
+        xmlElement("upc", album.upc),
+    ].filter((element): element is string => element !== null);
+
+    const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<album>
+${elements.join("\n")}
+</album>
+`;
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, xml, 'utf-8');
+    console.log(`✅ [METADATA] Album NFO saved: ${outputPath}`);
 }

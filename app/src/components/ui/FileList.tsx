@@ -36,6 +36,7 @@ import {
     Copy24Regular,
 } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
+import { api } from "@/services/api";
 
 export interface LibraryFile {
     id: number;
@@ -285,12 +286,15 @@ function getFileIcon(fileType: string) {
         case "track":
             return <MusicNote124Regular />;
         case "video":
+        case "video_cover":
             return <Video24Regular />;
         case "cover":
-        case "video_cover":
         case "video_thumbnail":
             return <Image24Regular />;
         case "lyrics":
+        case "bio":
+        case "review":
+        case "nfo":
             return <Document24Regular />;
         default:
             return <Document24Regular />;
@@ -418,6 +422,12 @@ function formatFileTypeLabel(fileType: string): string {
             return "Thumbnail";
         case "lyrics":
             return "Lyrics";
+        case "bio":
+            return "Biography";
+        case "review":
+            return "Review";
+        case "nfo":
+            return "NFO";
         default:
             return fileType;
     }
@@ -767,31 +777,30 @@ const FileDetailDialog: React.FC<FileDetailDialogProps> = ({
     const styles = useStyles();
     const [textContent, setTextContent] = useState<string | null>(null);
     const [loadingText, setLoadingText] = useState(false);
+    const filePath = file?.file_path;
+    const fileType = file?.file_type;
 
-    // Load text content for lyrics files
+    // Load text content for sidecar metadata files
     useEffect(() => {
-        if (file?.file_type === "lyrics" && file.file_path) {
+        if (filePath && fileType && ["lyrics", "bio", "review", "nfo"].includes(fileType)) {
             setLoadingText(true);
-            // Fetch text content via API
-            fetch(`/api/library-files/content?path=${encodeURIComponent(file.file_path)}`)
-                .then(res => res.ok ? res.text() : Promise.reject("Failed to load"))
+            api.getFileContent(filePath)
                 .then(text => setTextContent(text))
                 .catch(() => setTextContent(null))
                 .finally(() => setLoadingText(false));
         } else {
             setTextContent(null);
         }
-    }, [file?.file_path, file?.file_type]);
+    }, [filePath, fileType]);
 
     if (!file) return null;
 
     const isAudio = file.file_type === "track";
-    const isVideo = file.file_type === "video";
-    const isImage = file.file_type === "cover" || file.file_type === "video_cover" || file.file_type === "video_thumbnail";
-    const isText = file.file_type === "lyrics";
+    const isVideo = file.file_type === "video" || file.file_type === "video_cover";
+    const isImage = file.file_type === "cover" || file.file_type === "video_thumbnail";
+    const isText = ["lyrics", "bio", "review", "nfo"].includes(file.file_type);
 
-    // Build preview URL using the streaming endpoint with file ID
-    const previewUrl = `/api/library-files/stream/${file.id}`;
+    const previewUrl = api.getStreamUrl(file.id);
 
     return (
         <Dialog open={!!file} onOpenChange={(_, data) => !data.open && onClose()}>

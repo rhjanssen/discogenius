@@ -30,6 +30,7 @@ api/src/**/*.js
 # Temporary reference folders
 .ref_lidarr/
 .ref_tidarr/
+.ref_jellyfin/
 .ref_tidalrr/
 .ref_old_scripts/
 .ref_tiddl/

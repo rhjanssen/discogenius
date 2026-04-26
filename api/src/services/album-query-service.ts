@@ -2,6 +2,7 @@ import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
+import { LibraryFilesService } from "./library-files.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
@@ -78,9 +79,30 @@ function getAlbumTrackRows(albumId: string): TrackRow[] {
     `).all(albumId) as TrackRow[];
 }
 
+function getAlbumFiles(albumId: string): any[] {
+    return LibraryFilesService.resolveExistingFiles(db.prepare(`
+      SELECT id, artist_id, album_id, media_id, file_type, file_path, relative_path,
+             filename, extension, quality, library_root, file_size, bitrate,
+             sample_rate, bit_depth, codec, duration
+      FROM library_files
+      WHERE album_id = ?
+        AND media_id IS NULL
+        AND file_type IN ('cover', 'video_cover', 'review', 'nfo')
+      ORDER BY
+        CASE file_type
+          WHEN 'cover' THEN 0
+          WHEN 'video_cover' THEN 1
+          WHEN 'nfo' THEN 2
+          WHEN 'review' THEN 3
+          ELSE 4
+        END,
+        id ASC
+    `).all(albumId) as any[]);
+}
+
 export class AlbumQueryService {
     private static async ensureAlbumRow(albumId: string): Promise<any | null> {
-        let album = queryAlbumRow(albumId);
+        const album = queryAlbumRow(albumId);
 
         if (album) {
             return album;
@@ -230,7 +252,10 @@ export class AlbumQueryService {
         );
 
         return {
-            album,
+            album: {
+                ...album,
+                files: getAlbumFiles(albumId),
+            },
             tracks: hydrateTrackRows(getAlbumTrackRows(albumId)),
             similarAlbums: this.getSimilarAlbums(albumId),
             otherVersions: this.getAlbumVersions(albumId),

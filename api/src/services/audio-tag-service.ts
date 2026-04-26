@@ -3,15 +3,14 @@ import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "./config.js";
 import { writeMetadata, removeAllTags } from "./audioUtils.js";
+import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import {
   type MusicBrainzRecording,
   type MusicBrainzRelease,
-  generateFingerprint,
-  lookupAcoustId,
   lookupMusicBrainzRecording,
   lookupMusicBrainzRecordingsByIsrc,
   lookupMusicBrainzReleasesByBarcode,
-} from "./fingerprint.js";
+} from "./musicbrainz.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";

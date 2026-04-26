@@ -10,7 +10,7 @@ import {
   expectRecord,
   expectString,
 } from "./runtime.js";
-import type { LibraryFileContract } from "./media.js";
+import { parseLibraryFileContract, type LibraryFileContract } from "./media.js";
 
 export interface ArtistContract {
   id: string;
@@ -190,6 +190,10 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     filter_locked: expectOptionalNumber(record.filter_locked, `${label}.filter_locked`),
     module: expectOptionalString(record.module, `${label}.module`),
     group_type: expectOptionalString(record.group_type, `${label}.group_type`),
+    files: record.files === undefined
+      ? undefined
+      : expectArray(record.files, `${label}.files`, (item, fileIndex) =>
+        parseLibraryFileContract(item, `${label}.files[${fileIndex}]`)),
   };
 }
 

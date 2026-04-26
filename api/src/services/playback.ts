@@ -9,6 +9,7 @@
  * fetched sequentially and concatenated into a single audio/mp4 stream.
  */
 import { loadToken, refreshTidalToken, getCountryCode } from "./tidal.js";
+import { tidalFetchWithRetry } from "./tidal-rate-limiter.js";
 
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 
@@ -152,12 +153,12 @@ async function fetchPlaybackInfo(
         `?countryCode=${countryCode}&audioquality=${quality}` +
         `&playbackmode=STREAM&assetpresentation=FULL`;
 
-    const res = await fetch(url, {
+    const res = await tidalFetchWithRetry(url, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/json",
         },
-    });
+    }, `playbackinfo:${trackId}:${quality}`);
 
     if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -270,12 +271,12 @@ async function fetchVideoPlaybackInfo(
         `${TIDAL_API_BASE}/videos/${videoId}/urlpostpaywall` +
         `?urlusagemode=STREAM&videoquality=${quality}&assetpresentation=FULL`;
 
-    const res = await fetch(url, {
+    const res = await tidalFetchWithRetry(url, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/json",
         },
-    });
+    }, `video-playback:${videoId}:${quality}`);
 
     if (!res.ok) {
         const body = await res.text().catch(() => "");

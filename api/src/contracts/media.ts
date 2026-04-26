@@ -104,7 +104,7 @@ export interface VideoUpdateContract {
   monitor_lock?: boolean;
 }
 
-function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFileContract {
+export function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFileContract {
   const record = expectRecord(value, indexLabel);
   const artistId = record.artist_id;
   const albumId = record.album_id;

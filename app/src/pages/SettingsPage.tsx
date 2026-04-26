@@ -2028,10 +2028,10 @@ const SettingsPage = () => {
                         })}
 
                         {renderToggleRow({
-                            title: "Save Album Review",
-                            description: "Save the album review as review.txt in the album folder",
-                            checked: metadataSettings?.save_album_review === true,
-                            onChange: (checked) => updateMetadataSettings({ save_album_review: checked }),
+                            title: "Save NFO Files",
+                            description: "Save Jellyfin/Kodi-compatible artist.nfo and album.nfo files alongside the library",
+                            checked: metadataSettings?.save_nfo === true,
+                            onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
 
                         {renderToggleRow({
@@ -2110,13 +2110,6 @@ const SettingsPage = () => {
                                 </div>
                             </>
                         )}
-
-                        {renderToggleRow({
-                            title: "Save Artist Bio",
-                            description: "Save the artist bio as bio.txt in the artist folder",
-                            checked: metadataSettings?.save_artist_bio === true,
-                            onChange: (checked) => updateMetadataSettings({ save_artist_bio: checked }),
-                        })}
 
                         {renderToggleRow({
                             title: "Save Music Video Thumbnails",
@@ -2656,7 +2649,6 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
-
 
 
 

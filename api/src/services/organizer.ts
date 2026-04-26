@@ -4,7 +4,7 @@ import { execFileSync, execSync } from "child_process";
 import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config } from "./config.js";
-import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveBioFile, saveReviewFile, saveLyricsFile } from "./metadata-files.js";
+import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveLyricsFile, saveArtistNfoFile, saveAlbumNfoFile } from "./metadata-files.js";
 import { getArtist, getTrack, getVideo } from "./tidal.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
 import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
@@ -294,7 +294,7 @@ export class OrganizerService {
   }
 
   /**
-   * Retroactively prune disabled metadata files (covers, bios, lyrics, etc.) 
+   * Retroactively prune disabled metadata files (covers, NFO, lyrics, etc.)
    * based on the current configuration.
    */
   public static async pruneDisabledMetadata(): Promise<void> {
@@ -311,10 +311,11 @@ export class OrganizerService {
     if (!config.save_artist_picture) {
       selectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
     }
-    if (!config.save_artist_bio) selectors.push("file_type = 'bio'");
-    if (!config.save_album_review) selectors.push("file_type = 'review'");
     if (!config.save_lyrics) selectors.push("file_type = 'lyrics'");
     if (!config.save_video_thumbnail) selectors.push("file_type = 'video_thumbnail'");
+    if (!config.save_nfo) selectors.push("file_type = 'nfo'");
+    selectors.push("file_type = 'bio'");
+    selectors.push("file_type = 'review'");
 
     if (selectors.length === 0) {
       console.log('[Organizer] No metadata types are disabled. Pruning skipped.');
@@ -621,7 +622,7 @@ export class OrganizerService {
     albumId?: string | null;
     expectedPath: string;
     libraryRoot: string;
-    fileType: "cover" | "video_cover" | "bio" | "review";
+    fileType: "cover" | "video_cover" | "bio" | "review" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
   }): string {
@@ -827,7 +828,7 @@ export class OrganizerService {
     mediaId?: string | null;
     filePath: string;
     libraryRoot: string;
-    fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics";
+    fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
     expectedPath?: string | null;
@@ -1211,29 +1212,29 @@ export class OrganizerService {
         }
       }
 
-      const bioPath = path.join(artistDir, "bio.txt");
-      if (metadataConfig.save_artist_bio) {
+      const artistNfoPath = path.join(artistDir, "artist.nfo");
+      if (metadataConfig.save_nfo) {
         this.relocateSingletonSidecar({
           artistId,
-          expectedPath: bioPath,
+          expectedPath: artistNfoPath,
           libraryRoot: targetRoot,
-          fileType: "bio",
+          fileType: "nfo",
         });
       }
-      if (metadataConfig.save_artist_bio && !fs.existsSync(bioPath)) {
+      if (metadataConfig.save_nfo && !fs.existsSync(artistNfoPath)) {
         try {
-          await saveBioFile(artistId, bioPath);
-          if (fs.existsSync(bioPath)) {
+          await saveArtistNfoFile(artistId, artistNfoPath);
+          if (fs.existsSync(artistNfoPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId: null,
               mediaId: null,
-              filePath: bioPath,
+              filePath: artistNfoPath,
               libraryRoot: targetRoot,
-              fileType: "bio",
+              fileType: "nfo",
               quality: null,
               namingTemplate: null,
-              expectedPath: bioPath,
+              expectedPath: artistNfoPath,
             });
           }
         } catch {
@@ -1241,30 +1242,30 @@ export class OrganizerService {
         }
       }
 
-      const reviewPath = path.join(targetAlbumDir, "review.txt");
-      if (metadataConfig.save_album_review) {
+      const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
+      if (metadataConfig.save_nfo) {
         this.relocateSingletonSidecar({
           artistId,
           albumId: tidalId,
-          expectedPath: reviewPath,
+          expectedPath: albumNfoPath,
           libraryRoot: targetRoot,
-          fileType: "review",
+          fileType: "nfo",
         });
       }
-      if (metadataConfig.save_album_review && !fs.existsSync(reviewPath)) {
+      if (metadataConfig.save_nfo && !fs.existsSync(albumNfoPath)) {
         try {
-          await saveReviewFile(tidalId, reviewPath);
-          if (fs.existsSync(reviewPath)) {
+          await saveAlbumNfoFile(tidalId, albumNfoPath);
+          if (fs.existsSync(albumNfoPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId: tidalId,
               mediaId: null,
-              filePath: reviewPath,
+              filePath: albumNfoPath,
               libraryRoot: targetRoot,
-              fileType: "review",
+              fileType: "nfo",
               quality: null,
               namingTemplate: null,
-              expectedPath: reviewPath,
+              expectedPath: albumNfoPath,
             });
           }
         } catch {
@@ -1465,7 +1466,7 @@ export class OrganizerService {
         }
       }
 
-      // Extras (cover, artist picture, bio, review) - ensure they exist when downloading individual tracks
+      // Extras (cover, artist picture, NFO) - ensure they exist when downloading individual tracks
       const artistDir = path.join(targetRoot, artistFolder);
       this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
@@ -1557,29 +1558,29 @@ export class OrganizerService {
         }
       }
 
-      const bioPath = path.join(artistDir, "bio.txt");
-      if (metadataConfig.save_artist_bio) {
+      const artistNfoPath = path.join(artistDir, "artist.nfo");
+      if (metadataConfig.save_nfo) {
         this.relocateSingletonSidecar({
           artistId,
-          expectedPath: bioPath,
+          expectedPath: artistNfoPath,
           libraryRoot: targetRoot,
-          fileType: "bio",
+          fileType: "nfo",
         });
       }
-      if (metadataConfig.save_artist_bio && !fs.existsSync(bioPath)) {
+      if (metadataConfig.save_nfo && !fs.existsSync(artistNfoPath)) {
         try {
-          await saveBioFile(artistId, bioPath);
-          if (fs.existsSync(bioPath)) {
+          await saveArtistNfoFile(artistId, artistNfoPath);
+          if (fs.existsSync(artistNfoPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId: null,
               mediaId: null,
-              filePath: bioPath,
+              filePath: artistNfoPath,
               libraryRoot: targetRoot,
-              fileType: "bio",
+              fileType: "nfo",
               quality: null,
               namingTemplate: null,
-              expectedPath: bioPath,
+              expectedPath: artistNfoPath,
             });
           }
         } catch {
@@ -1587,30 +1588,30 @@ export class OrganizerService {
         }
       }
 
-      const reviewPath = path.join(targetAlbumDir, "review.txt");
-      if (metadataConfig.save_album_review) {
+      const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
+      if (metadataConfig.save_nfo) {
         this.relocateSingletonSidecar({
           artistId,
           albumId,
-          expectedPath: reviewPath,
+          expectedPath: albumNfoPath,
           libraryRoot: targetRoot,
-          fileType: "review",
+          fileType: "nfo",
         });
       }
-      if (metadataConfig.save_album_review && !fs.existsSync(reviewPath)) {
+      if (metadataConfig.save_nfo && !fs.existsSync(albumNfoPath)) {
         try {
-          await saveReviewFile(albumId, reviewPath);
-          if (fs.existsSync(reviewPath)) {
+          await saveAlbumNfoFile(albumId, albumNfoPath);
+          if (fs.existsSync(albumNfoPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId,
               mediaId: null,
-              filePath: reviewPath,
+              filePath: albumNfoPath,
               libraryRoot: targetRoot,
-              fileType: "review",
+              fileType: "nfo",
               quality: null,
               namingTemplate: null,
-              expectedPath: reviewPath,
+              expectedPath: albumNfoPath,
             });
           }
         } catch {

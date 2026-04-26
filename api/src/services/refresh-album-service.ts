@@ -12,6 +12,7 @@ import { createCooperativeBatcher } from "../utils/concurrent.js";
 import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
+import { enrichAlbumWithMusicBrainzRelease } from "./musicbrainz-release-catalog.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -19,6 +20,28 @@ type SimilarAlbumSeed = {
 };
 
 export class RefreshAlbumService {
+    private static shouldEnrichMusicBrainzReleases(): boolean {
+        return process.env.DISCOGENIUS_ENABLE_MUSICBRAINZ_RELEASE_MATCHING !== "false";
+    }
+
+    private static async enrichAlbumMusicBrainz(albumId: string, force: boolean = false): Promise<void> {
+        if (!this.shouldEnrichMusicBrainzReleases()) {
+            return;
+        }
+
+        try {
+            const result = await enrichAlbumWithMusicBrainzRelease(albumId, { force });
+            if (result.matched) {
+                console.log(
+                    `[MusicBrainz] Matched album ${albumId} to release ${result.releaseId}` +
+                    ` (confidence=${result.confidence?.toFixed(2)}, tracks=${result.updatedTracks || 0})`
+                );
+            }
+        } catch (error: any) {
+            console.warn(`[MusicBrainz] Failed to enrich album ${albumId}:`, error?.message || error);
+        }
+    }
+
     static getScanLevel(albumId: string): ScanLevel {
         const album = db.prepare(`
             SELECT
@@ -173,6 +196,8 @@ export class RefreshAlbumService {
                 albumId,
             );
         }
+
+        await this.enrichAlbumMusicBrainz(albumId, forceUpdate);
 
         const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
         const similarAlbums = includeSimilar
@@ -526,6 +551,8 @@ export class RefreshAlbumService {
                 album.tidal_id,
             );
         }
+
+        await this.enrichAlbumMusicBrainz(String(album.tidal_id), forceUpdate);
 
         const albumGroup = album._group_type || album._group || "ALBUMS";
 

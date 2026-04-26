@@ -352,23 +352,6 @@ type QueueGroup = {
     sortIndex: number;
 };
 
-function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"] {
-    switch (progress.state) {
-        case "failed":
-        case "importFailed":
-            return "failed";
-        case "queued":
-        case "importPending":
-            return "pending";
-        case "importing":
-            return "processing";
-        case "completed":
-            return "completed";
-        default:
-            return "downloading";
-    }
-}
-
 function getLiveQueueItemStage(progress: DownloadProgress): QueueItem["stage"] | undefined {
     switch (progress.state) {
         case "importPending":
@@ -383,98 +366,6 @@ function getLiveQueueItemStage(progress: DownloadProgress): QueueItem["stage"] |
         default:
             return undefined;
     }
-}
-
-function mergeQueueItemsWithProgress(
-    downloadQueue: QueueItem[],
-    progressByJobId: Map<number, DownloadProgress>,
-): QueueItem[] {
-    const mergedQueue = downloadQueue.map((item) => {
-        const progress = progressByJobId.get(item.id);
-        if (!progress) {
-            return item;
-        }
-
-        const liveStatus = getLiveQueueItemStatus(progress);
-        const liveStage = getLiveQueueItemStage(progress);
-
-        return {
-            ...item,
-            status: liveStatus,
-            stage: liveStage ?? item.stage,
-            progress: progress.progress ?? item.progress,
-            error: liveStatus === "failed"
-                ? progress.statusMessage ?? item.error ?? null
-                : item.error ?? null,
-            quality: progress.quality ?? item.quality ?? null,
-            title: progress.title ?? item.title,
-            artist: progress.artist ?? item.artist,
-            cover: progress.cover ?? item.cover ?? null,
-            currentFileNum: progress.currentFileNum ?? item.currentFileNum,
-            totalFiles: progress.totalFiles ?? item.totalFiles,
-            currentTrack: progress.currentTrack ?? item.currentTrack,
-            trackProgress: progress.trackProgress ?? item.trackProgress,
-            trackStatus: progress.trackStatus ?? item.trackStatus,
-            statusMessage: progress.statusMessage ?? item.statusMessage,
-            speed: progress.speed ?? item.speed,
-            eta: progress.eta ?? item.eta,
-            size: progress.size ?? item.size,
-            sizeleft: progress.sizeleft ?? item.sizeleft,
-            state: progress.state ?? item.state,
-            tracks: progress.tracks ?? item.tracks,
-        };
-    });
-
-    const existingJobIds = new Set(mergedQueue.map((item) => item.id));
-
-    for (const progress of progressByJobId.values()) {
-        if (existingJobIds.has(progress.jobId)) {
-            continue;
-        }
-
-        const status = getLiveQueueItemStatus(progress);
-        if (status === "completed") {
-            continue;
-        }
-
-        const timestamp = new Date().toISOString();
-        mergedQueue.push({
-            id: progress.jobId,
-            url: null,
-            type: progress.type,
-            queuePosition: undefined,
-            quality: progress.quality ?? null,
-            stage: getLiveQueueItemStage(progress),
-            tidalId: progress.tidalId,
-            path: null,
-            status,
-            progress: progress.progress ?? 0,
-            error: status === "failed" ? progress.statusMessage ?? null : null,
-            created_at: timestamp,
-            updated_at: timestamp,
-            started_at: timestamp,
-            completed_at: null,
-            title: progress.title,
-            artist: progress.artist,
-            cover: progress.cover ?? null,
-            album_id: progress.type === "album" ? progress.tidalId : null,
-            album_title: progress.type === "album" ? progress.title : null,
-            currentFileNum: progress.currentFileNum,
-            totalFiles: progress.totalFiles,
-            currentTrack: progress.currentTrack,
-            trackProgress: progress.trackProgress,
-            trackStatus: progress.trackStatus,
-            statusMessage: progress.statusMessage,
-            speed: progress.speed,
-            eta: progress.eta,
-            size: progress.size,
-            sizeleft: progress.sizeleft,
-            state: progress.state,
-            tracks: progress.tracks,
-        });
-    }
-
-    return mergedQueue;
 }
 
 function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | undefined {
@@ -683,15 +574,10 @@ const QueueTab = () => {
     const activeSentinelRef = useRef<HTMLDivElement | null>(null);
     const historySentinelRef = useRef<HTMLDivElement | null>(null);
 
-    const liveQueueItems = useMemo(
-        () => mergeQueueItemsWithProgress(downloadQueue, progressByJobId),
-        [downloadQueue, progressByJobId],
-    );
-
     const groupedDownloads = useMemo(() => {
-        const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'processing');
-        const pendingDownloads = liveQueueItems.filter(i => i.status === 'pending');
-        const failedDownloads = liveQueueItems.filter(i => i.status === 'failed');
+        const activeDownloads = downloadQueue.filter(i => i.status === 'downloading' || i.status === 'processing');
+        const pendingDownloads = downloadQueue.filter(i => i.status === 'pending');
+        const failedDownloads = downloadQueue.filter(i => i.status === 'failed');
         const filteredQueue = [...activeDownloads, ...pendingDownloads, ...failedDownloads];
 
         const albumTrackCounts = new Map<string, number>();
@@ -768,7 +654,7 @@ const QueueTab = () => {
             if (rankDiff !== 0) return rankDiff;
             return a.sortIndex - b.sortIndex;
         });
-    }, [liveQueueItems]);
+    }, [downloadQueue]);
 
     const ACTIVE_PAGE_SIZE = 25;
     const [visibleActiveLimit, setVisibleActiveLimit] = useState(ACTIVE_PAGE_SIZE);

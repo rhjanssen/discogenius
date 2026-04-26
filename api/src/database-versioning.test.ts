@@ -68,19 +68,21 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
     LIMIT 1
   `).get() as { schemaFrom: number; schemaTo: number; migrationNotes: string } | undefined;
 
-  assert.equal(userVersion, 5);
+  assert.equal(userVersion, 7);
   assert.deepEqual(runtimeRows, [
-    { key: "runtime.current_schema_version", value: "5" },
+    { key: "runtime.current_schema_version", value: "7" },
     { key: "runtime.schema_version_format", value: "integer" },
   ]);
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 10000);
-  assert.equal(latestHistory?.schemaTo, 5);
+  assert.equal(latestHistory?.schemaTo, 7);
   assert.match(latestHistory?.migrationNotes ?? "", /baseline current schema as 1/);
   assert.match(latestHistory?.migrationNotes ?? "", /add reverse media_artists lookup index/i);
   assert.match(latestHistory?.migrationNotes ?? "", /queue ordering column/i);
   assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
   assert.match(latestHistory?.migrationNotes ?? "", /lidarr-aligned names/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /MusicBrainz exact release cache/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /Lidarr-style MusicBrainz catalog/i);
 });
 
 // ====================================================================
@@ -89,13 +91,16 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
 
 test("fresh database initializes with correct schema version", () => {
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 5);
+  assert.equal(userVersion, 7);
 
   const coreTables = [
     "artists", "albums", "media", "media_artists", "library_files",
     "unmapped_files", "config", "job_queue", "quality_profiles",
     "upgrade_queue", "playlists", "playlist_tracks", "history_events",
-    "database_version_history",
+    "database_version_history", "artist_metadata", "managed_artists",
+    "release_groups", "album_releases", "tracks", "release_group_monitoring",
+    "track_files", "provider_releases", "provider_tracks", "videos",
+    "provider_videos", "video_files",
   ];
   for (const tableName of coreTables) {
     const row = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName) as { name: string } | undefined;
@@ -114,7 +119,7 @@ test("migration from integer schema v1 runs pending migrations", () => {
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 5);
+  assert.equal(userVersion, 7);
 
   // v4 migration adds artists.path
   const artistCols = dbModule.db.prepare("PRAGMA table_info(artists)").all() as Array<{ name: string }>;
@@ -125,7 +130,7 @@ test("migration from integer schema v1 runs pending migrations", () => {
   assert.ok(jobCols.some((c) => c.name === "queue_order"), "Expected job_queue table to have 'queue_order' column");
 });
 
-test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
+test("migration from integer schema v3 runs the v4-v7 tail migrations", () => {
   dbModule.db.pragma("user_version = 3");
   dbModule.db.prepare(`
     INSERT INTO config (key, value, description)
@@ -136,7 +141,7 @@ test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 5);
+  assert.equal(userVersion, 7);
 
   const latestHistory = dbModule.db.prepare(`
     SELECT schema_from as schemaFrom, schema_to as schemaTo, migration_notes as migrationNotes
@@ -147,9 +152,11 @@ test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
 
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 3);
-  assert.equal(latestHistory?.schemaTo, 5);
+  assert.equal(latestHistory?.schemaTo, 7);
   assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
   assert.match(latestHistory?.migrationNotes ?? "", /lidarr-aligned names/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /MusicBrainz exact release cache/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /Lidarr-style MusicBrainz catalog/i);
 });
 
 test("unversioned database with existing data runs full migration chain", () => {
@@ -160,7 +167,7 @@ test("unversioned database with existing data runs full migration chain", () => 
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 5);
+  assert.equal(userVersion, 7);
 
   const latestHistory = dbModule.db.prepare(`
     SELECT schema_from as schemaFrom, schema_to as schemaTo
@@ -171,5 +178,5 @@ test("unversioned database with existing data runs full migration chain", () => 
 
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 0);
-  assert.equal(latestHistory?.schemaTo, 5);
+  assert.equal(latestHistory?.schemaTo, 7);
 });
