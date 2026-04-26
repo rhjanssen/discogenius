@@ -8,9 +8,9 @@ import {
     downloadAlbumVideoCover,
     downloadArtistPicture,
     downloadVideoThumbnail,
-    saveBioFile,
-    saveReviewFile,
     saveLyricsFile,
+    saveArtistNfoFile,
+    saveAlbumNfoFile,
 } from "./metadata-files.js";
 import { embedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
@@ -128,18 +128,18 @@ class LibraryMetadataBackfillService {
                 }
             }
 
-            if (metadataConfig.save_artist_bio) {
-                const bioPath = path.join(artistDir, "bio.txt");
-                if (!fs.existsSync(bioPath)) {
+            if (metadataConfig.save_nfo) {
+                const artistNfoPath = path.join(artistDir, "artist.nfo");
+                if (!fs.existsSync(artistNfoPath)) {
                     try {
-                        await saveBioFile(artistId, bioPath);
-                        if (fs.existsSync(bioPath)) {
+                        await saveArtistNfoFile(artistId, artistNfoPath);
+                        if (fs.existsSync(artistNfoPath)) {
                             this.upsertLibraryFile({
                                 artistId,
-                                filePath: bioPath,
+                                filePath: artistNfoPath,
                                 libraryRoot,
-                                fileType: "bio",
-                                expectedPath: bioPath,
+                                fileType: "nfo",
+                                expectedPath: artistNfoPath,
                             });
                             result.downloaded++;
                         } else {
@@ -254,19 +254,19 @@ class LibraryMetadataBackfillService {
                     }
                 }
 
-                if (metadataConfig.save_album_review) {
-                    const reviewPath = path.join(albumDir, "review.txt");
-                    if (!fs.existsSync(reviewPath)) {
+                if (metadataConfig.save_nfo) {
+                    const albumNfoPath = path.join(albumDir, "album.nfo");
+                    if (!fs.existsSync(albumNfoPath)) {
                         try {
-                            await saveReviewFile(String(album.id), reviewPath);
-                            if (fs.existsSync(reviewPath)) {
+                            await saveAlbumNfoFile(String(album.id), albumNfoPath);
+                            if (fs.existsSync(albumNfoPath)) {
                                 this.upsertLibraryFile({
                                     artistId,
                                     albumId: String(album.id),
-                                    filePath: reviewPath,
+                                    filePath: albumNfoPath,
                                     libraryRoot,
-                                    fileType: "review",
-                                    expectedPath: reviewPath,
+                                    fileType: "nfo",
+                                    expectedPath: albumNfoPath,
                                 });
                                 result.downloaded++;
                             } else {

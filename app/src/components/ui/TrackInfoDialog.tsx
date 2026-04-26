@@ -187,6 +187,8 @@ function formatFileTypeLabel(fileType: string): string {
             return "Biography";
         case "review":
             return "Review";
+        case "nfo":
+            return "NFO";
         default:
             return fileType.replace(/_/g, " ");
     }
@@ -197,7 +199,7 @@ function isImageFile(file: TrackFileInfo) {
 }
 
 function isTextFile(file: TrackFileInfo) {
-    return ["lyrics", "bio", "review"].includes(file.file_type);
+    return ["lyrics", "bio", "review", "nfo"].includes(file.file_type);
 }
 
 function isVideoFile(file: TrackFileInfo) {

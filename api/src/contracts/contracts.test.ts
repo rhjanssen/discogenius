@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { parseAuthStatusContract } from "./auth.js";
 import {
+  parseAlbumsListResponseContract,
   parseArtistsListResponseContract,
   parseLibraryStatsContract,
   parseSearchResponseContract,
@@ -228,6 +229,32 @@ test("catalog contract parsers validate list, stats, and search payloads", () =>
   });
   assert.equal(artists.items[0].id, "10");
   assert.equal(artists.items[0].is_monitored, true);
+
+  const albums = parseAlbumsListResponseContract({
+    items: [
+      {
+        id: 30,
+        title: "Give Me the Future",
+        is_monitored: true,
+        is_downloaded: true,
+        artist_id: 10,
+        artist_name: "Bastille",
+        files: [
+          {
+            id: 8,
+            album_id: 30,
+            file_type: "cover",
+            file_path: "E:/music/Bastille/Give Me the Future/cover.jpg",
+          },
+        ],
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(albums.items[0].files?.[0]?.id, 8);
 
   const stats = parseLibraryStatsContract({
     artists: { total: 1, monitored: 1, downloaded: 0 },
@@ -461,6 +488,5 @@ test("history contract parser validates audit event payloads", () => {
   assert.equal(history.items[0].eventType, "TrackFileImported");
   assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });
-
 
 

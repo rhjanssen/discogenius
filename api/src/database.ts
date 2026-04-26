@@ -535,6 +535,58 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       `);
     },
   },
+  {
+    version: 6,
+    description: "add MusicBrainz exact release cache and provider match tables",
+    up: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS musicbrainz_releases (
+          mbid TEXT PRIMARY KEY,
+          release_group_mbid TEXT,
+          title TEXT NOT NULL,
+          disambiguation TEXT,
+          barcode TEXT,
+          date TEXT,
+          country TEXT,
+          status TEXT,
+          labels TEXT,
+          artist_credits TEXT,
+          media TEXT,
+          track_count INT,
+          duration INT,
+          data TEXT,
+          fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS musicbrainz_release_tracks (
+          release_mbid TEXT NOT NULL,
+          track_mbid TEXT NOT NULL,
+          recording_mbid TEXT,
+          title TEXT NOT NULL,
+          medium_number INT,
+          track_number TEXT,
+          absolute_track_number INT,
+          duration INT,
+          isrcs TEXT,
+          PRIMARY KEY (release_mbid, track_mbid),
+          FOREIGN KEY (release_mbid) REFERENCES musicbrainz_releases(mbid) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS provider_release_matches (
+          provider TEXT NOT NULL,
+          provider_album_id TEXT NOT NULL,
+          musicbrainz_release_mbid TEXT,
+          match_method TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          score REAL NOT NULL,
+          data TEXT,
+          matched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (provider, provider_album_id),
+          FOREIGN KEY (musicbrainz_release_mbid) REFERENCES musicbrainz_releases(mbid) ON DELETE SET NULL
+        );
+      `);
+    },
+  },
 ];
 
 type MigrationRunSummary = {
@@ -1054,8 +1106,9 @@ export function initDatabase() {
   // provider: 'tidal' | 'spotify' | 'apple' | 'musicbrainz' | 'discogs' | 'deezer'
   // external_id: the provider's own identifier for this entity
   //
-  // For albums, join on mb_release_group_id to group format variants (16-bit,
-  // 24-bit, Atmos) that share the same abstract album across providers.
+  // For albums, mb_release_group_id is a broad cross-provider family key for
+  // discovery and matching, not a curation/deduplication key. Exact release IDs,
+  // UPCs, provider edition groups, and track identity sets decide redundancy.
   // For media, ISRC on the media table is already the canonical cross-provider key.
   // ====================================================================
   db.exec(`
@@ -1066,6 +1119,63 @@ export function initDatabase() {
       external_id TEXT NOT NULL,
       fetched_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (entity_type, entity_id, provider)
+    )
+  `);
+
+  // ====================================================================
+  // MUSICBRAINZ RELEASE CACHE
+  // Exact MusicBrainz releases are the canonical metadata layer. Provider
+  // albums (TIDAL now, Apple Music later) link to these exact releases when a
+  // UPC/barcode and sanity scoring produce a confident match.
+  // ====================================================================
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS musicbrainz_releases (
+      mbid TEXT PRIMARY KEY,
+      release_group_mbid TEXT,
+      title TEXT NOT NULL,
+      disambiguation TEXT,
+      barcode TEXT,
+      date TEXT,
+      country TEXT,
+      status TEXT,
+      labels TEXT,
+      artist_credits TEXT,
+      media TEXT,
+      track_count INT,
+      duration INT,
+      data TEXT,
+      fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS musicbrainz_release_tracks (
+      release_mbid TEXT NOT NULL,
+      track_mbid TEXT NOT NULL,
+      recording_mbid TEXT,
+      title TEXT NOT NULL,
+      medium_number INT,
+      track_number TEXT,
+      absolute_track_number INT,
+      duration INT,
+      isrcs TEXT,
+      PRIMARY KEY (release_mbid, track_mbid),
+      FOREIGN KEY (release_mbid) REFERENCES musicbrainz_releases(mbid) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_release_matches (
+      provider TEXT NOT NULL,
+      provider_album_id TEXT NOT NULL,
+      musicbrainz_release_mbid TEXT,
+      match_method TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      score REAL NOT NULL,
+      data TEXT,
+      matched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider, provider_album_id),
+      FOREIGN KEY (musicbrainz_release_mbid) REFERENCES musicbrainz_releases(mbid) ON DELETE SET NULL
     )
   `);
 
@@ -1158,6 +1268,12 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mb_release_group ON albums(mb_release_group_id)`);
   db.exec(`DROP INDEX IF EXISTS idx_albums_downloaded`);
+
+  // MusicBrainz exact release indexes
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_musicbrainz_releases_barcode ON musicbrainz_releases(barcode)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_musicbrainz_releases_release_group ON musicbrainz_releases(release_group_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_musicbrainz_release_tracks_recording ON musicbrainz_release_tracks(recording_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_provider_release_matches_mb_release ON provider_release_matches(musicbrainz_release_mbid)`);
 
   // Album artists indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_album_artists_version_group ON album_artists(version_group_id)`);

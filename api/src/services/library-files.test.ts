@@ -105,6 +105,95 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   assert.ok(!expected.expectedPath?.includes("Queen [artist-mbid-1]"));
 });
 
+test("NFO sidecars resolve to artist and album metadata paths and stay singleton-tracked", () => {
+  writeTestConfig({
+    artistFolder: "{artistName}",
+    albumTrackPathSingle: "{albumTitle} ({releaseYear})/{trackNumber00} - {trackTitle}",
+  });
+
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(1, "Queen", "artist-mbid-1", "Queen", 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO albums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(10, 1, "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1);
+
+  const musicRoot = configModule.Config.getMusicPath();
+  const artistNfoPath = path.join(musicRoot, "Queen", "artist.nfo");
+  const albumNfoPath = path.join(musicRoot, "Queen", "A Night at the Opera (1975)", "album.nfo");
+
+  const artistNfoExpected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    id: 501,
+    artist_id: 1,
+    album_id: null,
+    media_id: null,
+    file_path: path.join(tempDir, "legacy", "artist.nfo"),
+    relative_path: null,
+    library_root: "music",
+    file_type: "nfo",
+    extension: "nfo",
+  });
+
+  const albumNfoExpected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    id: 502,
+    artist_id: 1,
+    album_id: 10,
+    media_id: null,
+    file_path: path.join(tempDir, "legacy", "album.nfo"),
+    relative_path: null,
+    library_root: "music",
+    file_type: "nfo",
+    extension: "nfo",
+  });
+
+  assert.equal(artistNfoExpected.expectedPath, artistNfoPath);
+  assert.equal(albumNfoExpected.expectedPath, albumNfoPath);
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    filePath: path.join(tempDir, "legacy", "old-artist.nfo"),
+    libraryRoot: musicRoot,
+    fileType: "nfo",
+  });
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    filePath: artistNfoPath,
+    libraryRoot: musicRoot,
+    fileType: "nfo",
+  });
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    filePath: path.join(tempDir, "legacy", "old-album.nfo"),
+    libraryRoot: musicRoot,
+    fileType: "nfo",
+  });
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    filePath: albumNfoPath,
+    libraryRoot: musicRoot,
+    fileType: "nfo",
+  });
+
+  const rows = dbModule.db.prepare(`
+    SELECT album_id, file_path
+    FROM library_files
+    WHERE file_type = 'nfo'
+    ORDER BY album_id IS NOT NULL, album_id
+  `).all() as Array<{ album_id: number | null; file_path: string }>;
+
+  assert.deepEqual(rows, [
+    { album_id: null, file_path: artistNfoPath },
+    { album_id: 10, file_path: albumNfoPath },
+  ]);
+});
+
 test("resolveArtistFolderForPersistence disambiguates same-name artists outside the repository layer", () => {
   dbModule.db.prepare(`
     INSERT INTO artists (id, name, path, monitor)

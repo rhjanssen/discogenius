@@ -906,12 +906,12 @@ export class DiskScanService {
      * For each monitored album with downloaded tracks:
      *   - Album cover (if save_album_cover enabled and file missing)
      *   - Album video cover (if save_album_cover enabled, album has video_cover, and file missing)
-     *   - Album review (if save_album_review enabled and file missing)
+     *   - Album NFO (if save_nfo enabled and file missing)
      *   - Track lyrics (if save_lyrics enabled and .lrc missing for downloaded tracks)
      *
      * For each monitored artist with library files:
      *   - Artist picture (if save_artist_picture enabled and file missing)
-     *   - Artist bio (if save_artist_bio enabled and file missing)
+     *   - Artist NFO (if save_nfo enabled and file missing)
      *
      * For each downloaded video:
      *   - Video thumbnail (if save_video_thumbnail enabled and file missing)

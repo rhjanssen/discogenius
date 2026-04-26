@@ -11,6 +11,7 @@ import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { RenameTrackFileService } from "../services/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/audioUtils.js";
 import { rootScanRouteService, type RootScanSsePayload } from "../services/root-scan-route-service.js";
+import { parseSingleByteRange } from "../utils/http-range.js";
 
 const router = Router();
 const streamPipeline = promisify(pipeline);
@@ -148,7 +149,7 @@ router.get("/content", (req, res) => {
     }
 
     // Only allow text file types
-    const allowedTypes = ["lyrics", "bio", "review"];
+    const allowedTypes = ["lyrics", "bio", "review", "nfo"];
     if (!allowedTypes.includes(file.file_type)) {
       return res.status(400).json({ detail: "Content retrieval only supported for text files" });
     }
@@ -229,6 +230,15 @@ router.get("/stream/:id", async (req, res) => {
     const contentType = mimeTypes[ext] || "application/octet-stream";
 
     if (useBrowserCompatibleAudioStream) {
+      if (req.method === "HEAD") {
+        res.writeHead(200, {
+          "Content-Type": "audio/mp4",
+          "Cache-Control": "no-store",
+          "Accept-Ranges": "none",
+        });
+        return res.end();
+      }
+
       const child = spawnBrowserCompatibleAudioTranscode(filePath);
       let stderr = "";
       child.stderr.on("data", (chunk) => {
@@ -275,14 +285,18 @@ router.get("/stream/:id", async (req, res) => {
       }
     }
 
-    // Handle range requests for audio/video seeking
-    const range = req.headers.range;
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = end - start + 1;
+    const rangeResult = parseSingleByteRange(req.headers.range, fileSize);
+    if (!rangeResult.satisfiable) {
+      res.writeHead(416, {
+        "Content-Range": rangeResult.contentRange,
+        "Accept-Ranges": "bytes",
+        "Content-Type": contentType,
+      });
+      return res.end();
+    }
 
+    if (rangeResult.range) {
+      const { start, end, chunkSize } = rangeResult.range;
       res.writeHead(206, {
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
@@ -290,17 +304,25 @@ router.get("/stream/:id", async (req, res) => {
         "Content-Type": contentType,
       });
 
-      const stream = fs.createReadStream(filePath, { start, end });
-      stream.pipe(res);
-    } else {
-      res.writeHead(200, {
-        "Content-Length": fileSize,
-        "Content-Type": contentType,
-        "Accept-Ranges": "bytes",
-      });
+      if (req.method === "HEAD") {
+        return res.end();
+      }
 
-      fs.createReadStream(filePath).pipe(res);
+      await streamPipeline(fs.createReadStream(filePath, { start, end }), res);
+      return;
     }
+
+    res.writeHead(200, {
+      "Content-Length": fileSize,
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+    });
+
+    if (req.method === "HEAD") {
+      return res.end();
+    }
+
+    await streamPipeline(fs.createReadStream(filePath), res);
   } catch (error: any) {
     if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") {
       return;
@@ -381,6 +403,5 @@ router.post("/scan-roots-now", async (req, res) => {
 });
 
 export default router;
-
 
 

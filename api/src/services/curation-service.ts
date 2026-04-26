@@ -1,9 +1,9 @@
 import { db } from "../database.js";
-import { JobTypes, TaskQueueService } from "./queue.js";
 import { Config, getConfigSection } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
-import { getQualityRank, type QualityProfile, type LibraryType } from "../repositories/MediaRepository.js";
 import { readIntEnv } from "../utils/env.js";
+import { WantedQueueService } from "./wanted-queue-service.js";
+import { buildCurationDecisions } from "./curation-decision-service.js";
 
 interface Album {
     id: string;
@@ -21,7 +21,10 @@ interface Album {
     redundant?: string;
     module?: string;
     group_type?: string;
-    version_group_id?: number; // Groups related album versions together
+    version_group_id?: number; // Provider-derived same-edition group, e.g. clean/explicit/quality variants
+    mbid?: string | null;
+    mb_release_group_id?: string | null;
+    upc?: string | null;
     mb_primary?: string | null;
     mb_secondary?: string | null;
 }
@@ -95,230 +98,43 @@ export class CurationService {
 
             console.log(`   Analyzing ${allArtistAlbums.length} albums with ${tracks.length} tracks...`);
 
-            // 3. Filter by library type (Atmos vs Normal Music)
-            let qualifiedAlbums = allArtistAlbums;
-            if (libraryType === 'atmos') {
-                // Atmos library: Only albums tagged DOLBY_ATMOS
-                qualifiedAlbums = allArtistAlbums.filter(a => (a.quality || '').toUpperCase() === 'DOLBY_ATMOS');
+            const decisionResult = await buildCurationDecisions({
+                albums: allArtistAlbums,
+                libraryType,
+                curationConfig,
+                qualityConfig,
+                yieldEvery: CurationService.REDUNDANCY_YIELD_EVERY,
+            });
+
+            const qualifiedAlbums = decisionResult.qualifiedAlbums as Album[];
+
+            if (libraryType === "atmos") {
                 console.log(`   ${qualifiedAlbums.length} albums with DOLBY_ATMOS quality`);
-            } else if (libraryType === 'music') {
-                // Normal music: Only stereo albums (LOSSLESS or HIRES_LOSSLESS)
-                const stereoQualities = ['LOSSLESS', 'HIRES_LOSSLESS'];
-                qualifiedAlbums = allArtistAlbums.filter(a => stereoQualities.includes((a.quality || '').toUpperCase()));
+            } else if (libraryType === "music") {
                 console.log(`   ${qualifiedAlbums.length} albums with stereo quality (LOSSLESS/HIRES_LOSSLESS)`);
             }
 
-            // 3b. Apply category filters BEFORE redundancy selection.
-            // This prevents excluded releases (e.g. compilations) from "shadowing" included ones during subset selection.
-            const normalizePrimary = (album: Album): 'album' | 'ep' | 'single' => {
-                const raw = (album.mb_primary || '').toString().trim().toLowerCase();
-                if (raw === 'album' || raw === 'ep' || raw === 'single') return raw;
+            console.log(`   After category filters: ${decisionResult.includedAlbums.length} included, ${qualifiedAlbums.length - decisionResult.includedAlbums.length} excluded`);
 
-                const t = (album.type || '').toString().trim().toUpperCase();
-                if (t === 'SINGLE') return 'single';
-                if (t === 'EP') return 'ep';
-                return 'album';
-            };
-
-            const isIncludedByCategory = (album: Album): boolean => {
-                const mod = (album.module || '').toString().toUpperCase();
-                if (mod.includes('APPEARS_ON')) {
-                    return curationConfig.include_appears_on === true;
-                }
-
-                const secondary = (album.mb_secondary || '').toString().trim().toLowerCase();
-                if (secondary) {
-                    switch (secondary) {
-                        case 'compilation': return curationConfig.include_compilation !== false;
-                        case 'soundtrack': return curationConfig.include_soundtrack !== false;
-                        case 'live': return curationConfig.include_live !== false;
-                        case 'remix': return curationConfig.include_remix !== false;
-                        case 'dj-mix': return curationConfig.include_remix !== false;
-                        case 'demo': return false;
-                        default: return true;
-                    }
-                }
-
-                const primary = normalizePrimary(album);
-                switch (primary) {
-                    case 'single': return curationConfig.include_single !== false;
-                    case 'ep': return curationConfig.include_ep !== false;
-                    case 'album':
-                    default: return curationConfig.include_album !== false;
-                }
-            };
-
-            const includedAlbums = qualifiedAlbums.filter(isIncludedByCategory);
-            const includedAlbumIds = new Set(includedAlbums.map(a => a.id));
-            console.log(`   After category filters: ${includedAlbums.length} included, ${qualifiedAlbums.length - includedAlbums.length} excluded`);
-
-            const redundancyEnabled = curationConfig?.enable_redundancy_filter !== false;
-
-            // Track redundancy decisions (duplicates/subsets/etc)
-            const redundancyMap = new Map<string, string>(); // redundantId -> chosen/supersetId
-
-            let candidatesForDedup: Album[] = includedAlbums;
-
-            // When redundancy is disabled, keep all versions/editions (no version-group curation and no subset removal).
-            // We still apply quality + explicit selection for identical track sets (handled below).
-            if (redundancyEnabled) {
-                // 4. GROUP BY VERSION GROUP (or fallback to title)
-                // CRITICAL: Use includedAlbums (not qualifiedAlbums) to prevent excluded categories
-                // (e.g. compilations) from "shadowing" included albums during version selection
-                const versionGroups = this.groupByVersionGroup(includedAlbums);
-                console.log(`   Grouped into ${versionGroups.size} version groups`);
-
-                // 5. RANK WITHIN GROUPS - Select best from each group
-                const bestByVersionGroup: Album[] = [];
-                let versionSelectionCounter = 0;
-
-                for (const group of versionGroups.values()) {
-                    const best = this.selectBestInGroup(group, curationConfig, qualityConfig, libraryType);
-                    bestByVersionGroup.push(best);
-
-                    // Mark others in group as redundant
-                    for (const album of group) {
-                        if (album.id !== best.id) {
-                            redundancyMap.set(album.id, best.id);
-                        }
-                    }
-
-                    versionSelectionCounter++;
-                    await this.maybeYield(versionSelectionCounter);
-                }
-
-                console.log(`   ${bestByVersionGroup.length} releases after version grouping`);
-                candidatesForDedup = bestByVersionGroup;
+            if (curationConfig?.enable_redundancy_filter !== false) {
+                console.log(`   Grouped into ${decisionResult.editionGroupCount} edition groups`);
+                console.log(`   ${decisionResult.afterEditionCount} releases after edition grouping`);
             } else {
-                console.log(`   Redundancy disabled: keeping all versions/editions (no version-group curation)`);
+                console.log(`   Redundancy disabled: keeping all versions/editions (no edition curation)`);
             }
 
-            // Helper: Get ISRC Set
-            const getIsrcSet = (album: Album) => {
-                return new Set(album.tracks?.map(t => t.isrc).filter(Boolean));
-            };
-
-            // Helper: Get Track Name Set (Normalized)
-            const getTrackNameSet = (album: Album) => {
-                return new Set(album.tracks?.map(t => t.title.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
-            };
-
-            // 6. UNIFIED ISRC DEDUPLICATION
-            // Group releases by identical ISRC sets, pick best in each group.
-            // This must also run for Atmos so explicit-vs-clean variants still resolve
-            // to one canonical release and the redundant badge/path stays consistent.
-            const resolveEqualTrackSets = async (albums: Album[]): Promise<Album[]> => {
-                const uniqueAlbums: Album[] = [];
-                const albumsByIsrcSet = new Map<string, Album[]>();
-                let isrcGroupingCounter = 0;
-
-                for (const album of albums) {
-                    const isrcs = Array.from(getIsrcSet(album)).sort().join('|');
-                    if (!isrcs) {
-                        // If no tracks/ISRCs, treat as unique
-                        uniqueAlbums.push(album);
-                        isrcGroupingCounter++;
-                        await this.maybeYield(isrcGroupingCounter);
-                        continue;
-                    }
-                    if (!albumsByIsrcSet.has(isrcs)) {
-                        albumsByIsrcSet.set(isrcs, []);
-                    }
-                    albumsByIsrcSet.get(isrcs)!.push(album);
-                    isrcGroupingCounter++;
-                    await this.maybeYield(isrcGroupingCounter);
-                }
-
-                for (const group of albumsByIsrcSet.values()) {
-                    // Pick best in group using consistent ranking logic
-                    const best = this.selectBestInGroup(group, curationConfig, qualityConfig, libraryType);
-                    uniqueAlbums.push(best);
-
-                    // Mark others as redundant
-                    for (const album of group) {
-                        if (album.id !== best.id) {
-                            redundancyMap.set(album.id, best.id);
-                        }
-                    }
-
-                    isrcGroupingCounter++;
-                    await this.maybeYield(isrcGroupingCounter);
-                }
-
-                return uniqueAlbums;
-            };
-
-            const deduped = await resolveEqualTrackSets(candidatesForDedup);
-            console.log(`   After ISRC dedup: ${deduped.length} releases (from ${candidatesForDedup.length}) [quality/explicit dedup applied]`);
-
-            // 7. UNIFIED SUBSET FILTERING
-            // Drop any release whose tracks are a subset of another release
-            const filterSubsets = async (albums: Album[]): Promise<Album[]> => {
-                const result: Album[] = [];
-                let subsetFilteringCounter = 0;
-
-                // Sort by track count descending (larger albums first for efficiency)
-                const sorted = [...albums].sort((a, b) => (b.num_tracks || 0) - (a.num_tracks || 0));
-
-                for (const cand of sorted) {
-                    subsetFilteringCounter++;
-                    await this.maybeYield(subsetFilteringCounter);
-
-                    const candIsrcs = getIsrcSet(cand);
-                    const candNames = getTrackNameSet(cand);
-
-                    let isSubset = false;
-                    // Check against all albums already kept (which are larger or equal)
-                    for (const sup of result) {
-                        subsetFilteringCounter++;
-                        await this.maybeYield(subsetFilteringCounter);
-
-                        if (cand.id === sup.id) continue;
-
-                        const supIsrcs = getIsrcSet(sup);
-                        const supNames = getTrackNameSet(sup);
-
-                        // Check ISRC Subset
-                        let isIsrcSubset = false;
-                        if (candIsrcs.size > 0 && supIsrcs.size > 0) {
-                            isIsrcSubset = [...candIsrcs].every(i => supIsrcs.has(i));
-                        }
-
-                        // Check Name Subset (fallback if ISRCs missing)
-                        let isNameSubset = false;
-                        if (candNames.size > 0 && supNames.size > 0) {
-                            isNameSubset = [...candNames].every(n => supNames.has(n));
-                        }
-
-                        if (isIsrcSubset || isNameSubset) {
-                            isSubset = true;
-                            // Mark as redundant
-                            redundancyMap.set(cand.id, sup.id);
-                            break;
-                        }
-                    }
-
-                    if (!isSubset) {
-                        result.push(cand);
-                    }
-                }
-                return result;
-            };
-
-            let finalSelection = deduped;
-            if (redundancyEnabled) {
+            console.log(`   After ISRC dedup: ${decisionResult.afterTrackSetDedupCount} releases (from ${decisionResult.afterEditionCount}) [quality/explicit dedup applied]`);
+            if (decisionResult.subsetFilteringApplied) {
                 console.log(`   Curating subsets (unified)...`);
-                finalSelection = await filterSubsets(deduped);
             } else {
                 console.log(`   Redundancy disabled: skipping subset curation`);
             }
-            const finalIds = new Set(finalSelection.map(a => a.id));
 
             // Count by type for logging
-            const albumCount = finalSelection.filter(a => (a.type || '').toUpperCase() === 'ALBUM').length;
-            const epCount = finalSelection.filter(a => (a.type || '').toUpperCase() === 'EP').length;
-            const singleCount = finalSelection.filter(a => (a.type || '').toUpperCase() === 'SINGLE').length;
-            const otherCount = finalSelection.length - albumCount - epCount - singleCount;
+            const albumCount = decisionResult.finalSelection.filter(a => (a.type || '').toUpperCase() === 'ALBUM').length;
+            const epCount = decisionResult.finalSelection.filter(a => (a.type || '').toUpperCase() === 'EP').length;
+            const singleCount = decisionResult.finalSelection.filter(a => (a.type || '').toUpperCase() === 'SINGLE').length;
+            const otherCount = decisionResult.finalSelection.length - albumCount - epCount - singleCount;
             console.log(`   Final selection: ${albumCount} albums, ${epCount} EPs, ${singleCount} singles, ${otherCount} other`);
 
             // --- Apply Updates only to albums that qualify for this library type ---
@@ -333,22 +149,8 @@ export class CurationService {
                 albumUpdatePrepCounter++;
                 await this.maybeYield(albumUpdatePrepCounter);
 
-                let shouldMonitor = false;
-                let redundantOf = null;
-
-                const includedByCategory = includedAlbumIds.has(album.id);
-
-                if (includedByCategory && finalIds.has(album.id)) {
-                    shouldMonitor = true;
-                } else if (includedByCategory) {
-                    shouldMonitor = false;
-                    // Included, but filtered out by redundancy/version selection
-                    redundantOf = redundancyMap.get(album.id) || null;
-                } else {
-                    // Excluded by category filter
-                    shouldMonitor = false;
-                    redundantOf = "filtered";
-                }
+                const decision = decisionResult.decisionsByAlbumId.get(String(album.id));
+                if (!decision) continue;
 
                 // Lock mechanism: Respect manual lock
                 if (album.monitor_lock === 1) {
@@ -359,8 +161,8 @@ export class CurationService {
                     continue;
                 }
 
-                const nextMonitor = shouldMonitor ? 1 : 0;
-                const nextRedundant = redundantOf ?? null;
+                const nextMonitor = decision.monitor ? 1 : 0;
+                const nextRedundant = decision.redundant ?? null;
                 const currentRedundant = album.redundant ?? null;
                 if (Number(album.monitor || 0) === nextMonitor && currentRedundant === nextRedundant) {
                     continue;
@@ -373,7 +175,7 @@ export class CurationService {
                     redundant: nextRedundant,
                 });
 
-                if (shouldMonitor && !album.monitor) newAlbums++;
+                if (decision.monitor && !album.monitor) newAlbums++;
             }
 
             // Batch Update DB
@@ -443,438 +245,9 @@ export class CurationService {
     ): Promise<{ albums: number; tracks: number; videos: number }> {
         console.log(`[Queue] Queueing monitored items${artistId ? ` for artist ${artistId}` : ''}...`);
 
-        const filteringConfig = getConfigSection("filtering");
-        const allowVideos = filteringConfig?.include_videos !== false;
-
-        const hasActiveJob = (types: string[], refId: string) => {
-            const placeholders = types.map(() => '?').join(', ');
-            const existing = db.prepare(`
-                SELECT id FROM job_queue
-                WHERE type IN (${placeholders}) AND ref_id = ? AND status IN ('pending', 'processing')
-            `).get(...types, refId);
-            return Boolean(existing);
-        };
-
-        const hasActiveAlbumWork = (albumId: string) => {
-            if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], albumId)) {
-                return true;
-            }
-
-            const trackWork = db.prepare(`
-                SELECT 1
-                FROM job_queue jq
-                JOIN media m ON m.id = jq.ref_id
-                WHERE m.album_id = ?
-                  AND jq.type IN ('DownloadTrack', 'ImportDownload')
-                  AND jq.status IN ('pending', 'processing')
-                LIMIT 1
-            `).get(albumId);
-
-            return Boolean(trackWork);
-        };
-
-        const hasImportedTrackFile = (mediaIdColumn: string) => `
-            EXISTS (
-                SELECT 1
-                FROM library_files lf
-                WHERE lf.media_id = ${mediaIdColumn}
-                  AND lf.file_type = 'track'
-            )
-        `;
-
-        const hasImportedVideoFile = (mediaIdColumn: string) => `
-            EXISTS (
-                SELECT 1
-                FROM library_files lf
-                WHERE lf.media_id = ${mediaIdColumn}
-                  AND lf.file_type = 'video'
-            )
-        `;
-
-        const formatAlbumTitle = (title: string, version?: string | null) => {
-            const base = title || 'Unknown Album';
-            const v = (version || '').trim();
-            if (!v) return base;
-            if (base.toLowerCase().includes(v.toLowerCase())) return base;
-            return `${base} (${v})`;
-        };
-
-        const formatTrackTitle = (title: string, version?: string | null) => {
-            const base = title || 'Unknown Track';
-            const v = (version || '').trim();
-            if (!v) return base;
-            if (base.toLowerCase().includes(v.toLowerCase())) return base;
-            return `${base} (${v})`;
-        };
-
-        // 1) Albums monitored at release level
-        let albumsQuery = `
-            SELECT DISTINCT
-                a.id,
-                a.title,
-                a.version,
-                a.cover,
-                a.quality,
-                a.artist_id,
-                ar.name as artist_name
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
-        `;
-        const albumsWhere: string[] = ["a.monitor = 1"];
-        const albumsParams: any[] = [];
-
-        if (artistId) {
-            albumsQuery += " JOIN album_artists aa ON a.id = aa.album_id";
-            albumsWhere.push("aa.artist_id = ?");
-            albumsParams.push(artistId);
-        }
-
-        albumsQuery += ` WHERE ${albumsWhere.join(" AND ")}`;
-
-        const albums = db.prepare(albumsQuery).all(...albumsParams) as any[];
-
-        let albumJobs = 0;
-        let trackJobs = 0;
-        let videoJobs = 0;
-        const albumQueuedAsAlbum = new Set<string>();
-
-        for (const album of albums) {
-            const albumId = String(album.id);
-
-            const counts = db.prepare(`
-                SELECT
-                    COUNT(*) as total_tracks,
-                    SUM(CASE WHEN m.monitor = 1 THEN 1 ELSE 0 END) as monitored_tracks,
-                    SUM(CASE WHEN m.monitor = 1 AND NOT ${hasImportedTrackFile('m.id')} THEN 1 ELSE 0 END) as monitored_missing
-                FROM media m
-                WHERE album_id = ?
-                  AND type != 'Music Video'
-            `).get(albumId) as any;
-
-            const totalTracks = Number(counts?.total_tracks || 0);
-            const monitoredTracks = Number(counts?.monitored_tracks || 0);
-            const monitoredMissing = Number(counts?.monitored_missing || 0);
-
-            const albumTitleFull = formatAlbumTitle(album.title, album.version);
-
-            // Album artist display name (prefer main artist_name; fall back to album_artists list)
-            const albumArtists = db.prepare(`
-                SELECT a.name
-                FROM album_artists aa
-                JOIN artists a ON aa.artist_id = a.id
-                WHERE aa.album_id = ?
-            `).all(albumId) as any[];
-            const artistNames = albumArtists.map(a => a.name).filter(Boolean);
-            const artistName = album.artist_name || artistNames[0] || 'Unknown';
-
-            // If tracks are missing from DB, fall back to album-level download (unless already fully downloaded)
-            if (totalTracks === 0) {
-                const hasImportedTracks = db.prepare(`
-                    SELECT 1
-                    FROM library_files lf
-                    WHERE lf.album_id = ?
-                      AND lf.file_type = 'track'
-                    LIMIT 1
-                `).get(albumId);
-
-                if (hasImportedTracks) {
-                    continue;
-                }
-                if (!hasActiveAlbumWork(albumId)) {
-                    TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                        url: `https://listen.tidal.com/album/${albumId}`,
-                        type: 'album',
-                        tidalId: albumId,
-                        title: albumTitleFull,
-                        artist: artistName,
-                        cover: album.cover || null,
-                        quality: album.quality,
-                        artists: artistNames,
-                        description: `${albumTitleFull} by ${artistName}`,
-                    }, albumId);
-                    albumJobs++;
-                }
-                albumQueuedAsAlbum.add(albumId);
-                continue;
-            }
-
-            // Nothing left to download for monitored tracks
-            if (monitoredMissing <= 0) {
-                continue;
-            }
-
-            // If every track is monitored, prefer a single album job
-            if (monitoredTracks === totalTracks) {
-                if (!hasActiveAlbumWork(albumId)) {
-                    TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                        url: `https://listen.tidal.com/album/${albumId}`,
-                        type: 'album',
-                        tidalId: albumId,
-                        title: albumTitleFull,
-                        artist: artistName,
-                        cover: album.cover || null,
-                        quality: album.quality,
-                        artists: artistNames,
-                        description: `${albumTitleFull} by ${artistName}`,
-                    }, albumId);
-                    albumJobs++;
-                }
-                albumQueuedAsAlbum.add(albumId);
-                continue;
-            }
-
-            // Otherwise, queue only monitored+missing tracks
-            const tracks = db.prepare(`
-                SELECT
-                    m.id as track_id,
-                    m.title as track_title,
-                    m.version as track_version,
-                    m.quality as track_quality
-                FROM media m
-                WHERE m.album_id = ?
-                  AND m.type != 'Music Video'
-                  AND m.monitor = 1
-                  AND NOT ${hasImportedTrackFile('m.id')}
-            `).all(albumId) as any[];
-
-            for (const track of tracks) {
-                const trackId = String(track.track_id);
-                if (!trackId) continue;
-                if (hasActiveJob([JobTypes.DownloadTrack, JobTypes.ImportDownload], trackId)) continue;
-                if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], albumId)) continue;
-
-                const trackTitle = formatTrackTitle(track.track_title || 'Unknown Track', track.track_version);
-
-                TaskQueueService.addJob(JobTypes.DownloadTrack, {
-                    url: `https://listen.tidal.com/track/${trackId}`,
-                    type: 'track',
-                    tidalId: trackId,
-                    title: trackTitle,
-                    artist: artistName,
-                    cover: album.cover || null,
-                    quality: track.track_quality || album.quality || null,
-                    artists: [artistName, ...artistNames].filter(Boolean),
-                    albumId,
-                    albumTitle: albumTitleFull,
-                    description: `${trackTitle} on ${albumTitleFull} by ${artistName}`,
-                }, trackId);
-                trackJobs++;
-            }
-        }
-
-        // 2) Tracks monitored individually on albums that are not monitored
-        let tracksQuery = `
-            SELECT
-                m.id as track_id,
-                m.title as track_title,
-                m.version as track_version,
-                m.quality as track_quality,
-                a.id as album_id,
-                a.title as album_title,
-                a.version as album_version,
-                a.cover as album_cover,
-                a.quality as album_quality,
-                ar.name as artist_name
-            FROM media m
-            JOIN albums a ON a.id = m.album_id
-            LEFT JOIN artists ar ON ar.id = a.artist_id
-            WHERE m.type != 'Music Video'
-              AND m.monitor = 1
-              AND NOT ${hasImportedTrackFile('m.id')}
-              AND COALESCE(a.monitor, 0) = 0
-        `;
-        const trackParams: any[] = [];
-        if (artistId) {
-            tracksQuery += `
-              AND EXISTS (
-                SELECT 1 FROM album_artists aa
-                WHERE aa.album_id = a.id AND aa.artist_id = ?
-              )
-            `;
-            trackParams.push(artistId);
-        }
-
-        const individuallyMonitoredTracks = db.prepare(tracksQuery).all(...trackParams) as any[];
-        for (const row of individuallyMonitoredTracks) {
-            const trackId = String(row.track_id);
-            if (!trackId) continue;
-            if (hasActiveJob([JobTypes.DownloadTrack, JobTypes.ImportDownload], trackId)) continue;
-
-            const albumId = String(row.album_id);
-            if (albumQueuedAsAlbum.has(albumId)) continue;
-            if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], albumId)) continue;
-
-            const albumTitleFull = formatAlbumTitle(row.album_title, row.album_version);
-            const artistName = row.artist_name || 'Unknown';
-            const trackTitle = formatTrackTitle(row.track_title || 'Unknown Track', row.track_version);
-
-            TaskQueueService.addJob(JobTypes.DownloadTrack, {
-                url: `https://listen.tidal.com/track/${trackId}`,
-                type: 'track',
-                tidalId: trackId,
-                title: trackTitle,
-                artist: artistName,
-                cover: row.album_cover || null,
-                quality: row.track_quality || row.album_quality || null,
-                artists: [artistName],
-                albumId,
-                albumTitle: albumTitleFull,
-                description: `${trackTitle} on ${albumTitleFull} by ${artistName}`,
-            }, trackId);
-            trackJobs++;
-        }
-
-        // 3) Videos (if enabled)
-        if (allowVideos) {
-            let videosQuery = `
-                SELECT
-                    m.id as video_id,
-                    m.title as video_title,
-                    m.quality as video_quality,
-                    m.artist_id as artist_id,
-                    ar.name as artist_name,
-                    a.cover as album_cover
-                FROM media m
-                LEFT JOIN artists ar ON ar.id = m.artist_id
-                LEFT JOIN albums a ON a.id = m.album_id
-                WHERE m.type = 'Music Video'
-                  AND m.monitor = 1
-                  AND NOT ${hasImportedVideoFile('m.id')}
-            `;
-            const videoParams: any[] = [];
-            if (artistId) {
-                videosQuery += " AND m.artist_id = ?";
-                videoParams.push(artistId);
-            }
-
-            const videos = db.prepare(videosQuery).all(...videoParams) as any[];
-            for (const video of videos) {
-                const videoId = String(video.video_id);
-                if (!videoId) continue;
-                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], videoId)) continue;
-
-                const artistName = video.artist_name || 'Unknown';
-                const title = video.video_title || 'Unknown Video';
-
-                TaskQueueService.addJob(JobTypes.DownloadVideo, {
-                    url: `https://listen.tidal.com/video/${videoId}`,
-                    type: 'video',
-                    tidalId: videoId,
-                    title,
-                    artist: artistName,
-                    cover: video.album_cover || null,
-                    quality: video.video_quality || null,
-                    artists: [artistName],
-                    description: `${title} by ${artistName}`,
-                }, videoId);
-                videoJobs++;
-            }
-        }
-
-        console.log(`[Queue] Ensured queue has ${albumJobs} albums, ${trackJobs} tracks, ${videoJobs} videos.`);
-        return { albums: albumJobs, tracks: trackJobs, videos: videoJobs };
-    }
-
-    /**
-     * Group albums by version_group_id (pre-computed from Other Versions API)
-     * Falls back to title-based grouping for albums without version_group_id
-     * 
-     * Note: Explicit/clean versions have identical titles - they are differentiated
-     * by the explicit column in the database, not by title variations.
-     */
-    private static groupByVersionGroup(albums: Album[]): Map<string, Album[]> {
-        const groups = new Map<string, Album[]>();
-
-        for (const album of albums) {
-            // Use version_group_id if available, otherwise fall back to title-based key
-            let groupKey: string;
-            if (album.version_group_id) {
-                groupKey = `vg:${album.version_group_id}`;
-            } else {
-                // Fallback to title-based grouping
-                // Explicit/clean have the same title - differentiated by explicit column
-                const name = album.title || '';
-                const version = album.version || '';
-                groupKey = `title:${(name + (version ? ` ${version}` : '')).toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-            }
-
-            if (!groups.has(groupKey)) {
-                groups.set(groupKey, []);
-            }
-            groups.get(groupKey)!.push(album);
-        }
-
-        return groups;
-    }
-
-    /**
-     * Select best album from a group based on ranking
-     * Ranks by: quality > explicit preference > highest ID (newest version)
-     */
-    private static selectBestInGroup(group: Album[], curationConfig: any, qualityConfig: any, libraryType: 'music' | 'atmos' | 'video' = 'music'): Album {
-        if (group.length === 0) {
-            throw new Error('Cannot select best from empty group');
-        }
-
-        if (group.length === 1) {
-            return group[0];
-        }
-
-        return group.reduce((best, current) => {
-            const bestRank = this.rankAlbumForComparison(best, curationConfig, qualityConfig, libraryType);
-            const currentRank = this.rankAlbumForComparison(current, curationConfig, qualityConfig, libraryType);
-
-            // 1. Quality first (HIRES_LOSSLESS vs LOSSLESS based on config)
-            if (currentRank.quality !== bestRank.quality) {
-                return currentRank.quality > bestRank.quality ? current : best;
-            }
-
-            // 2. Explicit preference (based on config)
-            if (currentRank.explicit !== bestRank.explicit) {
-                return currentRank.explicit > bestRank.explicit ? current : best;
-            }
-
-            // 3. Final tie-breaker: higher ID (newer version)
-            return Number(current.id) > Number(best.id) ? current : best;
-        });
-    }
-
-    /**
-     * Rank album for comparison
-     * Returns quality and explicit ranking for multi-criteria sorting
-     */
-    private static rankAlbumForComparison(album: Album, curationConfig: any, qualityConfig: any, libraryType: 'music' | 'atmos' | 'video' = 'music'): {
-        quality: number;
-        explicit: number;
-    } {
-        // Explicit preference from curation config
-        const preferExplicit = curationConfig?.prefer_explicit !== undefined ? curationConfig.prefer_explicit : true;
-        let explicit = 0;
-        if (preferExplicit) {
-            // Prefer explicit: explicit=1, clean=0
-            explicit = album.explicit ? 1 : 0;
-        } else {
-            // Prefer clean: clean=1, explicit=0
-            explicit = album.explicit ? 0 : 1;
-        }
-
-        // Quality ranking using getQualityRank from MediaRepository
-        const qualityTier = (qualityConfig?.audio_quality || 'max') as QualityProfile;
-
-        // Determine library type for quality ranking - use the passed libraryType
-        // This ensures Atmos albums get rank -1 when processing the music library
-        const effectiveLibraryType: LibraryType = libraryType === 'atmos' ? 'dolby_atmos' : libraryType === 'video' ? 'music_video' : 'music';
-
-        // Get quality from tags array or album.quality directly
-        const qualityTag = album.tags?.[0] || album.quality || 'LOSSLESS';
-
-        // Use the centralized quality ranking function
-        // - Max profile: HIRES_LOSSLESS > LOSSLESS, exclude DOLBY_ATMOS
-        // - High/Normal/Low: LOSSLESS > HIRES_LOSSLESS, exclude DOLBY_ATMOS
-        // - Dolby Atmos library: Only DOLBY_ATMOS included
-        const quality = getQualityRank(qualityTag, qualityTier, effectiveLibraryType);
-
-        return { quality, explicit };
+        const result = WantedQueueService.queueWantedItems({ artistId });
+        console.log(`[Queue] Ensured queue has ${result.albums} albums, ${result.tracks} tracks, ${result.videos} videos.`);
+        return result;
     }
 
     /**

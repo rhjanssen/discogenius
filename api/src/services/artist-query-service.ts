@@ -639,8 +639,15 @@ export class ArtistQueryService {
       WHERE artist_id = ?
         AND album_id IS NULL
         AND media_id IS NULL
-        AND file_type IN ('cover', 'bio')
-      ORDER BY file_type ASC, id ASC
+        AND file_type IN ('cover', 'bio', 'nfo')
+      ORDER BY
+        CASE file_type
+          WHEN 'cover' THEN 0
+          WHEN 'nfo' THEN 1
+          WHEN 'bio' THEN 2
+          ELSE 3
+        END,
+        id ASC
     `).all(artistId) as any[]);
 
         return {

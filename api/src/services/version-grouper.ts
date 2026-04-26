@@ -1,7 +1,7 @@
 /**
  * Version Grouper Service
  * 
- * Groups related album versions together using Tidal's "Other Versions" API.
+ * Groups provider variants of the same edition using Tidal's "Other Versions" API.
  * Uses 2-level recursive traversal and Union-Find algorithm to find all connected versions.
  * 
  * Example: "Give Me The Future + Dreams of the Past" has 6 versions:
@@ -10,7 +10,8 @@
  * All 6 should share the same version_group_id.
  * 
  * Note: Standard vs Deluxe are NOT the same version group - they're different releases.
- * Only same-name albums with different qualities/explicit variants are grouped.
+ * Only same-name albums with different qualities/explicit variants are grouped. MusicBrainz
+ * release groups are deliberately broader than this provider edition grouping.
  */
 
 import { db } from '../database.js';
