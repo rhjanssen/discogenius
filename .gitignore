@@ -28,6 +28,7 @@ api/src/**/*.js
 *.venv
 
 # Temporary reference folders
+.ref_*/
 .ref_lidarr/
 .ref_tidarr/
 .ref_tidalrr/

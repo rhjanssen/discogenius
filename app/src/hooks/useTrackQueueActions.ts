@@ -1,15 +1,15 @@
 import { useState } from "react";
 import type React from "react";
-import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-import { dispatchActivityRefresh } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import type { TrackListItem } from "@/types/track-list";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 
 type QueueableTrack = Pick<TrackListItem, "id" | "title" | "version" | "downloaded" | "is_downloaded">;
 
 export function useTrackQueueActions() {
   const { toast } = useToast();
+  const { addToQueue } = useQueueStatus();
   const [downloadingTracks, setDownloadingTracks] = useState<Set<string>>(new Set());
 
   const handleDownloadTrack = async (
@@ -28,12 +28,10 @@ export function useTrackQueueActions() {
 
     try {
       const fullTitle = track.version ? `${track.title} (${track.version})` : track.title;
-      await api.addToQueue(tidalUrl("track", track.id), "track", track.id);
-      toast({
-        title: "Track added to queue",
-        description: `${fullTitle} will be downloaded shortly`,
+      await addToQueue(tidalUrl("track", track.id), "track", track.id, {
+        successTitle: "Track added to queue",
+        successDescription: `${fullTitle} will be downloaded shortly`,
       });
-      dispatchActivityRefresh();
     } catch (error) {
       console.error("Error adding track to queue:", error);
       toast({

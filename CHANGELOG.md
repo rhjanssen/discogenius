@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.6] - 2026-04-28
+
+### Changed
+- Stabilized the Docker runtime and health checks so `/config`, `/downloads`, `/library/music`, `/library/atmos`, and `/library/videos` are created writable for UID/GID 568 and startup preflight failures roll up into the top-level health status.
+- Moved metadata output to NFO-only sidecars: artist biographies and album reviews are embedded in Jellyfin/Plex-compatible NFO files, and new `bio.txt`/`review.txt` generation has been removed.
+- Made MusicBrainz identity first-class across scans/imports with persisted identity status, release/release-group IDs, track MBIDs, and MusicBrainz release-group type data driving album/module classification when available.
+- Reworked naming around Lidarr-style tokens, backend-owned validation/previews, MBID-safe artist folders (`{artistName} {mbid-{artistMbId}}`), TRaSH-style nested identifiers, and cursor-aware token editing in Settings.
+- Repaired durable queue visibility so pending, processing, importing, and recoverable failed jobs survive reloads and share one backend contract for retry/delete/reorder/progress behavior.
+
+### Fixed
+- Fixed the e2e managed-server harness for WSL/IPv6 localhost behavior and updated stale navigation assertions for empty-library roots.
+- Excluded `.ref_*` reference repositories from git/docker contexts so local reference checkouts cannot leak into release images.
+
 ## [1.2.5] - 2026-04-22
 
 ### Changed

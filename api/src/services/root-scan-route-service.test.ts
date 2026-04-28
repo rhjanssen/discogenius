@@ -36,6 +36,7 @@ test("root scan route service queues root scans with route-compatible defaults",
     assert.deepEqual(queuedOptions, {
         trigger: 1,
         fullProcessing: true,
+        addNewArtists: true,
         monitorArtist: undefined,
     });
 });

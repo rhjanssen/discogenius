@@ -52,8 +52,7 @@ const TRACKED_ASSET_FILE_TYPES = new Set([
   "cover",
   "video_cover",
   "video_thumbnail",
-  "bio",
-  "review",
+  "nfo",
   "lyrics",
 ] as const);
 
@@ -119,7 +118,7 @@ export type LibraryFileUpsertParams = {
   mediaId?: string | null;
   filePath: string;
   libraryRoot: string;
-  fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics" | string;
+  fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "nfo" | "lyrics" | string;
   quality?: string | null;
   namingTemplate?: string | null;
   expectedPath?: string | null;
@@ -409,7 +408,14 @@ export class LibraryFilesService {
         ...contextBase,
         videoTitle: video?.title || "Unknown Video",
         trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
+        videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         explicit: video?.explicit === 1,
+        quality: row.quality || null,
+        codec: row.codec || null,
+        bitrate: row.bitrate || null,
+        sampleRate: row.sample_rate || null,
+        bitDepth: row.bit_depth || null,
+        channels: row.channels || null,
       };
 
       const fileStem = renderFileStem(naming.video_file, context);
@@ -440,11 +446,25 @@ export class LibraryFilesService {
       };
     }
 
-    // Album-scoped types (track, lyrics, cover, review)
+    if (row.file_type === "nfo" && row.media_id) {
+      const video = db.prepare("SELECT id, title, explicit, type FROM media WHERE id = ?").get(row.media_id) as any;
+      if (video?.type === "Music Video") {
+        const context: NamingContext = {
+          ...contextBase,
+          videoTitle: video.title || "Unknown Video",
+          trackId: video.id != null ? String(video.id) : String(row.media_id),
+          explicit: video.explicit === 1,
+        };
+        const fileStem = renderFileStem(naming.video_file, context);
+        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };
+      }
+    }
+
+    // Album-scoped types (track, lyrics, cover, NFO)
     if (!row.album_id) {
-      // Artist-scoped types (bio, artist picture cover)
-      if (row.file_type === "bio") {
-        return { expectedPath: path.join(libraryRootPath, artistFolder, "bio.txt") };
+      // Artist-scoped types (artist NFO and artist picture cover)
+      if (row.file_type === "nfo") {
+        return { expectedPath: path.join(libraryRootPath, artistFolder, "artist.nfo") };
       }
 
       if (row.file_type === "cover") {
@@ -507,8 +527,8 @@ export class LibraryFilesService {
       return { expectedPath: path.join(albumDir, videoCoverName) };
     }
 
-    if (row.file_type === "review") {
-      return { expectedPath: path.join(albumDir, "review.txt") };
+    if (row.file_type === "nfo" && !row.media_id) {
+      return { expectedPath: path.join(albumDir, "album.nfo") };
     }
 
     if (row.file_type === "track") {
@@ -607,21 +627,21 @@ export class LibraryFilesService {
     | null {
     const { artistId, albumId, mediaId, fileType } = params;
 
-    if (mediaId && (fileType === "lyrics" || fileType === "video_thumbnail")) {
+    if (mediaId && (fileType === "lyrics" || fileType === "video_thumbnail" || fileType === "nfo")) {
       return {
         sql: "media_id = ? AND file_type = ?",
         values: [mediaId, fileType],
       };
     }
 
-    if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "review")) {
+    if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "nfo")) {
       return {
         sql: "album_id = ? AND media_id IS NULL AND file_type = ?",
         values: [albumId, fileType],
       };
     }
 
-    if (!albumId && !mediaId && (fileType === "cover" || fileType === "bio")) {
+    if (!albumId && !mediaId && (fileType === "cover" || fileType === "nfo")) {
       return {
         sql: "artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ?",
         values: [artistId, fileType],
@@ -1138,7 +1158,7 @@ export class LibraryFilesService {
     const groups = db.prepare(`
       SELECT artist_id, album_id, media_id, file_type, COUNT(*) AS count
       FROM library_files
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics')
+      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
       GROUP BY artist_id, album_id, media_id, file_type
       HAVING COUNT(*) > 1
@@ -1167,7 +1187,7 @@ export class LibraryFilesService {
     const rows = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
       FROM library_files
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'bio', 'review', 'lyrics')
+      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
       ORDER BY id ASC
     `).all(...(artistId ? [artistId] : [])) as Array<{
@@ -1367,11 +1387,8 @@ export class LibraryFilesService {
     if (!metadataConfig.save_lyrics) {
       selectors.push({ sql: "artist_id = ? AND file_type = 'lyrics'", params: [artistId] });
     }
-    if (!metadataConfig.save_album_review) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'review'", params: [artistId] });
-    }
-    if (!metadataConfig.save_artist_bio) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'bio'", params: [artistId] });
+    if (!metadataConfig.save_nfo) {
+      selectors.push({ sql: "artist_id = ? AND file_type = 'nfo'", params: [artistId] });
     }
 
     if (selectors.length === 0) {

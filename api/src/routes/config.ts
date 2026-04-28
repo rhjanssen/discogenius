@@ -21,6 +21,7 @@ import {
 import * as TOML from "@iarna/toml";
 import fs from "fs";
 import type { PublicAppConfigContract } from "../contracts/config.js";
+import { previewNamingConfig, validateNamingConfig } from "../services/naming.js";
 
 const router = Router();
 
@@ -203,9 +204,52 @@ router.get("/naming", (_, res) => {
   }
 });
 
+router.post("/naming/validate", (req, res) => {
+  try {
+    const current = getConfigSection("naming");
+    const updates = parseNamingConfigUpdate(getObjectBody(req.body), current);
+    const next = { ...current, ...updates };
+    res.json(validateNamingConfig(next));
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/naming/preview", (req, res) => {
+  try {
+    const current = getConfigSection("naming");
+    const updates = parseNamingConfigUpdate(getObjectBody(req.body), current);
+    const next = { ...current, ...updates };
+    const validation = validateNamingConfig(next);
+    const valid = Object.values(validation).every((result) => result.valid);
+    res.json({
+      valid,
+      validation,
+      preview: valid ? previewNamingConfig(next) : null,
+    });
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.post("/naming", (req, res) => {
   try {
     const updates = parseNamingConfigUpdate(getObjectBody(req.body), getConfigSection("naming"));
+    const next = { ...getConfigSection("naming"), ...updates };
+    const validation = validateNamingConfig(next);
+    const invalid = Object.values(validation).filter((result) => !result.valid);
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        detail: invalid.flatMap((result) => result.errors).join(" "),
+        validation,
+      });
+    }
     updateConfig("naming", updates);
     res.json({ success: true });
   } catch (error: any) {

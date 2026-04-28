@@ -12,6 +12,7 @@ import { useGlobalEvents, type GlobalEventPayload, type JobStatusRaw } from "@/h
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import {
   QueueStatusContext,
+  type AddToQueueOptions,
   type QueueStatusContextType,
 } from "@/providers/queueStatusContext";
 import {
@@ -330,13 +331,15 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     };
   }, [applyQueueStatus, fetchQueueStatus, invalidateQueueQueries, scheduleStatusRefresh, updateProgressState]);
 
-  const addToQueue = useCallback(async (url: string, type: string, tidalId?: string) => {
+  const addToQueue = useCallback(async (url: string, type: string, tidalId?: string, options?: AddToQueueOptions) => {
     try {
       await api.addToQueue(url, type, tidalId);
-      toastRef.current({
-        title: "Added to queue",
-        description: "Download will start automatically",
-      });
+      if (!options?.silent) {
+        toastRef.current({
+          title: options?.successTitle ?? "Added to queue",
+          description: options?.successDescription ?? "Download will start automatically",
+        });
+      }
       scheduleStatusRefresh(0);
       invalidateQueueQueries();
       dispatchActivityRefresh();

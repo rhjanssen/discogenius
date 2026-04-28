@@ -24,6 +24,8 @@ services:
     volumes:
       # Persistent config directory (database, settings, tidal tokens)
       - ./config:/config
+      # Temporary download/import workspace
+      - ./downloads:/downloads
       # Library directory (organized music)
       # You can map these individually to different NAS shares if needed
       - ./library:/library

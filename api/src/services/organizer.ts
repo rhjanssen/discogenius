@@ -4,7 +4,7 @@ import { execFileSync, execSync } from "child_process";
 import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config } from "./config.js";
-import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveBioFile, saveReviewFile, saveLyricsFile } from "./metadata-files.js";
+import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
 import { getArtist, getTrack, getVideo } from "./tidal.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
 import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
@@ -294,7 +294,7 @@ export class OrganizerService {
   }
 
   /**
-   * Retroactively prune disabled metadata files (covers, bios, lyrics, etc.) 
+   * Retroactively prune disabled metadata files (covers, NFO, lyrics, etc.)
    * based on the current configuration.
    */
   public static async pruneDisabledMetadata(): Promise<void> {
@@ -311,8 +311,7 @@ export class OrganizerService {
     if (!config.save_artist_picture) {
       selectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
     }
-    if (!config.save_artist_bio) selectors.push("file_type = 'bio'");
-    if (!config.save_album_review) selectors.push("file_type = 'review'");
+    if (!config.save_nfo) selectors.push("file_type = 'nfo'");
     if (!config.save_lyrics) selectors.push("file_type = 'lyrics'");
     if (!config.save_video_thumbnail) selectors.push("file_type = 'video_thumbnail'");
 
@@ -621,7 +620,7 @@ export class OrganizerService {
     albumId?: string | null;
     expectedPath: string;
     libraryRoot: string;
-    fileType: "cover" | "video_cover" | "bio" | "review";
+    fileType: "cover" | "video_cover" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
   }): string {
@@ -827,7 +826,7 @@ export class OrganizerService {
     mediaId?: string | null;
     filePath: string;
     libraryRoot: string;
-    fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "bio" | "review" | "lyrics";
+    fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "lyrics" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
     expectedPath?: string | null;
@@ -931,6 +930,22 @@ export class OrganizerService {
         throw new Error(`[Organizer] Could not match downloaded album files for ${tidalId} to Discogenius tracks in ${sourceAlbumDir}`);
       }
 
+      const unmatchedAudioFiles = audioFiles.filter((srcFile) => {
+        const ext = path.extname(srcFile).toLowerCase();
+        const base = path.basename(srcFile, ext);
+        const idFromName = /^\d+$/.test(base) ? base : null;
+        const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
+        if (!trackId) return true;
+        const trackRow = db.prepare("SELECT id FROM media WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any;
+        return !trackRow;
+      });
+
+      if (unmatchedAudioFiles.length > 0) {
+        throw new Error(
+          `[Organizer] Could not match ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded album file(s) for ${tidalId}; keeping the download workspace for review.`
+        );
+      }
+
       const totalImportableTracks = audioFiles.length;
       onProgress?.({
         phase: "importing",
@@ -982,6 +997,8 @@ export class OrganizerService {
         const trackArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(trackArtistId) as any;
         const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
+        const metrics = await parseAudioFile(srcFile);
+        const derivedQuality = deriveQuality(ext, metrics);
 
         const relativeTrackPath = renderRelativePath(trackTemplate, {
           artistName: resolvedArtistName,
@@ -1002,6 +1019,12 @@ export class OrganizerService {
           explicit: trackRow.explicit === 1,
           trackNumber,
           volumeNumber,
+          quality: derivedQuality,
+          codec: metrics.codec || null,
+          bitrate: metrics.bitrate || null,
+          sampleRate: metrics.sampleRate || null,
+          bitDepth: metrics.bitDepth || null,
+          channels: metrics.channels || null,
         });
 
         if (!sampleRelativeTrackPath) sampleRelativeTrackPath = relativeTrackPath;
@@ -1013,9 +1036,6 @@ export class OrganizerService {
 
         const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
         this.moveFileCrossDevice(srcFile, destFile);
-
-        const metrics = await parseAudioFile(destFile);
-        const derivedQuality = deriveQuality(ext, metrics);
 
         // Fingerprinting is skipped during download import (Lidarr pattern:
         // fingerprint only during identification for manual import with poor
@@ -1211,64 +1231,41 @@ export class OrganizerService {
         }
       }
 
-      const bioPath = path.join(artistDir, "bio.txt");
-      if (metadataConfig.save_artist_bio) {
-        this.relocateSingletonSidecar({
-          artistId,
-          expectedPath: bioPath,
-          libraryRoot: targetRoot,
-          fileType: "bio",
-        });
-      }
-      if (metadataConfig.save_artist_bio && !fs.existsSync(bioPath)) {
+      if (metadataConfig.save_nfo) {
+        const artistNfoPath = path.join(artistDir, "artist.nfo");
+        const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
         try {
-          await saveBioFile(artistId, bioPath);
-          if (fs.existsSync(bioPath)) {
-            this.upsertLibraryFile({
-              artistId,
-              albumId: null,
-              mediaId: null,
-              filePath: bioPath,
-              libraryRoot: targetRoot,
-              fileType: "bio",
-              quality: null,
-              namingTemplate: null,
-              expectedPath: bioPath,
-            });
-          }
-        } catch {
-          // ignore
+          await saveArtistNfoFile(artistId, artistNfoPath);
+          this.upsertLibraryFile({
+            artistId,
+            albumId: null,
+            mediaId: null,
+            filePath: artistNfoPath,
+            libraryRoot: targetRoot,
+            fileType: "nfo",
+            quality: null,
+            namingTemplate: null,
+            expectedPath: artistNfoPath,
+          });
+        } catch (error) {
+          console.warn(`[Organizer] Failed to write artist NFO for ${artistId}:`, error);
         }
-      }
 
-      const reviewPath = path.join(targetAlbumDir, "review.txt");
-      if (metadataConfig.save_album_review) {
-        this.relocateSingletonSidecar({
-          artistId,
-          albumId: tidalId,
-          expectedPath: reviewPath,
-          libraryRoot: targetRoot,
-          fileType: "review",
-        });
-      }
-      if (metadataConfig.save_album_review && !fs.existsSync(reviewPath)) {
         try {
-          await saveReviewFile(tidalId, reviewPath);
-          if (fs.existsSync(reviewPath)) {
-            this.upsertLibraryFile({
-              artistId,
-              albumId: tidalId,
-              mediaId: null,
-              filePath: reviewPath,
-              libraryRoot: targetRoot,
-              fileType: "review",
-              quality: null,
-              namingTemplate: null,
-              expectedPath: reviewPath,
-            });
-          }
-        } catch {
-          // ignore
+          await saveAlbumNfoFile(tidalId, albumNfoPath);
+          this.upsertLibraryFile({
+            artistId,
+            albumId: tidalId,
+            mediaId: null,
+            filePath: albumNfoPath,
+            libraryRoot: targetRoot,
+            fileType: "nfo",
+            quality: null,
+            namingTemplate: null,
+            expectedPath: albumNfoPath,
+          });
+        } catch (error) {
+          console.warn(`[Organizer] Failed to write album NFO for ${tidalId}:`, error);
         }
       }
 
@@ -1302,7 +1299,7 @@ export class OrganizerService {
       const albumId = trackData?.album_id ? String(trackData.album_id) : null;
       if (!albumId) throw new Error(`Track ${tidalId} missing album_id`);
 
-      // Ensure album + tracks in DB for naming + review (and to locate track metadata)
+      // Ensure album + tracks in DB for naming and to locate track metadata.
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
       await RefreshAlbumService.scanShallow(albumId);
 
@@ -1465,7 +1462,7 @@ export class OrganizerService {
         }
       }
 
-      // Extras (cover, artist picture, bio, review) - ensure they exist when downloading individual tracks
+      // Extras (cover, artist picture, NFO) - ensure they exist when downloading individual tracks.
       const artistDir = path.join(targetRoot, artistFolder);
       this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
@@ -1557,64 +1554,41 @@ export class OrganizerService {
         }
       }
 
-      const bioPath = path.join(artistDir, "bio.txt");
-      if (metadataConfig.save_artist_bio) {
-        this.relocateSingletonSidecar({
-          artistId,
-          expectedPath: bioPath,
-          libraryRoot: targetRoot,
-          fileType: "bio",
-        });
-      }
-      if (metadataConfig.save_artist_bio && !fs.existsSync(bioPath)) {
+      if (metadataConfig.save_nfo) {
+        const artistNfoPath = path.join(artistDir, "artist.nfo");
+        const albumNfoPath = path.join(targetAlbumDir, "album.nfo");
         try {
-          await saveBioFile(artistId, bioPath);
-          if (fs.existsSync(bioPath)) {
-            this.upsertLibraryFile({
-              artistId,
-              albumId: null,
-              mediaId: null,
-              filePath: bioPath,
-              libraryRoot: targetRoot,
-              fileType: "bio",
-              quality: null,
-              namingTemplate: null,
-              expectedPath: bioPath,
-            });
-          }
-        } catch {
-          // ignore
+          await saveArtistNfoFile(artistId, artistNfoPath);
+          this.upsertLibraryFile({
+            artistId,
+            albumId: null,
+            mediaId: null,
+            filePath: artistNfoPath,
+            libraryRoot: targetRoot,
+            fileType: "nfo",
+            quality: null,
+            namingTemplate: null,
+            expectedPath: artistNfoPath,
+          });
+        } catch (error) {
+          console.warn(`[Organizer] Failed to write artist NFO for ${artistId}:`, error);
         }
-      }
 
-      const reviewPath = path.join(targetAlbumDir, "review.txt");
-      if (metadataConfig.save_album_review) {
-        this.relocateSingletonSidecar({
-          artistId,
-          albumId,
-          expectedPath: reviewPath,
-          libraryRoot: targetRoot,
-          fileType: "review",
-        });
-      }
-      if (metadataConfig.save_album_review && !fs.existsSync(reviewPath)) {
         try {
-          await saveReviewFile(albumId, reviewPath);
-          if (fs.existsSync(reviewPath)) {
-            this.upsertLibraryFile({
-              artistId,
-              albumId,
-              mediaId: null,
-              filePath: reviewPath,
-              libraryRoot: targetRoot,
-              fileType: "review",
-              quality: null,
-              namingTemplate: null,
-              expectedPath: reviewPath,
-            });
-          }
-        } catch {
-          // ignore
+          await saveAlbumNfoFile(albumId, albumNfoPath);
+          this.upsertLibraryFile({
+            artistId,
+            albumId,
+            mediaId: null,
+            filePath: albumNfoPath,
+            libraryRoot: targetRoot,
+            fileType: "nfo",
+            quality: null,
+            namingTemplate: null,
+            expectedPath: albumNfoPath,
+          });
+        } catch (error) {
+          console.warn(`[Organizer] Failed to write album NFO for ${albumId}:`, error);
         }
       }
 
@@ -1877,6 +1851,26 @@ export class OrganizerService {
 
         if (!persistentCoverPath && transientCoverPath && fs.existsSync(transientCoverPath)) {
           fs.rmSync(transientCoverPath, { force: true });
+        }
+      }
+
+      if (metadataConfig.save_nfo) {
+        const videoNfoPath = path.join(path.dirname(dest), `${path.parse(dest).name}.nfo`);
+        try {
+          await saveVideoNfoFile(tidalId, videoNfoPath);
+          this.upsertLibraryFile({
+            artistId,
+            albumId: video.album_id ? String(video.album_id) : null,
+            mediaId: tidalId,
+            filePath: videoNfoPath,
+            libraryRoot: videoRoot,
+            fileType: "nfo",
+            quality: derivedVideoQuality,
+            namingTemplate: videoNamingTemplate,
+            expectedPath: videoNfoPath,
+          });
+        } catch (error) {
+          console.warn(`[Organizer] Failed to write video NFO for ${tidalId}:`, error);
         }
       }
 

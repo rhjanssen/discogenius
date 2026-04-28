@@ -27,6 +27,8 @@ type RetagTrackRow = {
   library_root: string | null;
   extension: string;
   file_fingerprint: string | null;
+  file_acoustid_id: string | null;
+  file_fingerprint_duration: number | null;
   primary_artist_name: string;
   media_title: string;
   media_version: string | null;
@@ -46,6 +48,9 @@ type RetagTrackRow = {
   album_review_text: string | null;
   media_credits: string | null;
   media_mbid: string | null;
+  media_acoustid_id: string | null;
+  media_acoustid_fingerprint: string | null;
+  media_fingerprint_duration: number | null;
   media_explicit: number | null;
   album_mbid: string | null;
   album_mb_release_group_id: string | null;
@@ -534,6 +539,8 @@ export class AudioTagService {
         lf.library_root,
         lf.extension,
         lf.fingerprint AS file_fingerprint,
+        lf.acoustid_id AS file_acoustid_id,
+        lf.fingerprint_duration AS file_fingerprint_duration,
         artist.name AS primary_artist_name,
         m.title AS media_title,
         m.version AS media_version,
@@ -553,6 +560,9 @@ export class AudioTagService {
         a.review_text AS album_review_text,
         m.credits AS media_credits,
         m.mbid AS media_mbid,
+        m.acoustid_id AS media_acoustid_id,
+        m.acoustid_fingerprint AS media_acoustid_fingerprint,
+        m.fingerprint_duration AS media_fingerprint_duration,
         m.explicit AS media_explicit,
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
@@ -590,6 +600,8 @@ export class AudioTagService {
         lf.library_root,
         lf.extension,
         lf.fingerprint AS file_fingerprint,
+        lf.acoustid_id AS file_acoustid_id,
+        lf.fingerprint_duration AS file_fingerprint_duration,
         artist.name AS primary_artist_name,
         m.title AS media_title,
         m.version AS media_version,
@@ -609,6 +621,9 @@ export class AudioTagService {
         a.review_text AS album_review_text,
         m.credits AS media_credits,
         m.mbid AS media_mbid,
+        m.acoustid_id AS media_acoustid_id,
+        m.acoustid_fingerprint AS media_acoustid_fingerprint,
+        m.fingerprint_duration AS media_fingerprint_duration,
         m.explicit AS media_explicit,
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
@@ -768,8 +783,8 @@ export class AudioTagService {
       return nextRow;
     }
 
-    let fingerprint = nextRow.file_fingerprint;
-    let fingerprintDuration = Number(nextRow.media_duration || 0) || null;
+    let fingerprint = nextRow.file_fingerprint || nextRow.media_acoustid_fingerprint;
+    let fingerprintDuration = Number(nextRow.file_fingerprint_duration || nextRow.media_fingerprint_duration || nextRow.media_duration || 0) || null;
 
     if (!fingerprint) {
       try {
@@ -779,9 +794,9 @@ export class AudioTagService {
 
         db.prepare(`
           UPDATE library_files
-          SET fingerprint = ?, verified_at = CURRENT_TIMESTAMP
+          SET fingerprint = ?, fingerprint_duration = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(fingerprint, nextRow.id);
+        `).run(fingerprint, fingerprintDuration, nextRow.id);
       } catch (error) {
         console.warn(`[Retag] Failed to fingerprint ${resolvedPath}:`, error);
         return nextRow;
@@ -830,9 +845,14 @@ export class AudioTagService {
     db.prepare(`
       UPDATE media
       SET mbid = COALESCE(mbid, ?),
-          isrc = COALESCE(isrc, ?)
+          isrc = COALESCE(isrc, ?),
+          acoustid_fingerprint = COALESCE(acoustid_fingerprint, ?),
+          fingerprint_duration = COALESCE(fingerprint_duration, ?),
+          musicbrainz_status = COALESCE(musicbrainz_status, 'verified'),
+          musicbrainz_last_checked = CURRENT_TIMESTAMP,
+          musicbrainz_match_method = COALESCE(musicbrainz_match_method, 'acoustid')
       WHERE id = ?
-    `).run(bestFingerprintMatch.recording.id, fallbackIsrc, nextRow.media_id);
+    `).run(bestFingerprintMatch.recording.id, fallbackIsrc, fingerprint, fingerprintDuration, nextRow.media_id);
 
     if (primaryArtistCredit?.id) {
       db.prepare(`
@@ -1009,6 +1029,28 @@ export class AudioTagService {
           ffmpegKey: "musicbrainz_releasegroupid",
           targetValue: String(row.album_mb_release_group_id),
           aliases: ["musicbrainz_releasegroupid", "musicbrainzreleasegroupid", "musicbrainz release group id"],
+        });
+      }
+
+      const acoustidId = row.media_acoustid_id || row.file_acoustid_id;
+      if (acoustidId) {
+        tags.push({
+          key: "acoustid_id",
+          label: "AcoustID",
+          ffmpegKey: "acoustid_id",
+          targetValue: String(acoustidId),
+          aliases: ["acoustid_id", "acoustid id", "acoustid"],
+        });
+      }
+
+      const acoustidFingerprint = row.media_acoustid_fingerprint || row.file_fingerprint;
+      if (acoustidFingerprint) {
+        tags.push({
+          key: "acoustid_fingerprint",
+          label: "AcoustID Fingerprint",
+          ffmpegKey: "acoustid_fingerprint",
+          targetValue: String(acoustidFingerprint),
+          aliases: ["acoustid_fingerprint", "acoustid fingerprint", "fingerprint"],
         });
       }
 

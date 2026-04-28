@@ -173,7 +173,7 @@ function usesNestedArtistFolders(): boolean {
  * 1. Clean orphaned records (DB entries for files that no longer exist)
  * 2. Index new files found on disk (manually placed files)
  * 3. Update changed files (size/mtime mismatch)
- * 4. Backfill missing metadata files (covers, bios, lyrics, etc.)
+ * 4. Backfill missing metadata files (covers, NFO, lyrics, etc.)
  */
 export class DiskScanService {
     // ==========================================================================
@@ -253,6 +253,8 @@ export class DiskScanService {
             });
             result.artists = reconcileResult.artists;
             result.orphansRemoved = reconcileResult.totalOrphans;
+            result.filesIndexed = reconcileResult.filesIndexed;
+            result.filesUpdated = reconcileResult.filesUpdated;
             result.downloadFlagsReset = reconcileResult.totalFlagsReset;
             result.unmappedOrphans = reconcileResult.unmappedOrphans;
         }
@@ -408,11 +410,13 @@ export class DiskScanService {
     private static async reconcileAllArtists(
         onProgress?: (event: FullLibraryScanProgress) => void,
         options?: { trackUnmappedFiles?: boolean },
-    ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; unmappedOrphans: number }> {
+    ): Promise<{ artists: number; totalOrphans: number; totalFlagsReset: number; filesIndexed: number; filesUpdated: number; unmappedOrphans: number }> {
         const artists = getManagedArtists({ includeLibraryFiles: true })
             .map((artist) => ({ id: String(artist.id), name: artist.name || String(artist.id) }));
         let totalOrphans = 0;
         let totalFlagsReset = 0;
+        let filesIndexed = 0;
+        let filesUpdated = 0;
         let unmappedOrphans = 0;
 
         // The prebuilt root index only works when artist folders are single-segment.
@@ -464,6 +468,8 @@ export class DiskScanService {
             });
             totalOrphans += result.orphansRemoved;
             totalFlagsReset += result.downloadFlagsReset;
+            filesIndexed += result.filesIndexed;
+            filesUpdated += result.filesUpdated;
             await yieldToEventLoop();
         }
 
@@ -477,17 +483,19 @@ export class DiskScanService {
         });
         unmappedOrphans = this.pruneUnmappedFiles();
 
-        if (totalOrphans > 0 || totalFlagsReset > 0 || unmappedOrphans > 0) {
+        if (totalOrphans > 0 || totalFlagsReset > 0 || filesIndexed > 0 || filesUpdated > 0 || unmappedOrphans > 0) {
             console.log(
                 `[DiskScan] Full library disk reconciliation: ` +
                 `${artists.length} artists scanned, ` +
                 `${totalOrphans} library orphans removed, ` +
+                `${filesIndexed} new files indexed, ` +
+                `${filesUpdated} files updated, ` +
                 `${unmappedOrphans} unmapped orphans removed, ` +
                 `${totalFlagsReset} download flags reset`
             );
         }
 
-        return { artists: artists.length, totalOrphans, totalFlagsReset, unmappedOrphans };
+        return { artists: artists.length, totalOrphans, totalFlagsReset, filesIndexed, filesUpdated, unmappedOrphans };
     }
 
     /**
@@ -906,12 +914,12 @@ export class DiskScanService {
      * For each monitored album with downloaded tracks:
      *   - Album cover (if save_album_cover enabled and file missing)
      *   - Album video cover (if save_album_cover enabled, album has video_cover, and file missing)
-     *   - Album review (if save_album_review enabled and file missing)
+     *   - Album NFO (if save_nfo enabled and file missing)
      *   - Track lyrics (if save_lyrics enabled and .lrc missing for downloaded tracks)
      *
      * For each monitored artist with library files:
      *   - Artist picture (if save_artist_picture enabled and file missing)
-     *   - Artist bio (if save_artist_bio enabled and file missing)
+     *   - Artist NFO (if save_nfo enabled and file missing)
      *
      * For each downloaded video:
      *   - Video thumbnail (if save_video_thumbnail enabled and file missing)
@@ -1180,11 +1188,6 @@ export class DiskScanService {
         const basename = path.basename(filePath);
         const stem = path.parse(filePath).name;
 
-        // Metadata files — match by filename convention
-        if (basename === "bio.txt") {
-            return { albumId: null, mediaId: null, fileType: "bio", quality: null };
-        }
-
         const metadataConfig = getConfigSection("metadata");
         const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
         const albumCoverName = metadataConfig.album_cover_name || "cover.jpg";
@@ -1216,11 +1219,6 @@ export class DiskScanService {
         if (ext === ".mp4" && stem === albumCoverStem) {
             const albumId = this.findAlbumIdFromPath(filePath, artistId);
             return { albumId, mediaId: null, fileType: "video_cover", quality: null };
-        }
-
-        if (basename === "review.txt") {
-            const albumId = this.findAlbumIdFromPath(filePath, artistId);
-            return { albumId, mediaId: null, fileType: "review", quality: null };
         }
 
         if (ext === ".lrc") {

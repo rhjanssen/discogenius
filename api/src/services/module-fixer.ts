@@ -104,6 +104,18 @@ function normalizeMbSecondaryToModule(value: string | null | undefined): Canonic
     if (secondary === 'remix') return 'REMIX';
     if (secondary === 'soundtrack') return 'SOUNDTRACK';
     if (secondary === 'demo') return 'DEMO';
+    if (secondary === 'dj-mix') return 'DJ_MIXES';
+    return null;
+}
+
+function resolveMusicBrainzModule(primary: string | null | undefined, secondary: string | null | undefined): CanonicalModule | null {
+    const secondaryModule = normalizeMbSecondaryToModule(secondary);
+    if (secondaryModule) return secondaryModule;
+
+    const normalizedPrimary = (primary || '').trim().toLowerCase();
+    if (normalizedPrimary === 'ep') return 'EP';
+    if (normalizedPrimary === 'single') return 'SINGLE';
+    if (normalizedPrimary === 'album') return 'ALBUM';
     return null;
 }
 
@@ -342,12 +354,24 @@ export class ModuleFixer {
 
         const albumRows = db.prepare(`
             SELECT aa.album_id as album_id,
+                   aa.type as relation_type,
                    aa.group_type as group_type,
-                   a.type as album_type
+                   a.type as album_type,
+                   a.mb_primary as mb_primary,
+                   a.mb_secondary as mb_secondary,
+                   a.musicbrainz_status as musicbrainz_status
             FROM album_artists aa
             JOIN albums a ON a.id = aa.album_id
             WHERE aa.artist_id = ?
-        `).all(artistId) as Array<{ album_id: number | string; group_type: string | null; album_type: string | null }>;
+        `).all(artistId) as Array<{
+            album_id: number | string;
+            relation_type: string | null;
+            group_type: string | null;
+            album_type: string | null;
+            mb_primary: string | null;
+            mb_secondary: string | null;
+            musicbrainz_status: string | null;
+        }>;
 
         const updateModule = db.prepare(`
             UPDATE album_artists
@@ -366,7 +390,12 @@ export class ModuleFixer {
             const albumId = row.album_id?.toString?.() ?? String(row.album_id);
             const groupType = (row.group_type || '').toUpperCase();
             const albumType = (row.album_type || 'ALBUM').toUpperCase();
-            const desired = resolveAlbumModuleClassification({
+            const mbModule = row.musicbrainz_status === 'verified'
+                ? resolveMusicBrainzModule(row.mb_primary, row.mb_secondary)
+                : null;
+            const desired = (row.relation_type || '').toUpperCase() === 'APPEARS_ON'
+                ? 'APPEARS_ON'
+                : mbModule || resolveAlbumModuleClassification({
                 fromPage: pageMap.get(albumId) || null,
                 groupType,
                 albumType,
@@ -374,14 +403,15 @@ export class ModuleFixer {
 
             updateModule.run(desired, artistId, albumId);
 
-            const mbSecondary = getMbSecondaryFromModule(desired);
-            const mbPrimary = getMbPrimaryFromTypeAndSecondary(albumType, mbSecondary);
-            updateMb.run(mbPrimary, mbSecondary, albumId);
+            if (row.musicbrainz_status !== 'verified') {
+                const mbSecondary = getMbSecondaryFromModule(desired);
+                const mbPrimary = getMbPrimaryFromTypeAndSecondary(albumType, mbSecondary);
+                updateMb.run(mbPrimary, mbSecondary, albumId);
+            }
         }
 
         console.log(`[MODULE-FIXER] Module tag fixing complete for artist ${artistId}`);
     }
 }
-
 
 

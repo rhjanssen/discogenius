@@ -57,7 +57,28 @@ function flattenChecks(...groups: Array<HealthCheckResult[] | undefined>): Healt
   }, []).filter((check) => check.status !== "ok");
 }
 
+function disabledDownloadCheck(scope: string, displayName: string, details: Record<string, unknown> = {}): HealthCheckResult {
+  return {
+    scope,
+    status: "ok",
+    message: `${displayName} is not required because downloads are disabled`,
+    details: { ...details, disabledBy: "DISCOGENIUS_DISABLE_DOWNLOADS=1" },
+  };
+}
+
+function markBackendDisabled(snapshot: BackendCapabilitySnapshot): BackendCapabilitySnapshot {
+  return {
+    ...snapshot,
+    status: "healthy",
+    available: false,
+    ready: false,
+    checks: snapshot.checks.map((check) => disabledDownloadCheck(check.scope, check.scope, check.details)),
+    notes: ["Download processor is disabled for this runtime."],
+  };
+}
+
 export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
+  const downloadsDisabled = process.env.DISCOGENIUS_DISABLE_DOWNLOADS === "1";
   const configPathCheck = checkWritablePath("paths.config", CONFIG_DIR, {
     kind: "dir",
     displayName: "Config directory",
@@ -83,7 +104,9 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     displayName: "Video library directory",
   });
   const IS_DOCKER = process.env.DOCKER === "true";
-  const orpheusRuntimeCheck = IS_DOCKER
+  const orpheusRuntimeCheck = downloadsDisabled
+    ? disabledDownloadCheck("paths.runtime.orpheus", "Orpheus runtime", { path: ORPHEUS_RUNTIME_DIR })
+    : IS_DOCKER
     ? {
       scope: "paths.runtime.orpheus",
       status: "ok" as const,
@@ -94,14 +117,18 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       kind: "dir",
       displayName: "Orpheus runtime directory",
     });
-  const orpheusStateCheck = checkWritablePath("paths.runtime.orpheusState", path.dirname(ORPHEUS_SETTINGS_FILE), {
-    kind: "dir",
-    displayName: "Orpheus state directory",
-  });
-  const tidalDlNgConfigCheck = checkWritablePath("paths.runtime.tidalDlNg", TIDAL_DL_NG_CONFIG_DIR, {
-    kind: "dir",
-    displayName: "tidal-dl-ng config directory",
-  });
+  const orpheusStateCheck = downloadsDisabled
+    ? disabledDownloadCheck("paths.runtime.orpheusState", "Orpheus state directory", { path: path.dirname(ORPHEUS_SETTINGS_FILE) })
+    : checkWritablePath("paths.runtime.orpheusState", path.dirname(ORPHEUS_SETTINGS_FILE), {
+      kind: "dir",
+      displayName: "Orpheus state directory",
+    });
+  const tidalDlNgConfigCheck = downloadsDisabled
+    ? disabledDownloadCheck("paths.runtime.tidalDlNg", "tidal-dl-ng config directory", { path: TIDAL_DL_NG_CONFIG_DIR })
+    : checkWritablePath("paths.runtime.tidalDlNg", TIDAL_DL_NG_CONFIG_DIR, {
+      kind: "dir",
+      displayName: "tidal-dl-ng config directory",
+    });
 
   const gitCheck = checkCommandAvailability("tools.git", "git", "Git");
   const pythonCheck = checkCommandAvailability(
@@ -110,14 +137,18 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     "Python",
   );
   const ffmpegCheck = checkCommandAvailability("tools.ffmpeg", "ffmpeg", "FFmpeg");
-  const tidalDlNgCommandCheck = checkCommandAvailability(
-    "tools.tidalDlNg",
-    getTidalDlNgCommand().command,
-    "tidal-dl-ng",
-  );
+  const tidalDlNgCommandCheck = downloadsDisabled
+    ? disabledDownloadCheck("tools.tidalDlNg", "tidal-dl-ng", { command: getTidalDlNgCommand().command })
+    : checkCommandAvailability(
+      "tools.tidalDlNg",
+      getTidalDlNgCommand().command,
+      "tidal-dl-ng",
+    );
 
-  const orpheus = getOrpheusCapabilitySnapshot();
-  const tidalDlNg = getTidalDlNgCapabilitySnapshot();
+  const rawOrpheus = getOrpheusCapabilitySnapshot();
+  const rawTidalDlNg = getTidalDlNgCapabilitySnapshot();
+  const orpheus = downloadsDisabled ? markBackendDisabled(rawOrpheus) : rawOrpheus;
+  const tidalDlNg = downloadsDisabled ? markBackendDisabled(rawTidalDlNg) : rawTidalDlNg;
   const issues = flattenChecks(
     [
       configPathCheck,

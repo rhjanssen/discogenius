@@ -132,9 +132,8 @@ export interface MetadataConfig {
   embed_video_thumbnail?: boolean;
   video_thumbnail_resolution: "origin" | "640x360" | "1280x720" | "160x107" | "480x320" | "750x500" | "1080x720";
   save_lyrics: boolean;
-  save_album_review: boolean;
+  save_nfo: boolean;
   embed_album_review?: boolean;
-  save_artist_bio: boolean;
   enable_fingerprinting: boolean;
   write_tidal_url: boolean;
   mark_explicit: boolean;
@@ -229,10 +228,10 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_path: "./library/videos",
   },
   naming: {
-    artist_folder: "{artistName}",
-    album_track_path_single: "{albumFullTitle} ({releaseYear})/{trackNumber00} - {trackFullTitle}",
-    album_track_path_multi: "{albumFullTitle} ({releaseYear})/{volumeNumber0}{trackNumber00} - {trackFullTitle}",
-    video_file: "{videoTitle} [{trackId}]",
+    artist_folder: "{artistName} {mbid-{artistMbId}}",
+    album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
+    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}",
+    video_file: "{Artist CleanName} - {Video CleanTitle} {tidal-{videoId}}",
   },
   metadata: {
     save_album_cover: true,
@@ -245,9 +244,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_video_thumbnail: true,
     video_thumbnail_resolution: "1080x720",
     save_lyrics: true,
-    save_album_review: false,
+    save_nfo: true,
     embed_album_review: true,
-    save_artist_bio: false,
     enable_fingerprinting: true,
     write_tidal_url: false,
     mark_explicit: true,
@@ -297,6 +295,8 @@ export function readConfig(): DiscoGeniusConfig {
 
     // Deep merge with defaults to ensure all nested fields exist
     const metadataFromFile: Partial<MetadataConfig> = { ...(parsed.metadata || {}) };
+    delete (metadataFromFile as Record<string, unknown>).save_album_review;
+    delete (metadataFromFile as Record<string, unknown>).save_artist_bio;
     if (metadataFromFile.enable_fingerprinting === undefined) {
       metadataFromFile.enable_fingerprinting = DEFAULT_CONFIG.metadata.enable_fingerprinting;
     }
@@ -460,6 +460,3 @@ export class Config {
   }
 
 }
-
-
-

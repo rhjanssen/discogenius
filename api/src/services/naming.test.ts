@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderFileStem, renderRelativePath } from "./naming.js";
+import { previewNamingConfig, renderFileStem, renderRelativePath, validateNamingConfig } from "./naming.js";
 
 test("existing Discogenius naming tokens continue to render", () => {
   const rendered = renderFileStem(
@@ -55,6 +55,28 @@ test("normalized filename variants resolve correctly", () => {
     rendered,
     "The Beatles ; The Beatles ; The Beatles ; The Beatles ; The White Album ; ALBUM ; album-mbid-1 ; 1968 ; Helter Skelter ; Helter Skelter ; recording-mbid-1 ; The Beatles ; artist-mbid-1"
   );
+});
+
+test("TRaSH-style prefixed nested tokens render as literal folder disambiguators", () => {
+  const rendered = renderRelativePath("{artistName} {mbid-{artistMbId}}", {
+    artistName: "The Example Artist",
+    artistMbId: "artist-mbid-1",
+  });
+
+  assert.equal(rendered, "The Example Artist {mbid-artist-mbid-1}");
+});
+
+test("release group and video id tokens render correctly", () => {
+  const rendered = renderFileStem(
+    "{releaseGroupMbId} ; {videoId} ; {trackId}",
+    {
+      artistName: "Test Artist",
+      releaseGroupMbId: "release-group-mbid-1",
+      videoId: "video-1",
+    }
+  );
+
+  assert.equal(rendered, "release-group-mbid-1 ; video-1 ; video-1");
 });
 
 test("modifiers work: :the applies The suffix transform (deprecated, use named variables)", () => {
@@ -328,4 +350,41 @@ test("renderRelativePath returns \"Unknown\" when all segments collapse", () => 
   });
 
   assert.equal(rendered, "Unknown");
+});
+
+test("validateNamingConfig accepts Lidarr-style templates and returns backend previews", () => {
+  const config = {
+    artist_folder: "{artistCleanNameThe}",
+    album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
+    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}",
+    video_file: "{artistCleanName} - {videoCleanTitle} [{trackId}]",
+  };
+
+  const validation = validateNamingConfig(config);
+  assert.equal(Object.values(validation).every((result) => result.valid), true);
+
+  assert.deepEqual(previewNamingConfig(config), {
+    artistFolder: "Nine Inch Nails",
+    standardTrack: "The Downward Spiral (1994)/14 - Hurt.flac",
+    multiDiscTrack: "The Downward Spiral (1994)/02-03 - Hurt.flac",
+    video: "Nine Inch Nails - Hurt [123456789].mp4",
+  });
+});
+
+test("validateNamingConfig rejects unknown tokens and unsafe track templates", () => {
+  const validation = validateNamingConfig({
+    artist_folder: "{artistName} {mbid-{artistMbId}}",
+    album_track_path_single: "{AlbumTitle}/{Mystery Token}",
+    album_track_path_multi: "../{medium:00}-{track:00} - {trackTitle}",
+    video_file: "{artistName} - {videoTitle}",
+  });
+
+  assert.equal(validation.album_track_path_single.valid, false);
+  assert.match(validation.album_track_path_single.errors.join(" "), /Unknown token/i);
+  assert.match(validation.album_track_path_single.errors.join(" "), /track title/i);
+  assert.match(validation.album_track_path_single.errors.join(" "), /track number/i);
+  assert.deepEqual(validation.album_track_path_single.unknownTokens, ["Mystery Token"]);
+
+  assert.equal(validation.album_track_path_multi.valid, false);
+  assert.match(validation.album_track_path_multi.errors.join(" "), /parent-directory/i);
 });

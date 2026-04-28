@@ -130,6 +130,45 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   assert.equal(trackedFile.needsRename, 0);
 });
 
+test("RenameTrackFileService applies the same quality-token path shown in preview", () => {
+  const config = configModule.readConfig();
+  config.naming.album_track_path_single = "{albumTitle}/{quality}/{trackNumber00} - {trackTitle}";
+  configModule.writeConfig(config);
+
+  seedTrackedFile();
+  dbModule.db.prepare(`
+    UPDATE library_files
+    SET quality = ?, codec = ?, sample_rate = ?, bit_depth = ?, channels = ?
+    WHERE media_id = ?
+  `).run("HIRES_LOSSLESS", "FLAC", 96000, 24, 2, 100);
+
+  const expectedPath = path.join(
+    configModule.Config.getMusicPath(),
+    "Artist One",
+    "Album One",
+    "HIRES_LOSSLESS",
+    "01 - Track One.flac",
+  );
+
+  const statusBefore = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1" }, 10);
+  assert.equal(statusBefore.renameNeeded, 1);
+  assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(expectedPath), true);
+
+  const trackedFile = dbModule.db.prepare(`
+    SELECT file_path as filePath, expected_path as expectedPath, needs_rename as needsRename
+    FROM library_files
+    WHERE media_id = ?
+  `).get(100) as { filePath: string; expectedPath: string; needsRename: number };
+
+  assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
+  assert.equal(path.resolve(trackedFile.expectedPath), path.resolve(expectedPath));
+  assert.equal(trackedFile.needsRename, 0);
+});
+
 test("RenameTrackFileService keeps the stored artist path canonical until path updates are applied explicitly", () => {
   writeTestConfig();
   const musicRoot = configModule.Config.getMusicPath();

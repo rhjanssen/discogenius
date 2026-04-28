@@ -14,11 +14,16 @@ import { shouldHydrateArtistAlbumTracks, shouldHydrateArtistCatalog } from "./sc
 import { createCooperativeBatcher } from "../utils/concurrent.js";
 import pLimit from "p-limit";
 import { readIntEnv } from "../utils/env.js";
-import { resolveArtistFolderForPersistence } from "./artist-paths.js";
+import {
+    resolveArtistFolderForPersistence,
+    resolveArtistFolderFromTemplate,
+    shouldReapplyArtistPathTemplate,
+} from "./artist-paths.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { getTrackRefreshState, isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
+import { MetadataIdentityService } from "./metadata-identity-service.js";
 
 const ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY = readIntEnv(
     "DISCOGENIUS_ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY",
@@ -68,6 +73,36 @@ function parseArtistPageModules(pageData: any): Map<string, string> {
 }
 
 export class RefreshArtistService {
+    private static reapplyArtistPathAfterIdentity(artistId: string): void {
+        const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+            id: number | string;
+            name: string | null;
+            mbid: string | null;
+            path: string | null;
+        } | undefined;
+
+        if (!artist?.name || !artist.mbid) {
+            return;
+        }
+
+        const existingPath = String(artist.path || "").trim();
+        if (existingPath && !shouldReapplyArtistPathTemplate({
+            artistId,
+            artistName: artist.name,
+            artistMbId: artist.mbid,
+            existingPath,
+        })) {
+            return;
+        }
+
+        const nextPath = resolveArtistFolderFromTemplate({
+            artistId,
+            artistName: artist.name,
+            artistMbId: artist.mbid,
+        });
+        db.prepare("UPDATE artists SET path = ? WHERE id = ?").run(nextPath, artistId);
+    }
+
     private static async storeSimilarArtists(artistId: string, forceUpdate = false): Promise<string[]> {
         try {
             const similarArtists = await getArtistSimilar(artistId);
@@ -174,7 +209,7 @@ export class RefreshArtistService {
         console.log(`[RefreshArtistService] scanBasic for ${artistId}`);
 
         const existing = db.prepare(
-            "SELECT id, monitor, name, last_scanned, path FROM artists WHERE id = ?",
+            "SELECT id, monitor, name, mbid, last_scanned, path FROM artists WHERE id = ?",
         ).get(artistId) as any;
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const shouldRefresh =
@@ -218,6 +253,11 @@ export class RefreshArtistService {
                         }
                     }
                 }
+            }
+
+            if (!existing.mbid || options.forceUpdate === true) {
+                await MetadataIdentityService.resolveArtist(artistId, { force: options.forceUpdate === true });
+                this.reapplyArtistPathAfterIdentity(artistId);
             }
 
             console.log(`[RefreshArtistService] scanBasic skipped for ${artistId} (fresh)`);
@@ -282,6 +322,9 @@ export class RefreshArtistService {
                 artistId,
             );
         }
+
+        await MetadataIdentityService.resolveArtist(artistId, { force: options.forceUpdate === true });
+        this.reapplyArtistPathAfterIdentity(artistId);
 
         const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
         const similarArtistIds = includeSimilar

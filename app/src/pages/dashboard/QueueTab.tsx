@@ -655,6 +655,9 @@ const QueueTab = () => {
         isQueueInitialLoading: loading,
         hasQueueRefreshError,
         queueRefreshErrorMessage,
+        hasMoreQueueItems,
+        isLoadingMoreQueueItems,
+        loadMoreQueueItems,
         refetch: refreshQueue,
     } = useQueue();
     const {
@@ -776,7 +779,8 @@ const QueueTab = () => {
         () => groupedDownloads.slice(0, visibleActiveLimit),
         [groupedDownloads, visibleActiveLimit],
     );
-    const hasMoreActiveGroups = groupedDownloads.length > visibleActiveLimit;
+    const hasMoreLocalActiveGroups = groupedDownloads.length > visibleActiveLimit;
+    const hasMoreActiveGroups = hasMoreLocalActiveGroups || hasMoreQueueItems;
 
     // Reset visible limit when queue shrinks below threshold
     useEffect(() => {
@@ -792,7 +796,11 @@ const QueueTab = () => {
                 for (const entry of entries) {
                     if (!entry.isIntersecting) continue;
                     if (entry.target === activeSentinelRef.current && hasMoreActiveGroups) {
-                        setVisibleActiveLimit((prev) => prev + ACTIVE_PAGE_SIZE);
+                        if (hasMoreLocalActiveGroups) {
+                            setVisibleActiveLimit((prev) => prev + ACTIVE_PAGE_SIZE);
+                        } else if (hasMoreQueueItems && !isLoadingMoreQueueItems) {
+                            void loadMoreQueueItems();
+                        }
                     }
                     if (entry.target === historySentinelRef.current && hasMoreQueueHistory && !isLoadingMoreQueueHistory) {
                         void loadMoreQueueHistory();
@@ -808,7 +816,16 @@ const QueueTab = () => {
         if (historySentinel) observer.observe(historySentinel);
 
         return () => observer.disconnect();
-    }, [hasMoreActiveGroups, hasMoreQueueHistory, isLoadingMoreQueueHistory, loadMoreQueueHistory]);
+    }, [
+        hasMoreActiveGroups,
+        hasMoreLocalActiveGroups,
+        hasMoreQueueHistory,
+        hasMoreQueueItems,
+        isLoadingMoreQueueItems,
+        isLoadingMoreQueueHistory,
+        loadMoreQueueHistory,
+        loadMoreQueueItems,
+    ]);
 
     const pendingReorderGroups = useMemo(
         () => groupedDownloads.filter((group) => isPendingReorderableGroup(group)),

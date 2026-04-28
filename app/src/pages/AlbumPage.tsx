@@ -48,7 +48,7 @@ import { getAlbumCover } from "@/utils/tidalImages";
 import { useToast } from "@/hooks/useToast";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
-import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
+import { dispatchLibraryUpdated } from "@/utils/appEvents";
 import { tidalUrl } from "@/utils/tidalUrl";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
@@ -394,7 +394,7 @@ const AlbumPage = () => {
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
-  const { getProgressByTidalId } = useQueueStatus();
+  const { addToQueue, getProgressByTidalId } = useQueueStatus();
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
@@ -533,12 +533,10 @@ const AlbumPage = () => {
     setDownloadingAlbum(true);
     try {
       const url = tidalUrl('album', album.id);
-      await api.addToQueue(url, 'album', album.id);
-      toast({
-        title: "Album added to queue",
-        description: `${album.title} will be downloaded shortly`,
+      await addToQueue(url, 'album', album.id, {
+        successTitle: "Album added to queue",
+        successDescription: `${album.title} will be downloaded shortly`,
       });
-      dispatchActivityRefresh();
     } catch (error) {
       console.error("Error adding album to queue:", error);
       toast({

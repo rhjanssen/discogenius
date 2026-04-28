@@ -12,6 +12,7 @@ export type NamingContext = {
   albumFullTitle?: string | null;
   albumType?: string | null;
   albumMbId?: string | null;
+  releaseGroupMbId?: string | null;
   releaseYear?: string | null;
   explicit?: boolean | null;
 
@@ -27,6 +28,7 @@ export type NamingContext = {
   artistId?: string | null;
   albumId?: string | null;
   trackId?: string | null;
+  videoId?: string | null;
 
   videoTitle?: string | null;
 
@@ -186,6 +188,7 @@ function buildDerived(context: NamingContext) {
   const albumId = context.albumId || "";
   const albumType = context.albumType || "";
   const albumMbId = context.albumMbId || "";
+  const releaseGroupMbId = context.releaseGroupMbId || "";
   const albumVersion = context.albumVersion ?? "";
   const albumFullTitle =
     context.albumFullTitle ||
@@ -209,7 +212,8 @@ function buildDerived(context: NamingContext) {
 
   const releaseYear = (context.releaseYear ? String(context.releaseYear) : "").toString();
   const videoTitle = context.videoTitle || "Unknown Video";
-  const trackId = context.trackId || "";
+  const trackId = context.trackId || context.videoId || "";
+  const videoId = context.videoId || context.trackId || "";
 
   return {
     artistName,
@@ -219,6 +223,7 @@ function buildDerived(context: NamingContext) {
     albumId,
     albumType,
     albumMbId,
+    releaseGroupMbId,
     albumVersion,
     albumFullTitle,
     releaseYear,
@@ -232,6 +237,7 @@ function buildDerived(context: NamingContext) {
     volumeNumber,
     videoTitle,
     trackId,
+    videoId,
   };
 }
 
@@ -319,6 +325,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
     case "albummbid":
       baseValue = derived.albumMbId;
       break;
+    case "releasegroupmbid":
+      baseValue = derived.releaseGroupMbId;
+      break;
     case "albumid":
       baseValue = derived.albumId;
       break;
@@ -381,6 +390,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "videocleantitlethe":
       baseValue = cleanTitleThe(derived.videoTitle);
+      break;
+    case "videoid":
+      baseValue = derived.videoId;
       break;
 
     // Track/Medium numbers (support format specifier)
@@ -469,11 +481,230 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
 }
 
 function renderTokens(template: string, context: NamingContext): string {
-  return (template || "").replace(/\{([^{}]+)\}/g, (_token, body: string) => resolveToken(body, context));
+  const literalPlaceholders: string[] = [];
+  const withNestedTokens = (template || "").replace(/\{([^{}]+)-\{([^{}]+)\}\}/g, (_match, prefix: string, tokenBody: string) => {
+    const value = resolveToken(tokenBody, context);
+    const literalPrefix = sanitizeSegment(String(prefix || "").trim());
+    if (!value || !literalPrefix) {
+      return "";
+    }
+
+    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
+    literalPlaceholders.push(`{${literalPrefix}-${value}}`);
+    return placeholder;
+  });
+
+  const rendered = withNestedTokens
+    .replace(/\{([^{}]+)\}/g, (_token, body: string) => resolveToken(body, context));
+
+  return literalPlaceholders.reduce(
+    (current, value, index) => current.replace(`__DISCOGENIUS_LITERAL_${index}__`, value),
+    rendered,
+  );
 }
 
 export function getNamingConfig(): NamingConfig {
   return getConfigSection("naming");
+}
+
+const KNOWN_TOKEN_NAMES = new Set([
+  "artistname",
+  "artistcleanname",
+  "artistnamethe",
+  "artistcleannamthe",
+  "artistcleannamethe",
+  "artistmbid",
+  "artistid",
+  "artistnamefirstcharacter",
+  "albumtitle",
+  "albumcleantitle",
+  "albumtitlethe",
+  "albumcleantitlethe",
+  "albumtype",
+  "albummbid",
+  "releasegroupmbid",
+  "albumid",
+  "albumfulltitle",
+  "releaseyear",
+  "tracktitle",
+  "trackcleantitle",
+  "tracktitlethe",
+  "trackcleantitlethe",
+  "trackfulltitle",
+  "trackartistname",
+  "trackartistcleanname",
+  "trackartistnamethe",
+  "trackartistcleannamethe",
+  "trackartistmbid",
+  "trackmbid",
+  "trackid",
+  "videotitle",
+  "videocleantitle",
+  "videotitlethe",
+  "videocleantitlethe",
+  "videoid",
+  "tracknumber",
+  "track",
+  "volumenumber",
+  "medium",
+  "explicit",
+  "e",
+  "quality",
+  "codec",
+  "bitrate",
+  "samplerate",
+  "bitdepth",
+  "channels",
+  "albumversion",
+  "trackversion",
+]);
+
+export type NamingTemplateValidationResult = {
+  valid: boolean;
+  errors: string[];
+  unknownTokens: string[];
+  tokens: string[];
+};
+
+export type NamingPreviewResult = {
+  artistFolder: string;
+  standardTrack: string;
+  multiDiscTrack: string;
+  video: string;
+};
+
+function extractTemplateTokens(template: string): string[] {
+  const tokens: string[] = [];
+  for (const match of (template || "").matchAll(/\{([^{}]+)\}/g)) {
+    const token = String(match[1] || "").trim();
+    if (token) tokens.push(token);
+  }
+  return tokens;
+}
+
+function normalizeTemplateToken(token: string): string {
+  return normalizeTokenName(String(token || "").split(":")[0] || "");
+}
+
+function isKnownTemplateToken(token: string): boolean {
+  const normalized = normalizeTemplateToken(token);
+  return KNOWN_TOKEN_NAMES.has(normalized)
+    || parseLegacyPaddedToken(normalized, "tracknumber") !== null
+    || parseLegacyPaddedToken(normalized, "volumenumber") !== null;
+}
+
+function hasAnyToken(tokens: string[], names: string[]): boolean {
+  const normalized = new Set(tokens.map(normalizeTemplateToken));
+  return names.some((name) => normalized.has(normalizeTokenName(name)));
+}
+
+function hasTrackNumberToken(tokens: string[]): boolean {
+  return tokens.some((token) => {
+    const normalized = normalizeTemplateToken(token);
+    return normalized === "tracknumber"
+      || normalized === "track"
+      || parseLegacyPaddedToken(normalized, "tracknumber") !== null;
+  });
+}
+
+export function validateNamingTemplate(
+  template: string,
+  kind: "artist_folder" | "track" | "video",
+): NamingTemplateValidationResult {
+  const errors: string[] = [];
+  const rawTemplate = String(template || "");
+  const tokens = extractTemplateTokens(rawTemplate);
+  const unknownTokens = Array.from(new Set(tokens.filter((token) => !isKnownTemplateToken(token))));
+  const literalTemplateText = rawTemplate.replace(/\{[^{}]*\}/g, "");
+
+  if (!rawTemplate.trim()) {
+    errors.push("Template cannot be empty.");
+  }
+
+  if (/[<>:"|?*]/.test(literalTemplateText)) {
+    errors.push("Template contains characters that are not valid in file or folder names.");
+  }
+
+  if (rawTemplate.split(/[\\/]+/g).some((segment) => segment.trim() === "..")) {
+    errors.push("Template cannot contain parent-directory segments.");
+  }
+
+  if (unknownTokens.length > 0) {
+    errors.push(`Unknown token${unknownTokens.length === 1 ? "" : "s"}: ${unknownTokens.join(", ")}.`);
+  }
+
+  if (kind === "artist_folder" && !hasAnyToken(tokens, ["artistName", "artistCleanName", "artistNameThe", "artistCleanNameThe"])) {
+    errors.push("Artist folder template must include an artist name token.");
+  }
+
+  if (kind === "track") {
+    if (!hasAnyToken(tokens, ["trackTitle", "trackFullTitle", "trackCleanTitle", "trackTitleThe", "trackCleanTitleThe"])) {
+      errors.push("Track template must include a track title token.");
+    }
+    if (!hasTrackNumberToken(tokens)) {
+      errors.push("Track template must include a track number token.");
+    }
+  }
+
+  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "trackId", "videoId"])) {
+    errors.push("Video template must include a video title or TIDAL ID token.");
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    unknownTokens,
+    tokens,
+  };
+}
+
+export function validateNamingConfig(config: NamingConfig): Record<keyof NamingConfig, NamingTemplateValidationResult> {
+  return {
+    artist_folder: validateNamingTemplate(config.artist_folder, "artist_folder"),
+    album_track_path_single: validateNamingTemplate(config.album_track_path_single, "track"),
+    album_track_path_multi: validateNamingTemplate(config.album_track_path_multi, "track"),
+    video_file: validateNamingTemplate(config.video_file, "video"),
+  };
+}
+
+export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
+  const baseContext: NamingContext = {
+    artistName: "Nine Inch Nails",
+    artistId: "65662",
+    artistMbId: "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
+    albumTitle: "The Downward Spiral",
+    albumVersion: "Deluxe Edition",
+    albumFullTitle: "The Downward Spiral (Deluxe Edition)",
+    albumType: "album",
+    albumId: "77617",
+    albumMbId: "81a185ad-085c-4cde-8a97-84a6f176180b",
+    releaseGroupMbId: "f3fe65f9-efab-38bd-a8e8-9be4ea2e2976",
+    releaseYear: "1994",
+    trackTitle: "Hurt",
+    trackVersion: null,
+    trackFullTitle: "Hurt",
+    trackArtistName: "Nine Inch Nails",
+    trackArtistMbId: "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
+    trackMbId: "f4d1b6b1-0a1a-47f0-bf0b-fae0e5f5a5f4",
+    trackId: "123456789",
+    videoId: "987654321",
+    trackNumber: 14,
+    volumeNumber: 1,
+    videoTitle: "Hurt",
+    explicit: false,
+    quality: "HIRES_LOSSLESS",
+    codec: "FLAC",
+    sampleRate: 96000,
+    bitDepth: 24,
+    channels: 2,
+  };
+
+  return {
+    artistFolder: renderRelativePath(config.artist_folder, baseContext),
+    standardTrack: `${renderRelativePath(config.album_track_path_single, baseContext)}.flac`,
+    multiDiscTrack: `${renderRelativePath(config.album_track_path_multi, { ...baseContext, volumeNumber: 2, trackNumber: 3 })}.flac`,
+    video: `${renderFileStem(config.video_file, baseContext)}.mp4`,
+  };
 }
 
 export function renderRelativePath(template: string, context: NamingContext): string {

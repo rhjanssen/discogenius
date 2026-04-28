@@ -362,6 +362,29 @@ class ApiClient {
     });
   }
 
+  async validateNamingConfig(config: Partial<NamingConfigContract>) {
+    return this.request('/config/naming/validate', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async previewNamingConfig(config: Partial<NamingConfigContract>): Promise<{
+    valid: boolean;
+    validation: Record<string, { valid: boolean; errors: string[]; unknownTokens: string[]; tokens: string[] }>;
+    preview: {
+      artistFolder: string;
+      standardTrack: string;
+      multiDiscTrack: string;
+      video: string;
+    } | null;
+  }> {
+    return this.request('/config/naming/preview', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
   // Config TOML raw content endpoints
   async getConfigToml() {
     return this.request('/config/toml');

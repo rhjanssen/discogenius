@@ -160,3 +160,77 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
         ],
     );
 });
+
+test("terminal queue jobs ignore late progress, state, complete, and fail updates", () => {
+    const jobId = queuePendingDownload("track", "99");
+    queueModule.TaskQueueService.markProcessing(jobId);
+    queueModule.TaskQueueService.updateState(jobId, {
+        progress: 45,
+        payloadPatch: { downloadState: { state: "downloading", statusMessage: "Downloading track" } },
+    });
+    queueModule.TaskQueueService.cancel(jobId);
+
+    queueModule.TaskQueueService.updateProgress(jobId, 88);
+    queueModule.TaskQueueService.updateState(jobId, {
+        progress: 90,
+        payloadPatch: { downloadState: { state: "importing", statusMessage: "Late import state" } },
+    });
+    queueModule.TaskQueueService.complete(jobId);
+    queueModule.TaskQueueService.fail(jobId, "Late failure");
+
+    const job = queueModule.TaskQueueService.getById(jobId);
+    assert.ok(job);
+    assert.equal(job.status, "cancelled");
+    assert.equal(job.progress, 45);
+    assert.equal(job.error ?? null, null);
+    assert.equal(job.payload.downloadState?.state, "downloading");
+    assert.equal(job.payload.downloadState?.statusMessage, "Downloading track");
+});
+
+test("terminal queue jobs cannot be resurrected as processing", () => {
+    const jobId = queuePendingDownload("track", "100");
+    queueModule.TaskQueueService.cancel(jobId);
+
+    const marked = queueModule.TaskQueueService.markProcessing(jobId);
+
+    const job = queueModule.TaskQueueService.getById(jobId);
+    assert.equal(marked, false);
+    assert.ok(job);
+    assert.equal(job.status, "cancelled");
+});
+
+test("manual retry resets attempts so max-attempt jobs can run again", () => {
+    const jobId = queuePendingDownload("track", "101");
+
+    queueModule.TaskQueueService.fail(jobId, "first failure");
+    queueModule.TaskQueueService.retry(jobId);
+
+    const job = queueModule.TaskQueueService.getById(jobId);
+    assert.ok(job);
+    assert.equal(job.status, "pending");
+    assert.equal(job.attempts, 0);
+    assert.equal(job.progress, 0);
+    assert.equal(job.error ?? null, null);
+});
+
+test("active import blocks duplicate download for the same content id", () => {
+    const importJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.ImportDownload,
+        {
+            type: "track",
+            tidalId: "102",
+            path: path.join(tempDir, "download-102"),
+            originalJobId: 1,
+        },
+        "102",
+    );
+
+    const duplicateDownloadId = queuePendingDownload("track", "102");
+    const pendingDownloads = queueModule.TaskQueueService.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_JOB_TYPES,
+        ["pending", "processing"],
+    );
+
+    assert.equal(duplicateDownloadId, importJobId);
+    assert.equal(pendingDownloads.length, 0);
+});

@@ -1,6 +1,12 @@
 import { createContext } from "react";
 import type { DownloadProgress, QueueStatsSummary } from "@/queue/queueProgress";
 
+export type AddToQueueOptions = {
+  successTitle?: string;
+  successDescription?: string;
+  silent?: boolean;
+};
+
 export type QueueStatusContextType = {
   loading: boolean;
   stats: QueueStatsSummary;
@@ -9,7 +15,7 @@ export type QueueStatusContextType = {
   progressByTidalId: Map<string, DownloadProgress>;
   getProgress: (jobId: number) => DownloadProgress | undefined;
   getProgressByTidalId: (tidalId: string) => DownloadProgress | undefined;
-  addToQueue: (url: string, type: string, tidalId?: string) => Promise<void>;
+  addToQueue: (url: string, type: string, tidalId?: string, options?: AddToQueueOptions) => Promise<void>;
   processItem: (id: number) => Promise<void>;
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;

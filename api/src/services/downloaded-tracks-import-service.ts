@@ -10,6 +10,7 @@ import { getDownloadWorkspacePath } from "./download-routing.js";
 import { getExistingLibraryMediaIds } from "./download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { JobOfType, JobTypes } from "./queue.js";
+import { MetadataIdentityService } from "./metadata-identity-service.js";
 
 type ImportDownloadJob = JobOfType<typeof JobTypes.ImportDownload>;
 
@@ -266,6 +267,25 @@ export class DownloadedTracksImportService {
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
+            options.updateState({
+                progress: 98,
+                description: "ImportDownload: resolving MusicBrainz and AcoustID identity",
+                currentFileNum: organizeResult.processedTrackIds.length,
+                totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
+                statusMessage: "Resolving MusicBrainz and AcoustID identity",
+                state: "importing",
+            });
+
+            try {
+                if (type === "album") {
+                    await MetadataIdentityService.resolveAlbum(tidalId, { includeTracks: true });
+                } else {
+                    await MetadataIdentityService.resolveTrack(tidalId);
+                }
+            } catch (error) {
+                console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${tidalId}:`, error);
+            }
+
             options.updateState({
                 progress: 99,
                 description: "ImportDownload: applying audio tag rules",

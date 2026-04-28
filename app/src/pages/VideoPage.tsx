@@ -47,7 +47,6 @@ import {
     LIBRARY_UPDATED_EVENT,
     dispatchMonitorStateChanged,
     dispatchLibraryUpdated,
-    dispatchActivityRefresh,
 } from "@/utils/appEvents";
 
 /* ------------------------------------------------------------------ */
@@ -330,9 +329,10 @@ const VideoPage = () => {
 
     const handleDownload = async () => {
         const url = tidalUrl("video", videoId!);
-        await addToQueue(url, "video", videoId!);
-        toast({ title: "Download queued", description: video?.title || "Video" });
-        dispatchActivityRefresh();
+        await addToQueue(url, "video", videoId!, {
+            successTitle: "Download queued",
+            successDescription: video?.title || "Video",
+        });
     };
 
     const handlePlayClick = async () => {

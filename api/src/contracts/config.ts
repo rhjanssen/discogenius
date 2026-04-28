@@ -68,9 +68,8 @@ export interface MetadataConfigContract {
   embed_video_thumbnail?: boolean;
   video_thumbnail_resolution: VideoThumbnailResolutionValue;
   save_lyrics: boolean;
-  save_album_review: boolean;
+  save_nfo: boolean;
   embed_album_review?: boolean;
-  save_artist_bio: boolean;
   enable_fingerprinting: boolean;
   write_tidal_url: boolean;
   mark_explicit: boolean;
@@ -203,9 +202,8 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
       "metadata.video_thumbnail_resolution",
     ),
     save_lyrics: expectBoolean(record.save_lyrics, "metadata.save_lyrics"),
-    save_album_review: expectBoolean(record.save_album_review, "metadata.save_album_review"),
+    save_nfo: expectBoolean(record.save_nfo, "metadata.save_nfo"),
     embed_album_review: expectOptionalBoolean(record.embed_album_review, "metadata.embed_album_review"),
-    save_artist_bio: expectBoolean(record.save_artist_bio, "metadata.save_artist_bio"),
     enable_fingerprinting: expectBoolean(record.enable_fingerprinting, "metadata.enable_fingerprinting"),
     write_tidal_url: expectBoolean(record.write_tidal_url, "metadata.write_tidal_url"),
     mark_explicit: expectBoolean(record.mark_explicit, "metadata.mark_explicit"),
@@ -287,5 +285,3 @@ export function parseMonitoringConfigUpdateResponseContract(value: unknown): Mon
     config: parseMonitoringConfigContract(record.config),
   };
 }
-
-

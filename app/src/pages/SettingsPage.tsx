@@ -40,7 +40,7 @@ import { useTidalConnection } from "@/hooks/useTidalConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
@@ -61,33 +61,69 @@ type NamingFieldKey =
     | "album_track_path_multi"
     | "video_file";
 
-type NamingToken = { token: string; example: string };
-
-type NamingContext = {
-    artistName: string;
-    artistMbId?: string | null;
-    albumTitle?: string | null;
-    albumType?: string | null;
-    albumMbId?: string | null;
-    albumVersion?: string | null;
-    albumFullTitle?: string | null;
-    releaseYear?: string | null;
-    trackTitle?: string | null;
-    trackArtistName?: string | null;
-    trackArtistMbId?: string | null;
-    trackVersion?: string | null;
-    trackFullTitle?: string | null;
-    videoTitle?: string | null;
-    explicit?: boolean | null;
-    artistId?: string | null;
-    albumId?: string | null;
-    trackId?: string | null;
-    videoId?: string | null;
-    trackNumber?: number | null;
-    volumeNumber?: number | null;
+type NamingToken = {
+    token: string;
+    example: string;
+    section: string;
+    mode?: "insert" | "replace";
 };
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
+
+const ARTIST_NAMING_TOKENS: NamingToken[] = [
+    { section: "Artist", token: "{Artist Name}", example: "Daft Punk" },
+    { section: "Artist", token: "{Artist CleanName}", example: "Daft Punk" },
+    { section: "Artist", token: "{Artist NameThe}", example: "Daft Punk" },
+    { section: "Artist", token: "{Artist CleanNameThe}", example: "Daft Punk" },
+    { section: "Artist", token: "{Artist NameFirstCharacter}", example: "D" },
+    { section: "Artist", token: "{Artist MbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
+    { section: "Artist", token: "{mbid-{Artist MbId}}", example: "{mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}" },
+    { section: "Artist", token: "{Artist Id}", example: "8847" },
+];
+
+const ALBUM_NAMING_TOKENS: NamingToken[] = [
+    { section: "Album", token: "{Album Title}", example: "Discovery" },
+    { section: "Album", token: "{Album CleanTitle}", example: "Discovery" },
+    { section: "Album", token: "{Album TitleThe}", example: "Discovery" },
+    { section: "Album", token: "{Album CleanTitleThe}", example: "Discovery" },
+    { section: "Album", token: "{Album Type}", example: "Album" },
+    { section: "Album", token: "{Album MbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
+    { section: "Album", token: "{Release Group MbId}", example: "1d5f10c6-4d7f-4f94-b76f-2f61fb5c42f8" },
+    { section: "Album", token: "{Album FullTitle}", example: "Discovery (Deluxe)" },
+    { section: "Album", token: "{Release Year}", example: "2001" },
+    { section: "Album", token: "{Album Id}", example: "1550545" },
+];
+
+const TRACK_NAMING_TOKENS: NamingToken[] = [
+    { section: "Track", token: "{Track Title}", example: "One More Time" },
+    { section: "Track", token: "{Track CleanTitle}", example: "One More Time" },
+    { section: "Track", token: "{Track TitleThe}", example: "One More Time" },
+    { section: "Track", token: "{Track CleanTitleThe}", example: "One More Time" },
+    { section: "Track", token: "{Track FullTitle}", example: "One More Time (Radio Edit)" },
+    { section: "Track", token: "{Track ArtistName}", example: "Daft Punk" },
+    { section: "Track", token: "{Track ArtistCleanName}", example: "Daft Punk" },
+    { section: "Track", token: "{Track ArtistNameThe}", example: "Daft Punk" },
+    { section: "Track", token: "{Track ArtistCleanNameThe}", example: "Daft Punk" },
+    { section: "Track", token: "{Track ArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
+    { section: "Track", token: "{Track MbId}", example: "8f1b4f76-8c53-4f28-bb73-0e1d1b97a3ef" },
+    { section: "Track", token: "{Track Id}", example: "1550546" },
+    { section: "Numbering", token: "{track:00}", example: "01" },
+    { section: "Numbering", token: "{track:000}", example: "001" },
+    { section: "Numbering", token: "{medium:00}", example: "01" },
+    { section: "Numbering", token: "{medium:000}", example: "001" },
+];
+
+const QUALITY_NAMING_TOKENS: NamingToken[] = [
+    { section: "Quality", token: "{Quality}", example: "HIRES_LOSSLESS" },
+    { section: "Quality", token: "{Codec}", example: "FLAC" },
+    { section: "Quality", token: "{Bitrate}", example: "1800000" },
+    { section: "Quality", token: "{SampleRate}", example: "96000" },
+    { section: "Quality", token: "{SampleRate:kHz}", example: "96" },
+    { section: "Quality", token: "{BitDepth}", example: "24" },
+    { section: "Quality", token: "{Channels}", example: "2" },
+    { section: "Quality", token: "{Explicit}", example: "(Explicit) or empty" },
+    { section: "Quality", token: "{E}", example: "[E] or empty" },
+];
 
 const NAMING_HELP: Record<
     NamingFieldKey,
@@ -97,366 +133,52 @@ const NAMING_HELP: Record<
         title: "Artist Folder",
         description: "Template for the artist folder name.",
         tokens: [
-            { token: "{artistName}", example: "Daft Punk" },
-            { token: "{Artist Name}", example: "Daft Punk" },
-            { token: "{artist_name}", example: "Daft Punk" },
-            { token: "{artist-name}", example: "Daft Punk" },
-            { token: "{artist.clean_name}", example: "Daft Punk" },
-            { token: "{artistNameThe}", example: "Daft Punk" },
-            { token: "{artistCleanNameThe}", example: "Daft Punk" },
-            { token: "{artistNameFirstCharacter}", example: "D" },
-            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{artistId}", example: "8847" },
+            { section: "Formats", token: "{Artist Name} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
+            { section: "Formats", token: "{Artist CleanNameThe} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
+            ...ARTIST_NAMING_TOKENS,
         ],
     },
     album_track_path_single: {
         title: "Single-volume Album Track Path",
         description: "Relative path (inside the artist folder) for tracks in single-volume albums. Include album folder + track filename (without extension).",
         tokens: [
-            { token: "{artistName}", example: "Daft Punk" },
-            { token: "{artistCleanName}", example: "Daft Punk" },
-            { token: "{artistNameThe}", example: "Daft Punk" },
-            { token: "{artistCleanNameThe}", example: "Daft Punk" },
-            { token: "{artistNameFirstCharacter}", example: "D" },
-            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{artistId}", example: "8847" },
-            { token: "{albumTitle}", example: "Discovery" },
-            { token: "{Album Title}", example: "Discovery" },
-            { token: "{albumCleanTitle}", example: "Discovery" },
-            { token: "{albumTitleThe}", example: "Discovery" },
-            { token: "{albumCleanTitleThe}", example: "Discovery" },
-            { token: "{albumType}", example: "ALBUM" },
-            { token: "{albumMbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
-            { token: "{albumFullTitle}", example: "Discovery (Deluxe)" },
-            { token: "{releaseYear}", example: "2001" },
-            { token: "{albumId}", example: "1550545" },
-            { token: "{trackTitle}", example: "One More Time" },
-            { token: "{trackCleanTitle}", example: "One More Time" },
-            { token: "{trackFullTitle}", example: "One More Time (Radio Edit)" },
-            { token: "{trackArtistName}", example: "Daft Punk" },
-            { token: "{trackArtistCleanName}", example: "Daft Punk" },
-            { token: "{trackArtistNameThe}", example: "Daft Punk" },
-            { token: "{trackArtistCleanNameThe}", example: "Daft Punk" },
-            { token: "{trackArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{trackId}", example: "1550546" },
-            { token: "{trackNumber}", example: "1" },
-            { token: "{trackNumber0}", example: "1" },
-            { token: "{trackNumber00}", example: "01" },
-            { token: "{trackNumber000}", example: "001" },
-            { token: "{track:00}", example: "01" },
-            { token: "{track:000}", example: "001" },
-            { token: "{medium:00}", example: "01" },
-            { token: "{medium:000}", example: "001" },
-            { token: "{explicit}", example: "(Explicit) or empty" },
-            { token: "{E}", example: "[E] or empty" },
+            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}", example: "Discovery (2001)/01 - One More Time", mode: "replace" },
+            { section: "Formats", token: "{Album Title} ({Release Year})/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
+            ...ARTIST_NAMING_TOKENS,
+            ...ALBUM_NAMING_TOKENS,
+            ...TRACK_NAMING_TOKENS,
+            ...QUALITY_NAMING_TOKENS,
         ],
     },
     album_track_path_multi: {
         title: "Multi-volume Album Track Path",
         description: "Relative path (inside the artist folder) for tracks in multi-volume albums. Include album folder + optional disc folder + track filename (without extension).",
         tokens: [
-            { token: "{artistName}", example: "Daft Punk" },
-            { token: "{artistCleanName}", example: "Daft Punk" },
-            { token: "{artistNameThe}", example: "Daft Punk" },
-            { token: "{artistCleanNameThe}", example: "Daft Punk" },
-            { token: "{artistNameFirstCharacter}", example: "D" },
-            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{artistId}", example: "8847" },
-            { token: "{albumTitle}", example: "Discovery" },
-            { token: "{albumCleanTitle}", example: "Discovery" },
-            { token: "{albumTitleThe}", example: "Discovery" },
-            { token: "{albumCleanTitleThe}", example: "Discovery" },
-            { token: "{albumType}", example: "ALBUM" },
-            { token: "{albumMbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
-            { token: "{albumFullTitle}", example: "Discovery (Deluxe)" },
-            { token: "{releaseYear}", example: "2001" },
-            { token: "{albumId}", example: "1550545" },
-            { token: "{trackTitle}", example: "One More Time" },
-            { token: "{trackCleanTitle}", example: "One More Time" },
-            { token: "{trackFullTitle}", example: "One More Time (Radio Edit)" },
-            { token: "{trackArtistName}", example: "Daft Punk" },
-            { token: "{trackArtistCleanName}", example: "Daft Punk" },
-            { token: "{trackArtistNameThe}", example: "Daft Punk" },
-            { token: "{trackArtistCleanNameThe}", example: "Daft Punk" },
-            { token: "{trackArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{trackId}", example: "1550546" },
-            { token: "{trackNumber}", example: "1" },
-            { token: "{trackNumber0}", example: "1" },
-            { token: "{trackNumber00}", example: "01" },
-            { token: "{trackNumber000}", example: "001" },
-            { token: "{track:00}", example: "01" },
-            { token: "{track:000}", example: "001" },
-            { token: "{volumeNumber}", example: "2" },
-            { token: "{volumeNumber0}", example: "2" },
-            { token: "{volumeNumber00}", example: "02" },
-            { token: "{volumeNumber000}", example: "002" },
-            { token: "{medium:00}", example: "01" },
-            { token: "{medium:000}", example: "001" },
-            { token: "{explicit}", example: "(Explicit) or empty" },
-            { token: "{E}", example: "[E] or empty" },
+            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}", example: "Discovery (2001)/02-01 - One More Time", mode: "replace" },
+            { section: "Formats", token: "{Album Title} ({Release Year})/{medium:00}/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/02/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
+            ...ARTIST_NAMING_TOKENS,
+            ...ALBUM_NAMING_TOKENS,
+            ...TRACK_NAMING_TOKENS,
+            ...QUALITY_NAMING_TOKENS,
         ],
     },
     video_file: {
         title: "Video File",
         description: "Template for the video filename (without extension).",
         tokens: [
-            { token: "{artistName}", example: "Daft Punk" },
-            { token: "{artistCleanName}", example: "Daft Punk" },
-            { token: "{artistNameThe}", example: "Daft Punk" },
-            { token: "{artistNameFirstCharacter}", example: "D" },
-            { token: "{artistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-            { token: "{artistId}", example: "8847" },
-            { token: "{videoTitle}", example: "Around the World" },
-            { token: "{trackId}", example: "1550546" },
+            { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {tidal-{Video Id}}", example: "Daft Punk - Around the World {tidal-44187439}", mode: "replace" },
+            ...ARTIST_NAMING_TOKENS,
+            { section: "Video", token: "{Video Title}", example: "Around the World" },
+            { section: "Video", token: "{Video CleanTitle}", example: "Around the World" },
+            { section: "Video", token: "{Video TitleThe}", example: "Around the World" },
+            { section: "Video", token: "{Video CleanTitleThe}", example: "Around the World" },
+            { section: "Video", token: "{Video Id}", example: "44187439" },
+            { section: "Video", token: "{tidal-{Video Id}}", example: "{tidal-44187439}" },
+            { section: "Video", token: "{Track Id}", example: "1550546" },
+            ...QUALITY_NAMING_TOKENS,
         ],
     },
 };
-
-const SAMPLE_NAMING: Required<Pick<
-    NamingContext,
-    | "artistName"
-    | "artistMbId"
-    | "albumTitle"
-    | "albumType"
-    | "albumMbId"
-    | "albumVersion"
-    | "albumFullTitle"
-    | "releaseYear"
-    | "trackTitle"
-    | "trackArtistName"
-    | "trackArtistMbId"
-    | "trackVersion"
-    | "trackFullTitle"
-    | "videoTitle"
-    | "explicit"
-    | "trackNumber"
-    | "volumeNumber"
-    | "artistId"
-    | "albumId"
-    | "trackId"
-    | "videoId"
->> = {
-    artistName: "Daft Punk",
-    artistMbId: "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
-    albumTitle: "Discovery",
-    albumType: "ALBUM",
-    albumMbId: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53",
-    albumVersion: "Deluxe",
-    albumFullTitle: "Discovery (Deluxe)",
-    releaseYear: "2001",
-    trackTitle: "One More Time",
-    trackArtistName: "Daft Punk",
-    trackArtistMbId: "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
-    trackVersion: "Radio Edit",
-    trackFullTitle: "One More Time (Radio Edit)",
-    videoTitle: "Around the World",
-    explicit: true,
-    trackNumber: 1,
-    volumeNumber: 1,
-    artistId: "8847",
-    albumId: "1550545",
-    trackId: "1550546",
-    videoId: "44187439",
-};
-
-function sanitizeNamingSegment(input: string): string {
-    return (input || "")
-        .replace(/[<>:"/\\|?*]/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function cleanupRenderedNaming(input: string): string {
-    return (input || "")
-        .replace(/\(\s*\)/g, "")
-        .replace(/\[\s*\]/g, "")
-        .replace(/\{\s*\}/g, "")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-}
-
-function toCleanNamingText(input: string): string {
-    return (input || "")
-        .replace(/[^a-zA-Z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function toNameThe(input: string): string {
-    const value = (input || "").trim();
-    if (!value) return "";
-    const match = /^the\s+(.+)$/i.exec(value);
-    if (!match) return value;
-    const rest = match[1].trim();
-    return rest ? `${rest}, The` : value;
-}
-
-function normalizeNamingTokenName(input: string): string {
-    return (input || "").toLowerCase().replace(/[\s._-]+/g, "").trim();
-}
-
-function applyNamingNumberFormat(value: number, format?: string): string {
-    const normalizedFormat = (format || "").trim();
-    if (!normalizedFormat) {
-        return String(value);
-    }
-
-    if (/^0+$/.test(normalizedFormat)) {
-        return String(value).padStart(normalizedFormat.length, "0");
-    }
-
-    const width = Number.parseInt(normalizedFormat, 10);
-    if (Number.isFinite(width) && width > 0) {
-        return String(value).padStart(width, "0");
-    }
-
-    return String(value);
-}
-
-function parseLegacyPaddedNamingToken(normalizedName: string, base: string): number | null {
-    const match = new RegExp(`^${base}(0+)$`).exec(normalizedName);
-    if (!match) return null;
-    return match[1].length;
-}
-
-function resolveNamingToken(rawTokenBody: string, context: NamingContext): string {
-    const separator = rawTokenBody.indexOf(":");
-    const tokenName = separator >= 0 ? rawTokenBody.slice(0, separator) : rawTokenBody;
-    const customFormat = separator >= 0 ? rawTokenBody.slice(separator + 1).trim() : "";
-    const normalizedName = normalizeNamingTokenName(tokenName);
-
-    const trackNumber = Number(context.trackNumber || 0);
-    const volumeNumber = Number(context.volumeNumber || 1);
-
-    const artistName = context.artistName || "Unknown Artist";
-    const artistMbId = context.artistMbId || "";
-    const artistNameThe = toNameThe(artistName);
-    const artistNameFirstCharacter = artistName.trim().charAt(0) || "";
-
-    const albumTitle = context.albumTitle || "Unknown Album";
-    const albumVersion = context.albumVersion ?? "";
-    const albumFullTitle = context.albumFullTitle
-        || (albumVersion && !albumTitle.toLowerCase().includes(albumVersion.toLowerCase())
-            ? `${albumTitle} (${albumVersion})`
-            : albumTitle);
-
-    const trackTitle = context.trackTitle || "Unknown Track";
-    const trackVersion = context.trackVersion ?? "";
-    const trackArtistName = context.trackArtistName || artistName;
-    const trackArtistMbId = context.trackArtistMbId || artistMbId;
-    const trackFullTitle = context.trackFullTitle
-        || (trackVersion && !trackTitle.toLowerCase().includes(trackVersion.toLowerCase())
-            ? `${trackTitle} (${trackVersion})`
-            : trackTitle);
-
-    const trackLegacyPad = parseLegacyPaddedNamingToken(normalizedName, "tracknumber");
-    if (trackLegacyPad !== null) {
-        return applyNamingNumberFormat(trackNumber, "0".repeat(trackLegacyPad));
-    }
-
-    const volumeLegacyPad = parseLegacyPaddedNamingToken(normalizedName, "volumenumber");
-    if (volumeLegacyPad !== null) {
-        return applyNamingNumberFormat(volumeNumber, "0".repeat(volumeLegacyPad));
-    }
-
-    switch (normalizedName) {
-        case "artistname":
-            return sanitizeNamingSegment(artistName);
-        case "artistcleanname":
-            return sanitizeNamingSegment(toCleanNamingText(artistName));
-        case "artistnamethe":
-            return sanitizeNamingSegment(artistNameThe);
-        case "artistcleannamethe":
-            return sanitizeNamingSegment(toCleanNamingText(artistNameThe));
-        case "artistnamefirstcharacter":
-            return sanitizeNamingSegment(artistNameFirstCharacter);
-        case "artistmbid":
-            return sanitizeNamingSegment(artistMbId);
-        case "artistid":
-            return sanitizeNamingSegment(context.artistId || "");
-
-        case "albumtitle":
-            return sanitizeNamingSegment(albumTitle);
-        case "albumcleantitle":
-            return sanitizeNamingSegment(toCleanNamingText(albumTitle));
-        case "albumtitlethe":
-            return sanitizeNamingSegment(toNameThe(albumTitle));
-        case "albumcleantitlethe":
-            return sanitizeNamingSegment(toCleanNamingText(toNameThe(albumTitle)));
-        case "albumtype":
-            return sanitizeNamingSegment(context.albumType || "");
-        case "albummbid":
-            return sanitizeNamingSegment(context.albumMbId || "");
-        case "albumid":
-            return sanitizeNamingSegment(context.albumId || "");
-        case "albumfulltitle":
-            return sanitizeNamingSegment(albumFullTitle);
-        case "releaseyear":
-            return sanitizeNamingSegment((context.releaseYear || "").toString());
-
-        case "tracktitle":
-            return sanitizeNamingSegment(trackTitle);
-        case "trackcleantitle":
-            return sanitizeNamingSegment(toCleanNamingText(trackTitle));
-        case "trackfulltitle":
-            return sanitizeNamingSegment(trackFullTitle);
-        case "trackartistname":
-            return sanitizeNamingSegment(trackArtistName);
-        case "trackartistcleanname":
-            return sanitizeNamingSegment(toCleanNamingText(trackArtistName));
-        case "trackartistnamethe":
-            return sanitizeNamingSegment(toNameThe(trackArtistName));
-        case "trackartistcleannamethe":
-            return sanitizeNamingSegment(toCleanNamingText(toNameThe(trackArtistName)));
-        case "trackartistmbid":
-            return sanitizeNamingSegment(trackArtistMbId);
-        case "trackid":
-            return sanitizeNamingSegment(context.trackId || "");
-
-        case "videotitle":
-            return sanitizeNamingSegment(context.videoTitle || "Unknown Video");
-
-        case "tracknumber":
-        case "track":
-            return applyNamingNumberFormat(trackNumber, customFormat);
-        case "volumenumber":
-        case "medium":
-            return applyNamingNumberFormat(volumeNumber, customFormat);
-
-        case "explicit":
-            return context.explicit ? "(Explicit)" : "";
-        case "e":
-            return context.explicit ? "[E]" : "";
-
-        case "albumversion":
-        case "trackversion":
-            return "";
-
-        default:
-            return "";
-    }
-}
-
-function renderNamingTemplate(template: string, context: NamingContext): string {
-    return cleanupRenderedNaming(
-        (template || "").replace(/\{([^{}]+)\}/g, (_token, body: string) => resolveNamingToken(body, context)),
-    );
-}
-
-function renderNamingFileStem(template: string, context: NamingContext): string {
-    return sanitizeNamingSegment(renderNamingTemplate(template, context));
-}
-
-function renderNamingRelativePath(template: string, context: NamingContext): string {
-    const rendered = cleanupRenderedNaming(renderNamingTemplate(template, context));
-    const rawSegments = rendered.split(/[\\/]+/g);
-    const segments = rawSegments
-        .map((s) => cleanupRenderedNaming(s))
-        .map((s) => sanitizeNamingSegment(s))
-        .filter(Boolean)
-        .filter((s) => s !== "." && s !== "..");
-    return segments.length > 0 ? segments.join("/") : "Unknown";
-}
 
 // Section layout helpers
 const MEDIA = {
@@ -607,6 +329,9 @@ const useStyles = makeStyles({
     templatePreview: {
         color: tokens.colorNeutralForeground2,
     },
+    templateError: {
+        color: tokens.colorPaletteRedForeground1,
+    },
     // Naming template row - stacked vertical layout (heading/description on top, input below)
     namingRow: {
         display: 'flex',
@@ -686,6 +411,11 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         gap: tokens.spacingVerticalM,
     },
+    tokenGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalS,
+    },
     tokenList: {
         display: 'flex',
         flexDirection: 'column',
@@ -699,6 +429,8 @@ const useStyles = makeStyles({
     },
     tokenCode: {
         fontFamily: tokens.fontFamilyMonospace,
+        overflowWrap: 'anywhere',
+        whiteSpace: 'normal',
     },
     // Row without bottom border divider
     rowNoDivider: {
@@ -901,6 +633,8 @@ interface RetagStatus {
     sample: RetagStatusSample[];
 }
 
+type NamingPreviewResponse = Awaited<ReturnType<typeof api.previewNamingConfig>>;
+
 const SettingsPage = () => {
     const styles = useStyles();
     const navigate = useNavigate();
@@ -941,6 +675,20 @@ const SettingsPage = () => {
     const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
+    const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
+    const namingPreviewRequestRef = useRef(0);
+    const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
+        artist_folder: null,
+        album_track_path_single: null,
+        album_track_path_multi: null,
+        video_file: null,
+    });
+    const namingSelectionRef = useRef<Record<NamingFieldKey, { start: number; end: number } | null>>({
+        artist_folder: null,
+        album_track_path_single: null,
+        album_track_path_multi: null,
+        video_file: null,
+    });
 
     const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
     const audioRetaggingEnabled =
@@ -956,10 +704,30 @@ const SettingsPage = () => {
 
     const handleNamingChange = (key: keyof NamingConfigContract, value: string) => {
         setLocalNaming((prev) => ({ ...prev, [key]: value }));
+        setRenameStatus(null);
+        setRenameStatusInitialized(false);
     };
 
     const handleNamingCommit = (key: keyof NamingConfigContract) => {
         if (!namingSettings) {
+            return;
+        }
+
+        if (localNaming[key] !== namingSettings[key] && !namingPreviewResponse) {
+            toast({
+                title: "Naming not saved",
+                description: "Wait for the backend preview to finish before saving.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (namingPreviewResponse?.valid === false) {
+            toast({
+                title: "Naming not saved",
+                description: "Fix the template validation errors before saving.",
+                variant: "destructive",
+            });
             return;
         }
 
@@ -969,6 +737,17 @@ const SettingsPage = () => {
     };
 
     const loadRenameStatus = useCallback(async () => {
+        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
+            toast({
+                title: "Rename plan blocked",
+                description: namingPreviewResponse
+                    ? "Fix the naming template errors before refreshing the rename plan."
+                    : "Wait for the backend naming preview before refreshing the rename plan.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         setRenameStatusLoading(true);
         try {
             await flushNamingSettings();
@@ -984,9 +763,20 @@ const SettingsPage = () => {
             setRenameStatusLoading(false);
             setRenameStatusInitialized(true);
         }
-    }, [flushNamingSettings, toast]);
+    }, [flushNamingSettings, namingPreviewResponse, toast]);
 
     const handleApplyLibraryNaming = async () => {
+        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
+            toast({
+                title: "Rename blocked",
+                description: namingPreviewResponse
+                    ? "Fix the naming template errors before applying naming to the library."
+                    : "Wait for the backend naming preview before applying naming to the library.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         setRenameApplying(true);
         try {
             await flushNamingSettings();
@@ -1048,12 +838,12 @@ const SettingsPage = () => {
     }, []);
 
     useEffect(() => {
-        if (!namingSettings || renameStatus || renameStatusLoading || renameStatusInitialized) {
+        if (!namingSettings || !namingPreviewResponse?.valid || renameStatus || renameStatusLoading || renameStatusInitialized) {
             return;
         }
 
         loadRenameStatus().catch(() => undefined);
-    }, [loadRenameStatus, namingSettings, renameStatus, renameStatusInitialized, renameStatusLoading]);
+    }, [loadRenameStatus, namingPreviewResponse?.valid, namingSettings, renameStatus, renameStatusInitialized, renameStatusLoading]);
 
     useEffect(() => {
         if (audioRetaggingEnabled) {
@@ -1078,6 +868,38 @@ const SettingsPage = () => {
             active = false;
         };
     }, []);
+
+    const effectiveNamingSettings = useMemo(
+        () => namingSettings ? { ...namingSettings, ...localNaming } : null,
+        [localNaming, namingSettings],
+    );
+
+	    useEffect(() => {
+	        if (!effectiveNamingSettings) {
+	            namingPreviewRequestRef.current += 1;
+	            setNamingPreviewResponse(null);
+	            return;
+	        }
+
+        const requestId = namingPreviewRequestRef.current + 1;
+        namingPreviewRequestRef.current = requestId;
+        setNamingPreviewResponse(null);
+        const timeout = setTimeout(() => {
+            api.previewNamingConfig(effectiveNamingSettings)
+	                .then((response) => {
+	                    if (namingPreviewRequestRef.current === requestId) {
+	                        setNamingPreviewResponse(response);
+	                    }
+	                })
+	                .catch(() => {
+	                    if (namingPreviewRequestRef.current === requestId) {
+	                        setNamingPreviewResponse(null);
+	                    }
+	                });
+	        }, 250);
+
+        return () => clearTimeout(timeout);
+    }, [effectiveNamingSettings]);
 
     const fetchConfigs = async () => {
         try {
@@ -1384,48 +1206,83 @@ const SettingsPage = () => {
                 : metadataSettings?.video_thumbnail_resolution || "1080x720";
     const isScanInProgress = checkingNow || monitoringStatus.checking || monitoringConfig?.checkInProgress;
 
-    const insertNamingToken = (token: string) => {
-        if (!namingHelpField || !namingSettings) return;
-        const current = (localNaming as any)[namingHelpField] || "";
-        setLocalNaming((prev) => ({ ...prev, [namingHelpField]: `${current}${token}` }));
-        updateNamingSettings({ [namingHelpField]: `${current}${token}` } as any);
+    const setNamingInputRef = (field: NamingFieldKey) => (element: HTMLInputElement | null) => {
+        namingInputRefs.current[field] = element;
     };
 
-    const effectiveNamingSettings = namingSettings
-        ? { ...namingSettings, ...localNaming }
-        : null;
+    const captureNamingSelection = (field: NamingFieldKey) => {
+        const input = namingInputRefs.current[field];
+        if (!input) return;
+        namingSelectionRef.current[field] = {
+            start: input.selectionStart ?? input.value.length,
+            end: input.selectionEnd ?? input.value.length,
+        };
+    };
 
-    const namingExamples = effectiveNamingSettings ? (() => {
-        const artistFolder = renderNamingRelativePath(effectiveNamingSettings.artist_folder, {
-            ...SAMPLE_NAMING,
-        });
+    const insertNamingToken = (item: NamingToken) => {
+        if (!namingHelpField || !namingSettings) return;
+        const current = (localNaming as any)[namingHelpField] || "";
+        const range = namingSelectionRef.current[namingHelpField];
+        const hasSelection = Boolean(
+            range
+            && range.start >= 0
+            && range.end >= range.start
+            && range.end <= current.length,
+        );
+        const next = item.mode === "replace"
+            ? item.token
+            : hasSelection
+                ? `${current.slice(0, range!.start)}${item.token}${current.slice(range!.end)}`
+                : `${current}${item.token}`;
+        const cursor = item.mode === "replace"
+            ? item.token.length
+            : hasSelection
+                ? range!.start + item.token.length
+                : next.length;
 
-        const trackPathSingle = renderNamingRelativePath(effectiveNamingSettings.album_track_path_single, {
-            ...SAMPLE_NAMING,
-        });
+        setLocalNaming((prev) => ({ ...prev, [namingHelpField]: next }));
+        namingSelectionRef.current[namingHelpField] = { start: cursor, end: cursor };
+        setRenameStatus(null);
+        setRenameStatusInitialized(false);
+    };
 
-        const trackPathMulti = renderNamingRelativePath(effectiveNamingSettings.album_track_path_multi, {
-            ...SAMPLE_NAMING,
-        });
+    const namingTokenGroups = (() => {
+        if (!namingHelpMeta) return [];
+        const groups: Array<{ section: string; tokens: NamingToken[] }> = [];
+        for (const item of namingHelpMeta.tokens) {
+            let group = groups.find((candidate) => candidate.section === item.section);
+            if (!group) {
+                group = { section: item.section, tokens: [] };
+                groups.push(group);
+            }
+            group.tokens.push(item);
+        }
+        return groups;
+    })();
 
-        const videoFile = renderNamingFileStem(effectiveNamingSettings.video_file, {
-            ...SAMPLE_NAMING,
-        });
-
-        const fullSingleTrackPath = [artistFolder, `${trackPathSingle}.flac`].filter(Boolean).join("/");
-        const fullMultiTrackPath = [artistFolder, `${trackPathMulti}.flac`].filter(Boolean).join("/");
-        const videoPath = [artistFolder, `${videoFile}.mp4`].filter(Boolean).join("/");
-
+    const namingExamples = namingPreviewResponse?.preview ? (() => {
+        const artistFolder = namingPreviewResponse.preview.artistFolder;
+        const trackPathSingle = namingPreviewResponse.preview.standardTrack;
+        const trackPathMulti = namingPreviewResponse.preview.multiDiscTrack;
+        const videoFile = namingPreviewResponse.preview.video;
         return {
             artistFolder,
             videoFile,
             trackPathSingle,
             trackPathMulti,
-            fullSingleTrackPath,
-            fullMultiTrackPath,
-            videoPath,
+            fullSingleTrackPath: [artistFolder, trackPathSingle].filter(Boolean).join("/"),
+            fullMultiTrackPath: [artistFolder, trackPathMulti].filter(Boolean).join("/"),
+            videoPath: [artistFolder, videoFile].filter(Boolean).join("/"),
         };
     })() : null;
+    const namingIsInvalid = namingPreviewResponse?.valid === false;
+    const namingPreviewPending = Boolean(effectiveNamingSettings && !namingPreviewResponse);
+    const namingActionsDisabled = namingIsInvalid || namingPreviewPending;
+
+    const getNamingFieldErrors = (field: NamingFieldKey): string[] => {
+        const result = namingPreviewResponse?.validation?.[field];
+        return Array.isArray(result?.errors) ? result.errors : [];
+    };
 
     const currentVersionLabel = releaseInfo?.version || appVersion;
     const versionStatusColor: "warning" | "success" | "informative" = releaseInfo?.updateStatus === "update-available"
@@ -2028,10 +1885,10 @@ const SettingsPage = () => {
                         })}
 
                         {renderToggleRow({
-                            title: "Save Album Review",
-                            description: "Save the album review as review.txt in the album folder",
-                            checked: metadataSettings?.save_album_review === true,
-                            onChange: (checked) => updateMetadataSettings({ save_album_review: checked }),
+                            title: "Save Jellyfin NFO Files",
+                            description: "Save artist.nfo, album.nfo, and music-video sidecar NFO files with MusicBrainz IDs",
+                            checked: metadataSettings?.save_nfo === true,
+                            onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
 
                         {renderToggleRow({
@@ -2110,13 +1967,6 @@ const SettingsPage = () => {
                                 </div>
                             </>
                         )}
-
-                        {renderToggleRow({
-                            title: "Save Artist Bio",
-                            description: "Save the artist bio as bio.txt in the artist folder",
-                            checked: metadataSettings?.save_artist_bio === true,
-                            onChange: (checked) => updateMetadataSettings({ save_artist_bio: checked }),
-                        })}
 
                         {renderToggleRow({
                             title: "Save Music Video Thumbnails",
@@ -2321,8 +2171,12 @@ const SettingsPage = () => {
                             <div className={styles.templateControl}>
                                 <div className={styles.templateInputRow}>
                                     <Input
+                                        ref={setNamingInputRef("artist_folder")}
                                         value={localNaming?.artist_folder ?? ''}
                                         onChange={(_, data) => handleNamingChange("artist_folder", data.value)}
+                                        onFocus={() => captureNamingSelection("artist_folder")}
+                                        onSelect={() => captureNamingSelection("artist_folder")}
+                                        onKeyUp={() => captureNamingSelection("artist_folder")}
                                         onBlur={() => handleNamingCommit("artist_folder")}
                                         onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("artist_folder"); }}
                                         className={styles.pathInput}
@@ -2340,6 +2194,9 @@ const SettingsPage = () => {
                                 <Caption1 className={styles.templatePreview}>
                                     Example: <span className={styles.tokenCode}>{namingExamples?.artistFolder ?? "—"}</span>
                                 </Caption1>
+                                {getNamingFieldErrors("artist_folder").map((error) => (
+                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
+                                ))}
                             </div>
                         </div>
                         <div className={styles.namingRow}>
@@ -2352,8 +2209,12 @@ const SettingsPage = () => {
                             <div className={styles.templateControl}>
                                 <div className={styles.templateInputRow}>
                                     <Input
+                                        ref={setNamingInputRef("album_track_path_single")}
                                         value={localNaming?.album_track_path_single ?? ''}
                                         onChange={(_, data) => handleNamingChange("album_track_path_single", data.value)}
+                                        onFocus={() => captureNamingSelection("album_track_path_single")}
+                                        onSelect={() => captureNamingSelection("album_track_path_single")}
+                                        onKeyUp={() => captureNamingSelection("album_track_path_single")}
                                         onBlur={() => handleNamingCommit("album_track_path_single")}
                                         onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_single"); }}
                                         className={styles.pathInput}
@@ -2371,6 +2232,9 @@ const SettingsPage = () => {
                                 <Caption1 className={styles.templatePreview}>
                                     Example: <span className={styles.tokenCode}>{namingExamples?.fullSingleTrackPath ?? "—"}</span>
                                 </Caption1>
+                                {getNamingFieldErrors("album_track_path_single").map((error) => (
+                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
+                                ))}
                             </div>
                         </div>
                         <div className={styles.namingRow}>
@@ -2383,8 +2247,12 @@ const SettingsPage = () => {
                             <div className={styles.templateControl}>
                                 <div className={styles.templateInputRow}>
                                     <Input
+                                        ref={setNamingInputRef("album_track_path_multi")}
                                         value={localNaming?.album_track_path_multi ?? ''}
                                         onChange={(_, data) => handleNamingChange("album_track_path_multi", data.value)}
+                                        onFocus={() => captureNamingSelection("album_track_path_multi")}
+                                        onSelect={() => captureNamingSelection("album_track_path_multi")}
+                                        onKeyUp={() => captureNamingSelection("album_track_path_multi")}
                                         onBlur={() => handleNamingCommit("album_track_path_multi")}
                                         onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_multi"); }}
                                         className={styles.pathInput}
@@ -2402,6 +2270,9 @@ const SettingsPage = () => {
                                 <Caption1 className={styles.templatePreview}>
                                     Example: <span className={styles.tokenCode}>{namingExamples?.fullMultiTrackPath ?? "—"}</span>
                                 </Caption1>
+                                {getNamingFieldErrors("album_track_path_multi").map((error) => (
+                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
+                                ))}
                             </div>
                         </div>
                         <div className={styles.namingRow}>
@@ -2414,8 +2285,12 @@ const SettingsPage = () => {
                             <div className={styles.templateControl}>
                                 <div className={styles.templateInputRow}>
                                     <Input
+                                        ref={setNamingInputRef("video_file")}
                                         value={localNaming?.video_file ?? ''}
                                         onChange={(_, data) => handleNamingChange("video_file", data.value)}
+                                        onFocus={() => captureNamingSelection("video_file")}
+                                        onSelect={() => captureNamingSelection("video_file")}
+                                        onKeyUp={() => captureNamingSelection("video_file")}
                                         onBlur={() => handleNamingCommit("video_file")}
                                         onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("video_file"); }}
                                         className={styles.pathInput}
@@ -2433,6 +2308,9 @@ const SettingsPage = () => {
                                 <Caption1 className={styles.templatePreview}>
                                     Example: <span className={styles.tokenCode}>{namingExamples?.videoPath ?? "—"}</span>
                                 </Caption1>
+                                {getNamingFieldErrors("video_file").map((error) => (
+                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
+                                ))}
                             </div>
                         </div>
                         <div className={styles.row}>
@@ -2486,10 +2364,10 @@ const SettingsPage = () => {
                             <div className={styles.namingActionGroup}>
                                 <Button
                                     appearance="outline"
-                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                                    onClick={() => loadRenameStatus()}
-                                    disabled={renameStatusLoading || renameApplying || !namingSettings}
-                                >
+	                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+	                                    onClick={() => loadRenameStatus()}
+	                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
+	                                >
                                     Refresh plan
                                 </Button>
                                 <Button
@@ -2497,11 +2375,12 @@ const SettingsPage = () => {
                                     icon={renameApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
                                     onClick={() => handleApplyLibraryNaming()}
                                     disabled={
-                                        renameStatusLoading
-                                        || renameApplying
-                                        || !namingSettings
-                                        || (renameStatus?.renameNeeded ?? 0) === 0
-                                    }
+	                                        renameStatusLoading
+	                                        || renameApplying
+	                                        || !namingSettings
+	                                        || namingActionsDisabled
+	                                        || (renameStatus?.renameNeeded ?? 0) === 0
+	                                    }
                                 >
                                     Apply to library
                                 </Button>
@@ -2528,25 +2407,27 @@ const SettingsPage = () => {
                                         <Text className={styles.mutedText}>
                                             {namingHelpMeta?.description}
                                         </Text>
-                                        <Text size={200} className={styles.mutedText}>
-                                            Click a token to append it to the template.
-                                        </Text>
-                                        <div className={styles.tokenList}>
-                                            {(namingHelpMeta?.tokens ?? []).map((t) => (
-                                                <div key={t.token} className={styles.tokenRow}>
-                                                    <Button
-                                                        appearance="subtle"
-                                                        size="small"
-                                                        onClick={() => insertNamingToken(t.token)}
-                                                    >
-                                                        <span className={styles.tokenCode}>{t.token}</span>
-                                                    </Button>
-                                                    <Text size={200} className={styles.mutedText}>
-                                                        Example: <span className={styles.tokenCode}>{t.example}</span>
-                                                    </Text>
+                                        {namingTokenGroups.map((group) => (
+                                            <div key={group.section} className={styles.tokenGroup}>
+                                                <Text size={200} weight="semibold">{group.section}</Text>
+                                                <div className={styles.tokenList}>
+                                                    {group.tokens.map((t) => (
+                                                        <div key={`${group.section}-${t.token}`} className={styles.tokenRow}>
+                                                            <Button
+                                                                appearance="subtle"
+                                                                size="small"
+                                                                onClick={() => insertNamingToken(t)}
+                                                            >
+                                                                <span className={styles.tokenCode}>{t.token}</span>
+                                                            </Button>
+                                                            <Text size={200} className={styles.mutedText}>
+                                                                Example: <span className={styles.tokenCode}>{t.example}</span>
+                                                            </Text>
+                                                        </div>
+                                                    ))}
                                                 </div>
-                                            ))}
-                                        </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </DialogContent>
                             </DialogBody>
@@ -2656,8 +2537,3 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
-
-
-
-
-

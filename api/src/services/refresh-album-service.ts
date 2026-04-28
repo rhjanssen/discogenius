@@ -12,6 +12,7 @@ import { createCooperativeBatcher } from "../utils/concurrent.js";
 import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
+import { MetadataIdentityService } from "./metadata-identity-service.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -65,13 +66,16 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanBasic for ${albumId}`);
 
         const monitoringConfig = getConfigSection("monitoring");
-        const existingRow = db.prepare("SELECT id, last_scanned FROM albums WHERE id = ?").get(albumId) as any;
+        const existingRow = db.prepare("SELECT id, mbid, mb_release_group_id, last_scanned FROM albums WHERE id = ?").get(albumId) as any;
         const shouldRefreshAlbum =
             !existingRow ||
             options.forceUpdate === true ||
             isRefreshDue(existingRow?.last_scanned, monitoringConfig.album_refresh_days);
 
         if (existingRow && !shouldRefreshAlbum) {
+            if (!existingRow.mbid || !existingRow.mb_release_group_id || options.forceUpdate === true) {
+                await MetadataIdentityService.resolveAlbum(albumId, { force: options.forceUpdate === true, includeTracks: false });
+            }
             console.log(`[RefreshAlbumService] scanBasic skipped for ${albumId} (fresh)`);
             return;
         }
@@ -173,6 +177,8 @@ export class RefreshAlbumService {
                 albumId,
             );
         }
+
+        await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, includeTracks: false });
 
         const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
         const similarAlbums = includeSimilar
@@ -426,6 +432,8 @@ export class RefreshAlbumService {
                 await cooperateTrackStore();
             }
         }
+
+        await MetadataIdentityService.resolveAlbumTracks(albumId, { force: false });
     }
 
     static async upsertArtistAlbum(
@@ -631,6 +639,11 @@ export class RefreshAlbumService {
                 }
             }
         }
+
+        await MetadataIdentityService.resolveAlbum(String(album.tidal_id), {
+            force: forceUpdate,
+            includeTracks: false,
+        });
 
         return !exists;
     }

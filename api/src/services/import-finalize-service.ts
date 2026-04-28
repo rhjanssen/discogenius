@@ -146,7 +146,7 @@ export async function finalizeImportedDirectories(params: {
                 } else if (ext === ".lrc") {
                     fileType = "lyrics";
                 } else if (ext === ".nfo") {
-                    fileType = "review";
+                    fileType = "nfo";
                 }
 
                 const stats = fs.statSync(targetPath);

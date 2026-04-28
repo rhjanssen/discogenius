@@ -12,3 +12,4 @@ token.json
 *.db
 *.sqlite
 *.sqlite-journal
+.ref_*/

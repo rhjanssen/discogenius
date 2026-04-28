@@ -60,7 +60,7 @@ RUN groupadd --gid 1000 node \
     && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
 # Create directories and set permissions
-RUN mkdir -p /config /downloads /library /app \
+RUN mkdir -p /config /downloads /library/music /library/atmos /library/videos /app \
     && chown -R node:node /config /downloads /library /app /opt/orpheusdl
 
 # Copy package files (workspaces setup)
@@ -92,7 +92,7 @@ ENV DOCKER=true
 # tidal-dl-ng-for-dj uses /config/tidal_dl_ng-dev for its config
 
 # Declare volumes for persistent data
-VOLUME ["/config", "/library"]
+VOLUME ["/config", "/downloads", "/library"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \

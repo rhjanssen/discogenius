@@ -8,9 +8,10 @@ import {
     downloadAlbumVideoCover,
     downloadArtistPicture,
     downloadVideoThumbnail,
-    saveBioFile,
-    saveReviewFile,
+    saveAlbumNfoFile,
+    saveArtistNfoFile,
     saveLyricsFile,
+    saveVideoNfoFile,
 } from "./metadata-files.js";
 import { embedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
@@ -128,28 +129,20 @@ class LibraryMetadataBackfillService {
                 }
             }
 
-            if (metadataConfig.save_artist_bio) {
-                const bioPath = path.join(artistDir, "bio.txt");
-                if (!fs.existsSync(bioPath)) {
-                    try {
-                        await saveBioFile(artistId, bioPath);
-                        if (fs.existsSync(bioPath)) {
-                            this.upsertLibraryFile({
-                                artistId,
-                                filePath: bioPath,
-                                libraryRoot,
-                                fileType: "bio",
-                                expectedPath: bioPath,
-                            });
-                            result.downloaded++;
-                        } else {
-                            result.failed++;
-                        }
-                    } catch {
-                        result.failed++;
-                    }
-                } else {
-                    result.skipped++;
+            if (metadataConfig.save_nfo) {
+                const nfoPath = path.join(artistDir, "artist.nfo");
+                try {
+                    await saveArtistNfoFile(artistId, nfoPath);
+                    this.upsertLibraryFile({
+                        artistId,
+                        filePath: nfoPath,
+                        libraryRoot,
+                        fileType: "nfo",
+                        expectedPath: nfoPath,
+                    });
+                    result.downloaded++;
+                } catch {
+                    result.failed++;
                 }
             }
         }
@@ -254,29 +247,21 @@ class LibraryMetadataBackfillService {
                     }
                 }
 
-                if (metadataConfig.save_album_review) {
-                    const reviewPath = path.join(albumDir, "review.txt");
-                    if (!fs.existsSync(reviewPath)) {
-                        try {
-                            await saveReviewFile(String(album.id), reviewPath);
-                            if (fs.existsSync(reviewPath)) {
-                                this.upsertLibraryFile({
-                                    artistId,
-                                    albumId: String(album.id),
-                                    filePath: reviewPath,
-                                    libraryRoot,
-                                    fileType: "review",
-                                    expectedPath: reviewPath,
-                                });
-                                result.downloaded++;
-                            } else {
-                                result.failed++;
-                            }
-                        } catch {
-                            result.failed++;
-                        }
-                    } else {
-                        result.skipped++;
+                if (metadataConfig.save_nfo) {
+                    const nfoPath = path.join(albumDir, "album.nfo");
+                    try {
+                        await saveAlbumNfoFile(String(album.id), nfoPath);
+                        this.upsertLibraryFile({
+                            artistId,
+                            albumId: String(album.id),
+                            filePath: nfoPath,
+                            libraryRoot,
+                            fileType: "nfo",
+                            expectedPath: nfoPath,
+                        });
+                        result.downloaded++;
+                    } catch {
+                        result.failed++;
                     }
                 }
             }
@@ -338,9 +323,10 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         result: MetadataFillResult,
     ) {
+        const videoRoot = Config.getVideoPath();
+
         // ---- Thumbnail backfill ----
         if (metadataConfig.save_video_thumbnail) {
-            const videoRoot = Config.getVideoPath();
             const resolution = metadataConfig.video_thumbnail_resolution || "1080x720";
 
             const thumbnailVideos = db.prepare(`
@@ -386,6 +372,35 @@ class LibraryMetadataBackfillService {
                     } else {
                         result.failed++;
                     }
+                } catch {
+                    result.failed++;
+                }
+            }
+        }
+
+        if (metadataConfig.save_nfo) {
+            const videos = db.prepare(`
+      SELECT lf.file_path, lf.media_id, m.album_id
+      FROM library_files lf
+      JOIN media m ON m.id = lf.media_id
+      WHERE lf.artist_id = ?
+        AND lf.file_type = 'video'
+    `).all(artistId) as Array<{ file_path: string; media_id: number; album_id: number | null }>;
+
+            for (const video of videos) {
+                const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
+                try {
+                    await saveVideoNfoFile(String(video.media_id), nfoPath);
+                    this.upsertLibraryFile({
+                        artistId,
+                        albumId: video.album_id ? String(video.album_id) : null,
+                        mediaId: String(video.media_id),
+                        filePath: nfoPath,
+                        libraryRoot: videoRoot,
+                        fileType: "nfo",
+                        expectedPath: nfoPath,
+                    });
+                    result.downloaded++;
                 } catch {
                     result.failed++;
                 }
@@ -496,7 +511,7 @@ class LibraryMetadataBackfillService {
 
         const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);
         const templateDirSegments = templateSegments.slice(0, -1);
-        const volumeDirIndex = templateDirSegments.findIndex((seg) => seg.includes("{volumeNumber"));
+        const volumeDirIndex = templateDirSegments.findIndex((seg) => /\{(?:volumeNumber|medium)(?::|0|\})/i.test(seg));
 
         const renderedTrackPath = renderRelativePath(trackTemplate, {
             ...albumContext,

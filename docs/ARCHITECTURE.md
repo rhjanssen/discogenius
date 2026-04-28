@@ -66,6 +66,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - `GET /api/queue/history` is the queue-tab history surface for completed/failed/cancelled download/import rows and returns queue-shaped `QueueItemContract` payloads.
 - `/api/activity` is not the queue-history source for the Dashboard queue tab.
 - Queue reorder requests must target pending download jobs and provide exactly one anchor (`beforeJobId` xor `afterJobId`) with deduplicated positive integer `jobIds`.
+- Terminal queue states (`completed`, `failed`, `cancelled`) are immutable for late progress/state/complete/fail calls. This prevents cancelled imports from later overwriting themselves as completed after an async worker catches up.
 
 #### Library List Filter Contract
 
@@ -140,9 +141,11 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - api/src/services/refresh-playlist-service.ts: playlist metadata and membership refresh
 - api/src/services/refresh-video-service.ts: video upsert/refresh helpers for artist catalog scans
 - api/src/services/media-seed-service.ts: small targeted metadata seed flows for single track/video intake
+- api/src/services/metadata-identity-service.ts: MusicBrainz and AcoustID identity enrichment for artists, albums, tracks, and videos during scan/import
 - api/src/services/library-scan.ts: disk reconciliation/import coordination
 - api/src/services/import-service.ts + import-* services: manual import discovery/matching/apply/finalize pipeline
 - api/src/services/identification-service.ts + fingerprint.ts: local-file identification support
+- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO sidecar generation using live TIDAL data when available and local database metadata as fallback
 
 ### Curation and Download Candidate Selection
 
@@ -157,6 +160,7 @@ Detailed flow and semantics are documented in docs/CURATION_DEDUPLICATION.md.
 - api/src/services/organizer.ts: stage-to-library file organization
 - api/src/services/library-files.ts: managed file tracking/prune helpers
 - api/src/services/naming.ts + library-paths.ts: naming/path conventions
+- api/src/routes/config.ts: naming validation and preview endpoints used by the settings UI before persisting templates
 
 Naming renderer behavior (api/src/services/naming.ts):
 
@@ -172,9 +176,19 @@ Naming renderer behavior (api/src/services/naming.ts):
   - Clean+The form: `{artistCleanNameThe}`, `{albumCleanTitleThe}`, `{trackCleanTitleThe}`, etc. (applies CleanTitleThe)
 - Supports numeric formatting for track and medium tokens using format suffixes such as `{trackNumber:00}`, `{trackNumber:000}`, `{medium:00}`, and `{medium:000}`.
 - Supports quality metadata tokens: `{quality}`, `{codec}`, `{bitrate}`, `{sampleRate}`, `{bitDepth}`, `{channels}` with optional format modifiers (e.g., `{sampleRate:kHz}`)
+- Validates persisted naming templates server-side. Format suffixes inside tokens, such as `{track:00}`, are allowed; invalid filename characters are checked only in literal template text.
 - Legacy modifier syntax (e.g., `{artistName:clean:the}`) is deprecated but still supported for backward compatibility; new code should use named variables instead.
 - Unknown tokens resolve to an empty string; if the rendered relative path has no valid segments, it normalizes to `Unknown`.
 - MBID and track-artist fields are metadata-dependent: `artistMbId`, `albumMbId`, and `trackArtistMbId` are optional, and track-artist naming fields use available track-artist metadata when present.
+
+MusicBrainz identity behavior:
+
+- Artist refresh resolves `artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
+- Album refresh resolves `albums.mbid` and `albums.mb_release_group_id` by UPC first, then MusicBrainz release search.
+- Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes `media.mbid`, `media.acoustid_id`, and fingerprint metadata.
+- Music videos are tracked in the same status table, but MusicBrainz video IDs are treated as generally unavailable; video NFO files still include artist and album MusicBrainz IDs when the linked rows have them.
+- Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside TIDAL metadata.
+- `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
 
 ## Data and State Model
 
@@ -183,6 +197,7 @@ Primary persisted entities:
 - artists, albums, media
 - album_artists, media_artists
 - library_files
+- metadata_identity_status
 - history_events
 - unmapped_files
 - job_queue, scheduled_tasks, monitoring_runtime_state
@@ -252,6 +267,3 @@ Operationally important semantics:
 - docs/CURATION_DEDUPLICATION.md: curation/redundancy deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
 - docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance
-
-
-

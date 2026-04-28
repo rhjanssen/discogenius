@@ -29,6 +29,7 @@ import { tidalUrl } from "@/utils/tidalUrl";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
+import { useQueueStatus } from "@/hooks/useQueueStatus";
 
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";
@@ -329,6 +330,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     const searchRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const { toast } = useToast();
+    const { addToQueue } = useQueueStatus();
     const searchActivityLabel = "Searching TIDAL...";
 
     useEffect(() => {
@@ -482,10 +484,9 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
             };
             const urlType = typeMap[item.type] || 'track';
             const url = tidalUrl(urlType as any, item.tidalId);
-            await api.addToQueue(url, item.type, item.tidalId);
-            toast({
-                title: "Added to queue",
-                description: `${item.name} will be downloaded shortly`,
+            await addToQueue(url, item.type, item.tidalId, {
+                successTitle: "Added to queue",
+                successDescription: `${item.name} will be downloaded shortly`,
             });
         } catch (error) {
             console.error("Error adding to queue:", error);
@@ -793,7 +794,6 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 };
 
 export default GlobalSearch;
-
 
 
 

@@ -30,15 +30,49 @@ export interface MusicBrainzRelease {
     country: string | null;
     status: string | null;
     releaseGroupId: string | null;
+    releaseGroupPrimaryType: string | null;
+    releaseGroupSecondaryTypes: string[];
     artistCredits: MusicBrainzArtistCredit[];
 }
 
-const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.1 (music metadata enrichment)";
+export interface AcoustIdLookupResult {
+    id: string;
+    score: number | null;
+    recordingIds: string[];
+}
+
+const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.6 (metadata identity; https://github.com/rhjanssen/discogenius)";
+const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
+let musicBrainzRequestChain: Promise<void> = Promise.resolve();
+let lastMusicBrainzRequestAt = 0;
 
 function getMusicBrainzHeaders() {
     return {
         "User-Agent": MUSICBRAINZ_USER_AGENT,
     };
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function requestMusicBrainzJson<T = any>(url: string): Promise<T> {
+    const run = musicBrainzRequestChain.then(async () => {
+        const elapsed = Date.now() - lastMusicBrainzRequestAt;
+        if (elapsed < MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS) {
+            await delay(MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS - elapsed);
+        }
+
+        lastMusicBrainzRequestAt = Date.now();
+        const response = await axios.get(url, {
+            timeout: 10000,
+            headers: getMusicBrainzHeaders(),
+        });
+        return response.data as T;
+    });
+
+    musicBrainzRequestChain = run.then(() => undefined, () => undefined);
+    return run;
 }
 
 function mapMusicBrainzArtistCredits(rawCredits: unknown): MusicBrainzArtistCredit[] {
@@ -57,6 +91,23 @@ function mapMusicBrainzArtistCredits(rawCredits: unknown): MusicBrainzArtistCred
             return { id, name };
         })
         .filter(Boolean) as MusicBrainzArtistCredit[];
+}
+
+function getReleaseGroupPrimaryType(release: any): string | null {
+    return String(release?.["release-group"]?.["primary-type"] || "")
+        .trim()
+        .toLowerCase() || null;
+}
+
+function getReleaseGroupSecondaryTypes(release: any): string[] {
+    const rawSecondaryTypes = release?.["release-group"]?.["secondary-types"];
+    if (!Array.isArray(rawSecondaryTypes)) {
+        return [];
+    }
+
+    return rawSecondaryTypes
+        .map((type) => String(type || "").trim().toLowerCase())
+        .filter(Boolean);
 }
 
 function findWingetFpcalcPath(): string {
@@ -195,13 +246,7 @@ export async function generateFingerprint(filePath: string): Promise<{ duration:
     });
 }
 
-/**
- * Lookup AcoustID and retrieve corresponding MusicBrainz Recording IDs
- * @param fingerprint Chromaprint fingerprint
- * @param duration Duration in seconds
- * @returns Array of unique MusicBrainz IDs (MBIDs)
- */
-export async function lookupAcoustId(fingerprint: string, duration: number): Promise<string[]> {
+export async function lookupAcoustIdMatches(fingerprint: string, duration: number): Promise<AcoustIdLookupResult[]> {
     const clientId = resolveAcoustIdClientId({
         env: process.env,
         appConfig: Config.getAppConfig(),
@@ -218,19 +263,48 @@ export async function lookupAcoustId(fingerprint: string, duration: number): Pro
         const results = response.data.results;
         if (!results || results.length === 0) return [];
 
-        const mbids = new Set<string>();
-        for (const res of results) {
-            if (res.recordings) {
-                for (const rec of res.recordings) {
-                    if (rec.id) mbids.add(rec.id);
+        return results
+            .map((result: any) => {
+                const id = String(result?.id || "").trim();
+                const recordingIds = new Set<string>();
+                if (Array.isArray(result?.recordings)) {
+                    for (const recording of result.recordings) {
+                        const recordingId = String(recording?.id || "").trim();
+                        if (recordingId) recordingIds.add(recordingId);
+                    }
                 }
-            }
-        }
-        return Array.from(mbids);
+
+                return {
+                    id,
+                    score: typeof result?.score === "number" && Number.isFinite(result.score) ? result.score : null,
+                    recordingIds: Array.from(recordingIds),
+                } satisfies AcoustIdLookupResult;
+            })
+            .filter((result: AcoustIdLookupResult) => result.id || result.recordingIds.length > 0);
     } catch (error: any) {
         console.error('[Fingerprint] AcoustID lookup error:', error.message);
         return [];
     }
+}
+
+/**
+ * Lookup AcoustID and retrieve corresponding MusicBrainz Recording IDs
+ * @param fingerprint Chromaprint fingerprint
+ * @param duration Duration in seconds
+ * @returns Array of unique MusicBrainz IDs (MBIDs)
+ */
+export async function lookupAcoustId(fingerprint: string, duration: number): Promise<string[]> {
+    const results = await lookupAcoustIdMatches(fingerprint, duration);
+    const mbids = new Set<string>();
+    for (const result of results) {
+        for (const recordingId of result.recordingIds) {
+            if (recordingId) {
+                mbids.add(recordingId);
+            }
+        }
+    }
+
+    return Array.from(mbids);
 }
 
 export async function lookupMusicBrainzRecording(recordingId: string): Promise<MusicBrainzRecording | null> {
@@ -241,12 +315,7 @@ export async function lookupMusicBrainzRecording(recordingId: string): Promise<M
     const url = `https://musicbrainz.org/ws/2/recording/${encodeURIComponent(recordingId)}?fmt=json&inc=artist-credits+isrcs+releases`;
 
     try {
-        const response = await axios.get(url, {
-            timeout: 10000,
-            headers: getMusicBrainzHeaders(),
-        });
-
-        const data = response.data || {};
+        const data = await requestMusicBrainzJson<any>(url) || {};
         const artistCredits = mapMusicBrainzArtistCredits(data["artist-credit"]);
         const artists = artistCredits.map((credit) => credit.name);
         const releaseTitles = Array.isArray(data.releases)
@@ -288,12 +357,8 @@ export async function lookupMusicBrainzRecordingsByIsrc(isrc: string): Promise<M
     const url = `https://musicbrainz.org/ws/2/recording?fmt=json&limit=10&query=${encodeURIComponent(`isrc:${normalized}`)}`;
 
     try {
-        const response = await axios.get(url, {
-            timeout: 10000,
-            headers: getMusicBrainzHeaders(),
-        });
-
-        const recordings = Array.isArray(response.data?.recordings) ? response.data.recordings : [];
+        const data = await requestMusicBrainzJson<any>(url);
+        const recordings = Array.isArray(data?.recordings) ? data.recordings : [];
         return recordings.map((recording: any) => {
             const artistCredits = mapMusicBrainzArtistCredits(recording?.["artist-credit"]);
             const releaseTitles = Array.isArray(recording?.releases)
@@ -329,12 +394,8 @@ export async function lookupMusicBrainzReleasesByBarcode(barcode: string): Promi
     const url = `https://musicbrainz.org/ws/2/release?fmt=json&limit=10&query=${encodeURIComponent(`barcode:${normalized}`)}`;
 
     try {
-        const response = await axios.get(url, {
-            timeout: 10000,
-            headers: getMusicBrainzHeaders(),
-        });
-
-        const releases = Array.isArray(response.data?.releases) ? response.data.releases : [];
+        const data = await requestMusicBrainzJson<any>(url);
+        const releases = Array.isArray(data?.releases) ? data.releases : [];
         return releases.map((release: any) => ({
             id: String(release?.id || "").trim(),
             title: String(release?.title || "").trim(),
@@ -343,6 +404,8 @@ export async function lookupMusicBrainzReleasesByBarcode(barcode: string): Promi
             country: String(release?.country || "").trim() || null,
             status: String(release?.status || "").trim() || null,
             releaseGroupId: String(release?.["release-group"]?.id || "").trim() || null,
+            releaseGroupPrimaryType: getReleaseGroupPrimaryType(release),
+            releaseGroupSecondaryTypes: getReleaseGroupSecondaryTypes(release),
             artistCredits: mapMusicBrainzArtistCredits(release?.["artist-credit"]),
         })).filter((release: MusicBrainzRelease) => Boolean(release.id && release.title));
     } catch (error: any) {

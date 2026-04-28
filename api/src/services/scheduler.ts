@@ -209,7 +209,9 @@ export class Scheduler {
     private static startJob(job: Job) {
         // Mark as processing synchronously BEFORE launching async work,
         // so the next poll loop won't re-select this job from the DB.
-        TaskQueueService.markProcessing(job.id);
+        if (!TaskQueueService.markProcessing(job.id)) {
+            return;
+        }
         const promise = this.processJob(job).finally(() => {
             this.activeJobs.delete(job.id);
         });
@@ -703,7 +705,6 @@ export class Scheduler {
         }
     }
 }
-
 
 
 

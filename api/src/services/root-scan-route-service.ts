@@ -44,6 +44,7 @@ export function createRootScanRouteService(deps: RootScanRouteServiceDeps) {
             return deps.queueRootScanPass({
                 trigger: input.trigger ?? 1,
                 fullProcessing: input.fullProcessing === true,
+                addNewArtists: true,
                 monitorArtist: coerceOptionalBoolean(input.monitorArtist),
             });
         },

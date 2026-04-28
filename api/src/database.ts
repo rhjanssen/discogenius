@@ -535,7 +535,56 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       `);
     },
   },
+  {
+    version: 6,
+    description: "add MusicBrainz identity status and AcoustID import metadata",
+    up: () => {
+      ensureMetadataIdentitySchema();
+    },
+  },
 ];
+
+function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
+  if (!tableExists(tableName) || columnExists(tableName, columnName)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+}
+
+function ensureMetadataIdentitySchema(): void {
+  addColumnIfMissing("artists", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("artists", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("artists", "musicbrainz_match_method", "TEXT");
+
+  addColumnIfMissing("albums", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("albums", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("albums", "musicbrainz_match_method", "TEXT");
+
+  addColumnIfMissing("media", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("media", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("media", "musicbrainz_match_method", "TEXT");
+  addColumnIfMissing("media", "acoustid_id", "TEXT");
+  addColumnIfMissing("media", "acoustid_fingerprint", "TEXT");
+  addColumnIfMissing("media", "fingerprint_duration", "INT");
+
+  addColumnIfMissing("library_files", "acoustid_id", "TEXT");
+  addColumnIfMissing("library_files", "fingerprint_duration", "INT");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS metadata_identity_status (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL,
+      method TEXT,
+      message TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (entity_type, entity_id)
+    )
+  `);
+}
 
 type MigrationRunSummary = {
   fromVersion: number;
@@ -634,6 +683,9 @@ export function initDatabase() {
       user_date_added DATETIME,        -- When added to TIDAL favorites
       mbid TEXT,                       -- MusicBrainz ID
       path TEXT,                       -- Resolved library folder path (set at add/import time)
+      musicbrainz_status TEXT,         -- pending/verified/ambiguous/unmatched/error
+      musicbrainz_last_checked DATETIME,
+      musicbrainz_match_method TEXT,
       
       -- Biography
       bio_text TEXT,                   -- Full biography text
@@ -688,6 +740,9 @@ export function initDatabase() {
       mb_release_group_id TEXT,          -- MusicBrainz Release Group ID — cross-provider join key for the abstract
                                          -- album concept. NOTE: MB groups Standard + Deluxe editions into the same
                                          -- Release Group. Do NOT use this for dedup; use ISRC-set matching instead.
+      musicbrainz_status TEXT,           -- pending/verified/ambiguous/unmatched/error
+      musicbrainz_last_checked DATETIME,
+      musicbrainz_match_method TEXT,
       
       -- Categorization (for Plex compatibility)
       mb_primary TEXT,                  -- MusicBrainz primary release type: album/ep/single
@@ -751,6 +806,12 @@ export function initDatabase() {
       copyright TEXT,
       isrc TEXT,
       mbid TEXT,                        -- MusicBrainz ID
+      musicbrainz_status TEXT,          -- pending/verified/ambiguous/unmatched/error
+      musicbrainz_last_checked DATETIME,
+      musicbrainz_match_method TEXT,
+      acoustid_id TEXT,                 -- AcoustID result ID
+      acoustid_fingerprint TEXT,        -- Chromaprint fingerprint written/imported for this media
+      fingerprint_duration INT,         -- Duration returned by fpcalc
       
       -- Monitoring & Filtering
       monitor BOOLEAN DEFAULT 0,        -- whether to scan and download this track, and monitor it for changes
@@ -870,6 +931,8 @@ export function initDatabase() {
       original_filename TEXT,            -- Original filename before rename/import (Scene Name)
       release_group TEXT,                -- Release group extracted from original filename
       fingerprint TEXT,                  -- AcoustID/Chromaprint fingerprint for audio matching
+      acoustid_id TEXT,                  -- AcoustID result ID for imported audio
+      fingerprint_duration INT,          -- Duration returned by fpcalc
 
       
       -- Timestamps
@@ -886,6 +949,8 @@ export function initDatabase() {
   db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_insert`);
   db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_delete`);
   db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_update`);
+
+  ensureMetadataIdentitySchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (Local Files not mapped to TIDAL)
@@ -1147,6 +1212,8 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_popularity ON artists(popularity)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_last_scanned ON artists(last_scanned)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_user_date_added ON artists(user_date_added)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_musicbrainz_status ON artists(musicbrainz_status)`);
 
   // Album indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id)`);
@@ -1156,7 +1223,9 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_quality ON albums(quality)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_release_date ON albums(release_date)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mbid ON albums(mbid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mb_release_group ON albums(mb_release_group_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_musicbrainz_status ON albums(musicbrainz_status)`);
   db.exec(`DROP INDEX IF EXISTS idx_albums_downloaded`);
 
   // Album artists indexes
@@ -1172,6 +1241,9 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artist_id ON media(artist_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_album_id ON media(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_isrc ON media(isrc)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_mbid ON media(mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_acoustid_id ON media(acoustid_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_musicbrainz_status ON media(musicbrainz_status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor ON media(monitor)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor_lock ON media(monitor_lock)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_quality ON media(quality)`);
@@ -1206,7 +1278,10 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_quality ON library_files(quality)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_path ON library_files(file_path)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_fingerprint ON library_files(fingerprint)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_acoustid_id ON library_files(acoustid_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_media_id_file_type ON library_files(media_id, file_type)`);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 
   // Quality profiles indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_quality_profiles_name ON quality_profiles(name)`);

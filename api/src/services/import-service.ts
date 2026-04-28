@@ -507,11 +507,15 @@ export class ImportService {
                 );
 
                 const videoTemplate = path.join(artistFolder, namingConfig.video_file);
-                const expectedVideoRel = renderRelativePath(videoTemplate, {
-                    artistName,
-                    artistMbId: artistRow?.mbid || null,
-                    videoTitle: videoData.title || tidalVideo.title || "Unknown Video"
-                });
+	                const expectedVideoRel = renderRelativePath(videoTemplate, {
+	                    artistName,
+	                    artistMbId: artistRow?.mbid || null,
+	                    artistId,
+	                    videoTitle: videoData.title || tidalVideo.title || "Unknown Video",
+	                    trackId: videoId,
+	                    videoId,
+	                    quality: videoData.quality || tidalVideo.quality || "MP4_1080P",
+	                });
 
                 for (const file of candidate.group.files) {
                     const ext = file.extension;

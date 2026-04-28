@@ -203,7 +203,7 @@ export class RenameTrackFileService {
 
     const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM library_files
       WHERE id IN (${placeholders})
     `).all(...ids) as RenameLibraryFileRow[];

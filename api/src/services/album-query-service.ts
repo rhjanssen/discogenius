@@ -80,7 +80,7 @@ function getAlbumTrackRows(albumId: string): TrackRow[] {
 
 export class AlbumQueryService {
     private static async ensureAlbumRow(albumId: string): Promise<any | null> {
-        let album = queryAlbumRow(albumId);
+        const album = queryAlbumRow(albumId);
 
         if (album) {
             return album;

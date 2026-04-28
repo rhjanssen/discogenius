@@ -117,12 +117,15 @@ Validate toggle combinations for:
 3. save_album_cover
 4. save_lyrics
 5. save_video_thumbnail
+6. save_nfo
 
 Expected:
 - Embedded metadata follows setting state.
-- Sidecars are created only when enabled.
+- Sidecars are created only when enabled, including Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video `.nfo` files when `save_nfo` is enabled.
 - Disabled sidecars are pruned cleanly.
 - No duplicate sidecar buildup or orphan DB file rows.
+- NFO files include available MusicBrainz artist, album/release, release-group, and track IDs.
+- NFO generation falls back to local database metadata when TIDAL text/detail calls are unavailable.
 
 ### D. Core Product Flows
 
@@ -234,4 +237,3 @@ Use this to confirm replacements, pruning, and sidecar toggles match disk state.
 - [ ] Metadata toggle behavior matches disk and DB state
 - [ ] No orphan media or sidecar files remain after prune/replacement flows
 - [ ] Desktop and mobile UI feel consistent and production-ready
-

@@ -19,6 +19,7 @@ import historyRouter from "./routes/history.js";
 import libraryFilesRouter from "./routes/library-files.js";
 import libraryBulkRouter from "./routes/library-bulk.js";
 import logRouter from "./routes/log.js";
+import metadataRouter from "./routes/metadata.js";
 import monitoringRouter from "./routes/monitoring.js";
 import playbackRouter from "./routes/playback.js";
 import playlistsRouter from "./routes/playlists.js";
@@ -203,6 +204,7 @@ app.use("/api/command", authMiddleware, commandRouter);
 app.use("/api/system-task", authMiddleware, systemTaskRouter);
 app.use("/api/library-files", authMiddleware, libraryFilesRouter);
 app.use("/api/library-bulk", authMiddleware, libraryBulkRouter);
+app.use("/api/metadata", authMiddleware, metadataRouter);
 app.use("/api/monitoring", authMiddleware, monitoringRouter);
 app.use("/api/status", authMiddleware, statusRouter);
 app.use("/api/log", authMiddleware, logRouter);
@@ -212,11 +214,19 @@ app.use("/api/history", authMiddleware, historyRouter);
 app.use("/api/unmapped", authMiddleware, unmappedRouter);
 
 app.get("/health", (_, res) => {
-  res.json({
-    status: "healthy",
-    runtime: getRuntimeDiagnosticsSnapshot(),
+  const runtime = getRuntimeDiagnosticsSnapshot();
+  const preflight = collectHealthDiagnosticsSnapshot();
+  const status = startupHealthSnapshot.status === "unhealthy" || preflight.status === "unhealthy"
+    ? "unhealthy"
+    : startupHealthSnapshot.status === "degraded" || preflight.status === "degraded"
+      ? "degraded"
+      : "healthy";
+
+  res.status(status === "unhealthy" ? 503 : 200).json({
+    status,
+    runtime,
     startup: startupHealthSnapshot,
-    preflight: collectHealthDiagnosticsSnapshot(),
+    preflight,
   });
 });
 

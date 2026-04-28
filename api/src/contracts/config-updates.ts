@@ -59,9 +59,8 @@ const METADATA_UPDATE_KEYS = [
   "embed_video_thumbnail",
   "video_thumbnail_resolution",
   "save_lyrics",
-  "save_album_review",
+  "save_nfo",
   "embed_album_review",
-  "save_artist_bio",
   "enable_fingerprinting",
   "write_tidal_url",
   "mark_explicit",
@@ -234,4 +233,3 @@ export function parseMonitoringConfigUpdate(
 ): Partial<MonitoringConfigContract> {
   return parsePartialUpdate(value, current, MONITORING_UPDATE_KEYS, parseMonitoringConfigContract, "Monitoring config update");
 }
-

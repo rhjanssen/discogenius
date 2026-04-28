@@ -39,6 +39,9 @@ type NormalizedQueueDetailsFilters = {
   tidalIds: string[];
 };
 
+const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
+const QUEUE_HISTORY_STATUSES: Array<"completed" | "cancelled"> = ["completed", "cancelled"];
+
 function getOptionalString(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return String(value);
@@ -321,11 +324,11 @@ export class DownloadQueueQueryService {
   static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
     const total = TaskQueueService.countJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      ["pending", "processing"],
+      ACTIVE_QUEUE_STATUSES,
     );
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      ["pending", "processing"],
+      ACTIVE_QUEUE_STATUSES,
       params.limit,
       params.offset,
       { orderBy: "live_activity" },
@@ -348,11 +351,10 @@ export class DownloadQueueQueryService {
   }
 
   static getQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
-    const statuses: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
-    const total = TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_OR_IMPORT_JOB_TYPES, statuses);
+    const total = TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_OR_IMPORT_JOB_TYPES, QUEUE_HISTORY_STATUSES);
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      statuses,
+      QUEUE_HISTORY_STATUSES,
       params.limit,
       params.offset,
       { orderBy: "history" },
@@ -372,7 +374,7 @@ export class DownloadQueueQueryService {
     const queuePositionById = buildQueuePositionById();
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      ["pending", "processing"],
+      ACTIVE_QUEUE_STATUSES,
       5000,
       0,
       { orderBy: "queue_order" },
@@ -387,7 +389,7 @@ export class DownloadQueueQueryService {
     const queuePositionById = buildQueuePositionById();
     const jobs = TaskQueueService.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      ["pending", "processing"],
+      ACTIVE_QUEUE_STATUSES,
       5000,
       0,
       { orderBy: "queue_order" },

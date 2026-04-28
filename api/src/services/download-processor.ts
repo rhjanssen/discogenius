@@ -69,6 +69,13 @@ const IMMEDIATE_FLUSH_STATES = new Set<string>([
 /** Minimum interval between DB writes for a single job's progress (ms). */
 const PROGRESS_WRITE_INTERVAL_MS = 1_000;
 
+function formatQueueTimestamp(value: unknown): string {
+    if (!value) return "unknown";
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return "unknown";
+    return date.toISOString();
+}
+
 export class DownloadProcessor {
     private processing: boolean = false;
     private isPaused: boolean = false;
@@ -122,7 +129,10 @@ export class DownloadProcessor {
             cover: importPayload?.resolved?.cover ?? (job.payload as any)?.cover ?? null,
         };
 
-        TaskQueueService.markProcessing(job.id);
+        if (!TaskQueueService.markProcessing(job.id)) {
+            console.log(`[DOWNLOAD-PROCESSOR] Import job #${job.id} is no longer pending; skipping dispatch.`);
+            return;
+        }
         console.log(`[DOWNLOAD-PROCESSOR] Dispatching import job #${job.id}: ${type} ${tidalId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
 
         const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
@@ -583,7 +593,7 @@ export class DownloadProcessor {
                 // Log details of what we're recovering (for diagnostic purposes)
                 console.log(`[DOWNLOAD-PROCESSOR] Found ${stuckJobs.length} interrupted download job(s) from previous crash/restart:`);
                 stuckJobs.forEach(job => {
-                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${(() => { try { const parsed = typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload; return parsed?.title || "unknown"; } catch { return "unknown"; } })()}" (started ${new Date(job.started_at).toISOString()})`);
+                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${(() => { try { const parsed = typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload; return parsed?.title || "unknown"; } catch { return "unknown"; } })()}" (started ${formatQueueTimestamp(job.started_at)})`);
                 });
 
                 // Reset to pending state - will be picked up by next processQueue() call
@@ -686,7 +696,15 @@ export class DownloadProcessor {
 
         console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${tidalId})`);
 
-        TaskQueueService.markProcessing(job.id);
+        if (!TaskQueueService.markProcessing(job.id)) {
+            console.log(`[DOWNLOAD-PROCESSOR] Job #${job.id} is no longer pending; skipping dispatch.`);
+            this.processing = false;
+            this.currentJobId = undefined;
+            this.currentTidalId = undefined;
+            this.currentType = undefined;
+            this.scheduleNext();
+            return;
+        }
         let resolved = {
             title: payload?.title || 'Unknown',
             artist: payload?.artist || 'Unknown',

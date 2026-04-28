@@ -186,6 +186,7 @@ import { appEvents, AppEvent, JobEventPayload } from "./app-events.js";
 // most one JOB_UPDATED is emitted per job per second.
 const JOB_UPDATE_THROTTLE_MS = 1000;
 const jobUpdateBuffer = new Map<number, { payload: JobEventPayload; timer: ReturnType<typeof setTimeout> }>();
+const TERMINAL_JOB_STATUSES = new Set<JobStatus>(["completed", "failed", "cancelled"]);
 
 /**
  * Emit JOB_UPDATED for progress/description changes at most once per second
@@ -238,6 +239,41 @@ function safeParsePayload(raw: unknown, jobId?: number): QueuePayloadCommon {
         console.warn(`[Queue] Failed to parse payload for job ${jobId ?? 'unknown'}; using empty payload`, error);
         return {};
     }
+}
+
+function getDownloadContentType(type: string, payload: QueuePayloadCommon): string | null {
+    if (type === JobTypes.DownloadTrack) return "track";
+    if (type === JobTypes.DownloadVideo) return "video";
+    if (type === JobTypes.DownloadAlbum) return "album";
+    if (type === JobTypes.DownloadPlaylist) return "playlist";
+    if (type === JobTypes.ImportDownload) {
+        const payloadType = String((payload as Partial<ImportDownloadJobPayload>).type || "").trim();
+        return payloadType || null;
+    }
+    return null;
+}
+
+function findActiveImportForDownload(type: JobType, payload: QueuePayloadCommon, refId?: string): number | null {
+    if (!refId || !isDownloadJobType(type)) return null;
+
+    const incomingType = getDownloadContentType(type, payload);
+    if (!incomingType) return null;
+
+    const rows = db.prepare(`
+        SELECT id, payload
+        FROM job_queue
+        WHERE type = ? AND ref_id = ? AND status IN ('pending', 'processing')
+        ORDER BY created_at ASC, id ASC
+    `).all(JobTypes.ImportDownload, refId) as Array<{ id: number; payload: unknown }>;
+
+    for (const row of rows) {
+        const existingPayload = safeParsePayload(row.payload, row.id);
+        if (getDownloadContentType(JobTypes.ImportDownload, existingPayload) === incomingType) {
+            return row.id;
+        }
+    }
+
+    return null;
 }
 
 function normalizeRefreshArtistPayload(
@@ -474,10 +510,16 @@ export class TaskQueueService {
             }
         }
 
-        // Enforce uniqueness for active jobs if refId is provided
-        if (refId) {
-            if (type === JobTypes.RefreshArtist) {
-                const incomingPayload = normalizeRefreshArtistPayload(payload as RefreshArtistJobPayload);
+	        // Enforce uniqueness for active jobs if refId is provided
+	        if (refId) {
+	            const activeImportId = findActiveImportForDownload(type, payload as QueuePayloadCommon, refId);
+	            if (activeImportId !== null) {
+	                console.log(`[TaskQueue] Import for ${type} ${refId} is already pending or processing, skipping duplicate download.`);
+	                return activeImportId;
+	            }
+
+	            if (type === JobTypes.RefreshArtist) {
+	                const incomingPayload = normalizeRefreshArtistPayload(payload as RefreshArtistJobPayload);
                 const existingRefreshJobs = db.prepare(`
                     SELECT id, payload FROM job_queue
                     WHERE type = ? AND ref_id = ? AND status IN('pending', 'processing')
@@ -696,15 +738,22 @@ ${buildExecutionOrderClause()}
             .filter((job): job is Job => job !== null);
     }
 
-    static markProcessing(id: number) {
-        db.prepare("UPDATE job_queue SET status = 'processing', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    static markProcessing(id: number): boolean {
+        const result = db.prepare(`
+            UPDATE job_queue
+            SET status = 'processing', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'pending'
+        `).run(id);
+        if (result.changes === 0) return false;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'processing', progress: job.progress } as JobEventPayload);
+        return true;
     }
 
     static updateProgress(id: number, progress: number) {
-        db.prepare("UPDATE job_queue SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(progress, id);
+        const result = db.prepare("UPDATE job_queue SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(progress, id);
+        if (result.changes === 0) return;
         const job = this.getById(id);
         if (job) emitThrottledJobUpdate({ id, type: job.type, status: job.status, progress } as JobEventPayload);
     }
@@ -712,6 +761,7 @@ ${buildExecutionOrderClause()}
     static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<QueuePayloadCommon> }) {
         const current = this.getById(id);
         if (!current) return null;
+        if (TERMINAL_JOB_STATUSES.has(current.status)) return current;
 
         const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
         const params: unknown[] = [];
@@ -736,7 +786,7 @@ ${buildExecutionOrderClause()}
         }
 
         params.push(id);
-        db.prepare(`UPDATE job_queue SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+        db.prepare(`UPDATE job_queue SET ${updates.join(", ")} WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`).run(...params);
 
         const updated = this.getById(id);
         if (updated) {
@@ -753,18 +803,20 @@ ${buildExecutionOrderClause()}
     }
 
     static complete(id: number) {
-        db.prepare("UPDATE job_queue SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        const result = db.prepare("UPDATE job_queue SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(id);
+        if (result.changes === 0) return;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'completed', progress: 100 } as JobEventPayload);
     }
 
     static fail(id: number, error: string) {
-        db.prepare(`
+        const result = db.prepare(`
             UPDATE job_queue 
             SET status = 'failed', error = ?, attempts = attempts + 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = ?
+            WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
     `).run(error, id);
+        if (result.changes === 0) return;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'failed', progress: job.progress, error } as JobEventPayload);
@@ -801,9 +853,10 @@ ${buildExecutionOrderClause()}
         db.prepare(`
             UPDATE job_queue 
             SET status = 'pending', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                attempts = 0,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE id = ?
-    `).run(id);
+	    `).run(id);
         const job = this.getById(id);
         if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'pending', progress: 0 } as JobEventPayload);
     }

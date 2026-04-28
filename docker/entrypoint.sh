@@ -32,6 +32,22 @@ done
 
 : > "$probe"
 rm -f "$probe"
+
+for dir in /downloads /library; do
+  if [[ ! -d "$dir" ]]; then
+    echo "[ENTRYPOINT] Missing $dir mount." >&2
+    exit 1
+  fi
+
+  if [[ ! -w "$dir" ]]; then
+    echo "[ENTRYPOINT] $dir is not writable." >&2
+    exit 1
+  fi
+
+  probe="$dir/.discogenius-write-check.$$"
+  : > "$probe"
+  rm -f "$probe"
+done
 '
 
 umask 0002
@@ -58,24 +74,29 @@ prepare_writable_dirs() {
   ensure_dir /config
   ensure_dir /downloads
   ensure_dir /library
+  ensure_dir /library/music
+  ensure_dir /library/atmos
+  ensure_dir /library/videos
 
   # Clean up stale runtime dir from pre-1.2 installations (Orpheus is now baked into the image)
   if [[ -d /config/runtime ]]; then
     rm -rf /config/runtime
   fi
 
-  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /opt/orpheusdl; then
-    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, or /opt/orpheusdl." >&2
+  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /library /opt/orpheusdl; then
+    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, /library, or /opt/orpheusdl." >&2
   fi
 
-  if ! chmod -R u+rwX,g+rwX /config /downloads; then
-    echo "[ENTRYPOINT] Warning: failed to normalize mode bits for /config or /downloads." >&2
+  if ! chmod -R u+rwX,g+rwX /config /downloads /library; then
+    echo "[ENTRYPOINT] Warning: failed to normalize mode bits for /config, /downloads, or /library." >&2
   fi
 }
 
 print_config_diagnostics() {
   echo "[ENTRYPOINT] Runtime user: $(id -u):$(id -g)" >&2
   ls -ld /config >&2 || true
+  ls -ld /downloads >&2 || true
+  ls -ld /library >&2 || true
   ls -l /config/discogenius.db* >&2 || true
 }
 
@@ -90,7 +111,7 @@ verify_current_config_writable() {
 fail_with_config_help() {
   local mode="$1"
 
-  echo "[ENTRYPOINT] Discogenius requires a writable /config directory for SQLite, tokens, and runtime state." >&2
+  echo "[ENTRYPOINT] Discogenius requires writable /config, /downloads, and /library directories for SQLite, downloads, imports, and organized media." >&2
   if [[ "$mode" == "root-managed" ]]; then
     echo "[ENTRYPOINT] If you are using TrueNAS, leave Custom User unset when relying on PUID/PGID so the entrypoint can normalize ownership." >&2
   else

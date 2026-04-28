@@ -174,6 +174,13 @@ APPEARS_ON is relationship context and is not written to mb_secondary.
 
 When any mb_secondary is present, mb_primary is forced to album; otherwise primary falls back to release type (album/ep/single).
 
+MusicBrainz identifier enrichment is handled outside the curation decision itself:
+
+- artist refresh resolves `artists.mbid` and records status in `metadata_identity_status`
+- album refresh resolves `albums.mbid` and `albums.mb_release_group_id`, preferring UPC/barcode matches before text search
+- album-track identity uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available
+- import runs the identity phase before tagging, so embedded tags and NFO sidecars can include MusicBrainz and AcoustID values
+
 ### Supported vs intentionally omitted
 
 Supported in module determination today:
@@ -204,4 +211,3 @@ Intentionally omitted from module expansion for now due to inconsistent real-wor
 - Additional typed lifecycle events around file and curation state transitions.
 
 Track these architecture changes in docs/ARCHITECTURE_WORKPLAN.md.
-

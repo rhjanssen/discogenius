@@ -1,10 +1,48 @@
 import { defineConfig } from '@playwright/test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const e2ePort = process.env.E2E_PORT || '3737';
-const baseURL = process.env.BASE_URL || `http://127.0.0.1:${e2ePort}`;
-const shouldManageServer = !process.env.BASE_URL;
+const configuredBaseURL = process.env.BASE_URL;
+const baseURL = configuredBaseURL || `http://[::1]:${e2ePort}`;
+const shouldManageServer = !configuredBaseURL;
 const baseUrlObject = new URL(baseURL);
 const webServerPort = baseUrlObject.port || (baseUrlObject.protocol === 'https:' ? '443' : '80');
+
+if (!configuredBaseURL) {
+  process.env.BASE_URL = baseURL;
+}
+
+const runtimeRoot = shouldManageServer
+  ? fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-e2e-'))
+  : '';
+const runtimeConfigDir = runtimeRoot ? path.join(runtimeRoot, 'config') : '';
+const runtimeDownloadDir = runtimeRoot ? path.join(runtimeRoot, 'downloads') : '';
+const runtimeMusicDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'music') : '';
+const runtimeAtmosDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'atmos') : '';
+const runtimeVideoDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'videos') : '';
+
+if (shouldManageServer) {
+  for (const dir of [runtimeConfigDir, runtimeDownloadDir, runtimeMusicDir, runtimeAtmosDir, runtimeVideoDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  fs.writeFileSync(
+    path.join(runtimeConfigDir, 'config.toml'),
+    [
+      '[app]',
+      'admin_password = ""',
+      '',
+      '[path]',
+      `music_path = ${JSON.stringify(runtimeMusicDir)}`,
+      `atmos_path = ${JSON.stringify(runtimeAtmosDir)}`,
+      `video_path = ${JSON.stringify(runtimeVideoDir)}`,
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+}
 
 export default defineConfig({
   testDir: '.',
@@ -28,6 +66,10 @@ export default defineConfig({
       ...process.env,
       PORT: webServerPort,
       ADMIN_PASSWORD: '',
+      DISCOGENIUS_CONFIG_DIR: runtimeConfigDir,
+      DB_PATH: path.join(runtimeConfigDir, 'discogenius.e2e.db'),
+      DOWNLOAD_PATH: runtimeDownloadDir,
+      TIDAL_DL_NG_CONFIG: path.join(runtimeConfigDir, 'tidal_dl_ng-dev'),
       DISCOGENIUS_PROVIDER_AUTH_MODE: 'mock',
       DISCOGENIUS_PROVIDER_AUTH_USERNAME: 'discogenius-e2e',
       DISCOGENIUS_DISABLE_DOWNLOADS: '1',
@@ -36,5 +78,3 @@ export default defineConfig({
     },
   } : undefined,
 });
-
-
