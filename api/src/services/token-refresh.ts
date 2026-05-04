@@ -1,4 +1,4 @@
-import { refreshTidalToken, loadToken, shouldRefreshToken } from './tidal.js';
+import { refreshTidalToken, loadToken, shouldRefreshToken } from "./providers/tidal/tidal.js";
 
 // Check every 30 minutes (in milliseconds)
 export const TOKEN_CHECK_INTERVAL = 30 * 60 * 1000;

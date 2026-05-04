@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { db } from "../database.js";
-import { getPlaylist, getUserPlaylists } from "../services/tidal.js";
+import { getPlaylist, getUserPlaylists } from "../services/providers/tidal/tidal.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { queuePlaylistSyncByUuid, PlaylistSyncServiceError } from "../services/playlist-sync.js";
 

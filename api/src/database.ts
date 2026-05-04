@@ -542,6 +542,20 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       ensureMetadataIdentitySchema();
     },
   },
+  {
+    version: 7,
+    description: "add artist cover image and MusicBrainz provider mapping scaffold",
+    up: () => {
+      ensureMusicBrainzProviderSchema();
+    },
+  },
+  {
+    version: 8,
+    description: "add MusicBrainz release group library slot selections",
+    up: () => {
+      ensureMusicBrainzProviderSchema();
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -584,6 +598,165 @@ function ensureMetadataIdentitySchema(): void {
       PRIMARY KEY (entity_type, entity_id)
     )
   `);
+}
+
+function ensureMusicBrainzProviderSchema(): void {
+  addColumnIfMissing("artists", "cover_image_url", "TEXT");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mb_artists (
+      mbid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      sort_name TEXT,
+      disambiguation TEXT,
+      type TEXT,
+      country TEXT,
+      begin_date TEXT,
+      end_date TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mb_release_groups (
+      mbid TEXT PRIMARY KEY,
+      artist_mbid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      primary_type TEXT,
+      secondary_types TEXT,
+      first_release_date TEXT,
+      disambiguation TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS mb_releases (
+      mbid TEXT PRIMARY KEY,
+      release_group_mbid TEXT NOT NULL,
+      artist_mbid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT,
+      country TEXT,
+      date TEXT,
+      barcode TEXT,
+      disambiguation TEXT,
+      media_count INT,
+      track_count INT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(release_group_mbid) REFERENCES mb_release_groups(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS mb_mediums (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      release_mbid TEXT NOT NULL,
+      position INT NOT NULL,
+      format TEXT,
+      title TEXT,
+      track_count INT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(release_mbid, position),
+      FOREIGN KEY(release_mbid) REFERENCES mb_releases(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS mb_recordings (
+      mbid TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      artist_credit TEXT,
+      length_ms INT,
+      isrcs TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mb_tracks (
+      mbid TEXT PRIMARY KEY,
+      release_mbid TEXT NOT NULL,
+      recording_mbid TEXT NOT NULL,
+      medium_position INT NOT NULL,
+      position INT NOT NULL,
+      number TEXT,
+      title TEXT NOT NULL,
+      length_ms INT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(release_mbid, medium_position, position),
+      FOREIGN KEY(release_mbid) REFERENCES mb_releases(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(recording_mbid) REFERENCES mb_recordings(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_items (
+      provider TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      artist_mbid TEXT,
+      release_group_mbid TEXT,
+      release_mbid TEXT,
+      track_mbid TEXT,
+      recording_mbid TEXT,
+      title TEXT,
+      version TEXT,
+      explicit BOOLEAN,
+      quality TEXT,
+      upc TEXT,
+      isrc TEXT,
+      duration INT,
+      release_date TEXT,
+      availability TEXT,
+      library_slot TEXT,
+      match_status TEXT,
+      match_confidence REAL,
+      match_method TEXT,
+      match_evidence TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(provider, entity_type, provider_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS release_group_slots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artist_mbid TEXT NOT NULL,
+      release_group_mbid TEXT NOT NULL,
+      slot TEXT NOT NULL,
+      wanted BOOLEAN NOT NULL DEFAULT 1,
+      selected_provider TEXT,
+      selected_provider_id TEXT,
+      selected_release_mbid TEXT,
+      quality TEXT,
+      match_status TEXT,
+      match_confidence REAL,
+      match_method TEXT,
+      match_evidence TEXT,
+      provider_data TEXT,
+      checked_at DATETIME,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(release_group_mbid, slot),
+      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_mbid) REFERENCES mb_release_groups(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(selected_release_mbid) REFERENCES mb_releases(mbid) ON DELETE SET NULL
+    );
+  `);
+
+  addColumnIfMissing("provider_items", "library_slot", "TEXT");
+  addColumnIfMissing("provider_items", "match_status", "TEXT");
+  addColumnIfMissing("provider_items", "match_confidence", "REAL");
+  addColumnIfMissing("provider_items", "match_method", "TEXT");
+  addColumnIfMissing("provider_items", "match_evidence", "TEXT");
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist ON mb_release_groups(artist_mbid, first_release_date)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_group ON mb_releases(release_group_mbid, date)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_release_position ON mb_tracks(release_mbid, medium_position, position)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_artist ON provider_items(provider, artist_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release_group ON provider_items(provider, release_group_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release ON provider_items(provider, release_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording ON provider_items(provider, recording_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_upc ON provider_items(provider, upc)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON provider_items(provider, isrc)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON provider_items(provider, entity_type, match_status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist ON release_group_slots(artist_mbid, slot)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON release_group_slots(selected_provider, selected_provider_id)");
 }
 
 type MigrationRunSummary = {
@@ -677,6 +850,7 @@ export function initDatabase() {
       id INT PRIMARY KEY,              -- TIDAL artist id
       name TEXT NOT NULL,              -- Artist name
       picture TEXT,                    -- Artist picture UUID
+      cover_image_url TEXT,            -- Resolved artist image URL used by UI pages
       popularity INT,                  -- TIDAL popularity score
       artist_types TEXT,               -- JSON array: ["ARTIST", "CONTRIBUTOR", ...ETC]
       artist_roles TEXT,               -- JSON array: [{"categoryId": -1, "category": "Artist"}, {"categoryId": 2, "category": "Songwriter"}, ...ETC]
@@ -951,6 +1125,7 @@ export function initDatabase() {
   db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_update`);
 
   ensureMetadataIdentitySchema();
+  ensureMusicBrainzProviderSchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (Local Files not mapped to TIDAL)

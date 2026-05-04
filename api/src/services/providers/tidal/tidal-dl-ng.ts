@@ -3,13 +3,13 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { fileURLToPath } from "url";
-import { Config, REPO_ROOT } from "./config.js";
+import { Config, REPO_ROOT } from "../../config.js";
 import {
     checkCommandAvailability,
     checkWritablePath,
     rollupHealthStatus,
     type BackendCapabilitySnapshot,
-} from "../utils/health.js";
+} from "../../../utils/health.js";
 
 // tidal-dl-ng config location
 const IS_WINDOWS = process.platform === "win32";

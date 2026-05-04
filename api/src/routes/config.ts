@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getConfigSection, updateConfig, CONFIG_FILE, Config } from "../services/config.js";
-import { syncDiscogeniusSettings } from "../services/tidal-dl-ng.js";
+import { syncDiscogeniusSettings } from "../services/providers/tidal/tidal-dl-ng.js";
 import { syncOrpheusSettings } from "../services/orpheus.js";
 import { UpgraderService } from "../services/upgrader.js";
 import { getAppReleaseInfo } from "../services/app-release.js";

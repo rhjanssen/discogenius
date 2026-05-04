@@ -1,12 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { CONFIG_DIR, updateConfig } from "./config.js";
+import { CONFIG_DIR, updateConfig } from "../../config.js";
 import {
     clearTidalDlNgToken,
     syncTokenToTidalDlNg,
 } from "./tidal-dl-ng.js";
-import { clearOrpheusSession, syncTokenToOrpheusSession } from "./orpheus.js";
-import { resolveTidalAuthClientConfig } from "./provider-client-config.js";
+import { clearOrpheusSession, syncTokenToOrpheusSession } from "../../orpheus.js";
+import { resolveTidalAuthClientConfig } from "../../provider-client-config.js";
 
 const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
 const TIDAL_AUTH_TOKEN_FILE = path.join(TIDAL_AUTH_DIR, "token.json");

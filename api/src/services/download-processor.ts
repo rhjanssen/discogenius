@@ -9,7 +9,7 @@ import {
     initializeSettings as initializeTidalDlNgSettings,
     clearHistory,
     syncDiscogeniusSettings,
-} from './tidal-dl-ng.js';
+} from "./providers/tidal/tidal-dl-ng.js";
 import { downloadEvents } from './download-events.js';
 import { updateAlbumDownloadStatus } from './download-state.js';
 import { readIntEnv } from '../utils/env.js';
@@ -29,7 +29,7 @@ import {
 } from './orpheus.js';
 import { MediaSeedService } from './media-seed-service.js';
 import { RefreshAlbumService } from "./refresh-album-service.js";
-import { loadStoredTidalToken } from './tidal-auth.js';
+import { loadStoredTidalToken } from "./providers/tidal/tidal-auth.js";
 import type {
     DownloadAlbumJobPayload,
     DownloadMediaType,

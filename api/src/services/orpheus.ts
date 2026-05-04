@@ -3,7 +3,7 @@ import path from "path";
 import { spawn, ChildProcess } from "child_process";
 import { CONFIG_DIR, REPO_ROOT } from "./config.js";
 import { Config } from "./config.js";
-import type { TidalAuthToken } from "./tidal-auth.js";
+import type { TidalAuthToken } from "./providers/tidal/tidal-auth.js";
 import { resolveOrpheusTidalModuleConfig } from "./provider-client-config.js";
 import {
     checkCommandAvailability,

@@ -1,6 +1,6 @@
 import levenshtein from "fast-levenshtein";
 import munkres from "munkres-js";
-import { getAlbumTracks } from "./tidal.js";
+import { getAlbumTracks } from "./providers/tidal/tidal.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 
 export interface IdentifiableFile {

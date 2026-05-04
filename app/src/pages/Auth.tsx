@@ -11,10 +11,12 @@ import {
   Body1,
   Link,
   makeStyles,
+  mergeClasses,
   tokens,
   shorthands,
 } from "@fluentui/react-components";
 import {
+  ArrowRight24Regular,
   Door24Regular,
   Open24Regular,
   WeatherMoon24Regular,
@@ -28,6 +30,11 @@ import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
 const logo = "/assets/images/logo.png";
 const tidalIcon = "/assets/images/tidal_icon.svg";
+const appleIcon = "/assets/images/apple_icon.svg";
+const amazonIcon = "/assets/images/amazon_icon.svg";
+const spotifyIcon = "/assets/images/spotify_icon.svg";
+const youtubeIcon = "/assets/images/youtube_icon.svg";
+const deezerIcon = "/assets/images/deezer_icon.svg";
 
 const useStyles = makeStyles({
   container: {
@@ -50,7 +57,7 @@ const useStyles = makeStyles({
   },
   card: {
     width: '100%',
-    maxWidth: '500px',
+    maxWidth: '900px',
     paddingTop: tokens.spacingVerticalXXL,
     paddingRight: tokens.spacingVerticalXXL,
     paddingBottom: tokens.spacingVerticalXXL,
@@ -116,6 +123,26 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalL,
+    '@media (min-width: 900px)': {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: tokens.spacingHorizontalXXL,
+    },
+  },
+  leftColumn: {
+    flex: '1',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    textAlign: 'center',
+  },
+  rightColumn: {
+    flex: '1',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
   },
   infoBox: {
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
@@ -148,6 +175,73 @@ const useStyles = makeStyles({
     height: '20px',
     borderRadius: tokens.borderRadiusSmall,
     objectFit: 'cover',
+  },
+  providerButtonList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    width: 'min(100%, 360px)',
+    alignSelf: 'center',
+  },
+  providerButtonContent: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalM,
+    width: '100%',
+  },
+  providerButtonText: {
+    flexGrow: 1,
+    textAlign: 'left',
+  },
+  providerIcon: {
+    width: '24px',
+    height: '24px',
+    objectFit: 'contain',
+  },
+  tidalButton: {
+    backgroundColor: '#000000',
+    color: '#ffffff',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { backgroundColor: '#1a1a1a', color: '#ffffff' },
+  },
+  appleButton: {
+    background: 'linear-gradient(135deg, #fa233b 0%, #fb5c74 42%, #a855f7 100%)',
+    color: '#ffffff',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { filter: 'brightness(1.1)', color: '#ffffff' },
+  },
+  amazonButton: {
+    backgroundColor: '#00a8e1',
+    color: '#031d2a',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { backgroundColor: '#00baf7', color: '#031d2a' },
+  },
+  spotifyButton: {
+    backgroundColor: '#1db954',
+    color: '#07140b',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { backgroundColor: '#1ed760', color: '#07140b' },
+  },
+  youtubeButton: {
+    backgroundColor: '#ff0033',
+    color: '#ffffff',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { backgroundColor: '#ff335c', color: '#ffffff' },
+  },
+  deezerButton: {
+    backgroundColor: '#ef5466',
+    color: '#ffffff',
+    border: 'none',
+    boxShadow: tokens.shadow4,
+    '&:hover': { backgroundColor: '#ff6b7d', color: '#ffffff' },
+  },
+  skipButton: {
+    alignSelf: 'center',
   },
 });
 
@@ -516,6 +610,22 @@ const Auth = () => {
     }
   };
 
+  const providerButtons = [
+    {
+      key: "tidal",
+      name: "TIDAL",
+      className: styles.tidalButton,
+      enabled: true,
+      logoUrl: tidalIcon,
+      onClick: connectTidal,
+    },
+    { key: "apple", name: "Apple Music", className: styles.appleButton, enabled: false, logoUrl: appleIcon },
+    { key: "amazon", name: "Amazon Music", className: styles.amazonButton, enabled: false, logoUrl: amazonIcon },
+    { key: "spotify", name: "Spotify", className: styles.spotifyButton, enabled: false, logoUrl: spotifyIcon },
+    { key: "youtube", name: "YouTube Music", className: styles.youtubeButton, enabled: false, logoUrl: youtubeIcon },
+    { key: "deezer", name: "Deezer", className: styles.deezerButton, enabled: false, logoUrl: deezerIcon },
+  ];
+
   return (
     <>
       <UltraBlurBackground colors={colors} />
@@ -585,27 +695,51 @@ const Auth = () => {
 
           {!connecting && !userCode && !authStatus?.authBypassed && !refreshing && (
             <div className={styles.content}>
-              <div className={styles.header}>
-                <div className={styles.logoContainer}>
-                  {/* Dynamic glow using blurred copy of logo */}
-                  <img src={logo} alt="" role="presentation" className={styles.logoGlow} />
-                  <img src={logo} alt="Discogenius" className={styles.logo} />
+              <div className={styles.leftColumn}>
+                <div className={styles.header}>
+                  <div className={styles.logoContainer}>
+                    {/* Dynamic glow using blurred copy of logo */}
+                    <img src={logo} alt="" role="presentation" className={styles.logoGlow} />
+                    <img src={logo} alt="Discogenius" className={styles.logo} />
+                  </div>
+                  <Title2>Welcome to Discogenius</Title2>
+                  <Body1 style={{ textAlign: "center", marginTop: tokens.spacingVerticalM, color: tokens.colorNeutralForeground2 }}>
+                    Connect TIDAL for availability, previews, followed artists, and downloads. You can also skip this and add artists from MusicBrainz first.
+                  </Body1>
                 </div>
-                <Title2>Welcome to Discogenius</Title2>
-                <Body1 style={{ textAlign: "center", marginTop: tokens.spacingVerticalM, color: tokens.colorNeutralForeground2 }}>
-                  Connect your TIDAL account to start downloading and managing your library.
-                </Body1>
               </div>
 
-              <Button
-                appearance="primary"
-                icon={<img src={tidalIcon} alt="Tidal" className={styles.tidalIcon} />}
-                onClick={connectTidal}
-                size="large"
-                style={{ width: '100%' }}
-              >
-                Connect with TIDAL
-              </Button>
+              <div className={styles.rightColumn}>
+                <div className={styles.providerButtonList} data-test="dsp-button-list">
+                  {providerButtons.map((providerButton) => (
+                    <Button
+                      key={providerButton.key}
+                      appearance="primary"
+                      disabled={!providerButton.enabled}
+                      onClick={providerButton.enabled ? providerButton.onClick : undefined}
+                      className={providerButton.className}
+                      size="large"
+                      icon={<img src={providerButton.logoUrl} alt="" className={styles.providerIcon} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+                      iconPosition="before"
+                      style={{ height: '56px', width: '100%', justifyContent: 'flex-start' }}
+                    >
+                      <div className={styles.providerButtonContent}>
+                        <span className={styles.providerButtonText}>{providerButton.name}</span>
+                        {providerButton.enabled ? <ArrowRight24Regular /> : <Text size={200}>Soon</Text>}
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+                <Button
+                  appearance="subtle"
+                  onClick={navigateAfterAuth}
+                  size="large"
+                  className={styles.skipButton}
+                  style={{ marginTop: tokens.spacingVerticalL }}
+                >
+                  Skip for now
+                </Button>
+              </div>
             </div>
           )}
 

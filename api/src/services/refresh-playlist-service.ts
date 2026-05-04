@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { getPlaylist, getPlaylistTracks } from "./tidal.js";
+import { getPlaylist, getPlaylistTracks } from "./providers/tidal/tidal.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 
 type PlaylistTrackValidationState = "valid" | "empty" | "partial" | "malformed";

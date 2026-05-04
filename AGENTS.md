@@ -3,9 +3,10 @@
 This file defines coding-agent expectations for Discogenius.
 
 ## Project Scope
-- Discogenius is a self-hosted TIDAL library manager inspired by Lidarr.
+- Discogenius is a self-hosted MusicBrainz/Lidarr-style library manager with provider-backed streaming and download integrations.
 - Monorepo layout: `api/` (Express + TypeScript), `app/` (React + Vite), `e2e/` (Playwright TypeScript).
 - Keep architecture aligned with Lidarr workflow boundaries and Tidarr-style pragmatic downloader integration.
+- Treat MusicBrainz/Lidarr metadata as canonical library identity; providers such as TIDAL supply availability, preview, lyrics, and download resources.
 
 ## Instruction Sources
 - Repository-wide guidance: `.github/copilot-instructions.md`.
@@ -17,6 +18,7 @@ This file defines coding-agent expectations for Discogenius.
 - Use Yarn only.
 - Backend DB access must use synchronous `better-sqlite3`.
 - Music downloads must use Orpheus; video downloads must use tidal-dl-ng.
+- Do not add new direct TIDAL catalog calls outside provider implementations; route provider catalog/search/preview work through the provider layer.
 - Keep routes thin; put durable workflow logic in services/repositories.
 - Queue long-running work; do not run maintenance-heavy work inline in routes.
 

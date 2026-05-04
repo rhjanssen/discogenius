@@ -15,7 +15,7 @@ import {
 export class ManualImportService {
     async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
         const { db } = await import("../database.js");
-        const { getTrack, getArtist, getVideo } = await import("./tidal.js");
+        const { getTrack, getArtist, getVideo } = await import("./providers/tidal/tidal.js");
         const { RefreshAlbumService } = await import("./refresh-album-service.js");
         const { Config } = await import("./config.js");
         const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("./naming.js");
@@ -79,7 +79,7 @@ export class ManualImportService {
                     } catch (e: any) {
                         console.warn(`[Bulk Import] getTrack(${item.tidalId}) failed: ${e.message}. Trying getAlbumTracks...`);
                         try {
-                            const { getAlbumTracks } = await import("./tidal.js");
+                            const { getAlbumTracks } = await import("./providers/tidal/tidal.js");
                             const tracks = await getAlbumTracks(item.tidalId);
 
                             let bestTrack = tracks.length > 0 ? tracks[0] : null;

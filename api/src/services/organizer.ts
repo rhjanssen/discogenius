@@ -5,7 +5,7 @@ import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
-import { getArtist, getTrack, getVideo } from "./tidal.js";
+import { getArtist, getTrack, getVideo } from "./providers/tidal/tidal.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
 import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";

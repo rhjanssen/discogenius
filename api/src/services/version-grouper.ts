@@ -1,8 +1,7 @@
 /**
  * Version Grouper Service
  * 
- * Groups related album versions together using Tidal's "Other Versions" API.
- * Uses 2-level recursive traversal and Union-Find algorithm to find all connected versions.
+ * Groups related album versions together using local provider catalog rows.
  * 
  * Example: "Give Me The Future + Dreams of the Past" has 6 versions:
  * - 3 clean (LOSSLESS, HIRES, ATMOS)
@@ -14,9 +13,7 @@
  */
 
 import { db } from '../database.js';
-import { getAlbumOtherVersions, getAlbum } from './tidal.js';
 import * as crypto from 'crypto';
-import pLimit from 'p-limit';
 
 /**
  * Union-Find data structure for efficiently grouping connected albums
@@ -78,13 +75,9 @@ interface VersionGroup {
 
 export class VersionGrouper {
     /**
-     * Build version groups for all albums of an artist using 2-level Other Versions traversal.
-     * 
-     * Algorithm:
-     * 1. For each album, fetch "Other Versions" (level 1)
-     * 2. For each other version, fetch THEIR "Other Versions" (level 2)
-     * 3. Use Union-Find to merge all connected albums into groups
-     * 4. Generate unique group ID using hash of sorted album IDs
+     * Build version groups for all albums of an artist from the local provider
+     * catalog snapshot. Artist refresh must stay cheap; it should not fan out
+     * into one provider "other versions" request per album.
      */
     static async buildVersionGroups(artistId: string): Promise<VersionGroup[]> {
         console.log(`[VERSION-GROUPER] Building version groups for artist ${artistId}...`);
@@ -106,46 +99,7 @@ export class VersionGrouper {
         }
 
         const uf = new UnionFind();
-        const visited = new Set<string>();
-        let apiCalls = 0;
-
-        // Level 1: Fetch other versions for each album
-        for (const albumId of artistAlbumIds) {
-            if (visited.has(albumId)) continue;
-            visited.add(albumId);
-
-            try {
-                const otherVersions = await getAlbumOtherVersions(albumId);
-                apiCalls++;
-
-                for (const otherId of otherVersions) {
-                    if (!otherId) continue;
-                    // Union this album with its other version
-                    uf.union(albumId, otherId);
-
-                    // Level 2: Fetch other versions of other versions (if not visited)
-                    if (!visited.has(otherId)) {
-                        visited.add(otherId);
-                        try {
-                            const level2Versions = await getAlbumOtherVersions(otherId);
-                            apiCalls++;
-                            for (const level2Id of level2Versions) {
-                                if (!level2Id) continue;
-                                uf.union(albumId, level2Id);
-                            }
-                        } catch {
-                            // Best effort - continue on error
-                        }
-                    }
-                }
-            } catch {
-                // Best effort - continue on error
-            }
-        }
-
-        console.log(`[VERSION-GROUPER] Made ${apiCalls} API calls for version traversal`);
-
-        // Fallback Grouping by Title (exact match)
+        // Grouping by title (exact match after provider normalization).
         // This catches cases where Tidal's "Other Versions" API misses links (e.g. "MTV Unplugged" Atmos vs HiRes)
         const titleToGroup = new Map<string, string>();
 

@@ -7,7 +7,7 @@ import { ImportDecisionEngine } from "./import-decision/engine.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 import type { LocalFile, LocalGroup, TidalMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
-import { getAlbum, searchTidal } from "./tidal.js";
+import { getAlbum, searchTidal } from "./providers/tidal/tidal.js";
 
 const unmappedFileRepository = new UnmappedFileRepository(db);
 

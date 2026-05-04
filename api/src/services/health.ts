@@ -14,7 +14,7 @@ import {
   getTidalDlNgCapabilitySnapshot,
   TIDAL_DL_NG_CONFIG_DIR,
   getTidalDlNgCommand,
-} from "./tidal-dl-ng.js";
+} from "./providers/tidal/tidal-dl-ng.js";
 
 export interface HealthDiagnosticsSnapshot {
   checkedAt: string;

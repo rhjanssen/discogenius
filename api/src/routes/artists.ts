@@ -379,10 +379,11 @@ router.post("/:artistId/redundancy", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const artistId = getRequiredIdentifier(body, "id");
+    const artistId = getOptionalString(body, "mbid") ?? getRequiredIdentifier(body, "id");
+    rejectUnknownKeys(body, ["id", "mbid"], "Artist add");
 
     // Ensure basic artist metadata exists and mark as monitored, then queue full scan.
-    const { jobId } = await monitorArtistAndQueueIntake({
+    const { artist, jobId } = await monitorArtistAndQueueIntake({
       artistId,
       priority: 1,
       trigger: 1,
@@ -390,7 +391,7 @@ router.post("/", async (req, res) => {
 
     res.json({
       success: true,
-      id: artistId,
+      id: artist?.id != null ? String(artist.id) : artistId,
       queued: jobId !== -1,
       message: "Artist added to library (monitoring enabled, scan queued)"
     });

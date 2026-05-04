@@ -1,5 +1,6 @@
 import { db } from "../database.js";
-import { getArtist, getArtistPage } from "./tidal.js";
+import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { getArtist, getArtistPage } from "./providers/tidal/tidal.js";
 import {
     getAlbumDownloadStats,
     getAlbumDownloadStatsMap,
@@ -111,6 +112,53 @@ function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId:
     });
 }
 
+function parseJsonStringArray(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+    }
+
+    try {
+        const parsed = JSON.parse(String(value || "[]"));
+        return Array.isArray(parsed)
+            ? parsed.map((entry) => String(entry || "").trim()).filter(Boolean)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function normalizeReleaseGroupPrimaryType(value: unknown): string {
+    const normalized = String(value || "Album").trim().toUpperCase();
+    if (normalized === "EP") return "EP";
+    if (normalized === "SINGLE") return "SINGLE";
+    return "ALBUM";
+}
+
+function releaseGroupBucket(row: any): keyof typeof RELEASE_GROUP_BUCKETS {
+    const secondaryTypes = parseJsonStringArray(row.secondary_types).map((type) => type.toLowerCase());
+    if (secondaryTypes.includes("live")) return "LIVE";
+    if (secondaryTypes.includes("compilation")) return "COMPILATION";
+    if (secondaryTypes.includes("soundtrack")) return "SOUNDTRACK";
+    if (secondaryTypes.includes("remix")) return "REMIX";
+    if (secondaryTypes.includes("demo")) return "DEMO";
+
+    const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
+    if (primaryType === "EP") return "EP";
+    if (primaryType === "SINGLE") return "SINGLE";
+    return "ALBUM";
+}
+
+const RELEASE_GROUP_BUCKETS = {
+    ALBUM: "ARTIST_ALBUMS",
+    EP: "ARTIST_EPS",
+    SINGLE: "ARTIST_SINGLES",
+    LIVE: "ARTIST_LIVE_ALBUMS",
+    COMPILATION: "ARTIST_COMPILATIONS",
+    SOUNDTRACK: "ARTIST_SOUNDTRACKS",
+    DEMO: "ARTIST_DEMOS",
+    REMIX: "ARTIST_REMIXES",
+} as const;
+
 export class ArtistQueryService {
     static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
@@ -169,8 +217,22 @@ export class ArtistQueryService {
         const artists = db.prepare(query).all(...params) as any[];
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
         const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
+        const artistMbids = artists.map((artist) => String(artist.mbid || "")).filter(Boolean);
         const albumCountsByArtistId = buildArtistCountMap("albums", artistIds);
         const trackCountsByArtistId = buildArtistCountMap("media", artistIds, { excludeMusicVideos: true });
+        const releaseGroupCountsByMbid = new Map<string, number>();
+        if (artistMbids.length > 0) {
+            const placeholders = artistMbids.map(() => "?").join(",");
+            const rows = db.prepare(`
+                SELECT artist_mbid, COUNT(*) AS cnt
+                FROM mb_release_groups
+                WHERE artist_mbid IN (${placeholders})
+                GROUP BY artist_mbid
+            `).all(...artistMbids) as Array<{ artist_mbid: string; cnt: number }>;
+            for (const row of rows) {
+                releaseGroupCountsByMbid.set(String(row.artist_mbid), Number(row.cnt || 0));
+            }
+        }
         const artistDownloadStats = includeDownloadStats
             ? getArtistDownloadStatsMap(artistIds)
             : null;
@@ -183,7 +245,10 @@ export class ArtistQueryService {
 
                 return {
                     ...artist,
-                    album_count: Number(albumCounts?.cnt || 0),
+                    album_count: Math.max(
+                        Number(albumCounts?.cnt || 0),
+                        artist.mbid ? Number(releaseGroupCountsByMbid.get(String(artist.mbid)) || 0) : 0,
+                    ),
                     monitored_album_count: Number(albumCounts?.monitored_cnt || 0),
                     track_count: Number(trackCounts?.cnt || 0),
                     monitored_track_count: Number(trackCounts?.monitored_cnt || 0),
@@ -429,6 +494,36 @@ export class ArtistQueryService {
     `).all(artistId) as any[];
 
         const videos = db.prepare("SELECT * FROM media WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
+        const musicBrainzReleaseGroups = artist.mbid
+            ? db.prepare(`
+        SELECT
+          rg.*,
+          COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+          COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+          COALESCE(stereo.wanted, spatial.wanted, ?) AS wanted,
+          selected_album.cover AS selected_cover,
+          selected_album.explicit AS selected_explicit,
+          rg.data
+        FROM mb_release_groups rg
+        LEFT JOIN release_group_slots stereo
+          ON stereo.release_group_mbid = rg.mbid
+         AND stereo.slot = 'stereo'
+        LEFT JOIN release_group_slots spatial
+          ON spatial.release_group_mbid = rg.mbid
+         AND spatial.slot = 'spatial'
+        LEFT JOIN albums selected_album
+          ON selected_album.id = COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)
+        WHERE rg.artist_mbid = ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM albums a
+            JOIN album_artists aa ON aa.album_id = a.id
+            WHERE aa.artist_id = ?
+              AND a.mb_release_group_id = rg.mbid
+          )
+        ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+      `).all(artist.effective_monitor ? 1 : 0, artist.mbid, artistId) as any[]
+            : [];
 
         let similarArtists: any[] = [];
         try {
@@ -494,7 +589,7 @@ export class ArtistQueryService {
 
             return {
                 ...album,
-                cover_id: album.cover || null,
+                cover_id: album.cover || (album.mb_release_group_id ? `https://coverartarchive.org/release-group/${album.mb_release_group_id}/front-500` : null),
                 monitor_locked: Boolean(album.monitor_lock),
                 redundant_of: album.redundant || null,
                 type: album.relationship_type === "APPEARS_ON" ? "APPEARS_ON" : album.type,
@@ -562,6 +657,53 @@ export class ArtistQueryService {
                 modules.ARTIST_ALBUMS.push(album);
             }
         });
+
+        const releaseGroupCards = musicBrainzReleaseGroups.map((row) => {
+            const bucketKey = releaseGroupBucket(row);
+            const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
+            const monitored = Boolean(row.wanted ?? artist.effective_monitor);
+            
+            let lidarrCover: string | null = null;
+            try {
+                if (row.data) {
+                    const albumData = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+                    lidarrCover = lidarrMetadataService.getAlbumImageUrl(albumData);
+                }
+            } catch {
+                // ignore
+            }
+
+            const coverUrl = lidarrCover || row.selected_cover || (row.mbid ? `https://coverartarchive.org/release-group/${row.mbid}/front-500` : null);
+
+            return {
+                id: String(row.mbid),
+                title: row.title,
+                cover: coverUrl,
+                cover_id: coverUrl,
+                release_date: row.first_release_date || null,
+                type: primaryType,
+                album_type: primaryType,
+                explicit: Boolean(row.selected_explicit),
+                quality: row.selected_quality || null,
+                artist_id: String(artist.id),
+                artist_name: String(artist.name || "Unknown Artist"),
+                mb_release_group_id: String(row.mbid),
+                monitor: monitored ? 1 : 0,
+                is_monitored: monitored,
+                downloaded: 0,
+                is_downloaded: false,
+                monitor_lock: 0,
+                monitor_locked: false,
+                module: bucketKey,
+                group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
+                source: "musicbrainz",
+            };
+        });
+
+        for (const releaseGroup of releaseGroupCards) {
+            const bucket = RELEASE_GROUP_BUCKETS[releaseGroup.module as keyof typeof RELEASE_GROUP_BUCKETS] || "ARTIST_ALBUMS";
+            modules[bucket].push(releaseGroup);
+        }
 
         const hydratedTopTracks = hydrateTrackRows(topTracks).map((track, index) => {
             const sourceTrack = topTracks[index];
@@ -654,8 +796,11 @@ export class ArtistQueryService {
             },
             rows,
             needs_scan: !artist.last_scanned || needsEnrichment,
-            album_count: transformedAlbums.length,
-            monitored_album_count: transformedAlbums.filter((album) => album.is_monitored).length,
+            album_count: transformedAlbums.length + releaseGroupCards.length,
+            monitored_album_count: [
+                ...transformedAlbums,
+                ...releaseGroupCards,
+            ].filter((album) => album.is_monitored).length,
         };
     }
 }

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { getAlbum, getVideo } from "./tidal.js";
+import { getAlbum, getVideo } from "./providers/tidal/tidal.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import { Config } from "./config.js";
 import {

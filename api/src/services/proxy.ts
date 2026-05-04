@@ -1,7 +1,7 @@
 import apicache from "apicache";
 import { Express } from "express";
 import proxy from "express-http-proxy";
-import { loadToken } from "./tidal.js";
+import { loadToken } from "./providers/tidal/tidal.js";
 
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const cache = apicache.middleware;

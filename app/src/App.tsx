@@ -57,7 +57,7 @@ const App = () => {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <FluentThemeProvider defaultTheme="dark" storageKey="discogenius-theme">
+        <FluentThemeProvider defaultTheme="system" storageKey="discogenius-theme">
           <AppAuthProvider>
             <UltraBlurProvider>
               <QueueStatusProvider>

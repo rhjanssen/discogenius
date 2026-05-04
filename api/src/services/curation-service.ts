@@ -507,6 +507,138 @@ export class CurationService {
             return `${base} (${v})`;
         };
 
+        const shouldIncludeReleaseGroup = (row: {
+            slot?: string | null;
+            primary_type?: string | null;
+            secondary_types?: string | null;
+            album_type?: string | null;
+        }): boolean => {
+            if (String(row.slot || "").toLowerCase() === "spatial" && filteringConfig.include_atmos !== true) {
+                return false;
+            }
+
+            let secondaryTypes: string[] = [];
+            try {
+                const parsed = JSON.parse(String(row.secondary_types || "[]"));
+                secondaryTypes = Array.isArray(parsed) ? parsed.map((type) => String(type).toLowerCase()) : [];
+            } catch {
+                secondaryTypes = [];
+            }
+
+            if (secondaryTypes.includes("compilation")) return filteringConfig.include_compilation !== false;
+            if (secondaryTypes.includes("soundtrack")) return filteringConfig.include_soundtrack !== false;
+            if (secondaryTypes.includes("live")) return filteringConfig.include_live !== false;
+            if (secondaryTypes.includes("remix") || secondaryTypes.includes("dj-mix")) return filteringConfig.include_remix !== false;
+
+            const primary = String(row.primary_type || row.album_type || "album").trim().toLowerCase();
+            if (primary === "single") return filteringConfig.include_single !== false;
+            if (primary === "ep") return filteringConfig.include_ep !== false;
+            return filteringConfig.include_album !== false;
+        };
+
+        let albumJobs = 0;
+        let trackJobs = 0;
+        let videoJobs = 0;
+        const albumQueuedAsAlbum = new Set<string>();
+
+        const queueAlbumDownload = (album: {
+            id: string | number;
+            title: string;
+            version?: string | null;
+            cover?: string | null;
+            quality?: string | null;
+            artist_name?: string | null;
+        }, artistNames: string[] = []): boolean => {
+            const albumId = String(album.id);
+            if (!albumId || albumQueuedAsAlbum.has(albumId) || hasActiveAlbumWork(albumId)) {
+                return false;
+            }
+
+            const albumTitleFull = formatAlbumTitle(album.title, album.version);
+            const artistName = album.artist_name || artistNames[0] || 'Unknown';
+            TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+                url: `https://listen.tidal.com/album/${albumId}`,
+                type: 'album',
+                tidalId: albumId,
+                title: albumTitleFull,
+                artist: artistName,
+                cover: album.cover || null,
+                quality: album.quality || null,
+                artists: artistNames,
+                description: `${albumTitleFull} by ${artistName}`,
+            }, albumId);
+            albumQueuedAsAlbum.add(albumId);
+            albumJobs++;
+            return true;
+        };
+
+        // Prefer selected MusicBrainz release-group slots when they exist. This is the
+        // Discogenius extension of Lidarr's "monitored release group + selected release"
+        // model: each slot resolves to a provider album ID that can be downloaded.
+        const slotParams: any[] = [];
+        let slotArtistWhere = "COALESCE(monitored_artist.monitor, 0) = 1";
+        if (artistId) {
+            slotArtistWhere = "monitored_artist.id = ?";
+            slotParams.push(artistId);
+        }
+
+        const selectedSlots = db.prepare(`
+            SELECT
+                rgs.slot,
+                rgs.selected_provider_id,
+                rg.primary_type,
+                rg.secondary_types,
+                a.id,
+                a.title,
+                a.version,
+                a.cover,
+                a.quality,
+                a.type as album_type,
+                a.monitor,
+                a.monitor_lock,
+                ar.name as artist_name
+            FROM release_group_slots rgs
+            JOIN mb_release_groups rg ON rg.mbid = rgs.release_group_mbid
+            JOIN artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
+            JOIN albums a ON CAST(a.id AS TEXT) = CAST(rgs.selected_provider_id AS TEXT)
+            LEFT JOIN artists ar ON ar.id = a.artist_id
+            WHERE rgs.wanted = 1
+              AND rgs.selected_provider = 'tidal'
+              AND rgs.selected_provider_id IS NOT NULL
+              AND ${slotArtistWhere}
+            ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
+        `).all(...slotParams) as any[];
+
+        for (const slot of selectedSlots) {
+            if (!shouldIncludeReleaseGroup(slot)) {
+                continue;
+            }
+            if (Number(slot.monitor_lock || 0) === 1 && Number(slot.monitor || 0) !== 1) {
+                continue;
+            }
+
+            const albumId = String(slot.id);
+            const hasImportedTracks = db.prepare(`
+                SELECT 1
+                FROM library_files lf
+                WHERE lf.album_id = ?
+                  AND lf.file_type = 'track'
+                LIMIT 1
+            `).get(albumId);
+            if (hasImportedTracks) {
+                continue;
+            }
+
+            const albumArtists = db.prepare(`
+                SELECT a.name
+                FROM album_artists aa
+                JOIN artists a ON aa.artist_id = a.id
+                WHERE aa.album_id = ?
+            `).all(albumId) as any[];
+            const artistNames = albumArtists.map(a => a.name).filter(Boolean);
+            queueAlbumDownload(slot, artistNames);
+        }
+
         // 1) Albums monitored at release level
         let albumsQuery = `
             SELECT DISTINCT
@@ -532,11 +664,6 @@ export class CurationService {
         albumsQuery += ` WHERE ${albumsWhere.join(" AND ")}`;
 
         const albums = db.prepare(albumsQuery).all(...albumsParams) as any[];
-
-        let albumJobs = 0;
-        let trackJobs = 0;
-        let videoJobs = 0;
-        const albumQueuedAsAlbum = new Set<string>();
 
         for (const album of albums) {
             const albumId = String(album.id);

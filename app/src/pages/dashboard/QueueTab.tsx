@@ -1781,7 +1781,21 @@ const QueueTab = () => {
                             )}
                         />
                     </section>
-                ) : null}
+                ) : (
+                    <section className={styles.queueSection} aria-label="Queue history">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+                            </div>
+                        </div>
+                        <EmptyState
+                            title="No history yet"
+                            description="Recently completed downloads will appear here."
+                            icon={<ArrowClockwise24Regular />}
+                            minHeight="220px"
+                        />
+                    </section>
+                )}
             </div>
         </div>
     );

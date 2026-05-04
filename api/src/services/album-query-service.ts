@@ -2,6 +2,7 @@ import { db } from "../database.js";
 import { getAlbumDownloadStats, getAlbumDownloadStatsMap } from "./download-state.js";
 import { hydrateTrackRows, type TrackRow } from "./track-query-service.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
+import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
@@ -78,12 +79,167 @@ function getAlbumTrackRows(albumId: string): TrackRow[] {
     `).all(albumId) as TrackRow[];
 }
 
+function queryMusicBrainzReleaseGroup(releaseGroupMbid: string): any | null {
+    return db.prepare(`
+      SELECT
+        rg.*,
+        a.id AS local_artist_id,
+        a.name AS local_artist_name,
+        a.picture AS artist_picture,
+        a.cover_image_url AS artist_cover_image_url,
+        a.monitor AS artist_monitor
+      FROM mb_release_groups rg
+      LEFT JOIN artists a ON a.mbid = rg.artist_mbid
+      WHERE rg.mbid = ?
+    `).get(releaseGroupMbid) as any | null;
+}
+
+function selectPreferredMusicBrainzRelease(releaseGroupMbid: string): any | null {
+    return db.prepare(`
+      SELECT
+        r.*,
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM mb_mediums m
+            WHERE m.release_mbid = r.mbid
+              AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
+          ) THEN 1 ELSE 0
+        END AS digital_score
+      FROM mb_releases r
+      WHERE r.release_group_mbid = ?
+      ORDER BY
+        digital_score DESC,
+        CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
+        COALESCE(r.track_count, 0) DESC,
+        (r.date IS NULL) ASC,
+        r.date DESC,
+        r.mbid ASC
+      LIMIT 1
+    `).get(releaseGroupMbid) as any | null;
+}
+
+function coverArtArchiveReleaseGroupUrl(mbid: string | null | undefined): string | null {
+    const trimmed = String(mbid || "").trim();
+    return trimmed ? `https://coverartarchive.org/release-group/${trimmed}/front-500` : null;
+}
+
+async function ensureMusicBrainzReleaseGroupHydrated(releaseGroupMbid: string): Promise<any | null> {
+    const releaseGroup = queryMusicBrainzReleaseGroup(releaseGroupMbid);
+    if (!releaseGroup) {
+        return null;
+    }
+
+    const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM mb_releases WHERE release_group_mbid = ?")
+        .get(releaseGroupMbid) as { count: number } | undefined;
+
+    if (Number(releaseCount?.count || 0) === 0) {
+        try {
+            await lidarrMetadataService.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+        } catch (error) {
+            console.warn(`[AlbumQueryService] Failed to hydrate Lidarr album ${releaseGroupMbid}:`, error);
+        }
+    }
+
+    return queryMusicBrainzReleaseGroup(releaseGroupMbid);
+}
+
+function normalizeMusicBrainzAlbum(releaseGroup: any, release: any | null, providerCoverUrl?: string | null): AlbumContract {
+    const primaryType = String(releaseGroup.primary_type || "Album").trim().toUpperCase();
+    const artistId = releaseGroup.local_artist_id == null
+        ? String(releaseGroup.artist_mbid)
+        : String(releaseGroup.local_artist_id);
+    const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
+    let coverUrl: string | null = null;
+
+    try {
+        if (releaseGroup.data) {
+            const albumData = typeof releaseGroup.data === "string" ? JSON.parse(releaseGroup.data) : releaseGroup.data;
+            coverUrl = lidarrMetadataService.getAlbumImageUrl(albumData);
+        }
+    } catch {
+        // ignore parsing errors
+    }
+
+    if (!coverUrl) {
+        coverUrl = providerCoverUrl ?? coverArtArchiveReleaseGroupUrl(releaseGroup.mbid);
+    }
+
+    return {
+        id: String(releaseGroup.mbid),
+        title: String(releaseGroup.title || release?.title || "Unknown Album"),
+        cover_id: coverUrl,
+        cover: coverUrl,
+        cover_art_url: coverUrl,
+        vibrant_color: null,
+        release_date: release?.date || releaseGroup.first_release_date || null,
+        type: primaryType === "EP" || primaryType === "SINGLE" ? primaryType : "ALBUM",
+        album_type: primaryType === "EP" || primaryType === "SINGLE" ? primaryType : "ALBUM",
+        quality: null,
+        is_monitored: Boolean(releaseGroup.artist_monitor),
+        is_downloaded: false,
+        downloaded: 0,
+        artist_id: artistId,
+        artist_name: artistName,
+        include_in_monitoring: 1,
+        excluded_reason: null,
+        filtered_out: 0,
+        filtered_reason: null,
+        redundant_of: null,
+        redundant: null,
+        monitor: releaseGroup.artist_monitor ? 1 : 0,
+        monitor_lock: 0,
+        monitor_locked: false,
+        module: primaryType,
+        group_type: primaryType,
+    };
+}
+
+function getMusicBrainzTrackRows(releaseMbid: string, releaseGroupMbid: string, albumTitle: string, artistName: string): AlbumTrackContract[] {
+    const rows = db.prepare(`
+      SELECT
+        t.mbid,
+        t.title,
+        t.number,
+        t.position,
+        t.medium_position,
+        t.length_ms
+      FROM mb_tracks t
+      WHERE t.release_mbid = ?
+      ORDER BY t.medium_position ASC, t.position ASC
+    `).all(releaseMbid) as any[];
+
+    return rows.map((track) => ({
+        id: String(track.mbid),
+        title: String(track.title || "Unknown Track"),
+        version: null,
+        duration: Math.round(Number(track.length_ms || 0) / 1000),
+        track_number: Number(track.position || 0),
+        volume_number: Number(track.medium_position || 1),
+        quality: "MusicBrainz",
+        artist_name: artistName,
+        album_title: albumTitle,
+        downloaded: false,
+        is_downloaded: false,
+        is_monitored: true,
+        monitor: 1,
+        monitor_lock: 0,
+        monitor_locked: false,
+        explicit: false,
+        album_id: releaseGroupMbid,
+        files: [],
+    }));
+}
+
 export class AlbumQueryService {
     private static async ensureAlbumRow(albumId: string): Promise<any | null> {
         const album = queryAlbumRow(albumId);
 
         if (album) {
             return album;
+        }
+
+        if (queryMusicBrainzReleaseGroup(albumId)) {
+            return null;
         }
 
         try {
@@ -196,6 +352,10 @@ export class AlbumQueryService {
         const album = await this.ensureAlbumRow(albumId);
 
         if (!album) {
+            const releaseGroup = await ensureMusicBrainzReleaseGroupHydrated(albumId);
+            if (releaseGroup) {
+                return normalizeMusicBrainzAlbum(releaseGroup, selectPreferredMusicBrainzRelease(albumId));
+            }
             return null;
         }
 
@@ -207,6 +367,12 @@ export class AlbumQueryService {
         const album = await this.ensureAlbumRow(albumId);
 
         if (!album) {
+            const releaseGroup = await ensureMusicBrainzReleaseGroupHydrated(albumId);
+            const release = releaseGroup ? selectPreferredMusicBrainzRelease(albumId) : null;
+            if (releaseGroup && release) {
+                const normalizedAlbum = normalizeMusicBrainzAlbum(releaseGroup, release);
+                return getMusicBrainzTrackRows(release.mbid, albumId, normalizedAlbum.title, normalizedAlbum.artist_name);
+            }
             return [];
         }
 
@@ -219,6 +385,21 @@ export class AlbumQueryService {
         const albumRow = await this.ensureAlbumRow(albumId);
 
         if (!albumRow) {
+            const releaseGroup = await ensureMusicBrainzReleaseGroupHydrated(albumId);
+            const release = releaseGroup ? selectPreferredMusicBrainzRelease(albumId) : null;
+            if (releaseGroup) {
+                const album = normalizeMusicBrainzAlbum(releaseGroup, release);
+                return {
+                    album,
+                    tracks: release
+                        ? getMusicBrainzTrackRows(release.mbid, albumId, album.title, album.artist_name)
+                        : [],
+                    similarAlbums: [],
+                    otherVersions: [],
+                    artistPicture: releaseGroup.artist_picture != null ? String(releaseGroup.artist_picture) : null,
+                    artistCoverImageUrl: releaseGroup.artist_cover_image_url ?? null,
+                };
+            }
             return null;
         }
 

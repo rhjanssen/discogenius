@@ -374,12 +374,12 @@ const Layout = () => {
   const isAuthRoute = location.pathname === "/auth";
 
   const showProviderModeBanner = Boolean(status?.canAccessShell && !status?.remoteCatalogAvailable);
-  const providerModeLabel = status?.mode === "mock" ? "Mock auth" : "Local only";
+  const providerModeLabel = status?.mode === "mock" ? "Mock auth" : "No provider";
   const providerModeTitle = status?.mode === "mock"
     ? "Mock provider auth mode"
-    : "Disconnected local-library mode";
+    : "Provider not connected";
   const providerModeMessage = status?.message
-    || "Remote provider access is unavailable. Library pages and search are limited to indexed local content.";
+    || "You can add artists from MusicBrainz now. Provider availability, previews, followed artists, lyrics, and downloads require connecting a provider.";
 
   useEffect(() => {
     if (!isStandaloneDisplayMode()) return;
@@ -484,7 +484,7 @@ const Layout = () => {
                   className={styles.tidalBannerPrimaryButton}
                   onClick={() => navigate("/search")}
                 >
-                  Search local library
+                  Search MusicBrainz
                 </Button>
               </div>
             </div>

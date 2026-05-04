@@ -30,6 +30,7 @@ import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
+import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";
@@ -331,7 +332,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     const navigate = useNavigate();
     const { toast } = useToast();
     const { addToQueue } = useQueueStatus();
-    const searchActivityLabel = "Searching TIDAL...";
+    const searchActivityLabel = "Searching catalog...";
 
     useEffect(() => {
         setSearchQuery(initialQuery.trim());
@@ -476,9 +477,19 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
         setDownloadingItems(prev => new Set(prev).add(item.tidalId));
         try {
+            if (item.type === 'album') {
+                await api.addAlbum(item.tidalId);
+                toast({
+                    title: "Added to queue",
+                    description: `${item.name} will be downloaded shortly`,
+                });
+                dispatchLibraryUpdated();
+                dispatchActivityRefresh();
+                return;
+            }
+
             const typeMap: Record<string, string> = {
                 track: 'track',
-                album: 'album',
                 video: 'video',
                 artist: 'artist',
             };
@@ -508,7 +519,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const renderEmpty = () => (
         <div className={styles.noResults}>
-            {`No results found for "${searchQuery}". Try a different search term, TIDAL URL, or album/artist ID.`}
+            {`No results found for "${searchQuery}". Try a different search term, MusicBrainz ID, provider URL, or provider ID.`}
         </div>
     );
 
@@ -741,7 +752,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         <div ref={searchRef} className={styles.container}>
             <SearchBox
                 autoFocus={autoFocus}
-                placeholder="Search by name, TIDAL ID, or URL..."
+                placeholder="Search artists, albums, tracks, videos, MBID, or URL..."
                 aria-label="Search artists, albums, tracks, or videos"
                 value={searchQuery}
                 onChange={(_e, data) => setSearchQuery(data.value)}
@@ -794,7 +805,4 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 };
 
 export default GlobalSearch;
-
-
-
 

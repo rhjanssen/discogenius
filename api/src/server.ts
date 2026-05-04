@@ -213,7 +213,7 @@ app.use("/api/events", authMiddleware, eventsRouter);
 app.use("/api/history", authMiddleware, historyRouter);
 app.use("/api/unmapped", authMiddleware, unmappedRouter);
 
-app.get("/health", (_, res) => {
+function sendHealthSnapshot(res: express.Response) {
   const runtime = getRuntimeDiagnosticsSnapshot();
   const preflight = collectHealthDiagnosticsSnapshot();
   const status = startupHealthSnapshot.status === "unhealthy" || preflight.status === "unhealthy"
@@ -228,6 +228,14 @@ app.get("/health", (_, res) => {
     startup: startupHealthSnapshot,
     preflight,
   });
+}
+
+app.get("/health", (_, res) => {
+  sendHealthSnapshot(res);
+});
+
+app.get("/api/health", (_, res) => {
+  sendHealthSnapshot(res);
 });
 
 app.use((err: any, _req: any, res: any, _next: any) => {

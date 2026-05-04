@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { AuthStatusContract } from "../contracts/auth.js";
-import { logout as clearAuthData, loadToken, refreshTidalToken } from "../services/tidal.js";
-import { pollTidalDeviceLogin, startTidalDeviceLogin } from "../services/tidal-auth.js";
+import { logout as clearAuthData, loadToken, refreshTidalToken } from "../services/providers/tidal/tidal.js";
+import { pollTidalDeviceLogin, startTidalDeviceLogin } from "../services/providers/tidal/tidal-auth.js";
 import {
   buildBypassedAuthStatus,
   getProviderAuthMode,

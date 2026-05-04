@@ -38,8 +38,8 @@ const SearchPage = () => {
   const { remoteCatalogAvailable, providerAuthMode } = useTidalConnection();
   const query = searchParams.get("q")?.trim() ?? "";
   const localOnlyMessage = providerAuthMode === "mock"
-    ? "Provider auth is mocked in this environment. Search results are limited to your indexed local library."
-    : "Disconnected mode is active. Search results are limited to your indexed local library.";
+    ? "Provider auth is mocked in this environment. Artist search still uses MusicBrainz/Lidarr metadata."
+    : "Provider not connected. Artist search uses MusicBrainz/Lidarr metadata; provider availability, previews, followed artists, and downloads require connecting a provider.";
 
   return (
     <div className={styles.container}>

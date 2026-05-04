@@ -1,4 +1,4 @@
-import { getTrack, getVideo } from "./tidal.js";
+import { getTrack, getVideo } from "./providers/tidal/tidal.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { RefreshVideoService } from "./refresh-video-service.js";

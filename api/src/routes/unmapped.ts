@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
 import { UnmappedFilesService } from "../services/unmapped-files.js";
-import { getVideo } from "../services/tidal.js";
+import { getVideo } from "../services/providers/tidal/tidal.js";
 import {
     getEnumValue,
     getObjectBody,

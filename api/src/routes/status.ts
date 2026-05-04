@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { TaskQueueService } from "../services/queue.js";
 import { CommandManager } from "../services/command.js";
-import { getRateLimitMetrics } from "../services/tidal.js";
+import { getRateLimitMetrics } from "../services/providers/tidal/tidal.js";
 import { getActivitySummary } from "../services/command-history.js";
 import type { StatusOverviewContract, TaskQueueStatContract } from "../contracts/status.js";
 

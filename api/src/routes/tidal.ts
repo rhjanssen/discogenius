@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getArtist, getArtistAlbums, getArtistVideos, getAlbumTracks } from "../services/tidal.js";
+import { getArtist, getArtistAlbums, getArtistVideos, getAlbumTracks } from "../services/providers/tidal/tidal.js";
 
 const router = Router();
 

@@ -13,7 +13,7 @@ import {
 } from "@/utils/appEvents";
 
 export interface SearchResultItem {
-    id: number;
+    id: string;
     tidalId: string;
     name: string;
     imageUrl: string | null;
@@ -128,7 +128,7 @@ export const useSearch = () => {
                 const finalSubtitle = parts.join(' · ');
 
                 return {
-                    id: parseInt(String(item.id)),
+                    id: String(item.id),
                     tidalId: item.id?.toString(),
                     name: item.name,
                     imageUrl: null, // Computed on frontend now

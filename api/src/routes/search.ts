@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { loadToken, searchTidal } from "../services/tidal.js";
 import { db } from "../database.js";
 import { getProviderAuthMode } from "../services/provider-auth-mode.js";
+import { lidarrMetadataService, type LidarrArtist } from "../services/metadata/lidarr-metadata-service.js";
+import { providerManager } from "../services/providers/index.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -44,6 +45,38 @@ const inDb = (tidalId: string, table: string): boolean => {
     return !!db.prepare(`SELECT 1 FROM ${actualTable} WHERE id = ?`).get(tidalId);
 };
 
+function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null } | undefined {
+    return db.prepare("SELECT id, monitor FROM artists WHERE mbid = ? LIMIT 1").get(mbid) as
+        { id: string | number; monitor: number | null } | undefined;
+}
+
+function coverArtArchiveReleaseGroupUrl(mbid: string | null | undefined): string | null {
+    const trimmed = String(mbid || "").trim();
+    return trimmed ? `https://coverartarchive.org/release-group/${trimmed}/front-500` : null;
+}
+
+function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContract {
+    const localArtist = loadArtistByMusicBrainzId(artist.id);
+    const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
+    const disambiguation = String(artist.disambiguation || "").trim();
+    const details = [
+        disambiguation || String(artist.type || "").trim(),
+        releaseGroupCount > 0 ? `${releaseGroupCount} release groups` : null,
+    ].filter(Boolean).join(" · ");
+
+    return {
+        id: localArtist?.id != null ? String(localArtist.id) : artist.id,
+        name: artist.artistname,
+        type: "artist",
+        subtitle: details || null,
+        imageId: lidarrMetadataService.getArtistImageUrl(artist),
+        monitored: Boolean(localArtist?.monitor),
+        in_library: Boolean(localArtist),
+        quality: null,
+        explicit: undefined,
+    };
+}
+
 function normalizeSearchTypes(input: unknown): SearchType[] {
     const allSearchTypes: SearchType[] = [...SEARCH_TYPES];
     const requestedTypes: SearchType[] = String(input || "all")
@@ -71,6 +104,8 @@ function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'vid
         in_library: item.in_library || false,
         quality: item.quality,
         explicit: item.explicit,
+        duration: item.duration,
+        release_date: item.release_date || item.releaseDate || null,
     };
 
     // Add subtitle (artist name) for non-artist items
@@ -104,7 +139,12 @@ router.get("/", async (req, res) => {
         }
 
         const providerAuthMode = getProviderAuthMode();
-        const hasRemoteAuth = providerAuthMode === "live" && Boolean(loadToken()?.access_token);
+        const provider = providerManager.getDefaultProvider();
+        const hasRemoteAuth = providerAuthMode === "live" && Boolean(provider.isAuthenticated?.());
+        const includeProviderCatalog =
+            req.query.provider === "true" ||
+            req.query.provider === "1" ||
+            String(req.query.scope || "").toLowerCase() === "provider";
 
         const results: any = {
             artists: [],
@@ -121,7 +161,20 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        "SELECT id, name, picture, monitor FROM artists WHERE name LIKE ? ESCAPE '\\' ORDER BY popularity DESC LIMIT ?"
+                        `SELECT id, name, COALESCE(picture, cover_image_url) AS picture, monitor
+                         FROM artists current_artist
+                         WHERE name LIKE ? ESCAPE '\\'
+                           AND NOT EXISTS (
+                             SELECT 1
+                             FROM artists canonical_artist
+                             WHERE canonical_artist.mbid IS NOT NULL
+                               AND canonical_artist.id != current_artist.id
+                               AND lower(canonical_artist.name) = lower(current_artist.name)
+                           )
+                         ORDER BY
+                           CASE WHEN mbid IS NOT NULL THEN 0 ELSE 1 END,
+                           popularity DESC
+                         LIMIT ?`
                     )
                     .all(like, limit) as any[];
 
@@ -135,24 +188,70 @@ router.get("/", async (req, res) => {
             }
 
             if (requestedTypeSet.has("albums")) {
+                const localReleaseGroups = db
+                    .prepare(
+                        `SELECT
+             rg.mbid AS id,
+             rg.title,
+             rg.first_release_date AS release_date,
+             rg.primary_type,
+             a.name AS artist_name,
+	             selected_album.cover AS cover,
+	             selected_album.quality AS quality,
+	             COALESCE(slot.wanted, a.monitor, 0) AS monitored
+	           FROM mb_release_groups rg
+	           LEFT JOIN artists a ON a.mbid = rg.artist_mbid
+	           LEFT JOIN release_group_slots slot
+             ON slot.release_group_mbid = rg.mbid
+            AND slot.slot = 'stereo'
+           LEFT JOIN albums selected_album
+             ON selected_album.id = slot.selected_provider_id
+	           WHERE rg.title LIKE ? ESCAPE '\\'
+	           ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+	           LIMIT ?`
+                    )
+                    .all(like, limit) as any[];
+
+                results.albums.push(...localReleaseGroups.map((row: any) => formatSearchResult({
+                    id: row.id,
+                    name: row.title,
+                    cover_id: row.cover || coverArtArchiveReleaseGroupUrl(row.id),
+                    artist_name: row.artist_name,
+                    release_date: row.release_date,
+                    quality: row.quality,
+                    monitored: !!row.monitored,
+                    in_library: true,
+                }, 'album')));
+
+                const seenReleaseGroupMbids = new Set(localReleaseGroups.map((row: any) => String(row.id)));
                 const localAlbums = db
                     .prepare(
-                        `SELECT a.id, a.title, a.cover, a.monitor, ar.name as artist_name 
-           FROM albums a 
-           LEFT JOIN artists ar ON ar.id = a.artist_id 
-               WHERE a.title LIKE ? ESCAPE '\\' 
+                        `SELECT a.id, a.title, a.cover, a.monitor, a.mb_release_group_id, ar.name as artist_name
+           FROM albums a
+           LEFT JOIN artists ar ON ar.id = a.artist_id
+               WHERE a.title LIKE ? ESCAPE '\\'
+                 AND (
+                   a.mb_release_group_id IS NULL
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM mb_release_groups rg
+                     WHERE rg.mbid = a.mb_release_group_id
+                   )
+                 )
            ORDER BY a.release_date DESC LIMIT ?`
                     )
                     .all(like, limit) as any[];
 
-                results.albums.push(...localAlbums.map((row: any) => formatSearchResult({
-                    id: row.id,
-                    name: row.title,
-                    cover_id: row.cover,
-                    artist_name: row.artist_name,
-                    monitored: !!row.monitor,
-                    in_library: true,
-                }, 'album')));
+                results.albums.push(...localAlbums
+                    .filter((row: any) => !row.mb_release_group_id || !seenReleaseGroupMbids.has(String(row.mb_release_group_id)))
+                    .map((row: any) => formatSearchResult({
+                        id: row.id,
+                        name: row.title,
+                        cover_id: row.cover,
+                        artist_name: row.artist_name,
+                        monitored: !!row.monitor,
+                        in_library: true,
+                    }, 'album')));
             }
 
             if (requestedTypeSet.has("tracks")) {
@@ -213,25 +312,95 @@ router.get("/", async (req, res) => {
             }
         }
 
-        // REMOTE SEARCH
-        if (hasRemoteAuth) {
+        // MUSICBRAINZ / LIDARR ARTIST SEARCH
+        // This is available without a connected provider, mirroring Lidarr's
+        // ability to add monitored artists before indexers/download clients exist.
+        if (requestedTypeSet.has("artists")) {
+            try {
+                const lidarrArtists = await lidarrMetadataService.searchArtists(query, limit);
+                const seenArtists = new Set(results.artists.map((artist: SearchResultContract) => String(artist.id)));
+                const seenMbids = new Set(
+                    db.prepare("SELECT mbid FROM artists WHERE mbid IS NOT NULL").all()
+                        .map((row: any) => String(row.mbid))
+                );
+
+                for (const artist of lidarrArtists) {
+                    const formatted = formatLidarrArtistSearchResult(artist);
+                    if (seenArtists.has(String(formatted.id))) {
+                        continue;
+                    }
+                    if (seenMbids.has(artist.id) && !formatted.in_library) {
+                        continue;
+                    }
+                    results.artists.push(formatted);
+                    seenArtists.add(String(formatted.id));
+                }
+            } catch (error: any) {
+                console.warn("[search] Lidarr artist search failed:", error.message);
+            }
+        }
+
+        // Provider catalog search is intentionally opt-in. Global Discogenius
+        // search mirrors Lidarr: search the local library plus MusicBrainz add
+        // results, and use providers later for availability/download searches.
+        if (hasRemoteAuth && includeProviderCatalog) {
             try {
                 // Keep the UI responsive: remote search can be slow; cap it with a short timeout.
                 const timeoutMs = Math.max(250, Math.min(Number(process.env.DISCOGENIUS_SEARCH_REMOTE_TIMEOUT_MS || 2500), 15000));
                 const remoteResults = await Promise.race([
-                    searchTidal(query, requestedTypes, limit),
+                    provider.search(query, { types: requestedTypes, limit }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error(`Remote search timeout after ${timeoutMs}ms`)), timeoutMs)),
                 ]) as any;
 
 
-                if (remoteResults && Array.isArray(remoteResults)) {
+                const remoteItems = Array.isArray(remoteResults)
+                    ? remoteResults
+                    : [
+                        ...(remoteResults?.artists || []).map((item: any) => ({
+                            id: item.providerId,
+                            type: "artist",
+                            name: item.name,
+                            picture: item.picture,
+                        })),
+                        ...(remoteResults?.albums || []).map((item: any) => ({
+                            id: item.providerId,
+                            type: "album",
+                            name: item.title,
+                            subtitle: item.artist?.name,
+                            cover: item.cover,
+                            release_date: item.releaseDate,
+                            quality: item.quality,
+                            explicit: item.explicit,
+                        })),
+                        ...(remoteResults?.tracks || []).map((item: any) => ({
+                            id: item.providerId,
+                            type: "track",
+                            name: item.title,
+                            subtitle: item.artist?.name,
+                            cover: item.album?.cover,
+                            duration: item.duration,
+                            quality: item.quality,
+                        })),
+                        ...(remoteResults?.videos || []).map((item: any) => ({
+                            id: item.providerId,
+                            type: "video",
+                            name: item.title,
+                            subtitle: item.artist?.name,
+                            imageId: item.cover,
+                            duration: item.duration,
+                            quality: item.quality,
+                            explicit: item.explicit,
+                        })),
+                    ];
+
+                if (remoteItems && Array.isArray(remoteItems)) {
                     // Normalize all seen IDs to strings for proper comparison
                     const seen = new Set(
                         [...results.artists, ...results.albums, ...results.tracks, ...results.videos]
                             .map((r) => `${String(r.type)}:${String(r.id)}`)
                     );
 
-                    for (const item of remoteResults) {
+                    for (const item of remoteItems) {
                         if (item.id === null || item.id === undefined) {
                             continue;
                         }

@@ -1,12 +1,8 @@
 import { db } from "../database.js";
 import {
-    getArtist,
-    getArtistAlbums,
     getArtistBio,
-    getArtistPage,
     getArtistSimilar,
-    getArtistVideos,
-} from "./tidal.js";
+} from "./providers/tidal/tidal.js";
 import { ModuleFixer } from "./module-fixer.js";
 import { VersionGrouper } from "./version-grouper.js";
 import { getConfigSection } from "./config.js";
@@ -24,6 +20,14 @@ import { RefreshVideoService } from "./refresh-video-service.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { getTrackRefreshState, isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
+import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import {
+    matchProviderAlbumsToReleaseGroups,
+    type ProviderReleaseGroupMatch,
+} from "./metadata/provider-release-group-matcher.js";
+import { providerManager } from "./providers/index.js";
+import type { IProvider, ProviderAlbum, ProviderArtist, ProviderVideo } from "./providers/provider-interface.js";
+import { ReleaseGroupSlotService } from "./release-group-slot-service.js";
 
 const ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY = readIntEnv(
     "DISCOGENIUS_ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY",
@@ -31,48 +35,287 @@ const ARTIST_ALBUM_TRACK_SCAN_CONCURRENCY = readIntEnv(
     1,
 );
 
-function parseArtistPageModules(pageData: any): Map<string, string> {
-    const albumModuleMap = new Map<string, string>();
+const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    for (const row of pageData.rows || []) {
-        for (const module of row.modules || []) {
-            const items = module.pagedList?.items || module.items || [];
-            const moduleTitle = String(module.title || "").toLowerCase();
+export function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
+    return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
+}
 
-            if (items.length === 0) {
-                continue;
-            }
-
-            let normalizedModule: string | null = null;
-
-            if (moduleTitle.includes("live")) {
-                normalizedModule = "LIVE";
-            } else if (moduleTitle.includes("compilation")) {
-                normalizedModule = "COMPILATION";
-            } else if (moduleTitle.includes("appears")) {
-                normalizedModule = "APPEARS_ON";
-            } else if (moduleTitle.includes("mix") || moduleTitle.includes("dj")) {
-                normalizedModule = "DJ_MIXES";
-            } else if (moduleTitle.includes("remix")) {
-                normalizedModule = "REMIX";
-            }
-
-            if (!normalizedModule) {
-                continue;
-            }
-
-            for (const item of items) {
-                if (item.id) {
-                    albumModuleMap.set(String(item.id), normalizedModule);
-                }
-            }
-        }
+function providerAlbumToLegacyAlbumRow(providerAlbum: ProviderAlbum, fallbackArtistId: string): any {
+    const raw = providerAlbum.raw;
+    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+        return raw;
     }
 
-    return albumModuleMap;
+    return {
+        tidal_id: providerAlbum.providerId,
+        artist_id: providerAlbum.artist?.providerId || fallbackArtistId,
+        artist_name: providerAlbum.artist?.name || "Unknown Artist",
+        artists: providerAlbum.artist ? [{ id: providerAlbum.artist.providerId, name: providerAlbum.artist.name }] : [],
+        title: providerAlbum.title || "Unknown Album",
+        release_date: providerAlbum.releaseDate || null,
+        cover: providerAlbum.cover || null,
+        vibrant_color: null,
+        video_cover: null,
+        num_tracks: providerAlbum.trackCount || 0,
+        num_videos: 0,
+        num_volumes: providerAlbum.volumeCount || 1,
+        duration: providerAlbum.duration || 0,
+        type: providerAlbum.type || "ALBUM",
+        version: providerAlbum.version || null,
+        explicit: providerAlbum.explicit || false,
+        quality: providerAlbum.quality || "LOSSLESS",
+        url: providerAlbum.url || null,
+        popularity: 0,
+        copyright: null,
+        upc: providerAlbum.upc || null,
+        _group_type: "ALBUMS",
+        _module: providerAlbum.type === "EP" ? "EP" : providerAlbum.type === "SINGLE" ? "SINGLE" : "ALBUM",
+    };
+}
+
+function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArtistId: string): any {
+    const raw = providerVideo.raw;
+    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+        return raw;
+    }
+
+    return {
+        tidal_id: providerVideo.providerId,
+        title: providerVideo.title,
+        duration: providerVideo.duration || 0,
+        release_date: providerVideo.releaseDate || null,
+        explicit: providerVideo.explicit || false,
+        quality: providerVideo.quality || "MP4_1080P",
+        image_id: providerVideo.cover || null,
+        artist_id: providerVideo.artist?.providerId || fallbackArtistId,
+        artist_name: providerVideo.artist?.name || "Unknown Artist",
+        url: providerVideo.url,
+        type: "Music Video",
+    };
 }
 
 export class RefreshArtistService {
+    private static getArtistMusicBrainzId(artistId: string): string | null {
+        const row = db.prepare("SELECT mbid FROM artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+        return row?.mbid ? String(row.mbid) : null;
+    }
+
+    private static async syncArtistMusicBrainzCatalog(artistId: string, force = false): Promise<string | null> {
+        const artistMbid = this.getArtistMusicBrainzId(artistId);
+        if (!artistMbid) {
+            return null;
+        }
+
+        const cachedCount = db.prepare("SELECT COUNT(*) AS count FROM mb_release_groups WHERE artist_mbid = ?")
+            .get(artistMbid) as { count: number };
+        if (!force && Number(cachedCount?.count || 0) > 0) {
+            return artistMbid;
+        }
+
+        try {
+            await lidarrMetadataService.syncArtist(artistMbid);
+        } catch (error) {
+            console.warn(`[RefreshArtistService] Failed to sync Lidarr metadata for artist ${artistId} (${artistMbid}):`, error);
+        }
+
+        return artistMbid;
+    }
+
+    static async upsertMusicBrainzArtist(artistMbid: string, options: ScanOptions = {}): Promise<string> {
+        if (!isMusicBrainzMbid(artistMbid)) {
+            throw new Error(`Invalid MusicBrainz artist id: ${artistMbid}`);
+        }
+
+        const existing = db.prepare(
+            "SELECT id, monitor, path FROM artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
+        ).get(artistMbid, artistMbid, artistMbid) as { id: string | number; monitor?: number | null; path?: string | null } | undefined;
+        const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
+        const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitor);
+        const shouldMonitorInt = shouldMonitor ? 1 : 0;
+        const artistData = await lidarrMetadataService.syncArtist(artistMbid);
+        const artistName = artistData.artistname || "Unknown Artist";
+        const posterUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Poster");
+        const fanartUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Fanart") || posterUrl;
+        const resolvedArtistFolder = resolveArtistFolderForPersistence({
+            artistId: localArtistId,
+            artistName,
+            artistMbId: artistMbid,
+            existingPath: existing?.path ?? null,
+        });
+
+        if (artistName === "Various Artists" || localArtistId === "0") {
+            console.warn(`[RefreshArtistService] Cannot monitor 'Various Artists' (MBID: ${artistMbid}). Skipping.`);
+            throw new Error("Cannot monitor 'Various Artists'. Please monitor specific compilations instead.");
+        }
+
+        if (!existing) {
+            db.prepare(`
+                INSERT INTO artists (
+                    id, name, picture, cover_image_url, popularity, artist_types, artist_roles,
+                    mbid, musicbrainz_status, musicbrainz_last_checked, musicbrainz_match_method,
+                    bio_text, bio_source,
+                    monitor, monitored_at, user_date_added, last_scanned, path
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'lidarr-metadata',
+                    ?, 'lidarr', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
+            `).run(
+                localArtistId,
+                artistName,
+                posterUrl,
+                fanartUrl,
+                0,
+                JSON.stringify([artistData.type || "Artist"]),
+                JSON.stringify([]),
+                artistMbid,
+                artistData.overview || null,
+                shouldMonitorInt,
+                shouldMonitorInt,
+                null,
+                resolvedArtistFolder,
+            );
+        } else {
+            db.prepare(`
+                UPDATE artists SET
+                    name = ?,
+                    picture = COALESCE(?, picture),
+                    cover_image_url = COALESCE(?, cover_image_url),
+                    popularity = COALESCE(popularity, 0),
+                    artist_types = ?,
+                    artist_roles = COALESCE(artist_roles, ?),
+                    mbid = ?,
+                    musicbrainz_status = 'verified',
+                    musicbrainz_last_checked = CURRENT_TIMESTAMP,
+                    musicbrainz_match_method = 'lidarr-metadata',
+                    bio_text = COALESCE(?, bio_text),
+                    bio_source = CASE WHEN ? IS NOT NULL THEN 'lidarr' ELSE bio_source END,
+                    monitor = ?,
+                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
+                    last_scanned = CURRENT_TIMESTAMP,
+                    path = COALESCE(path, ?)
+                WHERE id = ?
+            `).run(
+                artistName,
+                posterUrl,
+                fanartUrl,
+                JSON.stringify([artistData.type || "Artist"]),
+                JSON.stringify([]),
+                artistMbid,
+                artistData.overview || null,
+                artistData.overview || null,
+                shouldMonitorInt,
+                shouldMonitorInt,
+                resolvedArtistFolder,
+                localArtistId,
+            );
+        }
+
+        return localArtistId;
+    }
+
+    private static buildProviderReleaseGroupMatches(
+        artistMbid: string | null,
+        albums: any[],
+    ): Map<string, ProviderReleaseGroupMatch> {
+        if (!artistMbid || albums.length === 0) {
+            return new Map();
+        }
+
+        const releaseGroups = lidarrMetadataService.getCachedReleaseGroupsForArtist(artistMbid);
+        if (releaseGroups.length === 0) {
+            return new Map();
+        }
+
+        return matchProviderAlbumsToReleaseGroups(
+            albums.map((album) => ({
+                providerId: String(album.tidal_id),
+                title: String(album.title || ""),
+                version: album.version ?? null,
+                releaseDate: album.release_date ?? null,
+                type: album.type ?? null,
+            })),
+            releaseGroups,
+        );
+    }
+
+    private static normalizeProviderMatchText(value: unknown): string {
+        return String(value || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
+    }
+
+    private static storeProviderArtistMatch(provider: IProvider, artistMbid: string, artist: ProviderArtist, status: "verified" | "probable"): void {
+        db.prepare(`
+            INSERT INTO provider_items (
+                provider, entity_type, provider_id, artist_mbid,
+                title, match_status, match_confidence, match_method, data, updated_at
+            )
+            VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+                artist_mbid = COALESCE(excluded.artist_mbid, provider_items.artist_mbid),
+                title = excluded.title,
+                match_status = excluded.match_status,
+                match_confidence = excluded.match_confidence,
+                match_method = excluded.match_method,
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP
+        `).run(
+            provider.id,
+            artist.providerId,
+            artistMbid,
+            artist.name || null,
+            status,
+            status === "verified" ? 1 : 0.75,
+            JSON.stringify(artist.raw ?? artist),
+        );
+    }
+
+    private static async resolveProviderArtistId(provider: IProvider, artistId: string, artistMbid: string | null): Promise<string | null> {
+        if (!artistMbid || !isMusicBrainzMbid(artistId)) {
+            return artistId;
+        }
+
+        const cached = db.prepare(`
+            SELECT provider_id
+            FROM provider_items
+            WHERE provider = ?
+              AND entity_type = 'artist'
+              AND artist_mbid = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(provider.id, artistMbid) as { provider_id?: string | number | null } | undefined;
+        if (cached?.provider_id != null) {
+            return String(cached.provider_id);
+        }
+
+        const localArtist = db.prepare("SELECT name FROM artists WHERE id = ? OR mbid = ? LIMIT 1")
+            .get(artistId, artistMbid) as { name?: string | null } | undefined;
+        const artistName = String(localArtist?.name || "").trim();
+        if (!artistName) {
+            return null;
+        }
+
+        try {
+            const results = await provider.search(artistName, { types: ["artists"], limit: 8 });
+            const artists = Array.isArray(results.artists) ? results.artists : [];
+            const normalizedName = this.normalizeProviderMatchText(artistName);
+            const exact = artists.find((artist) => this.normalizeProviderMatchText(artist.name) === normalizedName);
+            const selected = exact || artists[0] || null;
+            if (!selected?.providerId) {
+                return null;
+            }
+
+            this.storeProviderArtistMatch(provider, artistMbid, selected, exact ? "verified" : "probable");
+            return selected.providerId;
+        } catch (error) {
+            console.warn(`[RefreshArtistService] Failed to resolve ${provider.name} artist for ${artistName} (${artistMbid}):`, error);
+            return null;
+        }
+    }
+
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
         const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
             id: number | string;
@@ -219,6 +462,23 @@ export class RefreshArtistService {
 
         const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitor || false);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
+        const provider = providerManager.getDefaultProvider();
+        const providerAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : true;
+
+        if (isMusicBrainzMbid(artistId) && (!existing || existing.mbid === artistId || String(existing.id) === artistId)) {
+            await this.upsertMusicBrainzArtist(artistId, options);
+            console.log(`[RefreshArtistService] scanBasic complete for MusicBrainz artist ${artistId}`);
+            return;
+        }
+
+        if (existing?.mbid && !providerAuthenticated) {
+            await this.upsertMusicBrainzArtist(String(existing.mbid), {
+                ...options,
+                monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitor),
+            });
+            console.log(`[RefreshArtistService] scanBasic skipped provider lookup for ${artistId} (provider not connected)`);
+            return;
+        }
 
         if (existing && !shouldRefresh) {
             if (options.monitorArtist === true && existing.monitor !== shouldMonitorInt) {
@@ -258,17 +518,17 @@ export class RefreshArtistService {
             if (!existing.mbid || options.forceUpdate === true) {
                 await MetadataIdentityService.resolveArtist(artistId, { force: options.forceUpdate === true });
                 this.reapplyArtistPathAfterIdentity(artistId);
+                await this.syncArtistMusicBrainzCatalog(artistId, options.forceUpdate === true);
             }
 
             console.log(`[RefreshArtistService] scanBasic skipped for ${artistId} (fresh)`);
             return;
         }
 
-        const artistData = await getArtist(artistId);
+        const artistData = await provider.getArtist(artistId);
         const resolvedArtistFolder = resolveArtistFolderForPersistence({
             artistId,
             artistName: artistData.name,
-            artistMbId: (artistData as any)?.mbid ?? null,
             existingPath: existing?.path ?? null,
         });
 
@@ -288,9 +548,9 @@ export class RefreshArtistService {
                 artistId,
                 artistData.name,
                 artistData.picture,
-                artistData.popularity,
-                JSON.stringify(artistData.artist_types || ["ARTIST"]),
-                JSON.stringify(artistData.artist_roles || []),
+                artistData.popularity ?? null,
+                JSON.stringify(artistData.types || ["ARTIST"]),
+                JSON.stringify(artistData.roles || []),
                 shouldMonitorInt,
                 shouldMonitorInt,
                 null,
@@ -313,9 +573,9 @@ export class RefreshArtistService {
             `).run(
                 artistData.name,
                 artistData.picture,
-                artistData.popularity,
-                JSON.stringify(artistData.artist_types || ["ARTIST"]),
-                JSON.stringify(artistData.artist_roles || []),
+                artistData.popularity ?? null,
+                JSON.stringify(artistData.types || ["ARTIST"]),
+                JSON.stringify(artistData.roles || []),
                 monitorValue,
                 monitorValue,
                 resolvedArtistFolder,
@@ -325,6 +585,7 @@ export class RefreshArtistService {
 
         await MetadataIdentityService.resolveArtist(artistId, { force: options.forceUpdate === true });
         this.reapplyArtistPathAfterIdentity(artistId);
+        await this.syncArtistMusicBrainzCatalog(artistId, options.forceUpdate === true);
 
         const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
         const similarArtistIds = includeSimilar
@@ -359,6 +620,12 @@ export class RefreshArtistService {
             isRefreshDue(existing?.last_scanned, refreshDays);
 
         await this.scanBasic(artistId, options);
+
+        const refreshed = db.prepare("SELECT mbid FROM artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+        if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
+            console.log(`[RefreshArtistService] Skipping provider biography lookup for MusicBrainz artist ${artistId}`);
+            return;
+        }
 
         if (!shouldRefreshBio) {
             console.log(`[RefreshArtistService] Skipping bio refresh for ${artistId} (fresh)`);
@@ -435,23 +702,34 @@ export class RefreshArtistService {
         }
 
         if (shouldHydrateCatalog) {
-            let albumModuleMap = new Map<string, string>();
-            try {
-                const pageData = await getArtistPage(artistId);
-                if (pageData?.rows) {
-                    albumModuleMap = parseArtistPageModules(pageData);
-                }
-                console.log(`[RefreshArtistService] Mapped ${albumModuleMap.size} albums to modules from page API`);
-            } catch (error) {
-                console.warn(`[RefreshArtistService] Failed to fetch page layout for ${artistId}:`, error);
+            const artistMbid = await this.syncArtistMusicBrainzCatalog(artistId, options.forceUpdate === true);
+            const provider = providerManager.getDefaultProvider();
+            const providerAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : true;
+            if (!providerAuthenticated) {
+                console.log(
+                    `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
+                    `(provider not connected)`,
+                );
+                db.prepare("UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
+                return;
             }
+
+            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+            if (!providerArtistId) {
+                console.log(`[RefreshArtistService] Skipping provider catalog hydration for ${artistId} (no provider artist match)`);
+                db.prepare("UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
+                return;
+            }
+
+            const albumModuleMap = new Map<string, string>();
 
             const shouldRefreshArtistVideos =
                 options.forceUpdate === true ||
                 shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
             if (shouldRefreshArtistVideos) {
                 try {
-                    const videos = await getArtistVideos(artistId);
+                    const videos = (await provider.getArtistVideos?.(providerArtistId) || [])
+                        .map((video) => providerVideoToLegacyVideoRow(video, artistId));
                     console.log(`[RefreshArtistService] Found ${videos.length} videos for artist ${artistId}`);
                     RefreshVideoService.upsertArtistVideos(artistId, videos, options);
                 } catch (error) {
@@ -461,14 +739,29 @@ export class RefreshArtistService {
                 console.log(`[RefreshArtistService] Skipping video refresh for ${artistId} (fresh)`);
             }
 
-            const albums = await getArtistAlbums(artistId);
+            const filteringConfig = getConfigSection("filtering");
+            const providerAlbums = provider.listArtistReleaseOffers
+                ? await provider.listArtistReleaseOffers(providerArtistId, {
+                    includeAppearsOn: filteringConfig.include_appears_on === true,
+                })
+                : await provider.getArtistAlbums(providerArtistId);
+            const albums = providerAlbums.map((album) => providerAlbumToLegacyAlbumRow(album, artistId));
+            const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
             console.log(`[RefreshArtistService] Found ${albums.length} albums for artist ${artistId}`);
             options.progress?.({ kind: "albums_total", total: albums.length });
 
             const cooperateAlbumStore = createCooperativeBatcher(20);
             for (let index = 0; index < albums.length; index += 1) {
                 const album = albums[index];
-                const created = await RefreshAlbumService.upsertArtistAlbum(album, artistId, albumModuleMap, options);
+                const releaseGroupMatch = providerReleaseGroupMatches.get(String(album.tidal_id));
+                if (releaseGroupMatch && releaseGroupMatch.status !== "unmatched") {
+                    album._mb_release_group_match = releaseGroupMatch;
+                    album._mb_artist_mbid = artistMbid;
+                }
+                const created = await RefreshAlbumService.upsertArtistAlbum(album, artistId, albumModuleMap, {
+                    ...options,
+                    resolveMusicBrainz: options.resolveMusicBrainz ?? false,
+                });
                 await cooperateAlbumStore();
                 options.progress?.({
                     kind: "album",
@@ -478,6 +771,26 @@ export class RefreshArtistService {
                     title: String(album.title),
                     created,
                 });
+            }
+
+            const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
+                provider: provider.id,
+                artistMbid,
+                albums: albums.map((album) => ({
+                    providerId: String(album.tidal_id),
+                    title: String(album.title || ""),
+                    version: album.version ?? null,
+                    releaseDate: album.release_date ?? null,
+                    quality: album.quality ?? null,
+                    explicit: album.explicit ?? null,
+                    trackCount: album.num_tracks ?? null,
+                    volumeCount: album.num_volumes ?? null,
+                    raw: album,
+                })),
+                matches: providerReleaseGroupMatches,
+            });
+            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
+                console.log(`[RefreshArtistService] Selected provider offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
             }
 
             if (shouldHydrateArtistAlbumTracks(options)) {
@@ -525,18 +838,18 @@ export class RefreshArtistService {
                             albumId: String(album.tidal_id),
                             title: String(album.title),
                         });
-                        await RefreshAlbumService.scanTracks(String(album.tidal_id));
+                        await RefreshAlbumService.scanTracks(String(album.tidal_id), { resolveMusicBrainz: false });
                     })));
                 }
             } else {
-                console.log(`[RefreshArtistService] Skipping inline track hydration for artist ${artistId} (monitorAlbums=false)`);
+                console.log(`[RefreshArtistService] Skipping inline track hydration for artist ${artistId} (hydrateAlbumTracks=false)`);
             }
 
             console.log(`[RefreshArtistService] Building version groups for artist ${artistId}...`);
             await VersionGrouper.applyVersionGroups(artistId);
 
             console.log(`[RefreshArtistService] Fixing module tags for artist ${artistId}...`);
-            await ModuleFixer.fixModuleTagsForArtist(artistId);
+            await ModuleFixer.fixModuleTagsForArtist(artistId, undefined, providerArtistId);
         } else {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
         }

@@ -12,12 +12,14 @@ All agents (Copilot, Claude, Gemini, GPT) should read instructions here and load
 - Validate behavior against GitHub docs support matrix and instruction precedence before introducing new instruction files.
 
 ## Project Snapshot
-Discogenius is a self-hosted Tidal library manager inspired by Lidarr. Monorepo with `api/` (Express + TypeScript) and `app/` (React + Vite). Local development (Node + Yarn + a repo-local `.venv` for `tidal-dl-ng`, or `TIDAL_DL_NG_BIN`/PATH override) and Docker builds are both supported.
+Discogenius is a self-hosted MusicBrainz/Lidarr-style library manager with provider-backed streaming/download integrations. Monorepo with `api/` (Express + TypeScript) and `app/` (React + Vite). Local development (Node + Yarn + a repo-local `.venv` for `tidal-dl-ng`, or `TIDAL_DL_NG_BIN`/PATH override) and Docker builds are both supported.
 
-Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it makes sense, but with TIDAL as the metadata/download source instead of MusicBrainz + indexers/download clients. Where Lidarr uses external metadata and identification layers, Discogenius should prefer TIDAL first and then use MusicBrainz/AcoustID/fingerprinting to improve identification of manually added local files. Tidarr (/.ref_tidarr) is a good reference for how to build around a CLI downloader and how a good react app is ructured. Although they use tiddl, and we use orpheus for music and tidal-dl-ng for video, the general download staging flow should be similar and then attach to our Lidarr style management structure.
+Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it makes sense: MusicBrainz/Lidarr metadata is the canonical artist/release-group/release/track graph, and providers expose availability, preview, lyrics, and download resources. TIDAL is the first provider, not the core metadata model. Tidarr (/.ref_tidarr) is a good reference for pragmatic provider/indexer/downloader integration. Although it uses tiddl, and Discogenius uses Orpheus for music and tidal-dl-ng for video, the general download staging flow should be similar and attach to our Lidarr-style management structure.
 
 ### Architecture Overview
 - **Download System**: Uses media-specific download backends with a Lidarr-style command queue: Orpheus for music downloads and tidal-dl-ng for video downloads
+- **Metadata Model**: Uses Lidarr/MusicBrainz artist, release-group, release, medium, track, and recording identity as canonical library metadata
+- **Provider Layer**: Keeps provider-specific catalog IDs, quality flags, preview URLs, lyrics, and download resources behind provider interfaces; do not add new direct TIDAL catalog calls outside provider implementations
 - **Task Queue**: SQLite-backed queue with `DownloadProcessor` (exact media downloads only) and `Scheduler` (all control, scan, import, and maintenance jobs)
 - **Command Manager**: Handles job exclusivity (type-exclusive, disk-intensive, globally exclusive)
 - **Organization**: Downloaded files are staged, then organized into library with metadata, optional fingerprints, and library file tracking
@@ -76,7 +78,9 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `refresh-playlist-service.ts` | Playlist metadata and membership refresh |
 | `refresh-video-service.ts` | Video upsert/refresh helpers for artist catalog scans |
 | `media-seed-service.ts` | Targeted metadata seed flows for single track/video intake |
-| `tidal.ts` | TIDAL API client for metadata and search |
+| `providers/` | Provider interface and provider implementations; TIDAL-specific catalog logic belongs here |
+| `metadata/lidarr-metadata-service.ts` | Lidarr metadata API cache for MusicBrainz artist/release-group/release/track graph |
+| `tidal.ts` | Low-level TIDAL API client used by the TIDAL provider and legacy compatibility paths only |
 | `import-discovery.ts` | Scans local/root folders into grouped local import candidates and derives common tags |
 | `import-matcher-service.ts` | Resolves TIDAL candidates (direct IDs, search, fingerprint evidence), scores matches, and applies auto-import policy |
 | `manual-import-service.ts` | Applies strict manual import mappings and updates artists/albums/media/library_files with dedup safeguards |
@@ -124,4 +128,3 @@ See `.github/workflows` for local + Docker dev steps, Docker deploy, and docs up
 - Rely on `.github/workflows/release-dockerhub.yml` for Docker publish + GitHub release asset/notes publication.
 - Keep `CHANGELOG.md` updated and concise; release workflow reads from it.
 - Database schema upgrades remain PRAGMA `user_version` migrations; the 1.0.x baseline uses an independent integer schema series starting at `1`, and runtime app/api/schema provenance is tracked in `config` keys and `database_version_history`.
-

@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { countManagedArtists } from "./managed-artists.js";
+import { countManagedArtists, buildManagedArtistPredicate } from "./managed-artists.js";
 import {
     countDownloadedAlbums,
     countDownloadedManagedArtists,
@@ -25,8 +25,27 @@ export class LibraryStatsQueryService {
                 downloaded: countDownloadedManagedArtists(),
             },
             albums: {
-                total: (db.prepare("SELECT COUNT(*) as count FROM albums").get() as { count: number }).count,
-                monitored: (db.prepare("SELECT COUNT(*) as count FROM albums WHERE monitor = 1").get() as { count: number }).count,
+                total: (db.prepare(`
+                    SELECT (SELECT COUNT(*) FROM albums) +
+                           (SELECT COUNT(*) FROM mb_release_groups WHERE mbid NOT IN (SELECT mb_release_group_id FROM albums WHERE mb_release_group_id IS NOT NULL)) as count
+                `).get() as { count: number }).count,
+                monitored: (db.prepare(`
+                    WITH artist_monitors AS (
+                      SELECT a.mbid, CASE WHEN (${buildManagedArtistPredicate("a")}) THEN 1 ELSE 0 END as effective_monitor
+                      FROM artists a
+                      WHERE a.mbid IS NOT NULL
+                    )
+                    SELECT
+                      (SELECT COUNT(*) FROM albums WHERE monitor = 1) +
+                      (
+                        SELECT COUNT(DISTINCT rg.mbid)
+                        FROM mb_release_groups rg
+                        LEFT JOIN release_group_slots rgs ON rgs.release_group_mbid = rg.mbid
+                        LEFT JOIN artist_monitors am ON am.mbid = rg.artist_mbid
+                        WHERE COALESCE(rgs.wanted, am.effective_monitor, 0) = 1
+                          AND rg.mbid NOT IN (SELECT mb_release_group_id FROM albums WHERE mb_release_group_id IS NOT NULL)
+                      ) as count
+                `).get() as { count: number }).count,
                 downloaded: countDownloadedAlbums(),
             },
             tracks: {

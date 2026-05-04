@@ -8,7 +8,7 @@
  * The route layer handles both: BTS gets a simple proxy, DASH segments are
  * fetched sequentially and concatenated into a single audio/mp4 stream.
  */
-import { loadToken, refreshTidalToken, getCountryCode } from "./tidal.js";
+import { loadToken, refreshTidalToken, getCountryCode } from "./providers/tidal/tidal.js";
 
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 

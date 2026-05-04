@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../database.js';
-import { tidalApiRequest, getCountryCode, getAlbumReview, getArtistBio, getArtist, getAlbum, getVideo } from './tidal.js';
+import { tidalApiRequest, getCountryCode, getAlbumReview, getArtistBio, getArtist, getAlbum, getVideo } from "./providers/tidal/tidal.js";
 
 /**
  * Clean Tidal text by removing [wimpLink] tags and normalizing line breaks.

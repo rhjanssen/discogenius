@@ -3,6 +3,7 @@ import { invalidateAlbumDownloadStatus, updateArtistDownloadStatus } from "./dow
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueArtistWorkflow } from "./artist-workflow.js";
+import { isMusicBrainzMbid } from "./refresh-artist-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 const MONITOR_ARTIST_WORKFLOW = "monitoring-intake" as const;
@@ -133,21 +134,26 @@ export async function monitorArtistAndQueueIntake(options: {
     priority?: number;
     trigger?: number;
 }) {
-    await RefreshArtistService.scanBasic(options.artistId, { monitorArtist: true });
+    const existingByMbid = isMusicBrainzMbid(options.artistId)
+        ? db.prepare("SELECT id FROM artists WHERE mbid = ? LIMIT 1").get(options.artistId) as { id: string | number } | undefined
+        : undefined;
+    const artistId = existingByMbid?.id != null ? String(existingByMbid.id) : options.artistId;
 
-    const changes = applyArtistMonitoringState(options.artistId, true);
+    await RefreshArtistService.scanBasic(artistId, { monitorArtist: true });
+
+    const changes = applyArtistMonitoringState(artistId, true);
     if (changes === 0) {
-        throw new Error(`Artist ${options.artistId} not found`);
+        throw new Error(`Artist ${artistId} not found`);
     }
 
     const jobId = queueArtistMonitoringIntake({
-        artistId: options.artistId,
+        artistId,
         priority: options.priority,
         trigger: options.trigger,
     });
 
     return {
-        artist: loadArtistWithEffectiveMonitor(options.artistId),
+        artist: loadArtistWithEffectiveMonitor(artistId),
         jobId,
     };
 }

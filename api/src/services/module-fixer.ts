@@ -1,5 +1,5 @@
 import { db } from '../database.js';
-import { getArtistPage } from './tidal.js';
+import { getArtistPage } from "./providers/tidal/tidal.js";
 
 type CanonicalModule =
     | 'ALBUM'
@@ -318,7 +318,7 @@ export class ModuleFixer {
      * In our schema, module tags live on `album_artists.module` (per-artist classification),
      * not on the `albums` table.
      */
-    static async fixModuleTagsForArtist(artistId: string, cachedPageData?: any) {
+    static async fixModuleTagsForArtist(artistId: string, cachedPageData?: any, pageLookupArtistId: string = artistId) {
         console.log(`[MODULE-FIXER] Fixing module tags for artist ${artistId}...`);
 
         // 0) Normalize legacy module values to the canonical set used by the UI layer
@@ -349,7 +349,12 @@ export class ModuleFixer {
         `).run(artistId);
 
         // 1) Page-derived tagging (Tidal artist page modules), with propagation via version_group
-        const pageMap = await buildArtistPageModuleMap(artistId, cachedPageData);
+        let pageMap = new Map<string, PageModuleKey>();
+        try {
+            pageMap = await buildArtistPageModuleMap(pageLookupArtistId, cachedPageData);
+        } catch (error) {
+            console.warn(`[MODULE-FIXER] Provider artist page module lookup failed for ${artistId}; falling back to stored MusicBrainz/provider classification:`, error);
+        }
         propagateModulesWithinVersionGroups(pageMap, artistId);
 
         const albumRows = db.prepare(`
@@ -413,5 +418,3 @@ export class ModuleFixer {
         console.log(`[MODULE-FIXER] Module tag fixing complete for artist ${artistId}`);
     }
 }
-
-

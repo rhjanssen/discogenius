@@ -1,6 +1,6 @@
 import path from "path";
 import { db } from "../database.js";
-import { getAlbum, getArtistVideos, getTrack, getVideo, searchTidal } from "./tidal.js";
+import { getAlbum, getArtistVideos, getTrack, getVideo, searchTidal } from "./providers/tidal/tidal.js";
 import { IdentificationService, type AlbumCandidateMatch, type IdentifiableFile } from "./identification-service.js";
 import { ImportDecisionEngine } from "./import-decision/engine.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";

@@ -174,10 +174,13 @@ router.post("/", async (req, res) => {
       ? Boolean(body.download)
       : true;
 
-    const result = AlbumCommandService.addAlbum(albumId, shouldDownload);
+    const result = await AlbumCommandService.addAlbum(albumId, shouldDownload);
 
     if (result.status === 404) {
       return res.status(404).json({ detail: result.message || "Album not found" });
+    }
+    if (result.status && result.status >= 400) {
+      return res.status(result.status).json({ detail: result.message || "Album request failed" });
     }
 
     const { status, message, ...body2 } = result;

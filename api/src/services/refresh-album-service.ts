@@ -1,23 +1,101 @@
 import { db } from "../database.js";
 import {
-    getAlbum,
     getAlbumCredits,
     getAlbumItemsCredits,
     getAlbumReview,
     getAlbumSimilar,
-    getAlbumTracks,
-} from "./tidal.js";
+} from "./providers/tidal/tidal.js";
 import { getConfigSection } from "./config.js";
 import { createCooperativeBatcher } from "../utils/concurrent.js";
 import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
+import type { ProviderReleaseGroupMatch } from "./metadata/provider-release-group-matcher.js";
+import { providerManager } from "./providers/index.js";
+import type { ProviderAlbum, ProviderTrack } from "./providers/provider-interface.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
     artistId: string;
 };
+
+function providerAlbumToLegacyAlbumRow(providerAlbum: ProviderAlbum): any {
+    const raw = providerAlbum.raw;
+    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+        return raw;
+    }
+
+    return {
+        id: providerAlbum.providerId,
+        tidal_id: providerAlbum.providerId,
+        artist_id: providerAlbum.artist?.providerId || null,
+        artist_name: providerAlbum.artist?.name || "Unknown Artist",
+        artists: providerAlbum.artist ? [{ id: providerAlbum.artist.providerId, name: providerAlbum.artist.name }] : [],
+        title: providerAlbum.title,
+        release_date: providerAlbum.releaseDate || null,
+        cover: providerAlbum.cover || null,
+        num_tracks: providerAlbum.trackCount || 0,
+        num_videos: 0,
+        num_volumes: providerAlbum.volumeCount || 1,
+        duration: providerAlbum.duration || 0,
+        type: providerAlbum.type || "ALBUM",
+        version: providerAlbum.version || null,
+        explicit: providerAlbum.explicit || false,
+        quality: providerAlbum.quality || "LOSSLESS",
+        url: providerAlbum.url,
+        popularity: 0,
+        copyright: null,
+        upc: providerAlbum.upc || null,
+    };
+}
+
+function providerTrackToLegacyTrackRow(providerTrack: ProviderTrack): any {
+    const raw = providerTrack.raw;
+    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+        return raw;
+    }
+
+    return {
+        tidal_id: providerTrack.providerId,
+        title: providerTrack.title,
+        duration: providerTrack.duration || 0,
+        track_number: providerTrack.trackNumber || 0,
+        volume_number: providerTrack.volumeNumber || 1,
+        version: null,
+        isrc: providerTrack.isrc || null,
+        explicit: false,
+        quality: providerTrack.quality || "LOSSLESS",
+        copyright: null,
+        artist_id: providerTrack.artist?.providerId || null,
+        artist_name: providerTrack.artist?.name || "Unknown Artist",
+        artists: providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : [],
+        url: providerTrack.url,
+        popularity: 0,
+        release_date: null,
+    };
+}
+
+function getProviderLibrarySlot(quality?: string | null): string {
+    const normalized = String(quality || "").toUpperCase();
+    return normalized === "DOLBY_ATMOS" || normalized === "SONY_360RA" ? "spatial" : "stereo";
+}
+
+function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
+    if (!match || match.status === "unmatched") {
+        return null;
+    }
+    return match.status === "verified" ? "verified" : "ambiguous";
+}
+
+function primaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
+    return String(match?.releaseGroup?.primaryType || "").trim().toLowerCase() || null;
+}
+
+function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
+    const secondaryTypes = match?.releaseGroup?.secondaryTypes || [];
+    return secondaryTypes.map((type) => String(type || "").trim().toLowerCase()).filter(Boolean)[0] || null;
+}
 
 export class RefreshAlbumService {
     static getScanLevel(albumId: string): ScanLevel {
@@ -80,7 +158,7 @@ export class RefreshAlbumService {
             return;
         }
 
-        const albumData = await getAlbum(albumId);
+        const albumData = providerAlbumToLegacyAlbumRow(await providerManager.getDefaultProvider().getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
 
         const primaryArtistId = albumData.artist_id || artistId;
@@ -306,8 +384,12 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanDeep complete for ${albumId}`);
     }
 
-    static async scanTracks(albumId: string): Promise<void> {
-        const tracks = await getAlbumTracks(albumId);
+    static async scanTracks(
+        albumId: string,
+        options: { resolveMusicBrainz?: boolean } = {},
+    ): Promise<void> {
+        const tracks = (await providerManager.getDefaultProvider().getAlbumTracks(albumId))
+            .map(providerTrackToLegacyTrackRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
         const album = db.prepare("SELECT id, artist_id, type, monitor FROM albums WHERE id = ?").get(albumId) as any;
@@ -433,7 +515,9 @@ export class RefreshAlbumService {
             }
         }
 
-        await MetadataIdentityService.resolveAlbumTracks(albumId, { force: false });
+        if (options.resolveMusicBrainz !== false) {
+            await MetadataIdentityService.resolveAlbumTracks(albumId, { force: false });
+        }
     }
 
     static async upsertArtistAlbum(
@@ -444,6 +528,9 @@ export class RefreshAlbumService {
     ): Promise<boolean> {
         const forceUpdate = options.forceUpdate === true;
         const primaryArtistId = album.artist_id;
+        const releaseGroupMatch = (album as { _mb_release_group_match?: ProviderReleaseGroupMatch })._mb_release_group_match || null;
+        const matchedReleaseGroup = releaseGroupMatch?.status !== "unmatched" ? releaseGroupMatch?.releaseGroup : null;
+        const matchedArtistMbid = (album as { _mb_artist_mbid?: string | null })._mb_artist_mbid || null;
 
         const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
         if (!artistExists && primaryArtistId !== scanningArtistId) {
@@ -640,10 +727,85 @@ export class RefreshAlbumService {
             }
         }
 
-        await MetadataIdentityService.resolveAlbum(String(album.tidal_id), {
-            force: forceUpdate,
-            includeTracks: false,
-        });
+        if (matchedReleaseGroup) {
+            db.prepare(`
+                UPDATE albums SET
+                    mb_release_group_id = ?,
+                    mb_primary = COALESCE(?, mb_primary),
+                    mb_secondary = COALESCE(?, mb_secondary),
+                    musicbrainz_status = CASE
+                        WHEN mbid IS NOT NULL AND musicbrainz_status = 'verified' THEN musicbrainz_status
+                        ELSE COALESCE(?, musicbrainz_status)
+                    END,
+                    musicbrainz_last_checked = CURRENT_TIMESTAMP,
+                    musicbrainz_match_method = ?
+                WHERE id = ?
+            `).run(
+                matchedReleaseGroup.mbid,
+                primaryTypeFromProviderMatch(releaseGroupMatch),
+                secondaryTypeFromProviderMatch(releaseGroupMatch),
+                getAlbumIdentityStatusFromProviderMatch(releaseGroupMatch),
+                releaseGroupMatch?.method || "lidarr-release-group-title-year-type",
+                album.tidal_id,
+            );
+        }
+
+        db.prepare(`
+            INSERT INTO provider_items (
+                provider, entity_type, provider_id, title, version, explicit, quality,
+                upc, duration, release_date, artist_mbid, release_group_mbid, library_slot,
+                match_status, match_confidence, match_method, match_evidence, data, updated_at
+            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+                title = excluded.title,
+                version = excluded.version,
+                explicit = excluded.explicit,
+                quality = excluded.quality,
+                upc = excluded.upc,
+                duration = excluded.duration,
+                release_date = excluded.release_date,
+                artist_mbid = excluded.artist_mbid,
+                release_group_mbid = excluded.release_group_mbid,
+                library_slot = excluded.library_slot,
+                match_status = excluded.match_status,
+                match_confidence = excluded.match_confidence,
+                match_method = excluded.match_method,
+                match_evidence = excluded.match_evidence,
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP
+        `).run(
+            String(album.tidal_id),
+            album.title || null,
+            album.version || null,
+            album.explicit ? 1 : 0,
+            album.quality || null,
+            album.upc || null,
+            album.duration || null,
+            album.release_date || null,
+            matchedArtistMbid,
+            matchedReleaseGroup?.mbid || null,
+            getProviderLibrarySlot(album.quality),
+            releaseGroupMatch?.status || "unmatched",
+            releaseGroupMatch?.confidence ?? null,
+            releaseGroupMatch?.method || null,
+            releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
+            JSON.stringify(album),
+        );
+
+        if (options.resolveMusicBrainz === false) {
+            db.prepare(`
+                UPDATE albums
+                SET musicbrainz_status = COALESCE(musicbrainz_status, 'pending')
+                WHERE id = ?
+                  AND mbid IS NULL
+                  AND mb_release_group_id IS NULL
+            `).run(album.tidal_id);
+        } else {
+            await MetadataIdentityService.resolveAlbum(String(album.tidal_id), {
+                force: forceUpdate,
+                includeTracks: false,
+            });
+        }
 
         return !exists;
     }

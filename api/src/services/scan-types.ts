@@ -10,6 +10,7 @@ export interface ScanOptions {
     monitorAlbums?: boolean;
     hydrateCatalog?: boolean;
     hydrateAlbumTracks?: boolean;
+    resolveMusicBrainz?: boolean;
     forceUpdate?: boolean;
     forceAlbumUpdate?: boolean;
     includeSimilarArtists?: boolean;

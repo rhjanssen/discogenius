@@ -41,6 +41,7 @@ export function getTidalImage(
   size: TidalImageSize
 ): string | null {
   if (!uuid) return null;
+  if (/^https?:\/\//i.test(uuid)) return uuid;
 
   let width: number;
   let height: number;
