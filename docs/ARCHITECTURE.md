@@ -8,7 +8,7 @@ Last updated: 2026-03-27
 This document describes the current Discogenius architecture and the stable boundaries we preserve while iterating.
 
 For planned architecture consolidation and Lidarr-alignment backlog, use docs/ARCHITECTURE_WORKPLAN.md.
-For curation and redundancy flow details, use docs/CURATION_DEDUPLICATION.md.
+For curation flow details, use docs/CURATION_DEDUPLICATION.md.
 
 ## System Shape
 
@@ -17,7 +17,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - api/: Express + TypeScript + better-sqlite3
 - app/: React + Vite + Fluent UI v9 + react-query
 - config/: TOML settings, SQLite metadata DB, auth/runtime state
-- library/: managed media library roots (music, atmos, videos)
+- library/: managed media library roots (music, spatial, videos)
 
 ## Stable Architectural Principles
 
@@ -97,13 +97,13 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 | `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
 | `ConfigPrune` | Prune disabled metadata sources, backfill enabled ones | Globally exclusive |
 
-**Legacy orchestration commands** (used by monitoring scheduler, remain queryable, and are now resolved through the shared system-task catalog rather than a route-local switch):
+**Orchestration commands** (used by monitoring scheduler and resolved through the shared system-task catalog rather than a route-local switch):
 
 | Command | Purpose |
 | --- | --- |
 | `RefreshMetadata` | Metadata refresh pass for queued artists |
 | `MonitoringCycle` | Full monitoring lifecycle (refresh → root scan → curation → download) |
-| `ApplyCuration` | Apply curation rules and update redundancy flags |
+| `ApplyCuration` | Apply curation rules to monitored release-group slots |
 | `DownloadMissing` | Queue concrete downloads for missing monitored media |
 | `CheckUpgrades` | Check for upgrade candidates in library |
 | `Housekeeping` | General system cleanup and maintenance |
@@ -130,8 +130,8 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 ### Playback and Browser Streaming
 
-- api/src/routes/playback.ts: signed browser playback routes for TIDAL audio/video streaming
-- Browser audio playback prefers BTS/progressive sources, but falls back to DASH segment playback when that is the only browser-safe TIDAL path available
+- api/src/routes/playback.ts: signed browser playback routes backed by the active streaming provider
+- Browser audio playback prefers progressive sources, but falls back to DASH segment playback when that is the only browser-safe provider path available
 - Browser-incompatible Atmos/Hi-Res audio is served through backend browser-compatible streaming/transcode paths so local/downloaded playback remains usable in standard browsers
 
 ### Metadata, Scan, and Import
@@ -145,11 +145,11 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - api/src/services/library-scan.ts: disk reconciliation/import coordination
 - api/src/services/import-service.ts + import-* services: manual import discovery/matching/apply/finalize pipeline
 - api/src/services/identification-service.ts + fingerprint.ts: local-file identification support
-- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO sidecar generation using live TIDAL data when available and local database metadata as fallback
+- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO sidecar generation using provider data when available and local database metadata as fallback
 
 ### Curation and Download Candidate Selection
 
-- api/src/services/curation-service.ts: CurationService — artist-level curation, redundancy filtering, monitor propagation, download queue candidate generation
+- api/src/services/curation-service.ts: CurationService — MusicBrainz release-group slot curation and download queue candidate generation
 - api/src/services/artist-workflow.ts: workflow phase definitions and queued handoff payloads
 - api/src/services/task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline)
 
@@ -258,12 +258,12 @@ Operationally important semantics:
 - No heavy route-level orchestration for scan/import/curation/download operations.
 - No shadow file-state source outside library_files.
 - No lock-blind monitor updates.
-- No local/offline/disconnected mode. The application requires an authenticated TIDAL session.
+- Provider authentication is optional for MusicBrainz library management; downloads, previews, followed artists, provider artwork, and provider lyrics require a capable connected provider.
 
 ## Documentation Ownership
 
 - docs/ARCHITECTURE.md: current architecture and stable boundaries (this file)
 - docs/ARCHITECTURE_WORKPLAN.md: architecture improvements and backlog
-- docs/CURATION_DEDUPLICATION.md: curation/redundancy deep-dive
+- docs/CURATION_DEDUPLICATION.md: curation flow deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
 - docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance

@@ -1,5 +1,3 @@
-import { discogeniusLogoColor } from "@/theme/theme";
-
 export interface UltraBlurColors {
   topLeft: string;
   topRight: string;
@@ -15,23 +13,23 @@ export interface UltraBlurColors {
  * Theme adaptation is handled by the overlay layer in UltraBlurBackground.tsx
  * (overlayDark/overlayLight, vignette, noise, etc.)
  * 
- * @param _isDarkMode - Unused, kept for API compatibility
+ * @param _isDarkMode - Whether the active Fluent theme is dark
  * @returns UltraBlurColors based on the brand seed colors
  */
 export function getThemeDefaultColors(_isDarkMode: boolean): UltraBlurColors {
   // Same colors for both themes - the overlay layer handles light/dark adaptation.
   if (_isDarkMode) {
     return {
-      topLeft: "#0a0c10",
-      topRight: "#12141a",
-      bottomLeft: "#08090c",
-      bottomRight: "#15181e",
+      topLeft: "#20125f",
+      topRight: "#071f3d",
+      bottomLeft: "#1238e8",
+      bottomRight: "#8f243d",
     };
   }
   return {
-    topLeft: "#e0e3e8",
-    topRight: "#ebedf0",
-    bottomLeft: "#d8dce2",
-    bottomRight: "#f4f5f7",
+    topLeft: "#d9ccff",
+    topRight: "#b8f0ff",
+    bottomLeft: "#6f8dff",
+    bottomRight: "#ffc0a0",
   };
 }

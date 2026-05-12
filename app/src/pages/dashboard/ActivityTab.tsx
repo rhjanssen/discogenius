@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import {
     Button,
     Spinner,
+    Subtitle2,
     Text,
 } from "@fluentui/react-components";
 import {
@@ -316,11 +317,7 @@ const ActivityTab = ({
         && runningEntries.length === 0
         && queuedEntries.length === 0
         && historyEntries.length === 0;
-    const showEmptyState = !showInitialLoadingState
-        && !isActivityInitialLoading
-        && runningEntries.length === 0
-        && queuedEntries.length === 0
-        && historyEntries.length === 0;
+    const hasActiveOrPendingEntries = runningEntries.length > 0 || queuedEntries.length > 0;
 
     if (showInitialLoadingState && !showUnavailableState) {
         return (
@@ -344,37 +341,65 @@ const ActivityTab = ({
                     description={activityRefreshErrorMessage || "Unable to load activity right now."}
                     icon={<DismissCircle24Filled />}
                 />
-            ) : showEmptyState ? (
-                <EmptyState
-                    title="No recent activity"
-                    description="Background jobs, downloads, scans, and imports appear here."
-                    icon={<Clock24Regular />}
-                />
             ) : (
-                <div className={styles.activityList}>
-                    {renderSection("Running", runningEntries, "running")}
-                    {renderSection("Queued", queuedEntries, "queued")}
-                    {hasMoreInFlightActivity ? (
-                        <div className={styles.loadMoreRow}>
-                            <Button appearance="subtle" onClick={() => void loadMoreInFlightActivity()} disabled={isLoadingMoreInFlightActivity}>
-                                {isLoadingMoreInFlightActivity ? "Loading..." : "Load more queued"}
-                            </Button>
+                <div className={styles.queueColumnsWrapper}>
+                    <section className={styles.queueSection} aria-label="Active activity">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                            </div>
                         </div>
-                    ) : null}
-                    <section className={styles.activitySection} aria-label="Recent">
-                        <div className={styles.activitySectionHeader}>
-                            <Text size={200} weight="semibold" className={styles.activitySectionLabel}>Recent</Text>
+                        {hasActiveOrPendingEntries ? (
+                            <div className={styles.activityList}>
+                                {renderSection("Running", runningEntries, "running")}
+                                {renderSection("Pending", queuedEntries, "queued")}
+                                {hasMoreInFlightActivity ? (
+                                    <div className={styles.loadMoreRow}>
+                                        <Button appearance="subtle" onClick={() => void loadMoreInFlightActivity()} disabled={isLoadingMoreInFlightActivity}>
+                                            {isLoadingMoreInFlightActivity ? "Loading..." : "Load more pending"}
+                                        </Button>
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : (
+                            <EmptyState
+                                title="No active jobs"
+                                description="Running scans, imports, downloads, and maintenance tasks appear here."
+                                icon={<Clock24Regular />}
+                                minHeight="220px"
+                            />
+                        )}
+                    </section>
+
+                    <section className={styles.queueSection} aria-label="Activity history">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+                            </div>
                         </div>
-                        <div className={styles.activitySectionItems}>
-                            {historyEntries.map((entry) => renderActivityEntry(entry))}
-                            {hasMoreActivity ? (
-                                <div className={styles.loadMoreRow}>
-                                    <Button appearance="subtle" onClick={() => void loadMoreActivity()} disabled={isLoadingMoreActivity}>
-                                        {isLoadingMoreActivity ? "Loading..." : "Load more"}
-                                    </Button>
-                                </div>
-                            ) : null}
-                        </div>
+                        {historyEntries.length > 0 ? (
+                            <div className={styles.activityList}>
+                                <section className={styles.activitySection} aria-label="History">
+                                    <div className={styles.activitySectionItems}>
+                                        {historyEntries.map((entry) => renderActivityEntry(entry))}
+                                        {hasMoreActivity ? (
+                                            <div className={styles.loadMoreRow}>
+                                                <Button appearance="subtle" onClick={() => void loadMoreActivity()} disabled={isLoadingMoreActivity}>
+                                                    {isLoadingMoreActivity ? "Loading..." : "Load more"}
+                                                </Button>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                </section>
+                            </div>
+                        ) : (
+                            <EmptyState
+                                title="No job history yet"
+                                description="Completed and failed jobs appear here after Discogenius starts doing work."
+                                icon={<Clock24Regular />}
+                                minHeight="220px"
+                            />
+                        )}
                     </section>
                 </div>
             )}
@@ -383,4 +408,3 @@ const ActivityTab = ({
 };
 
 export default ActivityTab;
-

@@ -23,6 +23,9 @@ before(async () => {
 beforeEach(() => {
     const { db } = dbModule;
     db.prepare("DELETE FROM job_queue").run();
+    db.prepare("DELETE FROM release_group_slots").run();
+    db.prepare("DELETE FROM mb_release_groups").run();
+    db.prepare("DELETE FROM mb_artists").run();
     db.prepare("DELETE FROM media_artists").run();
     db.prepare("DELETE FROM album_artists").run();
     db.prepare("DELETE FROM media").run();
@@ -38,9 +41,14 @@ after(() => {
 
 function seedLibrary() {
     dbModule.db.prepare(`
-        INSERT INTO artists (id, name, monitor)
+        INSERT INTO mb_artists (mbid, name, sort_name)
         VALUES (?, ?, ?)
-    `).run(1, "Artist One", 0);
+    `).run("artist-mbid-1", "Artist One", "Artist One");
+
+    dbModule.db.prepare(`
+        INSERT INTO artists (id, mbid, name, monitor)
+        VALUES (?, ?, ?, ?)
+    `).run(1, "artist-mbid-1", "Artist One", 0);
 
     dbModule.db.prepare(`
         INSERT INTO albums (
@@ -66,6 +74,31 @@ function seedLibrary() {
         INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(10, 1, "Artist One", 0, "main", "ALBUMS", "ALBUM");
+
+    dbModule.db.prepare(`
+        INSERT INTO mb_release_groups (mbid, artist_mbid, title, primary_type, first_release_date)
+        VALUES (?, ?, ?, ?, ?)
+    `).run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album", "2024-01-01");
+
+    dbModule.db.prepare(`
+        INSERT INTO release_group_slots (
+            artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id,
+            quality, match_status, match_confidence, match_method, provider_data
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "artist-mbid-1",
+        "release-group-mbid-1",
+        "stereo",
+        1,
+        "tidal",
+        "10",
+        "LOSSLESS",
+        "verified",
+        1,
+        "test-provider-slot",
+        JSON.stringify({ title: "Album One", cover: null, artist: { name: "Artist One" }, quality: "LOSSLESS" }),
+    );
 }
 
 test("artist monitor bulk updates related rows and queues intake", async () => {

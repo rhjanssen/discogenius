@@ -5,12 +5,6 @@ import { Config } from "./config.js";
 import { normalizeComparablePath } from "./path-utils.js";
 import type { LibraryRoot } from "./naming.js";
 
-const LEGACY_ROOTS: Record<LibraryRoot, string> = {
-  music: "/library/music",
-  spatial_music: "/library/atmos",
-  music_videos: "/library/videos",
-};
-
 function isAbsolutePathLike(inputPath: string): boolean {
   return path.isAbsolute(inputPath) || /^[A-Za-z]:[\\/]/.test(String(inputPath || ""));
 }
@@ -27,10 +21,9 @@ function guessRootKeyFromStoredPath(candidatePath: string): LibraryRoot | null {
     return null;
   }
 
-  for (const key of ["music", "spatial_music", "music_videos"] as const) {
+  for (const key of ["music", "spatial", "videos"] as const) {
     const currentBase = basenameForCompare(getCurrentLibraryRootPath(key));
-    const legacyBase = basenameForCompare(LEGACY_ROOTS[key]);
-    if (candidateBase === currentBase || candidateBase === legacyBase) {
+    if (candidateBase === currentBase) {
       return key;
     }
   }
@@ -71,7 +64,7 @@ function normalizeRelativePath(relativePath: string | null | undefined): string 
 
 export function getCurrentLibraryRootPath(libraryRoot: LibraryRoot): string {
   if (libraryRoot === "music") return Config.getMusicPath();
-  if (libraryRoot === "spatial_music") return Config.getAtmosPath();
+  if (libraryRoot === "spatial") return Config.getSpatialPath();
   return Config.getVideoPath();
 }
 
@@ -80,7 +73,7 @@ export function resolveLibraryRootKey(
   filePath?: string | null | undefined,
 ): LibraryRoot | null {
   const direct = String(libraryRoot || "").trim();
-  if (direct === "music" || direct === "spatial_music" || direct === "music_videos") {
+  if (direct === "music" || direct === "spatial" || direct === "videos") {
     return direct;
   }
 
@@ -94,8 +87,8 @@ export function resolveLibraryRootKey(
       return guessedKey;
     }
 
-    for (const key of ["music", "spatial_music", "music_videos"] as const) {
-      if (isWithinRoot(candidate, getCurrentLibraryRootPath(key)) || isWithinRoot(candidate, LEGACY_ROOTS[key])) {
+    for (const key of ["music", "spatial", "videos"] as const) {
+      if (isWithinRoot(candidate, getCurrentLibraryRootPath(key))) {
         return key;
       }
     }
@@ -138,7 +131,6 @@ export function resolveStoredLibraryPath(options: {
 
   const rootCandidates = [
     String(libraryRoot || "").trim(),
-    LEGACY_ROOTS[key],
     currentRoot,
   ].filter(Boolean);
 
@@ -178,12 +170,7 @@ function translateExpectedPath(
     return expectedPath;
   }
 
-  const derivedRelative = relativeFromRoot(expectedPath, LEGACY_ROOTS[libraryRootKey]);
-  if (derivedRelative === null) {
-    return expectedPath;
-  }
-
-  return derivedRelative ? path.join(currentRoot, derivedRelative) : currentRoot;
+  return expectedPath;
 }
 
 export function reconcileStoredLibraryPaths(): {

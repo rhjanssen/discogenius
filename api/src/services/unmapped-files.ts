@@ -7,7 +7,7 @@ import { ImportDecisionEngine } from "./import-decision/engine.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 import type { LocalFile, LocalGroup, TidalMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
-import { getAlbum, searchTidal } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 
 const unmappedFileRepository = new UnmappedFileRepository(db);
 
@@ -115,7 +115,8 @@ export class UnmappedFilesService {
     ) {
         const files = this.repository.findByIds(fileIds);
         const identification = await IdentificationService.identifyUnmappedFiles(files, tidalAlbumId);
-        const album = await getAlbum(tidalAlbumId);
+        const providerAlbum = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(tidalAlbumId);
+        const album = (providerAlbum?.raw || providerAlbum) as any;
         const evaluatedMatch = album
             ? this.evaluateAlbumCandidate(files, {
                 ...identification,
@@ -143,11 +144,11 @@ export class UnmappedFilesService {
         mode: ImportDecisionMode = "ExistingFiles"
     ): Promise<TidalMatch | null> {
         if (files.length === 0) return null;
-        if (files.some((file) => file.library_root === "music_videos")) {
+        if (files.some((file) => file.library_root === "videos")) {
             return this.findBestVideoCandidate(files, mode);
         }
         const group = this.buildLocalGroup(files);
-        const context = files[0]?.library_root === "spatial_music" ? "atmos" : "music";
+        const context = files[0]?.library_root === "spatial" ? "spatial" : "music";
         const matches = await this.importService.findMatchesForGroup(group, context, mode);
         return matches[0] ?? null;
     }
@@ -293,22 +294,27 @@ export class UnmappedFilesService {
 
                 let trackResults: any[] = [];
                 try {
-                    const searchResults = await searchTidal(query, "tracks", 10);
-                    trackResults = Array.isArray(searchResults) ? searchResults : [];
+                    const searchResults = await streamingProviderManager.getDefaultStreamingProvider().search(query, {
+                        types: ["tracks"],
+                        limit: 10,
+                    });
+                    trackResults = (searchResults.tracks || []).map((track) => track.raw || track);
                 } catch {
                     continue;
                 }
 
                 for (const track of trackResults) {
-                    const albumId = track?.album_id?.toString?.();
+                    const albumId = track?.album_id?.toString?.()
+                        ?? track?.album?.id?.toString?.()
+                        ?? track?.album?.providerId?.toString?.();
                     if (!albumId || candidateAlbums.has(albumId)) {
                         continue;
                     }
 
                     try {
-                        const album = await getAlbum(albumId);
-                        if (album) {
-                            candidateAlbums.set(albumId, album);
+                        const providerAlbum = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
+                        if (providerAlbum) {
+                            candidateAlbums.set(albumId, providerAlbum.raw || providerAlbum);
                         }
                     } catch {
                         // Ignore individual album hydration failures.

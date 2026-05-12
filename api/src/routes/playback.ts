@@ -7,16 +7,16 @@
  * Browser preview intentionally stays on a Tidarr-style safe path:
  *   - prefers BTS/progressive, but falls back to DASH when that is all TIDAL offers
  *   - byte range support preserved for scrubbing/seeking
- *   - Atmos/Hi-Res requests fall back to browser-friendly stereo ladders
+ *   - Spatial/Hi-Res requests fall back to browser-friendly stereo ladders
  */
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { Readable } from "stream";
-import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "../services/playback.js";
 import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worker.js";
-import type { PlaybackInfo, VideoPlaybackInfo } from "../services/playback.js";
+import { streamingProviderManager } from "../services/providers/index.js";
+import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../services/providers/streaming-provider.js";
 import { authMiddleware } from "../middleware/auth.js";
 
 const streamPipeline = promisify(pipeline);
@@ -35,9 +35,16 @@ function normalizePlaybackQuality(value: unknown): string | null {
     return PLAYBACK_QUALITIES.has(normalized) ? normalized : null;
 }
 
-function signUrl(id: string, expires: number, quality?: string | null): string {
+function resolvePlaybackProvider(providerId?: unknown) {
+    const requested = String(providerId ?? "").trim();
+    return requested
+        ? streamingProviderManager.getStreamingProvider(requested)
+        : streamingProviderManager.getDefaultStreamingProvider();
+}
+
+function signUrl(providerId: string, id: string, expires: number, quality?: string | null): string {
     const hmac = crypto.createHmac("sha256", getSecret());
-    hmac.update(`${id}:${quality || ""}:${expires}`);
+    hmac.update(`${providerId}:${id}:${quality || ""}:${expires}`);
     return hmac.digest("hex");
 }
 
@@ -55,10 +62,22 @@ router.get("/stream/sign/:trackId", authMiddleware, (req: Request, res: Response
         return res.status(400).json({ error: "Unsupported playback quality" });
     }
 
+    let providerId = "";
+    try {
+        const provider = resolvePlaybackProvider(req.query.provider);
+        providerId = provider.id;
+        if (!provider.getPlaybackInfo) {
+            return res.status(501).json({ error: `${provider.name} does not support track preview` });
+        }
+    } catch (error: any) {
+        return res.status(404).json({ error: error?.message || "Provider not found" });
+    }
+
     const expires = Math.floor(Date.now() / 1000) + 300; // 5 min
-    const sig = signUrl(trackId, expires, quality);
+    const sig = signUrl(providerId, trackId, expires, quality);
     const qualityQuery = quality ? `&quality=${encodeURIComponent(quality)}` : "";
-    const url = `/api/playback/stream/play/${trackId}?exp=${expires}&sig=${sig}${qualityQuery}`;
+    const providerQuery = `&provider=${encodeURIComponent(providerId)}`;
+    const url = `/api/playback/stream/play/${trackId}?exp=${expires}&sig=${sig}${providerQuery}${qualityQuery}`;
 
     res.json({ url });
 });
@@ -74,19 +93,26 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     const sig = String(req.query.sig ?? "") || undefined;
     const requestedQuality = req.query.quality;
     const quality = normalizePlaybackQuality(requestedQuality);
+    const providerId = String(req.query.provider ?? "").trim();
 
     if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
     if (requestedQuality !== undefined && !quality) return res.status(400).json({ error: "Unsupported playback quality" });
+    if (!providerId) return res.status(400).json({ error: "Missing provider" });
 
     const expires = parseInt(exp, 10);
     if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
 
-    const expected = signUrl(trackId, expires, quality);
+    const expected = signUrl(providerId, trackId, expires, quality);
     if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
 
     try {
-        console.log(`[Playback] Fetching browser playback info for track ${trackId} (preferred=${quality || "auto"})...`);
-        const info: PlaybackInfo | null = await getBrowserPlaybackInfo(trackId, quality || undefined);
+        const provider = resolvePlaybackProvider(providerId);
+        if (!provider.getPlaybackInfo) {
+            return res.status(501).json({ error: `${provider.name} does not support track preview` });
+        }
+
+        console.log(`[Playback] Fetching ${provider.name} playback info for track ${trackId} (preferred=${quality || "auto"})...`);
+        const info: ProviderPlaybackInfo | null = await provider.getPlaybackInfo(trackId, quality || undefined);
         if (!info) {
             console.error(`[Playback] No browser-safe playback source for track ${trackId}`);
             return res.status(502).json({ error: "No playable quality available" });
@@ -187,9 +213,20 @@ router.get("/video/sign/:videoId", authMiddleware, (req: Request, res: Response)
     const videoId = req.params.videoId as string;
     if (!videoId) return res.status(400).json({ error: "Missing videoId" });
 
+    let providerId = "";
+    try {
+        const provider = resolvePlaybackProvider(req.query.provider);
+        providerId = provider.id;
+        if (!provider.getVideoPlaybackInfo) {
+            return res.status(501).json({ error: `${provider.name} does not support video preview` });
+        }
+    } catch (error: any) {
+        return res.status(404).json({ error: error?.message || "Provider not found" });
+    }
+
     const expires = Math.floor(Date.now() / 1000) + 300;
-    const sig = signUrl(`video:${videoId}`, expires);
-    const url = `/api/playback/video/play/${videoId}?exp=${expires}&sig=${sig}`;
+    const sig = signUrl(providerId, `video:${videoId}`, expires);
+    const url = `/api/playback/video/play/${videoId}?exp=${expires}&sig=${sig}&provider=${encodeURIComponent(providerId)}`;
 
     res.json({ url });
 });
@@ -198,17 +235,24 @@ router.get("/video/play/:videoId", async (req: Request, res: Response) => {
     const videoId = req.params.videoId as string;
     const exp = String(req.query.exp ?? "") || undefined;
     const sig = String(req.query.sig ?? "") || undefined;
+    const providerId = String(req.query.provider ?? "").trim();
 
     if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
+    if (!providerId) return res.status(400).json({ error: "Missing provider" });
 
     const expires = parseInt(exp, 10);
     if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
 
-    const expected = signUrl(`video:${videoId}`, expires);
+    const expected = signUrl(providerId, `video:${videoId}`, expires);
     if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
 
     try {
-        const info: VideoPlaybackInfo | null = await getVideoPlaybackInfo(videoId);
+        const provider = resolvePlaybackProvider(providerId);
+        if (!provider.getVideoPlaybackInfo) {
+            return res.status(501).json({ error: `${provider.name} does not support video preview` });
+        }
+
+        const info: ProviderVideoPlaybackInfo | null = await provider.getVideoPlaybackInfo(videoId);
         if (!info) {
             return res.status(502).json({ error: "No playable video stream available" });
         }

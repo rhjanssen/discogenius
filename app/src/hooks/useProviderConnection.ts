@@ -2,9 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { AuthStatusContract } from "@contracts/auth";
 
-export function useTidalConnection() {
+export function useProviderConnection() {
   const query = useQuery({
-    queryKey: ["tidalAuthStatus"],
+    queryKey: ["providerAuthStatus"],
     queryFn: () => api.getAuthStatus(),
     staleTime: 30_000,
     refetchOnWindowFocus: false,

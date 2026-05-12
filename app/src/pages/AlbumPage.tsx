@@ -10,6 +10,11 @@ import {
   Spinner,
   Avatar,
   Tooltip,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
   makeStyles,
   tokens,
   Overflow,
@@ -25,6 +30,7 @@ import {
   LockOpen24Regular,
   Info24Regular,
   MusicNote224Regular,
+  ChevronDown16Regular,
 } from "@fluentui/react-icons";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
@@ -44,7 +50,6 @@ import {
 } from "@/hooks/useAlbumPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
-import { getAlbumCover } from "@/utils/tidalImages";
 import { useToast } from "@/hooks/useToast";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
@@ -52,6 +57,7 @@ import { dispatchLibraryUpdated } from "@/utils/appEvents";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
+import { getAlbumCover } from "@/utils/tidalImages";
 import {
   detailActionButtonRadiusStyles,
   standardDetailActionButtonStyles,
@@ -204,6 +210,24 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...standardDetailActionButtonStyles,
+  },
+  splitDownload: {
+    display: "inline-flex",
+    alignItems: "stretch",
+    borderRadius: tokens.borderRadiusMedium,
+    overflow: "hidden",
+  },
+  splitDownloadPrimary: {
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  splitDownloadMenu: {
+    minWidth: "36px",
+    paddingLeft: tokens.spacingHorizontalXS,
+    paddingRight: tokens.spacingHorizontalXS,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderLeftColor: tokens.colorNeutralStroke2,
   },
   metaAttribution: {
     marginTop: tokens.spacingVerticalXS,
@@ -423,7 +447,7 @@ const AlbumPage = () => {
   }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
   const artistImage = pageData?.artistImage ?? undefined;
-  const albumArtworkUrl = album?.cover_id ? getAlbumCover(album.cover_id, 'large') : null;
+  const albumArtworkUrl = album ? (album.cover_art_url || getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null) : undefined;
   const albumBrandColor = useArtworkBrandColor({
     artworkUrl: albumArtworkUrl,
     brandKeyColor: album?.vibrant_color ?? null,
@@ -431,6 +455,9 @@ const AlbumPage = () => {
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!((album as any)?.monitor_locked ?? (album as any)?.monitor_lock);
+  const hasStereoOffer = Boolean(album?.stereo_provider_id);
+  const hasSpatialOffer = Boolean(album?.spatial_provider_id);
+  const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
 
   useLayoutEffect(() => {
     if (!albumId) {
@@ -527,14 +554,15 @@ const AlbumPage = () => {
     dispatchLibraryUpdated();
   };
 
-  const handleDownloadAlbum = async () => {
+  const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
     if (!album) return;
     setDownloadingAlbum(true);
     try {
-      await api.addAlbum(album.id);
+      await api.addAlbum(album.id, slot ? { slot } : undefined);
+      const slotLabel = slot === 'spatial' ? 'spatial audio' : slot === 'stereo' ? 'stereo' : hasStereoOffer && hasSpatialOffer ? 'stereo and spatial audio' : 'selected';
       toast({
         title: "Album added to queue",
-        description: `${album.title} will be downloaded shortly`,
+        description: `${album.title} (${slotLabel}) will be downloaded shortly`,
       });
       dispatchLibraryUpdated();
     } catch (error) {
@@ -549,10 +577,24 @@ const AlbumPage = () => {
     }
   };
 
+  const handleDownloadPrimary = () => {
+    if (hasStereoOffer && hasSpatialOffer) {
+      void handleDownloadAlbum();
+      return;
+    }
+    if (hasSpatialOffer) {
+      void handleDownloadAlbum('spatial');
+      return;
+    }
+    void handleDownloadAlbum('stereo');
+  };
+
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
-    { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download', disabled: downloadingAlbum, onClick: handleDownloadAlbum },
+    { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download selected', disabled: downloadingAlbum || !hasAnyProviderOffer, onClick: handleDownloadPrimary },
+    ...(album?.stereo_provider_id ? [{ key: 'download-stereo', label: 'Download stereo', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('stereo') }] : []),
+    ...(album?.spatial_provider_id ? [{ key: 'download-spatial', label: 'Download spatial', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('spatial') }] : []),
   ];
 
   /** Open track info dialog */
@@ -607,7 +649,7 @@ const AlbumPage = () => {
         key={item.id}
         className={mergeClasses(styles.albumCard, isCurrent && styles.albumCard)}
         to={getAlbumPath(item.id)}
-        imageUrl={item.cover_id ? getAlbumCover(item.cover_id, "small") : (item.cover ? getAlbumCover(item.cover, "small") : null)}
+        imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
         alt={item.title}
         title={item.title}
         subtitle={subtitle}
@@ -736,16 +778,49 @@ const AlbumPage = () => {
 
                   {/* Download Button */}
                   <OverflowItem id="download" priority={1}>
-                    <Button
-                      icon={<ArrowDownload24Regular />}
-                      appearance="subtle"
-                      onClick={handleDownloadAlbum}
-                      disabled={downloadingAlbum}
-                      title="Download album"
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      {downloadingAlbum ? "Adding..." : "Download"}
-                    </Button>
+                    {hasStereoOffer && hasSpatialOffer ? (
+                      <div className={styles.splitDownload}>
+                        <Button
+                          icon={<ArrowDownload24Regular />}
+                          appearance="subtle"
+                          onClick={handleDownloadPrimary}
+                          disabled={downloadingAlbum}
+                          title="Download stereo and spatial audio"
+                          className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadPrimary)}
+                        >
+                          {downloadingAlbum ? "Adding..." : "Download"}
+                        </Button>
+                        <Menu>
+                          <MenuTrigger disableButtonEnhancement>
+                            <Button
+                              appearance="subtle"
+                              aria-label="Choose download version"
+                              icon={<ChevronDown16Regular />}
+                              disabled={downloadingAlbum}
+                              className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadMenu)}
+                            />
+                          </MenuTrigger>
+                          <MenuPopover>
+                            <MenuList>
+                              <MenuItem onClick={() => handleDownloadAlbum()}>Download both</MenuItem>
+                              <MenuItem onClick={() => handleDownloadAlbum('stereo')}>Download stereo only</MenuItem>
+                              <MenuItem onClick={() => handleDownloadAlbum('spatial')}>Download spatial only</MenuItem>
+                            </MenuList>
+                          </MenuPopover>
+                        </Menu>
+                      </div>
+                    ) : (
+                      <Button
+                        icon={<ArrowDownload24Regular />}
+                        appearance="subtle"
+                        onClick={handleDownloadPrimary}
+                        disabled={downloadingAlbum || !hasAnyProviderOffer}
+                        title={hasAnyProviderOffer ? "Download album" : "No provider offer selected"}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        {downloadingAlbum ? "Adding..." : "Download"}
+                      </Button>
+                    )}
                   </OverflowItem>
 
                   <ActionOverflowMenu actions={albumActions} />

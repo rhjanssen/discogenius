@@ -76,6 +76,10 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const styles = useCardStyles();
     const navigate = useNavigate();
     const showExplicitBadge = explicit === true || explicit === 1 || explicit === "1" || explicit === "true";
+    const [imageFailed, setImageFailed] = React.useState(false);
+    React.useEffect(() => {
+        setImageFailed(false);
+    }, [imageUrl]);
 
     const handleClick = useCallback(() => {
         if (onClick) {
@@ -117,12 +121,13 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
             aria-label={title}
         >
             <div className={previewClass}>
-                {imageUrl ? (
+                {imageUrl && !imageFailed ? (
                     <img
                         src={imageUrl}
                         alt={alt}
                         className={styles.cardImage}
                         loading="lazy"
+                        onError={() => setImageFailed(true)}
                     />
                 ) : (
                     placeholder || <div className={styles.placeholderBg} />

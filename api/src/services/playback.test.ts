@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BROWSER_PLAYBACK_MANIFEST_TYPES, buildBrowserPlaybackQualityOrder, buildPlaybackQualityOrder } from "./playback.js";
+import {
+  BROWSER_PLAYBACK_MANIFEST_TYPES,
+  buildBrowserPlaybackQualityOrder,
+  buildPlaybackQualityOrder,
+} from "./providers/tidal/tidal-playback.js";
 
 test("buildPlaybackQualityOrder prefers the requested quality before falling back", () => {
   assert.deepEqual(buildPlaybackQualityOrder("DOLBY_ATMOS"), [

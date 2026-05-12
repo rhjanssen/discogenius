@@ -2,6 +2,7 @@ import axios from 'axios';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { gzipSync } from 'zlib';
 import { spawn } from 'child_process';
 import { resolveAcoustIdClientId } from './provider-client-config.js';
 import { Config } from './config.js';
@@ -39,6 +40,11 @@ export interface AcoustIdLookupResult {
     id: string;
     score: number | null;
     recordingIds: string[];
+}
+
+interface AcoustIdBatchInput {
+    fingerprint: string;
+    duration: number;
 }
 
 const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.6 (metadata identity; https://github.com/rhjanssen/discogenius)";
@@ -246,45 +252,87 @@ export async function generateFingerprint(filePath: string): Promise<{ duration:
     });
 }
 
-export async function lookupAcoustIdMatches(fingerprint: string, duration: number): Promise<AcoustIdLookupResult[]> {
+function mapAcoustIdResults(results: any[]): AcoustIdLookupResult[] {
+    return results
+        .map((result: any) => {
+            const id = String(result?.id || "").trim();
+            const recordingIds = new Set<string>();
+            if (Array.isArray(result?.recordings)) {
+                for (const recording of result.recordings) {
+                    const recordingId = String(recording?.id || "").trim();
+                    if (recordingId) recordingIds.add(recordingId);
+                }
+            }
+
+            return {
+                id,
+                score: typeof result?.score === "number" && Number.isFinite(result.score) ? result.score : null,
+                recordingIds: Array.from(recordingIds),
+            } satisfies AcoustIdLookupResult;
+        })
+        .filter((result: AcoustIdLookupResult) => result.id || result.recordingIds.length > 0);
+}
+
+export async function lookupAcoustIdBatch(inputs: AcoustIdBatchInput[]): Promise<AcoustIdLookupResult[][]> {
+    if (inputs.length === 0) {
+        return [];
+    }
+
     const clientId = resolveAcoustIdClientId({
         env: process.env,
         appConfig: Config.getAppConfig(),
     });
-    const url = `https://api.acoustid.org/v2/lookup?client=${clientId}&meta=recordingids&duration=${duration}&fingerprint=${fingerprint}`;
+    const params = new URLSearchParams({
+        client: clientId,
+        format: "json",
+        meta: "recordingids",
+        batch: inputs.length > 1 ? "1" : "0",
+    });
+
+    inputs.forEach((input, index) => {
+        const suffix = inputs.length > 1 ? `.${index}` : "";
+        params.append(`duration${suffix}`, String(Math.round(input.duration)));
+        params.append(`fingerprint${suffix}`, input.fingerprint);
+    });
 
     try {
-        const response = await axios.get(url, { timeout: 10000 });
+        const response = await axios.post("https://api.acoustid.org/v2/lookup", gzipSync(Buffer.from(params.toString(), "utf8")), {
+            timeout: 10000,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Encoding": "gzip",
+            },
+            validateStatus: (status) => status < 500,
+        });
         if (response.data.status !== 'ok') {
             console.warn('[Fingerprint] AcoustID API error:', response.data.error);
-            return [];
+            return inputs.map(() => []);
         }
 
-        const results = response.data.results;
-        if (!results || results.length === 0) return [];
+        if (inputs.length === 1) {
+            const results = Array.isArray(response.data.results) ? response.data.results : [];
+            return [mapAcoustIdResults(results)];
+        }
 
-        return results
-            .map((result: any) => {
-                const id = String(result?.id || "").trim();
-                const recordingIds = new Set<string>();
-                if (Array.isArray(result?.recordings)) {
-                    for (const recording of result.recordings) {
-                        const recordingId = String(recording?.id || "").trim();
-                        if (recordingId) recordingIds.add(recordingId);
-                    }
-                }
+        const fingerprints = Array.isArray(response.data.fingerprints) ? response.data.fingerprints : [];
+        const output = inputs.map(() => [] as AcoustIdLookupResult[]);
+        for (const fingerprintResult of fingerprints) {
+            const index = Number(fingerprintResult?.index);
+            if (Number.isInteger(index) && index >= 0 && index < output.length) {
+                output[index] = mapAcoustIdResults(Array.isArray(fingerprintResult?.results) ? fingerprintResult.results : []);
+            }
+        }
 
-                return {
-                    id,
-                    score: typeof result?.score === "number" && Number.isFinite(result.score) ? result.score : null,
-                    recordingIds: Array.from(recordingIds),
-                } satisfies AcoustIdLookupResult;
-            })
-            .filter((result: AcoustIdLookupResult) => result.id || result.recordingIds.length > 0);
+        return output;
     } catch (error: any) {
         console.error('[Fingerprint] AcoustID lookup error:', error.message);
-        return [];
+        return inputs.map(() => []);
     }
+}
+
+export async function lookupAcoustIdMatches(fingerprint: string, duration: number): Promise<AcoustIdLookupResult[]> {
+    const [matches] = await lookupAcoustIdBatch([{ fingerprint, duration }]);
+    return matches || [];
 }
 
 /**

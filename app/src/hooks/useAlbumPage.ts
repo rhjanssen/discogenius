@@ -7,7 +7,6 @@ import {
     LIBRARY_UPDATED_EVENT,
     MONITOR_STATE_CHANGED_EVENT,
 } from '@/utils/appEvents';
-import { getArtistPicture } from '@/utils/tidalImages';
 import type {
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
@@ -50,9 +49,7 @@ export function useAlbumPage(albumId: string | undefined) {
                 timeoutMs: 15_000,
             });
 
-            const artistImage = response.artistPicture
-                ? getArtistPicture(response.artistPicture, 'tiny')
-                : response.artistCoverImageUrl ?? null;
+            const artistImage = response.artistCoverImageUrl ?? response.artistPicture ?? null;
 
             return {
                 album: response.album as Album,

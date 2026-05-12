@@ -250,7 +250,7 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     }
 
     if (groupType === 'album') {
-        return buildAlbumNavPath(firstItem.type === 'album' ? firstItem.tidalId : firstItem.album_id);
+        return buildAlbumNavPath(firstItem.album_id ?? (firstItem.type === 'album' ? firstItem.tidalId : null));
     }
 
     return buildAlbumNavPath(firstItem.album_id);
@@ -262,7 +262,7 @@ function getQueueHistoryNavPath(item: QueueItem): string | null {
     }
 
     if (item.type === 'album') {
-        return buildAlbumNavPath(item.tidalId ?? item.album_id);
+        return buildAlbumNavPath(item.album_id ?? item.tidalId);
     }
 
     if (item.type === 'track') {
@@ -714,7 +714,7 @@ const QueueTab = () => {
                 && Boolean(item.album_id)
                 && (albumTrackCounts.get(item.album_id as string) ?? 0) > 1;
             const groupId = isAlbum
-                ? `album-${item.tidalId}`
+                ? `album-${item.album_id ?? item.tidalId}`
                 : isVideo
                     ? `video-${item.tidalId}`
                     : shouldGroupTrackAsAlbum
@@ -1641,6 +1641,11 @@ const QueueTab = () => {
                     </section>
                 ) : (
                     <section className={styles.queueSection} aria-label="Active">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                            </div>
+                        </div>
                         {hasQueueRefreshError ? (
                             <ErrorState
                                 title="Queue unavailable"

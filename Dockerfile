@@ -60,7 +60,7 @@ RUN groupadd --gid 1000 node \
     && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
 # Create directories and set permissions
-RUN mkdir -p /config /downloads /library/music /library/atmos /library/videos /app \
+RUN mkdir -p /config /downloads /library/music /library/spatial /library/videos /app \
     && chown -R node:node /config /downloads /library /app /opt/orpheusdl
 
 # Copy package files (workspaces setup)

@@ -19,6 +19,7 @@ export function useQueue({ enabled = true }: UseQueueOptions = {}) {
     refreshErrorFallbackMessage: "Failed to refresh queue.",
     fetchPage: ({ limit, offset }) => api.getQueue({ limit, offset }),
     getItemId: (item) => item.id,
+    refetchIntervalMs: 2_000,
     enabled,
   });
 

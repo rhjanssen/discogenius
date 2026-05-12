@@ -22,6 +22,7 @@ import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
+import { isSpatialAudioQuality } from '@/utils/spatialAudio';
 import ManualImportModal from './ManualImportModal';
 
 const GROUP_MIN_FILES = 2;
@@ -417,12 +418,12 @@ function buildPrimaryQualityLabel(files: UnmappedFile[]) {
     const channels = files.map((file) => Number(file.channels || 0)).find((value) => value > 0) || null;
     const qualityText = firstWithAudioQuality?.audio_quality?.trim() || '';
     const normalizedQualityText = qualityText ? normalizeQualityText(qualityText) : '';
-    const isAtmos = normalizedQualityText.includes('ATMOS') || (channels !== null && channels > 2) || codec === 'EAC3';
+    const isSpatial = isSpatialAudioQuality(normalizedQualityText) || (channels !== null && channels > 2) || codec === 'EAC3';
 
-    if (isAtmos) {
+    if (isSpatial) {
         const bitrateLabel = formatBitrate(bitrate);
         const base = [bitrateLabel, codec || 'EAC3'].filter(Boolean).join(' ');
-        return base ? `${base} (Dolby Digital Plus + Dolby Atmos)` : 'DOLBY ATMOS';
+        return base ? `${base} (spatial audio)` : 'SPATIAL AUDIO';
     }
 
     if (normalizedQualityText && !['LOSSLESS', 'HIRES_LOSSLESS', 'DOLBY_ATMOS', 'HIGH', 'NORMAL', 'LOW'].includes(normalizedQualityText)) {
@@ -1058,6 +1059,5 @@ const ManualImportTab = () => {
 };
 
 export default ManualImportTab;
-
 
 

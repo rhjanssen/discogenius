@@ -2,11 +2,11 @@ import Database from "better-sqlite3";
 import { BaseRepository } from "./BaseRepository.js";
 
 /**
- * Album entity matching the new schema
- * Note: id is now INT (TIDAL album id) as primary key
+ * Provider-native album offer row.
+ * MusicBrainz release groups are the canonical album identity for library views.
  */
 export interface Album {
-    id: number;                    // TIDAL album id (primary key)
+    id: number;                    // provider-native album id
     artist_id: number;             // Main artist id
     title: string;                 // Album title
     version?: string;              // Album version (Deluxe, Remastered, etc)

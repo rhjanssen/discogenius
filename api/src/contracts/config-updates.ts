@@ -44,7 +44,6 @@ const QUALITY_UPDATE_KEYS = [
   "embed_synced_lyrics",
   "upgrade_existing_files",
   "convert_video_mp4",
-  "download_dolby_atmos",
   "extract_flac",
 ] as const satisfies readonly (keyof QualityConfigContract)[];
 
@@ -71,7 +70,7 @@ const METADATA_UPDATE_KEYS = [
 
 const PATH_UPDATE_KEYS = [
   "music_path",
-  "atmos_path",
+  "spatial_path",
   "video_path",
 ] as const satisfies readonly (keyof PathConfigContract)[];
 
@@ -91,10 +90,11 @@ const FILTERING_UPDATE_KEYS = [
   "include_live",
   "include_remix",
   "include_appears_on",
-  "include_atmos",
+  "include_spatial",
   "include_videos",
   "prefer_explicit",
   "enable_redundancy_filter",
+  "require_provider_availability",
 ] as const satisfies readonly (keyof FilteringConfigContract)[];
 
 const MONITORING_UPDATE_KEYS = [

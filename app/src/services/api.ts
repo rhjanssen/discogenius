@@ -120,6 +120,30 @@ type RequestControlOptions = {
   signal?: AbortSignal;
 };
 
+export type StreamingProviderStatus = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  authenticated: boolean;
+  remoteCatalogAvailable: boolean;
+  capabilities: {
+    hasVideo: boolean;
+    hasLossless?: boolean;
+    hasSpatialAudio?: boolean;
+    spatialFormats?: string[];
+  };
+  management: {
+    canAuthenticate: boolean;
+    canDisconnect: boolean;
+    canImportFollowedArtists: boolean;
+    canImportPlaylists: boolean;
+    canPreviewTracks: boolean;
+    canPreviewVideos: boolean;
+    canDownloadMusic: boolean;
+    canDownloadVideos: boolean;
+  };
+};
+
 class ApiClient {
   private baseUrl: string;
   private authToken: string | null = null;
@@ -264,8 +288,12 @@ class ApiClient {
     return this.request('/auth/status', {}, parseAuthStatusContract);
   }
 
-  async logoutTidal() {
-    return this.request('/auth/logout', { method: 'POST' });
+  async getStreamingProviders(): Promise<{ providers: StreamingProviderStatus[]; defaultProviderId: string }> {
+    return this.request('/providers');
+  }
+
+  async logoutProvider(providerId: string) {
+    return this.request(`/providers/${providerId}/logout`, { method: 'POST' });
   }
 
   // Config endpoints
@@ -485,20 +513,16 @@ class ApiClient {
     return this.request(`/albums/${albumId}/monitor`, { method: 'POST' });
   }
 
-  async getArtistAlbums(artistId: string, qualityFilter: 'all' | 'stereo' | 'atmos' = 'all') {
+  async getArtistAlbums(artistId: string, qualityFilter: 'all' | 'stereo' | 'spatial' = 'all') {
     return this.request(`/artists/${artistId}/albums?quality_filter=${qualityFilter}`);
   }
 
-  async getArtistAlbumsFromTidal(artistId: string) {
-    return this.request(`/tidal/artists/${artistId}/albums`);
-  }
-
-  async getTidalAlbumTracks(albumId: string) {
-    const tracks = await this.request(`/tidal/albums/${albumId}/tracks`) as any[];
+  async getProviderAlbumTracks(providerId: string, albumId: string) {
+    const tracks = await this.request(`/providers/${providerId}/albums/${albumId}/tracks`) as any[];
     return Array.isArray(tracks)
       ? tracks.map((track) => ({
         ...track,
-        id: String(track.id ?? track.tidal_id),
+        id: String(track.id ?? track.providerId),
       }))
       : tracks;
   }
@@ -544,10 +568,10 @@ class ApiClient {
     return this.request(`/albums/${albumId}/page`, options, parseAlbumPageContract);
   }
 
-  async addAlbum(tidalId: string) {
+  async addAlbum(albumId: string, options?: { slot?: 'stereo' | 'spatial' }) {
     return this.request(`/albums`, {
       method: 'POST',
-      body: JSON.stringify({ id: tidalId }),
+      body: JSON.stringify({ id: albumId, slot: options?.slot }),
     });
   }
 
@@ -789,18 +813,27 @@ class ApiClient {
   }
 
   /**
-   * Get a signed TIDAL stream URL for preview playback.
-   * The backend proxies the actual CDN bytes so no TIDAL token leaks to the client.
+   * Get a signed provider stream URL for preview playback.
+   * The backend proxies the actual CDN bytes so no provider token leaks to the client.
    */
-  async signTidalStream(trackId: string, preferredQuality?: string | null): Promise<string> {
-    const query = preferredQuality ? `?quality=${encodeURIComponent(preferredQuality)}` : '';
-    const data = await this.request(`/playback/stream/sign/${trackId}${query}`);
+  async signTrackPreviewStream(
+    trackId: string,
+    options?: { provider?: string | null; quality?: string | null },
+  ): Promise<string> {
+    const queryParams = new URLSearchParams();
+    if (options?.provider) queryParams.set('provider', options.provider);
+    if (options?.quality) queryParams.set('quality', options.quality);
+    const query = queryParams.toString();
+    const data = await this.request(`/playback/stream/sign/${trackId}${query ? `?${query}` : ''}`);
     // The returned url is relative (/api/playback/stream/play/...), make it absolute
     return `${this.baseUrl}${(data as any).url}`;
   }
 
-  async signTidalVideoStream(videoId: string): Promise<string> {
-    const data = await this.request(`/playback/video/sign/${videoId}`);
+  async signVideoPreviewStream(videoId: string, options?: { provider?: string | null }): Promise<string> {
+    const queryParams = new URLSearchParams();
+    if (options?.provider) queryParams.set('provider', options.provider);
+    const query = queryParams.toString();
+    const data = await this.request(`/playback/video/sign/${videoId}${query ? `?${query}` : ''}`);
     return `${this.baseUrl}${(data as any).url}`;
   }
 
@@ -922,8 +955,8 @@ class ApiClient {
     });
   }
 
-  async processRedundancy(artistId: string) {
-    return this.request(`/artists/${artistId}/redundancy`, { method: 'POST' });
+  async curateArtist(artistId: string) {
+    return this.request(`/artists/${artistId}/curate`, { method: 'POST' });
   }
 
   async toggleArtistMonitored(artistId: string, monitored: boolean) {

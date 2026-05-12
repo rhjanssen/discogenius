@@ -26,6 +26,9 @@ type RetagTrackRow = {
   relative_path: string | null;
   library_root: string | null;
   extension: string;
+  file_quality: string | null;
+  file_codec: string | null;
+  file_channels: number | null;
   file_fingerprint: string | null;
   file_acoustid_id: string | null;
   file_fingerprint_duration: number | null;
@@ -115,6 +118,23 @@ function buildFullTitle(title: string | null | undefined, version: string | null
   return baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())
     ? baseTitle
     : `${baseTitle} (${normalizedVersion})`;
+}
+
+function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
+  const extension = String(row.extension || "").replace(/^\./, "").toLowerCase();
+  const codec = String(row.file_codec || "").toLowerCase();
+  const quality = String(row.file_quality || "").toUpperCase();
+  const libraryRoot = String(row.library_root || "").toLowerCase();
+
+  if (!["m4a", "mp4"].includes(extension)) {
+    return false;
+  }
+
+  if (["eac3", "e-ac-3", "ac3", "ac-3", "ac4", "ac-4"].includes(codec)) {
+    return true;
+  }
+
+  return libraryRoot === "spatial" || quality.includes("ATMOS") || quality.includes("SPATIAL");
 }
 
 /**
@@ -538,6 +558,9 @@ export class AudioTagService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.quality AS file_quality,
+        lf.codec AS file_codec,
+        lf.channels AS file_channels,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
@@ -599,6 +622,9 @@ export class AudioTagService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.quality AS file_quality,
+        lf.codec AS file_codec,
+        lf.channels AS file_channels,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
@@ -1305,6 +1331,12 @@ export class AudioTagService {
       const desiredTags = Object.fromEntries(
         this.buildDesiredTags(enrichedRow, config).map((tag) => [tag.ffmpegKey, tag.targetValue]),
       );
+
+      if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
+        console.warn(`[Retag] Skipping embedded tag rewrite for ${resolvedPath}; ${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "spatial"} is not safely writable with ffmpeg stream copy.`);
+        result.skipped++;
+        continue;
+      }
 
       // Scrub all existing tags before writing (Lidarr's ScrubAudioTags)
       if (config.scrub_audio_tags) {

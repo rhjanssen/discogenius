@@ -182,7 +182,7 @@ export interface DownloadProgressData {
     /** Status of current track download */
     trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
 
-    /** Status message (e.g., "Switching to Atmos...", "Rate limited...") */
+    /** Status message (e.g., "Switching spatial mode...", "Rate limited...") */
     statusMessage?: string;
 
     /** Overall download state */

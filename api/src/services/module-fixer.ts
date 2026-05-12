@@ -1,5 +1,5 @@
 import { db } from '../database.js';
-import { getArtistPage } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 
 type CanonicalModule =
     | 'ALBUM'
@@ -209,7 +209,10 @@ function normalizePageModuleTitleToKey(title: string | null | undefined): PageMo
 
 async function buildArtistPageModuleMap(artistId: string, cachedPageData?: any): Promise<Map<string, PageModuleKey>> {
     const moduleMap = new Map<string, PageModuleKey>();
-    const pageData = cachedPageData ?? await getArtistPage(artistId);
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
+    const pageData = cachedPageData ?? (provider.getArtistCatalogPage
+        ? await provider.getArtistCatalogPage(artistId)
+        : null);
     const rows = pageData?.rows;
     if (!Array.isArray(rows)) return moduleMap;
 

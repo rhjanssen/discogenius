@@ -11,7 +11,6 @@ import { QualityBadge } from "@/components/ui/QualityBadge";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
-import { getAlbumCover } from "@/utils/tidalImages";
 import { formatDurationSeconds } from "@/utils/format";
 import type { TrackListItem } from "@/types/track-list";
 
@@ -141,7 +140,8 @@ const isTruthy = (value: unknown) => Boolean(value);
 
 const getAlbumTitle = (track: TrackListItem, fallback?: string | null) =>
   track.album?.title ?? track.album_title ?? fallback ?? null;
-const getAlbumCoverId = (track: TrackListItem) => track.album?.cover_id ?? null;
+const getAlbumArtworkUrl = (track: TrackListItem) =>
+  track.cover_url ?? track.album_cover ?? track.album?.cover_id ?? null;
 const getDisplayTitle = (track: TrackListItem) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 
@@ -212,6 +212,7 @@ const TrackList = <T extends TrackListItem>({
           const isPlaying = playingTrackId === track.id;
           const audioFile = getTrackAudioFile(track);
           const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
+          const canPlay = Boolean(audioFile || track.preview_provider_track_id);
           const isMonitored = isTruthy(track.is_monitored ?? track.monitor);
           const isLocked = isTruthy(track.monitor_locked ?? track.monitor_lock);
           const displayArtist = shouldShowArtist(track, showArtist, contextArtistName) ? track.artist_name : null;
@@ -219,9 +220,7 @@ const TrackList = <T extends TrackListItem>({
             ? getAlbumTitle(track, contextAlbumTitle)
             : null;
           const durationText = formatDurationSeconds(track.duration);
-          const coverUrl = showCover
-            ? getAlbumCover(getAlbumCoverId(track), "tiny")
-            : null;
+          const coverUrl = showCover ? getAlbumArtworkUrl(track) : null;
           const isDownloading = Boolean(isTrackDownloading?.(track));
           const currentVolume = track.volume_number || 1;
           const previousVolume = index > 0 ? (tracks[index - 1]?.volume_number || 1) : currentVolume;
@@ -274,7 +273,7 @@ const TrackList = <T extends TrackListItem>({
                     isDownloaded={isDownloaded}
                     isDownloading={isDownloading}
                     canShowInfo={Boolean(audioFile)}
-                    onPlay={(event) => toggleTrackPlayback(track, event)}
+                    onPlay={canPlay ? (event) => toggleTrackPlayback(track, event) : undefined}
                     onToggleMonitor={onToggleMonitor
                       ? (event) => {
                         event.stopPropagation();

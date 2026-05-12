@@ -2,7 +2,7 @@ import React from "react";
 import { Body1, makeStyles, tokens, Title1 } from "@fluentui/react-components";
 import { useSearchParams } from "react-router-dom";
 import GlobalSearch from "@/components/GlobalSearch";
-import { useTidalConnection } from "@/hooks/useTidalConnection";
+import { useProviderConnection } from "@/hooks/useProviderConnection";
 
 const useStyles = makeStyles({
   container: {
@@ -35,7 +35,7 @@ const useStyles = makeStyles({
 const SearchPage = () => {
   const styles = useStyles();
   const [searchParams] = useSearchParams();
-  const { remoteCatalogAvailable, providerAuthMode } = useTidalConnection();
+  const { remoteCatalogAvailable, providerAuthMode } = useProviderConnection();
   const query = searchParams.get("q")?.trim() ?? "";
   const localOnlyMessage = providerAuthMode === "mock"
     ? "Provider auth is mocked in this environment. Artist search still uses MusicBrainz/Lidarr metadata."

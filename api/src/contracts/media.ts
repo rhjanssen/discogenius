@@ -44,6 +44,8 @@ export interface LibraryFilesListResponseContract {
 
 export interface AlbumTrackContract {
   id: string;
+  preview_provider?: string | null;
+  preview_provider_track_id?: string | null;
   title: string;
   version?: string | null;
   duration: number;
@@ -52,6 +54,9 @@ export interface AlbumTrackContract {
   quality: string;
   artist_name?: string;
   album_title?: string;
+  musicbrainz_track_id?: string | null;
+  musicbrainz_recording_id?: string | null;
+  musicbrainz_release_id?: string | null;
   downloaded: boolean;
   is_downloaded: boolean;
   is_monitored: boolean;
@@ -153,6 +158,8 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
 
   return {
     id: expectString(record.id, `${label}.id`),
+    preview_provider: expectOptionalString(record.preview_provider, `${label}.preview_provider`) ?? null,
+    preview_provider_track_id: expectOptionalString(record.preview_provider_track_id, `${label}.preview_provider_track_id`) ?? null,
     title: expectString(record.title, `${label}.title`),
     version: expectNullableString(record.version, `${label}.version`),
     duration: expectNumber(record.duration, `${label}.duration`),
@@ -161,6 +168,9 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
     quality: expectString(record.quality, `${label}.quality`),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
     album_title: expectOptionalString(record.album_title, `${label}.album_title`),
+    musicbrainz_track_id: expectOptionalString(record.musicbrainz_track_id, `${label}.musicbrainz_track_id`) ?? null,
+    musicbrainz_recording_id: expectOptionalString(record.musicbrainz_recording_id, `${label}.musicbrainz_recording_id`) ?? null,
+    musicbrainz_release_id: expectOptionalString(record.musicbrainz_release_id, `${label}.musicbrainz_release_id`) ?? null,
     downloaded: expectBoolean(record.downloaded, `${label}.downloaded`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),

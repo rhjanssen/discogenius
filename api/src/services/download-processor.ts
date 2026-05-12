@@ -40,6 +40,7 @@ import type {
     ResolvedDownloadMetadata,
 } from './job-payloads.js';
 import { DownloadedTracksImportService } from './downloaded-tracks-import-service.js';
+import { appEvents, AppEvent, type JobEventPayload } from './app-events.js';
 
 type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload | DownloadPlaylistJobPayload;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album' | 'playlist'>;
@@ -88,6 +89,7 @@ export class DownloadProcessor {
     private cancelCurrentDownload: boolean = false;
     private lastBusyLogAt: number = 0;
     private lastStuckCleanupAt: number = 0;
+    private queueEventsSubscribed: boolean = false;
 
     /** Tracks the active import job (runs in its own slot alongside downloads, Tidarr-style). */
     private activeImports = new Map<number, { tidalId: string; type: string; promise: Promise<void> }>();
@@ -578,6 +580,15 @@ export class DownloadProcessor {
             // Continue anyway - settings might already be configured
         }
 
+        if (!this.queueEventsSubscribed) {
+            appEvents.on(AppEvent.JOB_ADDED, (event: JobEventPayload) => {
+                if (DOWNLOAD_OR_IMPORT_JOB_TYPES.includes(event.type as (typeof DOWNLOAD_OR_IMPORT_JOB_TYPES)[number])) {
+                    this.scheduleNext();
+                }
+            });
+            this.queueEventsSubscribed = true;
+        }
+
         // Reset any items that were "downloading" (processing) during crash/restart
         // This ensures interrupted downloads are safely re-queued on app startup
         try {
@@ -661,7 +672,12 @@ export class DownloadProcessor {
         this.processing = true;
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
-        const tidalId = String(job.ref_id || job.payload?.tidalId || '');
+        const tidalId = String(
+            (job.payload as DownloadJobPayload | undefined)?.providerId
+            || job.payload?.tidalId
+            || job.ref_id
+            || '',
+        );
         const type: DownloadJobType = job.type === JobTypes.DownloadVideo
             ? 'video'
             : job.type === JobTypes.DownloadAlbum

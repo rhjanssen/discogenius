@@ -1,5 +1,6 @@
 import { Config, type QualityConfig } from "./config.js";
 import { normalizeAudioQualityTag } from "./quality.js";
+import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 
 export type AudioQualityTier = "LOW" | "HIGH" | "LOSSLESS" | "HIRES_LOSSLESS";
 export type VideoQualityTier = "MP4_360P" | "MP4_480P" | "MP4_720P" | "MP4_1080P";
@@ -131,14 +132,14 @@ export class UpgradableSpecification {
         const normalizedCurrentQuality = normalizeAudioTier(params.currentQuality);
         const currentQuality = normalizedCurrentQuality ?? normalizeAudioQualityTag(params.currentQuality);
 
-        if (normalizeAudioQualityTag(params.currentQuality) === "DOLBY_ATMOS") {
+        if (isSpatialAudioQuality(params.currentQuality)) {
             return {
                 needsChange: false,
                 direction: "none",
                 currentQuality,
                 targetQuality: null,
                 qualityCutoffNotMet: false,
-                reason: "Dolby Atmos is curated separately",
+                reason: "Spatial audio is curated separately",
             };
         }
 

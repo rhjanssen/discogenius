@@ -795,7 +795,7 @@ export function getTidalDlNgCapabilitySnapshot(): BackendCapabilitySnapshot {
         capabilities: {
             audio: true,
             video: true,
-            atmos: true,
+            spatialAudio: true,
             highResAudio: true,
             playlists: true,
         },
@@ -1345,4 +1345,3 @@ export default {
     TIDAL_DL_NG_TOKEN_FILE,
     getTidalDlNgCapabilitySnapshot,
 };
-

@@ -53,7 +53,6 @@ export interface QualityConfigContract {
   embed_synced_lyrics?: boolean;
   upgrade_existing_files: boolean;
   convert_video_mp4?: boolean;
-  download_dolby_atmos?: boolean;
   extract_flac?: boolean;
 }
 
@@ -80,7 +79,7 @@ export interface MetadataConfigContract {
 
 export interface PathConfigContract {
   music_path: string;
-  atmos_path: string;
+  spatial_path: string;
   video_path: string;
 }
 
@@ -100,10 +99,11 @@ export interface FilteringConfigContract {
   include_live: boolean;
   include_remix: boolean;
   include_appears_on: boolean;
-  include_atmos: boolean;
+  include_spatial: boolean;
   include_videos: boolean;
   prefer_explicit: boolean;
   enable_redundancy_filter: boolean;
+  require_provider_availability: boolean;
 }
 
 export interface MonitoringConfigContract {
@@ -180,7 +180,6 @@ export function parseQualityConfigContract(value: unknown): QualityConfigContrac
     embed_synced_lyrics: expectOptionalBoolean(record.embed_synced_lyrics, "quality.embed_synced_lyrics"),
     upgrade_existing_files: expectBoolean(record.upgrade_existing_files, "quality.upgrade_existing_files"),
     convert_video_mp4: expectOptionalBoolean(record.convert_video_mp4, "quality.convert_video_mp4"),
-    download_dolby_atmos: expectOptionalBoolean(record.download_dolby_atmos, "quality.download_dolby_atmos"),
     extract_flac: expectOptionalBoolean(record.extract_flac, "quality.extract_flac"),
   };
 }
@@ -217,7 +216,7 @@ export function parsePathConfigContract(value: unknown): PathConfigContract {
   const record = expectRecord(value, "Path config");
   return {
     music_path: expectString(record.music_path, "path.music_path"),
-    atmos_path: expectString(record.atmos_path, "path.atmos_path"),
+    spatial_path: expectString(record.spatial_path, "path.spatial_path"),
     video_path: expectString(record.video_path, "path.video_path"),
   };
 }
@@ -243,10 +242,11 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_live: expectBoolean(record.include_live, "curation.include_live"),
     include_remix: expectBoolean(record.include_remix, "curation.include_remix"),
     include_appears_on: expectBoolean(record.include_appears_on, "curation.include_appears_on"),
-    include_atmos: expectBoolean(record.include_atmos, "curation.include_atmos"),
+    include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),
     enable_redundancy_filter: expectBoolean(record.enable_redundancy_filter, "curation.enable_redundancy_filter"),
+    require_provider_availability: expectBoolean(record.require_provider_availability, "curation.require_provider_availability"),
   };
 }
 

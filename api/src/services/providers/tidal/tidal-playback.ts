@@ -8,7 +8,7 @@
  * The route layer handles both: BTS gets a simple proxy, DASH segments are
  * fetched sequentially and concatenated into a single audio/mp4 stream.
  */
-import { loadToken, refreshTidalToken, getCountryCode } from "./providers/tidal/tidal.js";
+import { loadToken, refreshTidalToken, getCountryCode } from "./tidal.js";
 
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 
@@ -56,7 +56,7 @@ export function buildBrowserPlaybackQualityOrder(preferredQuality?: string | nul
     }
 
     // Match Tidarr's browser-preview approach: prefer progressive stereo-safe playback
-    // instead of trying to force Atmos/Hi-Res manifests through the HTML audio element.
+    // instead of trying to force spatial/Hi-Res manifests through the HTML audio element.
     return ["LOSSLESS", "HIGH", "LOW"];
 }
 

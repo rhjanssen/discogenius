@@ -556,6 +556,13 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       ensureMusicBrainzProviderSchema();
     },
   },
+  {
+    version: 9,
+    description: "add provider-neutral identity, artwork cache, and provider video matching scaffold",
+    up: () => {
+      ensureProviderNeutralIdentitySchema();
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -759,6 +766,181 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON release_group_slots(selected_provider, selected_provider_id)");
 }
 
+function ensureProviderNeutralIdentitySchema(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS local_entities (
+      local_id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      legacy_id TEXT,
+      musicbrainz_id TEXT,
+      display_name TEXT,
+      data TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(entity_type, legacy_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_entity_ids (
+      local_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      provider_entity_type TEXT,
+      match_status TEXT,
+      match_confidence REAL,
+      match_method TEXT,
+      match_evidence TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(provider, provider_entity_type, external_id),
+      FOREIGN KEY(local_id) REFERENCES local_entities(local_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS artist_metadata (
+      local_artist_id TEXT PRIMARY KEY,
+      musicbrainz_artist_id TEXT,
+      old_musicbrainz_artist_ids TEXT,
+      name TEXT NOT NULL,
+      sort_name TEXT,
+      aliases TEXT,
+      overview TEXT,
+      disambiguation TEXT,
+      type TEXT,
+      status TEXT,
+      links TEXT,
+      genres TEXT,
+      members TEXT,
+      ratings TEXT,
+      images TEXT,
+      source TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(local_artist_id) REFERENCES local_entities(local_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS artwork_cache (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      artwork_type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'candidate',
+      width INT,
+      height INT,
+      failure_count INT NOT NULL DEFAULT 0,
+      checked_at DATETIME,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(entity_type, entity_id, artwork_type, source, url)
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_video_identity (
+      identity_key TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      artist_name TEXT,
+      artist_mbid TEXT,
+      recording_mbid TEXT,
+      duration_bucket INT,
+      match_method TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0,
+      data TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_video_items (
+      provider TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      identity_key TEXT NOT NULL,
+      media_id TEXT,
+      title TEXT NOT NULL,
+      artist_name TEXT,
+      artist_mbid TEXT,
+      recording_mbid TEXT,
+      duration INT,
+      release_date TEXT,
+      url TEXT,
+      cover TEXT,
+      match_status TEXT,
+      match_confidence REAL,
+      match_method TEXT,
+      match_evidence TEXT,
+      data TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(provider, provider_id),
+      FOREIGN KEY(identity_key) REFERENCES provider_video_identity(identity_key) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
+    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
+    SELECT 'artist:' || CAST(id AS TEXT), 'artist', CAST(id AS TEXT), mbid, name
+    FROM artists;
+
+    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
+    SELECT 'album:' || CAST(id AS TEXT), 'album', CAST(id AS TEXT), COALESCE(mb_release_group_id, mbid), title
+    FROM albums;
+
+    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
+    SELECT
+      CASE WHEN type = 'Music Video' THEN 'video:' ELSE 'track:' END || CAST(id AS TEXT),
+      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
+      CAST(id AS TEXT),
+      mbid,
+      title
+    FROM media;
+
+    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
+    SELECT 'artist:' || CAST(id AS TEXT), 'artist', 'tidal', CAST(id AS TEXT), 'artist', 'verified', 1, 'legacy-primary-id'
+    FROM artists;
+
+    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
+    SELECT 'album:' || CAST(id AS TEXT), 'album', 'tidal', CAST(id AS TEXT), 'album', COALESCE(musicbrainz_status, 'verified'), 1, 'legacy-primary-id'
+    FROM albums;
+
+    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
+    SELECT
+      CASE WHEN type = 'Music Video' THEN 'video:' ELSE 'track:' END || CAST(id AS TEXT),
+      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
+      'tidal',
+      CAST(id AS TEXT),
+      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
+      COALESCE(musicbrainz_status, 'verified'),
+      1,
+      'legacy-primary-id'
+    FROM media;
+
+    INSERT OR IGNORE INTO artist_metadata (
+      local_artist_id, musicbrainz_artist_id, name, sort_name, overview,
+      disambiguation, type, status, images, source
+    )
+    SELECT
+      'artist:' || CAST(a.id AS TEXT),
+      COALESCE(mba.mbid, a.mbid),
+      a.name,
+      mba.sort_name,
+      COALESCE(a.bio_text, json_extract(mba.data, '$.overview')),
+      mba.disambiguation,
+      COALESCE(mba.type, json_extract(mba.data, '$.type')),
+      COALESCE(a.musicbrainz_status, 'unknown'),
+      json_extract(mba.data, '$.images'),
+      CASE WHEN mba.mbid IS NOT NULL THEN 'lidarr' ELSE a.bio_source END
+    FROM artists a
+    LEFT JOIN mb_artists mba ON mba.mbid = a.mbid;
+  `);
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_local_entities_type_mbid ON local_entities(entity_type, musicbrainz_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_local ON provider_entity_ids(local_id, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_provider_type ON provider_entity_ids(provider, provider_entity_type, external_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artist_metadata_mbid ON artist_metadata(musicbrainz_artist_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artwork_cache_lookup ON artwork_cache(entity_type, entity_id, artwork_type, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_items_identity ON provider_video_items(identity_key)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_items_recording ON provider_video_items(recording_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_identity_recording ON provider_video_identity(recording_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_monitor_date ON albums(artist_id, monitor, release_date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_media_artist_type_date ON media(artist_id, type, release_date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_artist_album_media ON library_files(artist_id, album_id, media_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist_type_date ON mb_release_groups(artist_mbid, primary_type, first_release_date DESC)");
+}
+
 type MigrationRunSummary = {
   fromVersion: number;
   toVersion: number;
@@ -879,7 +1061,7 @@ export function initDatabase() {
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS albums (
-      id INT PRIMARY KEY,                -- TIDAL album id
+      id INT PRIMARY KEY,                -- provider-native album id
       artist_id INT NOT NULL,            -- Main artist id
       title TEXT NOT NULL,               -- Album title
       version TEXT,                      -- Album version (Deluxe, Remastered, etc)
@@ -1008,7 +1190,7 @@ export function initDatabase() {
   // Album artists relationship
   db.exec(`
     CREATE TABLE IF NOT EXISTS album_artists (
-      album_id INT NOT NULL,             -- TIDAL album id  
+      album_id INT NOT NULL,             -- provider-native album id
       artist_id INT NOT NULL,            -- TIDAL artist id
       artist_name TEXT,                  -- Cached artist name (for fast UI rendering)
       ord INT,                           -- Ordering of artists on the release
@@ -1072,13 +1254,13 @@ export function initDatabase() {
       
       -- Linkage (at least artist_id required, then either media_id for tracks/videos)
       artist_id INT NOT NULL,            -- TIDAL artist id (always required)
-      album_id INT,                      -- TIDAL album id (for tracks)
+      album_id INT,                      -- provider-native album id (for tracks)
       media_id INT,                      -- TIDAL track or video id (links to media table)
       
       -- File Location
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file in library
       relative_path TEXT NOT NULL,       -- Path relative to library root (for portability)
-      library_root TEXT NOT NULL,        -- Which library: music, spatial_music, music_videos
+      library_root TEXT NOT NULL,        -- Which library: music, spatial, videos
       
       -- File Metadata
       filename TEXT NOT NULL,            -- Just the filename with extension
@@ -1126,6 +1308,7 @@ export function initDatabase() {
 
   ensureMetadataIdentitySchema();
   ensureMusicBrainzProviderSchema();
+  ensureProviderNeutralIdentitySchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (Local Files not mapped to TIDAL)
@@ -1136,7 +1319,7 @@ export function initDatabase() {
       
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file
       relative_path TEXT NOT NULL,       -- Path relative to library root
-      library_root TEXT NOT NULL,        -- Which library: music, spatial_music, music_videos
+      library_root TEXT NOT NULL,        -- Which library: music, spatial, videos
       
       filename TEXT NOT NULL,
       extension TEXT NOT NULL,
@@ -1295,7 +1478,7 @@ export function initDatabase() {
   // external_id: the provider's own identifier for this entity
   //
   // For albums, join on mb_release_group_id to group format variants (16-bit,
-  // 24-bit, Atmos) that share the same abstract album across providers.
+  // 24-bit, spatial) that share the same abstract album across providers.
   // For media, ISRC on the media table is already the canonical cross-provider key.
   // ====================================================================
   db.exec(`

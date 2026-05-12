@@ -63,7 +63,7 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api } from "@/services/api";
-import { getArtistPicture, getAlbumCover, getTidalImage } from "@/utils/tidalImages";
+import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -340,7 +340,7 @@ const Library = () => {
   });
 
   // Filters - load from persisted settings
-  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>(
+  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>(
     persistedSettings?.libraryFilter ?? 'all'
   );
   // Default: show only monitored items for new users
@@ -579,7 +579,7 @@ const Library = () => {
 
   const queueSelectedArtistCurate = async () => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
-      await api.processRedundancy(artist.id);
+      await api.curateArtist(artist.id);
     });
 
     if (succeeded > 0) {
@@ -920,7 +920,7 @@ const Library = () => {
   // Render a single artist card
   const renderArtistCard = (artist: any) => {
     const albumCount = artist.album_count ?? 0;
-    const imageUrl = getArtistPicture(artist.picture, 'small') || artist.cover_image_url || null;
+    const imageUrl = artist.cover_image_url || artist.picture || null;
     const itemProgress = getProgressByTidalId(String(artist.id));
     return (
       <MediaCard
@@ -980,7 +980,7 @@ const Library = () => {
   const handleArtistCurate = useCallback(async (e: React.MouseEvent, artist: any) => {
     e.stopPropagation();
     try {
-      const result: any = await api.processRedundancy(artist.id);
+      const result: any = await api.curateArtist(artist.id);
       toast({ title: "Curation queued", description: result?.message || `Queued curation for ${artist.name}` });
       dispatchActivityRefresh();
       dispatchLibraryUpdated();
@@ -1007,7 +1007,7 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (artist: any) => {
-        const src = getArtistPicture(artist.picture, 'small') || artist.cover_image_url;
+        const src = artist.cover_image_url || artist.picture;
         return src ? (
           <img src={src} alt={artist.name} className={dgCell.thumbnailCircle} />
         ) : (
@@ -1131,7 +1131,7 @@ const Library = () => {
     const year = album.release_date ? album.release_date.split('-')[0] : '';
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
-    const imageUrl = getAlbumCover(album.cover_id, 'small') || album.cover_art_url || null;
+    const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
     const itemProgress = getProgressByTidalId(String(album.id));
     return (
       <MediaCard
@@ -1172,7 +1172,7 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const src = getAlbumCover(album.cover_id, 'small') || album.cover_art_url;
+        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small');
         return src ? (
           <img src={src} alt={album.title} className={dgCell.thumbnailSquare} />
         ) : (
@@ -2036,4 +2036,3 @@ const Library = () => {
 };
 
 export default Library;
-

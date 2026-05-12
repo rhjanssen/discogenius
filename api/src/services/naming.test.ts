@@ -356,7 +356,7 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
   const config = {
     artist_folder: "{artistCleanNameThe}",
     album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
-    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}",
+    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}",
     video_file: "{artistCleanName} - {videoCleanTitle} [{trackId}]",
   };
 
@@ -366,7 +366,7 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
   assert.deepEqual(previewNamingConfig(config), {
     artistFolder: "Nine Inch Nails",
     standardTrack: "The Downward Spiral (1994)/14 - Hurt.flac",
-    multiDiscTrack: "The Downward Spiral (1994)/02-03 - Hurt.flac",
+    multiDiscTrack: "The Downward Spiral (1994)/203 - Hurt.flac",
     video: "Nine Inch Nails - Hurt [123456789].mp4",
   });
 });

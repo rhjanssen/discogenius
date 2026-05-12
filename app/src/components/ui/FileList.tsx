@@ -36,6 +36,7 @@ import {
     Copy24Regular,
 } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
+import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 
 export interface LibraryFile {
     id: number;
@@ -327,7 +328,7 @@ interface QualityStyle {
  * Determines the quality badge styling using Tidal colors:
  * - Yellow (#ffd432) for Hi-Res (24-bit)
  * - Teal (#33ffee) for Lossless (16-bit)
- * - Atmos-specific styling for multi-channel audio
+ * - Spatial/surround styling for multi-channel audio
  */
 function getQualityStyle(
     quality?: string,
@@ -340,13 +341,13 @@ function getQualityStyle(
     if (!quality) return null;
     const q = quality.toUpperCase();
 
-    // Check for Dolby Atmos (multi-channel audio, typically 6+ channels)
+    // Check for spatial/surround audio.
     const isMultiChannel = channels && channels > 2;
-    if (q === "DOLBY_ATMOS" || isMultiChannel) {
+    if (isSpatialAudioQuality(q) || isMultiChannel) {
         return {
-            backgroundColor: tidalBadgeColor.AtmosBackground,
-            color: tidalBadgeColor.AtmosText,
-            label: "Atmos",
+            backgroundColor: tidalBadgeColor.SpatialBackground,
+            color: tidalBadgeColor.SpatialText,
+            label: "Spatial",
         };
     }
 

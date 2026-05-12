@@ -291,7 +291,7 @@ const VideoPage = () => {
         const files = filesData?.items ?? [];
         return files.find((file) => file.file_type === "video");
     }, [filesData]);
-    const coverUrl = getTidalImage(video?.cover_id || video?.cover, "video", "large");
+    const coverUrl = video ? getTidalImage(video.cover_id || video.cover, "video", "large") : undefined;
     const videoBrandColor = useArtworkBrandColor({
         artworkUrl: coverUrl,
         deriveBrandFromArtwork: true,
@@ -338,7 +338,7 @@ const VideoPage = () => {
     const handlePlayClick = async () => {
         try {
             if (!isDownloaded) {
-                const signedUrl = await api.signTidalVideoStream(videoId!);
+                const signedUrl = await api.signVideoPreviewStream(videoId!, { provider: "tidal" });
                 setRemoteStreamUrl(signedUrl);
             }
 

@@ -1,6 +1,7 @@
 import { db } from "../database.js";
 import type { AlbumTrackContract, LibraryFileContract } from "../contracts/media.js";
 import { getMediaDownloadStateMap } from "./download-state.js";
+import { spatialAudioQualitySql } from "../utils/spatial-audio.js";
 
 const trackDownloadedPredicate = `
   EXISTS (
@@ -217,10 +218,10 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
     countParams.push(lockedValue);
   }
 
-  if (input.libraryFilter === "atmos") {
-    where.push(`UPPER(COALESCE(media.quality, '')) = 'DOLBY_ATMOS'`);
+  if (input.libraryFilter === "spatial") {
+    where.push(spatialAudioQualitySql("media.quality"));
   } else if (input.libraryFilter === "stereo") {
-    where.push(`UPPER(COALESCE(media.quality, '')) <> 'DOLBY_ATMOS'`);
+    where.push(`NOT ${spatialAudioQualitySql("media.quality")}`);
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { requiresBrowserCompatibleAudioStream } from "./audioUtils.js";
 
-test("requiresBrowserCompatibleAudioStream flags Atmos tracks for browser-safe transcoding", () => {
+test("requiresBrowserCompatibleAudioStream flags spatial tracks for browser-safe transcoding", () => {
     assert.equal(requiresBrowserCompatibleAudioStream({
         fileType: "track",
         quality: "DOLBY_ATMOS",

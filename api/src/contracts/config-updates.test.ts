@@ -21,7 +21,6 @@ test("config update parsers return only validated partial updates", () => {
     embed_synced_lyrics: false,
     upgrade_existing_files: true,
     convert_video_mp4: true,
-    download_dolby_atmos: false,
     extract_flac: true,
   });
   assert.deepEqual(qualityUpdate, {
@@ -60,7 +59,7 @@ test("config update parsers return only validated partial updates", () => {
 
   const filteringUpdate = parseFilteringConfigUpdate({
     include_videos: true,
-    include_atmos: false,
+    include_spatial: false,
   }, {
     include_album: true,
     include_single: true,
@@ -70,14 +69,15 @@ test("config update parsers return only validated partial updates", () => {
     include_live: true,
     include_remix: true,
     include_appears_on: false,
-    include_atmos: true,
+    include_spatial: true,
     include_videos: false,
     prefer_explicit: true,
     enable_redundancy_filter: true,
+    require_provider_availability: true,
   });
   assert.deepEqual(filteringUpdate, {
     include_videos: true,
-    include_atmos: false,
+    include_spatial: false,
   });
 });
 
@@ -93,7 +93,6 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       embed_synced_lyrics: false,
       upgrade_existing_files: true,
       convert_video_mp4: true,
-      download_dolby_atmos: false,
       extract_flac: true,
     });
   }, RequestValidationError);
@@ -116,5 +115,3 @@ test("config update parsers reject unsupported keys and invalid values", () => {
     });
   }, RequestValidationError);
 });
-
-

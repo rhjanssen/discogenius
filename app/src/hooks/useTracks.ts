@@ -19,7 +19,7 @@ type UseTracksOptions = {
   monitored?: boolean;
   downloaded?: boolean;
   locked?: boolean;
-  libraryFilter?: "all" | "stereo" | "atmos" | "video";
+  libraryFilter?: "all" | "stereo" | "spatial" | "video";
   sort?: string;
   dir?: "asc" | "desc";
   search?: string;

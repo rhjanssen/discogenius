@@ -90,12 +90,12 @@ function moveDirectoryCrossDevice(sourcePath: string, destinationPath: string): 
 function getLibraryRoots() {
   const roots = [
     { key: "music", path: Config.getMusicPath() },
-    { key: "music_videos", path: Config.getVideoPath() },
+    { key: "videos", path: Config.getVideoPath() },
   ];
 
-  const atmosPath = Config.getAtmosPath();
-  if (atmosPath) {
-    roots.push({ key: "spatial_music", path: atmosPath });
+  const spatialPath = Config.getSpatialPath();
+  if (spatialPath) {
+    roots.push({ key: "spatial", path: spatialPath });
   }
 
   return roots;

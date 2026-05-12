@@ -15,14 +15,16 @@ import {
 export class ManualImportService {
     async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
         const { db } = await import("../database.js");
-        const { getTrack, getArtist, getVideo } = await import("./providers/tidal/tidal.js");
+        const { streamingProviderManager } = await import("./providers/index.js");
         const { RefreshAlbumService } = await import("./refresh-album-service.js");
         const { Config } = await import("./config.js");
         const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("./naming.js");
         const { resolveArtistFolderForPersistence } = await import("./artist-paths.js");
         const { calculateFingerprint } = await import("./audioUtils.js");
+        const { isSpatialAudioQuality } = await import("../utils/spatial-audio.js");
 
         const namingConfig = getNamingConfig();
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
 
         // ── Phase 1: Async collection ───────────────────────────────────
         // Fetch all remote metadata, fingerprints, and FS stats before touching the DB.
@@ -62,41 +64,40 @@ export class ManualImportService {
                 }
 
                 const extension = String(file.extension || path.extname(file.file_path)).replace(/^\./, "").toLowerCase();
-                const isVideo = file.library_root === "music_videos" || ["mp4", "mkv", "m4v", "mov", "webm", "ts"].includes(extension);
+                const isVideo = file.library_root === "videos" || ["mp4", "mkv", "m4v", "mov", "webm", "ts"].includes(extension);
 
-                // Fetch track/video metadata from TIDAL API
+                // Fetch track/video metadata from the active streaming provider.
                 let trackData: any;
                 if (isVideo) {
                     try {
-                        trackData = await getVideo(item.tidalId);
+                        trackData = await provider.getVideo?.(item.tidalId);
                     } catch (videoError: any) {
                         console.error(`[Bulk Import] Could not resolve video ${item.tidalId} for file ${file.filename}`, videoError);
                         continue;
                     }
                 } else {
                     try {
-                        trackData = await getTrack(item.tidalId);
+                        trackData = await provider.getTrack(item.tidalId);
                     } catch (e: any) {
                         console.warn(`[Bulk Import] getTrack(${item.tidalId}) failed: ${e.message}. Trying getAlbumTracks...`);
                         try {
-                            const { getAlbumTracks } = await import("./providers/tidal/tidal.js");
-                            const tracks = await getAlbumTracks(item.tidalId);
+                            const tracks = await provider.getAlbumTracks(item.tidalId);
 
                             let bestTrack = tracks.length > 0 ? tracks[0] : null;
                             const lowerFilename = file.filename.toLowerCase();
                             for (const t of tracks) {
                                 if (lowerFilename.includes(t.title.toLowerCase()) ||
-                                    lowerFilename.includes(` ${t.track_number} `) ||
-                                    lowerFilename.startsWith(`${t.track_number} -`) ||
-                                    lowerFilename.startsWith(`0${t.track_number}`)) {
+                                    lowerFilename.includes(` ${t.trackNumber} `) ||
+                                    lowerFilename.startsWith(`${t.trackNumber} -`) ||
+                                    lowerFilename.startsWith(`0${t.trackNumber}`)) {
                                     bestTrack = t;
                                     break;
                                 }
                             }
 
                             if (bestTrack) {
-                                trackData = await getTrack(bestTrack.tidal_id);
-                                console.log(`[Bulk Import] Resolved album ${item.tidalId} to track ${bestTrack.tidal_id} for file ${file.filename}`);
+                                trackData = await provider.getTrack(bestTrack.providerId);
+                                console.log(`[Bulk Import] Resolved album ${item.tidalId} to track ${bestTrack.providerId} for file ${file.filename}`);
                             } else {
                                 throw new Error("No tracks found in album");
                             }
@@ -108,7 +109,9 @@ export class ManualImportService {
                 }
                 if (!trackData) continue;
 
-                const artistId = trackData.artist?.id?.toString() || trackData.artist_id?.toString();
+                const artistId = trackData.artist?.providerId?.toString()
+                    || trackData.artist?.id?.toString()
+                    || trackData.artist_id?.toString();
 
                 // Fetch artist info if needed (check DB first to avoid redundant API calls)
                 let artistInfo: CollectedItem["artistInfo"] = null;
@@ -117,7 +120,7 @@ export class ManualImportService {
                     if (!existingArtist) {
                         const fallbackName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
                         try {
-                            const remoteArtist = await getArtist(artistId);
+                            const remoteArtist = await provider.getArtist(artistId);
                             artistInfo = { name: remoteArtist.name, picture: remoteArtist.picture || null, popularity: remoteArtist.popularity || 0 };
                         } catch {
                             artistInfo = { name: fallbackName, picture: null, popularity: 0 };
@@ -130,8 +133,8 @@ export class ManualImportService {
                     ? db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any
                     : null;
 
-                // Scan album metadata from TIDAL
-                const albumId = (trackData.album?.id || trackData.album_id)?.toString() || null;
+                // Scan provider album metadata when the imported item belongs to an album.
+                const albumId = (trackData.album?.providerId || trackData.album?.id || trackData.album_id)?.toString() || null;
                 if (albumId) {
                     try { await RefreshAlbumService.scanShallow(albumId); } catch {
                         console.warn(`[Bulk Import] Could not perform shallow scan for album ${albumId}`);
@@ -150,13 +153,13 @@ export class ManualImportService {
                 // Compute paths and naming
                 const storedLibraryRoot = String(file.library_root || "");
                 const libraryRootKey = (() => {
-                    if (["music", "spatial_music", "music_videos"].includes(storedLibraryRoot)) return storedLibraryRoot;
+                    if (["music", "spatial", "videos"].includes(storedLibraryRoot)) return storedLibraryRoot;
                     const norm = storedLibraryRoot.toLowerCase();
                     const videoPath = Config.getVideoPath().toLowerCase();
-                    const atmosPath = Config.getAtmosPath()?.toLowerCase();
-                    if (norm === videoPath || norm.includes(`${path.sep}videos`) || norm.includes("/videos")) return "music_videos";
-                    if (atmosPath && norm === atmosPath) return "spatial_music";
-                    return isVideo ? "music_videos" : "music";
+                    const spatialPath = Config.getSpatialPath()?.toLowerCase();
+                    if (norm === videoPath || norm.includes(`${path.sep}videos`) || norm.includes("/videos")) return "videos";
+                    if (spatialPath && norm === spatialPath) return "spatial";
+                    return isVideo ? "videos" : "music";
                 })();
 
                 const quality = trackData.quality || (isVideo ? "MP4_1080P" : "LOSSLESS");
@@ -185,8 +188,8 @@ export class ManualImportService {
                 }) + "." + extension;
 
                 let rootPath = Config.getMusicPath();
-                if (libraryRootKey === "music_videos") rootPath = Config.getVideoPath();
-                else if (quality === "DOLBY_ATMOS") rootPath = Config.getAtmosPath();
+                if (libraryRootKey === "videos") rootPath = Config.getVideoPath();
+                else if (isSpatialAudioQuality(quality)) rootPath = Config.getSpatialPath();
 
                 const expectedPath = path.join(rootPath, expectedRelPath);
                 const relativePath = path.relative(rootPath, file.file_path);
@@ -282,7 +285,7 @@ export class ManualImportService {
                         c.trackData.title || "Unknown Video", c.trackData.version || null,
                         c.trackData.release_date || null, c.trackData.explicit ? 1 : 0,
                         c.trackData.quality || "MP4_1080P", c.trackData.duration || 0,
-                        c.trackData.popularity || 0, c.trackData.image_id || null,
+                        c.trackData.popularity || 0, c.trackData.cover || c.trackData.image_id || null,
                     );
                 }
 

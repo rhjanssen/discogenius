@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { getAlbum, getVideo } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import { Config } from "./config.js";
 import {
@@ -66,8 +66,8 @@ export class ImportService {
 
         const roots = [
             { path: Config.getMusicPath(), name: 'Music', context: 'music', libraryRoot: 'music' as const },
-            { path: Config.getAtmosPath(), name: 'Atmos', context: 'atmos', libraryRoot: 'spatial_music' as const },
-            { path: Config.getVideoPath(), name: 'Videos', context: 'video', libraryRoot: 'music_videos' as const }
+            { path: Config.getSpatialPath(), name: 'Spatial', context: 'spatial', libraryRoot: 'spatial' as const },
+            { path: Config.getVideoPath(), name: 'Videos', context: 'video', libraryRoot: 'videos' as const }
         ];
 
         const scannedRoots: Array<{
@@ -197,7 +197,7 @@ export class ImportService {
     }
 
     /**
-     * Manually maps a local group to a specific Tidal album and imports it.
+     * Manually maps a local group to a specific provider album/video and imports it.
      */
     async mapGroup(groupId: string, tidalId: string): Promise<boolean> {
         const candidate = this.candidates.find(c => c.group.id === groupId);
@@ -205,40 +205,41 @@ export class ImportService {
             throw new Error(`Group not found: ${groupId}`);
         }
 
-        const isVideo = candidate.group.libraryRoot === "music_videos";
+        const isVideo = candidate.group.libraryRoot === "videos";
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
 
         if (isVideo) {
-            let tidalVideo;
+            let providerVideo;
             try {
-                tidalVideo = await getVideo(tidalId);
+                providerVideo = await provider.getVideo?.(tidalId);
             } catch (e) {
-                throw new Error(`Failed to fetch Tidal video ${tidalId}`);
+                throw new Error(`Failed to fetch ${provider.name} video ${tidalId}`);
             }
 
-            if (!tidalVideo) {
-                throw new Error(`Tidal video ${tidalId} not found`);
+            if (!providerVideo) {
+                throw new Error(`${provider.name} video ${tidalId} not found`);
             }
 
             candidate.matches = [{
-                item: tidalVideo,
+                item: providerVideo.raw && typeof providerVideo.raw === "object" ? providerVideo.raw : providerVideo,
                 itemType: "video",
                 score: 1.0,
                 matchType: "exact"
             }];
         } else {
-            let tidalAlbum;
+            let providerAlbum;
             try {
-                tidalAlbum = await getAlbum(tidalId);
+                providerAlbum = await provider.getAlbum(tidalId);
             } catch (e) {
-                throw new Error(`Failed to fetch Tidal album ${tidalId}`);
+                throw new Error(`Failed to fetch ${provider.name} album ${tidalId}`);
             }
 
-            if (!tidalAlbum) {
-                throw new Error(`Tidal album ${tidalId} not found`);
+            if (!providerAlbum) {
+                throw new Error(`${provider.name} album ${tidalId} not found`);
             }
 
             candidate.matches = [{
-                item: tidalAlbum,
+                item: providerAlbum.raw && typeof providerAlbum.raw === "object" ? providerAlbum.raw : providerAlbum,
                 itemType: "album",
                 score: 1.0,
                 matchType: "exact"
@@ -265,7 +266,7 @@ export class ImportService {
    */
     async findMatches(
         groups: LocalGroup[],
-        context: "music" | "atmos" | "video" = "music",
+        context: "music" | "spatial" | "video" = "music",
         options?: { onProgress?: (event: RootFolderImportProgressEvent) => void },
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<ImportCandidate[]> {
@@ -274,7 +275,7 @@ export class ImportService {
 
     async findMatchesForGroup(
         group: LocalGroup,
-        context: "music" | "atmos" | "video" = "music",
+        context: "music" | "spatial" | "video" = "music",
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<TidalMatch[]> {
         return importMatcherService.findMatchesForGroup(group, context, mode);
@@ -457,7 +458,10 @@ export class ImportService {
 
                 let videoData = tidalVideo;
                 try {
-                    videoData = await getVideo(videoId);
+                    const providerVideo = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
+                    if (providerVideo) {
+                        videoData = providerVideo;
+                    }
                 } catch (e) {
                     console.warn(`[Import] Failed to fetch video ${videoId}, falling back to search data.`);
                 }

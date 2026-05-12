@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
 import { db } from "../database.js";
-import { getPlaylist, getUserPlaylists } from "../services/providers/tidal/tidal.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
 import { queuePlaylistSyncByUuid, PlaylistSyncServiceError } from "../services/playlist-sync.js";
+import { streamingProviderManager } from "../services/providers/index.js";
 
 const router = Router();
 
@@ -89,10 +89,14 @@ router.get("/:playlistId", (req: Request, res: Response) => {
   }
 });
 
-// Add playlist from Tidal
+// Add playlist from a provider.
 router.post("/", async (req: Request, res: Response) => {
   try {
     const { id, url } = req.body;
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
+    if (!provider.getPlaylist) {
+      return res.status(501).json({ error: `${provider.name} playlists are not supported` });
+    }
 
     // Extract playlist ID from URL if provided
     let playlistId = id;
@@ -116,11 +120,10 @@ router.post("/", async (req: Request, res: Response) => {
       return res.json({ message: "Playlist already exists", playlist: existing });
     }
 
-    // Fetch from Tidal
-    const tidalPlaylist = await getPlaylist(playlistId);
+    const providerPlaylist = await provider.getPlaylist(playlistId);
 
-    if (!tidalPlaylist) {
-      return res.status(404).json({ error: "Playlist not found on Tidal" });
+    if (!providerPlaylist) {
+      return res.status(404).json({ error: `Playlist not found on ${provider.name}` });
     }
 
     // Insert playlist
@@ -131,29 +134,29 @@ router.post("/", async (req: Request, res: Response) => {
         created, last_updated, type, public_playlist, user_date_added
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
-      tidalPlaylist.uuid,
-      tidalPlaylist.uuid, // tidal_id is same as uuid for playlists
-      tidalPlaylist.title,
-      tidalPlaylist.description,
-      tidalPlaylist.creator?.name,
-      tidalPlaylist.creator?.id?.toString(),
-      tidalPlaylist.image,
-      tidalPlaylist.squareImage,
-      tidalPlaylist.numberOfTracks || 0,
-      tidalPlaylist.numberOfVideos || 0,
-      tidalPlaylist.duration || 0,
-      tidalPlaylist.created,
-      tidalPlaylist.lastUpdated,
-      tidalPlaylist.type || "USER",
-      tidalPlaylist.publicPlaylist ? 1 : 0
+      providerPlaylist.uuid,
+      providerPlaylist.uuid, // provider playlist id is currently stored in the legacy tidal_id column.
+      providerPlaylist.title,
+      providerPlaylist.description,
+      providerPlaylist.creator?.name,
+      providerPlaylist.creator?.id?.toString(),
+      providerPlaylist.image,
+      providerPlaylist.squareImage,
+      providerPlaylist.numberOfTracks || 0,
+      providerPlaylist.numberOfVideos || 0,
+      providerPlaylist.duration || 0,
+      providerPlaylist.created,
+      providerPlaylist.lastUpdated,
+      providerPlaylist.type || "USER",
+      providerPlaylist.publicPlaylist ? 1 : 0
     );
 
     // Queue job to fetch playlist tracks
-    TaskQueueService.addJob(JobTypes.ScanPlaylist, { tidalId: tidalPlaylist.uuid }, tidalPlaylist.uuid);
+    TaskQueueService.addJob(JobTypes.ScanPlaylist, { tidalId: providerPlaylist.uuid }, providerPlaylist.uuid);
 
     const newPlaylist = db.prepare(
       "SELECT * FROM playlists WHERE uuid = ?"
-    ).get(tidalPlaylist.uuid);
+    ).get(providerPlaylist.uuid);
 
     res.status(201).json({ message: "Playlist added", playlist: newPlaylist });
   } catch (error: any) {
@@ -316,10 +319,15 @@ router.post("/:playlistId/download", async (req: Request, res: Response) => {
   }
 });
 
-// Import user's playlists from Tidal
+// Import user's playlists from a provider.
 router.post("/import-user", async (req: Request, res: Response) => {
   try {
-    const playlistsResponse = await getUserPlaylists();
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
+    if (!provider.getUserPlaylists) {
+      return res.status(501).json({ error: `${provider.name} user playlists are not supported` });
+    }
+
+    const playlistsResponse = await provider.getUserPlaylists();
 
     // Handle both array and paginated response formats
     const playlists = Array.isArray(playlistsResponse)

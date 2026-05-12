@@ -1,7 +1,8 @@
-import { useState, useMemo, ReactNode, useCallback, useEffect } from 'react';
+import { useState, useMemo, ReactNode, useCallback } from 'react';
 import { getThemeDefaultColors } from '@/ultrablur/colors';
 import { useUltraBlur } from '@/ultrablur/useUltraBlur';
 import { UltraBlurContext, type UltraBlurContextValue } from '@/providers/UltraBlurContext';
+import { useTheme } from '@/providers/themeContext';
 
 interface UltraBlurProviderProps {
   children: ReactNode;
@@ -14,35 +15,7 @@ interface UltraBlurProviderProps {
  */
 export function UltraBlurProvider({ children }: UltraBlurProviderProps) {
   const [artworkUrl, setArtworkUrl] = useState<string | undefined>(undefined);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-
-  // Detect theme changes
-  useEffect(() => {
-    const checkTheme = () => {
-      const isDark = document.documentElement.classList.contains('dark') ||
-        (document.documentElement.classList.contains('system') &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches) ||
-        (!document.documentElement.classList.contains('light') &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches);
-      setIsDarkMode(isDark);
-    };
-
-    checkTheme();
-
-    const observer = new MutationObserver(checkTheme);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class']
-    });
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    mediaQuery.addEventListener('change', checkTheme);
-
-    return () => {
-      observer.disconnect();
-      mediaQuery.removeEventListener('change', checkTheme);
-    };
-  }, []);
+  const { isDarkMode } = useTheme();
 
   // Get theme-aware default colors — memoised so the reference stays stable
   // and downstream effects don't re-fire on every render.

@@ -16,7 +16,13 @@ export function useArtworkBrandColor({
   const { setArtwork, colors } = useUltraBlurContext();
 
   useEffect(() => {
-    setArtwork(artworkUrl || undefined);
+    if (artworkUrl === undefined) {
+      return;
+    }
+
+    if (artworkUrl) {
+      setArtwork(artworkUrl);
+    }
   }, [artworkUrl, setArtwork]);
 
   return useMemo(() => {

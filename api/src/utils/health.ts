@@ -20,7 +20,7 @@ export interface BackendCapabilitySnapshot {
   capabilities: {
     audio: boolean;
     video: boolean;
-    atmos: boolean;
+    spatialAudio: boolean;
     highResAudio: boolean;
     playlists: boolean;
   };

@@ -115,6 +115,6 @@ Discogenius follows Lidarr-style patterns:
 ## Documentation Canon
 - Treat `docs/ARCHITECTURE.md` as current-state architecture truth.
 - Track architecture backlog/alignment work in `docs/ARCHITECTURE_WORKPLAN.md`.
-- Keep curation/redundancy behavior documentation in `docs/CURATION_DEDUPLICATION.md`.
+- Keep release-group slot curation behavior documentation in `docs/CURATION_DEDUPLICATION.md`.
 - Keep `docs/ROADMAP.md` forward-looking only.
 - Avoid overlap docs: update existing canonical docs above instead of creating parallel variants.

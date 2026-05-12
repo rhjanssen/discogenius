@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { BaseRepository } from "./BaseRepository.js";
+import { isSpatialAudioQuality, normalizeQualityTag } from "../utils/spatial-audio.js";
 
 /**
  * Media entity - unified representation for tracks and videos
@@ -85,7 +86,7 @@ export interface MediaInsert {
 /**
  * Library types for categorization
  */
-export type LibraryType = 'music' | 'dolby_atmos' | 'music_video';
+export type LibraryType = 'music' | 'spatial' | 'music_video';
 
 /**
  * Quality profiles based on tidal-dl-ng download settings
@@ -106,7 +107,7 @@ export type VideoQuality = 'MP4_1080P' | 'MP4_720P' | 'MP4_480P' | 'MP4_360P';
 
 /**
  * Helper function to extract the highest quality tag from mediaMetadata.tags
- * Quality priority: DOLBY_ATMOS > HIRES_LOSSLESS > LOSSLESS
+ * Quality priority: spatial audio > HIRES_LOSSLESS > LOSSLESS
  * 
  * Note: When the API returns both HIRES_LOSSLESS and LOSSLESS, we only store
  * the highest quality tag (HIRES_LOSSLESS)
@@ -118,8 +119,13 @@ export function getHighestQualityTag(tags: string[] | string | null | undefined)
         ? tags.split(',').map(t => t.trim()).filter(Boolean)
         : tags;
 
+    const spatialTag = tagArray.find((tag) => isSpatialAudioQuality(tag));
+    if (spatialTag) {
+        return normalizeQualityTag(spatialTag);
+    }
+
     // Priority order (highest first)
-    const priorityOrder = ['DOLBY_ATMOS', 'HIRES_LOSSLESS', 'LOSSLESS'];
+    const priorityOrder = ['HIRES_LOSSLESS', 'LOSSLESS'];
 
     for (const priority of priorityOrder) {
         if (tagArray.includes(priority)) {
@@ -134,15 +140,15 @@ export function getHighestQualityTag(tags: string[] | string | null | undefined)
  * Get quality rank based on quality profile and library type
  * 
  * Quality profiles for standard music library:
- * - Max: HIRES_LOSSLESS > LOSSLESS, exclude DOLBY_ATMOS
- * - High/Normal/Low: LOSSLESS > HIRES_LOSSLESS, exclude DOLBY_ATMOS
+ * - Max: HIRES_LOSSLESS > LOSSLESS, exclude spatial audio
+ * - High/Normal/Low: LOSSLESS > HIRES_LOSSLESS, exclude spatial audio
  * 
- * For Dolby Atmos library: Only DOLBY_ATMOS content included
+ * For the spatial library: Only spatial audio content included
  * For Music Videos: Ranked by resolution (1080p > 720p > 480p > 360p)
  * 
- * @param quality - The quality tag (HIRES_LOSSLESS, LOSSLESS, DOLBY_ATMOS) or video quality
+ * @param quality - The quality tag (HIRES_LOSSLESS, LOSSLESS, DOLBY_ATMOS, etc.) or video quality
  * @param profile - The quality profile setting (max, high, normal, low)
- * @param libraryType - The library type (music, dolby_atmos, music_video)
+ * @param libraryType - The library type (music, spatial, music_video)
  * @returns Rank number (higher is better), -1 if should be excluded
  */
 export function getQualityRank(
@@ -152,7 +158,7 @@ export function getQualityRank(
 ): number {
     if (!quality) return 0;
 
-    const normalizedQuality = quality.toUpperCase();
+    const normalizedQuality = normalizeQualityTag(quality);
 
     // Handle music videos - ranked by resolution, no filtering
     if (libraryType === 'music_video') {
@@ -165,13 +171,13 @@ export function getQualityRank(
         return videoRanks[normalizedQuality] || 0;
     }
 
-    // Handle Dolby Atmos library - only DOLBY_ATMOS is valid
-    if (libraryType === 'dolby_atmos') {
-        return normalizedQuality === 'DOLBY_ATMOS' ? 1 : -1; // -1 means exclude
+    // Handle spatial library - only spatial audio is valid
+    if (libraryType === 'spatial') {
+        return isSpatialAudioQuality(normalizedQuality) ? 1 : -1; // -1 means exclude
     }
 
-    // Standard music library - exclude DOLBY_ATMOS
-    if (normalizedQuality === 'DOLBY_ATMOS') {
+    // Standard music library - exclude spatial audio
+    if (isSpatialAudioQuality(normalizedQuality)) {
         return -1; // Exclude from standard music library
     }
 

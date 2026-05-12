@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type MouseEvent } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
+import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 
 interface PlayableTrackFile {
   id: number;
@@ -12,13 +13,15 @@ interface PlayableTrackFile {
 
 export interface PlayableTrack {
   id: string;
+  preview_provider?: string | null;
+  preview_provider_track_id?: string | null;
   quality?: string | null;
   files?: PlayableTrackFile[] | null;
   downloaded?: boolean;
   is_downloaded?: boolean;
 }
 
-const ATMOS_PREVIEW_MIME_TYPES = [
+const SPATIAL_PREVIEW_MIME_TYPES = [
   'audio/mp4; codecs="ec-3"',
   'audio/mp4; codecs="ac-4"',
   "audio/eac3",
@@ -28,13 +31,13 @@ function normalizePlaybackQuality(value: string | undefined | null) {
   return String(value ?? "").trim().toUpperCase();
 }
 
-function canBrowserPlayAtmosPreview() {
+function canBrowserPlaySpatialPreview() {
   if (typeof document === "undefined") {
     return false;
   }
 
   const audio = document.createElement("audio");
-  return ATMOS_PREVIEW_MIME_TYPES.some((mimeType) => {
+  return SPATIAL_PREVIEW_MIME_TYPES.some((mimeType) => {
     const supportLevel = audio.canPlayType(mimeType);
     return supportLevel === "probably" || supportLevel === "maybe";
   });
@@ -107,11 +110,19 @@ export function useTrackPlayback() {
     }
 
     const normalizedQuality = normalizePlaybackQuality(track.quality);
-    if (normalizedQuality !== "DOLBY_ATMOS") {
+    if (!isSpatialAudioQuality(normalizedQuality)) {
       return track.quality ?? null;
     }
 
-    return canBrowserPlayAtmosPreview() ? track.quality ?? null : null;
+    return canBrowserPlaySpatialPreview() ? track.quality ?? null : null;
+  }, []);
+
+  const getPreviewTrackId = useCallback((track: PlayableTrack) => {
+    return String(track.preview_provider_track_id || track.id);
+  }, []);
+
+  const getPreviewProviderId = useCallback((track: PlayableTrack) => {
+    return track.preview_provider || undefined;
   }, []);
 
   const getPlaybackSrc = useCallback((track: PlayableTrack) => {
@@ -131,12 +142,15 @@ export function useTrackPlayback() {
     signingTrackIdsRef.current.add(track.id);
 
     try {
-      const url = await api.signTidalStream(track.id, preferredQuality ?? undefined);
+      const url = await api.signTrackPreviewStream(getPreviewTrackId(track), {
+        provider: getPreviewProviderId(track),
+        quality: preferredQuality ?? undefined,
+      });
       setSignedStreamUrls((previous) => new Map(previous).set(track.id, url));
     } finally {
       signingTrackIdsRef.current.delete(track.id);
     }
-  }, []);
+  }, [getPreviewProviderId, getPreviewTrackId]);
 
   const toggleTrackPlayback = useCallback(async (track: PlayableTrack, event?: MouseEvent) => {
     event?.stopPropagation();
@@ -159,10 +173,10 @@ export function useTrackPlayback() {
       try {
         await ensureSignedStreamUrl(track, getPreviewPreferredQuality(track));
       } catch (error) {
-        console.error("Failed to get TIDAL stream URL:", error);
+        console.error("Failed to get provider stream URL:", error);
         toast({
           title: "Playback failed",
-          description: "Could not get stream URL from TIDAL",
+          description: "Could not get a preview stream from the provider",
           variant: "destructive",
         });
         return;

@@ -1,6 +1,6 @@
 import { db } from "../database.js";
 
-export type LibraryRootKey = "music" | "spatial_music" | "music_videos";
+export type LibraryRootKey = "music" | "spatial" | "videos";
 
 export interface RelinkUnresolvedLibraryFilesParams {
     artistId: string;

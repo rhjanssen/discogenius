@@ -191,9 +191,9 @@ export const tidalBadgeColor = {
     // Lossless / 16-bit (Teal/Blue)
     TealText: "#33ffee",
     TealBackground: "#004d46",
-    // Atmos (Black)
-    AtmosText: "#ffffff",
-    AtmosBackground: "#000000",
+    // Spatial audio
+    SpatialText: "#ffffff",
+    SpatialBackground: "#000000",
 } as const;
 
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {

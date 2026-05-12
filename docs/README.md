@@ -15,8 +15,8 @@ This folder is organized by document role so current architecture, architecture 
   - Tracks planned/in-progress architecture work.
 
 - CURATION_DEDUPLICATION.md
-  - Canonical deep-dive for Discogenius curation/redundancy workflow.
-  - Covers end-to-end flow, lock semantics, and monitored semantics.
+  - Canonical deep-dive for Discogenius release-group slot curation.
+  - Covers end-to-end flow, slot semantics, and monitored semantics.
 
 - ROADMAP.md
   - Forward-looking product priorities only.

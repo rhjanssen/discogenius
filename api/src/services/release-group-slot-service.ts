@@ -1,6 +1,7 @@
 import { db } from "../database.js";
 import { getConfigSection } from "./config.js";
 import type { ProviderReleaseGroupMatch } from "./metadata/provider-release-group-matcher.js";
+import { isSpatialAudioQuality, normalizeQualityTag } from "../utils/spatial-audio.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
 
@@ -24,20 +25,19 @@ export type ReleaseGroupSlotSelection = {
     score: number;
 };
 
-function normalizeQuality(value?: string | null): string {
-    return String(value || "").trim().toUpperCase();
+export function isSpatialQualityTag(quality?: string | null): boolean {
+    return isSpatialAudioQuality(quality);
 }
 
 function slotForQuality(quality?: string | null): ReleaseGroupLibrarySlot {
-    const normalized = normalizeQuality(quality);
-    return normalized === "DOLBY_ATMOS" || normalized === "SONY_360RA" ? "spatial" : "stereo";
+    return isSpatialQualityTag(quality) ? "spatial" : "stereo";
 }
 
 function qualityScore(slot: ReleaseGroupLibrarySlot, quality?: string | null): number {
-    const normalized = normalizeQuality(quality);
+    const normalized = normalizeQualityTag(quality);
     if (slot === "spatial") {
         if (normalized === "DOLBY_ATMOS") return 1000;
-        if (normalized === "SONY_360RA") return 950;
+        if (isSpatialQualityTag(normalized)) return 920;
         return 0;
     }
 
@@ -59,12 +59,29 @@ function scoreCandidate(
     const explicit = Boolean(album.explicit);
     const matchBonus = match.status === "verified" ? 40 : match.status === "probable" ? 20 : 0;
     const explicitBonus = explicit === preferExplicit ? 5 : 0;
+    const evidence = match.evidence ?? {};
+    const targetTrackCount = Number(evidence.targetTrackCount || 0);
+    const targetVolumeCount = Number(evidence.targetVolumeCount || 0);
+    const trackShapeBonus = evidence.trackCountMatched
+        ? 160
+        : targetTrackCount > 0 && tracks > 0
+            ? -Math.min(240, Math.max(1, Math.abs(targetTrackCount - tracks)) * 36)
+            : 0;
+    const volumeShapeBonus = evidence.volumeCountMatched
+        ? 32
+        : targetVolumeCount > 0 && volumes > 0
+            ? -Math.min(80, Math.max(1, Math.abs(targetVolumeCount - volumes)) * 20)
+            : 0;
+    const typeBonus = evidence.typeMatched ? 60 : -60;
 
     return Number((
         qualityScore(slot, album.quality)
         + matchBonus
         + (match.confidence * 20)
-        + (tracks * 8)
+        + trackShapeBonus
+        + volumeShapeBonus
+        + typeBonus
+        + (tracks * 3)
         + (volumes * 2)
         + explicitBonus
     ).toFixed(3));
@@ -121,27 +138,49 @@ export class ReleaseGroupSlotService {
 
         const filteringConfig = getConfigSection("filtering");
         const selections = selectReleaseGroupSlotAlbums(input.albums, input.matches, {
-            includeSpatial: filteringConfig.include_atmos === true,
+            includeSpatial: filteringConfig.include_spatial === true,
             preferExplicit: filteringConfig.prefer_explicit !== false,
         });
 
-        if (selections.length === 0) {
-            return { stereo: 0, spatial: 0 };
-        }
+        const selectionKeys = new Set(selections.map((selection) => `${selection.releaseGroupMbid}:${selection.slot}`));
+        const clearStaleSelection = db.prepare(`
+            UPDATE release_group_slots
+            SET
+                wanted = 0,
+                selected_provider = NULL,
+                selected_provider_id = NULL,
+                selected_release_mbid = NULL,
+                quality = NULL,
+                match_status = 'unmatched',
+                match_confidence = NULL,
+                match_method = NULL,
+                match_evidence = NULL,
+                provider_data = NULL,
+                checked_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `);
+        const existingSlots = db.prepare(`
+            SELECT id, release_group_mbid, slot
+            FROM release_group_slots
+            WHERE artist_mbid = ?
+              AND selected_provider = ?
+        `).all(input.artistMbid, input.provider) as Array<{ id: number; release_group_mbid: string; slot: string }>;
 
         const upsert = db.prepare(`
             INSERT INTO release_group_slots (
                 artist_mbid, release_group_mbid, slot, wanted,
-                selected_provider, selected_provider_id, quality,
+                selected_provider, selected_provider_id, selected_release_mbid, quality,
                 match_status, match_confidence, match_method, match_evidence,
                 provider_data, checked_at, updated_at
             )
-            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
                 artist_mbid = excluded.artist_mbid,
                 wanted = excluded.wanted,
                 selected_provider = excluded.selected_provider,
                 selected_provider_id = excluded.selected_provider_id,
+                selected_release_mbid = excluded.selected_release_mbid,
                 quality = excluded.quality,
                 match_status = excluded.match_status,
                 match_confidence = excluded.match_confidence,
@@ -154,6 +193,13 @@ export class ReleaseGroupSlotService {
 
         const counts = { stereo: 0, spatial: 0 };
         db.transaction(() => {
+            for (const existing of existingSlots) {
+                const key = `${existing.release_group_mbid}:${existing.slot}`;
+                if (!selectionKeys.has(key)) {
+                    clearStaleSelection.run(existing.id);
+                }
+            }
+
             for (const selection of selections) {
                 upsert.run(
                     input.artistMbid,
@@ -161,6 +207,7 @@ export class ReleaseGroupSlotService {
                     selection.slot,
                     input.provider,
                     selection.album.providerId,
+                    selection.match.releaseMbid || null,
                     selection.album.quality || null,
                     selection.match.status,
                     selection.match.confidence,

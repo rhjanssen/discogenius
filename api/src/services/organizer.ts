@@ -5,7 +5,7 @@ import * as mm from "music-metadata";
 import { db } from "../database.js";
 import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
-import { getArtist, getTrack, getVideo } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
 import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
@@ -15,6 +15,7 @@ import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-path
 import { getDownloadWorkspacePath } from "./download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
+import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 
 
 type OrganizeType = "album" | "track" | "video" | "playlist";
@@ -82,6 +83,25 @@ export class OrganizerService {
     ".webm",
     ".ts",
   ]);
+
+  private static async fetchProviderArtist(artistId: string): Promise<any> {
+    const artist = await streamingProviderManager.getDefaultStreamingProvider().getArtist(artistId);
+    return artist?.raw || artist;
+  }
+
+  private static async fetchProviderTrack(trackId: string): Promise<any> {
+    const track = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
+    return track?.raw || track;
+  }
+
+  private static async fetchProviderVideo(videoId: string): Promise<any> {
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
+    if (!provider.getVideo) {
+      throw new Error(`${provider.name} does not support video metadata`);
+    }
+    const video = await provider.getVideo(videoId);
+    return video?.raw || video;
+  }
 
   private static refreshArtistPathFromTemplateIfNeeded(artistId: string) {
     const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
@@ -794,7 +814,7 @@ export class OrganizerService {
     if (mappedRoot) return mappedRoot;
 
     const resolved = path.resolve(filePath);
-    for (const root of [Config.getMusicPath(), Config.getVideoPath(), Config.getAtmosPath()]) {
+    for (const root of [Config.getMusicPath(), Config.getVideoPath(), Config.getSpatialPath()]) {
       if (root && resolved.startsWith(path.resolve(root))) return root;
     }
     return null;
@@ -866,7 +886,7 @@ export class OrganizerService {
     const metadataConfig = Config.getMetadataConfig();
 
     const musicRoot = Config.getMusicPath();
-    const spatialRoot = Config.getAtmosPath();
+    const spatialRoot = Config.getSpatialPath();
     const videoRoot = Config.getVideoPath();
 
     [musicRoot, spatialRoot, videoRoot].forEach((root) => this.ensureDir(root));
@@ -884,7 +904,7 @@ export class OrganizerService {
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
-        const remoteArtist = await getArtist(artistId);
+        const remoteArtist = await this.fetchProviderArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
         artistPath = resolveArtistFolderForPersistence({
@@ -907,7 +927,7 @@ export class OrganizerService {
         path: artistPath || null,
       });
 
-      const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
+      const isSpatial = isSpatialAudioQuality(album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
       const trackTemplate = Number(album.num_volumes || 1) > 1
@@ -1288,7 +1308,7 @@ export class OrganizerService {
         throw new Error(`[Organizer] Could not locate downloaded file for track ${tidalId} in ${downloadPath}`);
       }
 
-      const trackData = await getTrack(tidalId);
+      const trackData = await this.fetchProviderTrack(tidalId);
       onProgress?.({
         phase: "importing",
         currentFileNum: 0,
@@ -1315,7 +1335,7 @@ export class OrganizerService {
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
-        const remoteArtist = await getArtist(artistId);
+        const remoteArtist = await this.fetchProviderArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
         artistPath = resolveArtistFolderForPersistence({
@@ -1338,7 +1358,7 @@ export class OrganizerService {
         path: artistPath || null,
       });
 
-      const isSpatial = ["DOLBY_ATMOS", "SONY_360RA", "360"].includes((album.quality || "").toUpperCase());
+      const isSpatial = isSpatialAudioQuality(album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
       const ext = path.extname(src);
@@ -1626,7 +1646,7 @@ export class OrganizerService {
       let fetchedVideoData: any | null = null;
       let video = db.prepare("SELECT * FROM media WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
       if (!video) {
-        fetchedVideoData = await getVideo(tidalId);
+        fetchedVideoData = await this.fetchProviderVideo(tidalId);
         const videoData = fetchedVideoData;
         const videoCoverId = videoData.image_id || null;
 
@@ -1639,7 +1659,7 @@ export class OrganizerService {
         const exists = db.prepare("SELECT id FROM artists WHERE id = ?").get(videoArtistId) as any;
         if (!exists) {
           try {
-            const a = await getArtist(videoArtistId);
+            const a = await this.fetchProviderArtist(videoArtistId);
             db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
               .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
                 artistId: videoArtistId,
@@ -1700,7 +1720,7 @@ export class OrganizerService {
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
-        const remoteArtist = await getArtist(artistId);
+        const remoteArtist = await this.fetchProviderArtist(artistId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
         artistPath = resolveArtistFolderForPersistence({
@@ -1812,7 +1832,7 @@ export class OrganizerService {
         let coverId = video.cover ? String(video.cover) : (fetchedVideoData?.image_id || null);
         if (!coverId) {
           try {
-            fetchedVideoData = fetchedVideoData ?? await getVideo(tidalId);
+            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(tidalId);
             coverId = fetchedVideoData?.image_id || null;
             if (coverId) {
               db.prepare("UPDATE media SET cover = COALESCE(?, cover) WHERE id = ? AND type = 'Music Video'")

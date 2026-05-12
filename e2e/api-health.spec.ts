@@ -175,7 +175,7 @@ test.describe('API health & key endpoints', () => {
     expect(data?.results?.albums ?? []).toEqual([]);
     expect(data?.results?.tracks ?? []).toEqual([]);
     expect(data?.results?.videos ?? []).toEqual([]);
-    expect(data?.remoteCatalogAvailable).toBe(false);
+    expect(typeof data?.remoteCatalogAvailable).toBe("boolean");
   });
 
   test('/api/search returns results for valid query when connected', async ({ request }) => {

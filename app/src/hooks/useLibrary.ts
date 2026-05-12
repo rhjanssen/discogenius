@@ -45,7 +45,7 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   const [albumMonitoredFilter, setAlbumMonitoredFilter] = useState<boolean | undefined>(undefined);
   const [albumDownloadedFilter, setAlbumDownloadedFilter] = useState<boolean | undefined>(undefined);
   const [albumLockedFilter, setAlbumLockedFilter] = useState<boolean | undefined>(undefined);
-  const [albumLibraryFilter, setAlbumLibraryFilter] = useState<"all" | "stereo" | "atmos" | "video">("all");
+  const [albumLibraryFilter, setAlbumLibraryFilter] = useState<"all" | "stereo" | "spatial" | "video">("all");
   const [listSort, setListSort] = useState<{ sort: SortKey; dir: SortDir }>(() => {
     const persisted = loadPersistedLibrarySettings();
     return persisted ?? { sort: "popularity", dir: "desc" };

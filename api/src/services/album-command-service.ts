@@ -1,14 +1,23 @@
 import { db } from "../database.js";
-import { getTrack } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 import { updateAlbumDownloadStatus } from "./download-state.js";
 import { getConfigSection } from "./config.js";
-import { RefreshAlbumService } from "./refresh-album-service.js";
 
 function refreshAlbumState(albumId: string) {
     if (!albumId) return;
     updateAlbumDownloadStatus(albumId);
 }
+
+type AlbumSlotSelection = {
+    slot: "stereo" | "spatial";
+    selected_provider?: string | null;
+    selected_provider_id: string;
+    quality?: string | null;
+    provider_data?: string | null;
+    title?: string | null;
+    artist_name?: string | null;
+};
 
 export class AlbumCommandService {
     private static releaseGroupExists(releaseGroupMbid: string): { mbid: string; artist_mbid: string } | null {
@@ -22,13 +31,14 @@ export class AlbumCommandService {
             return false;
         }
 
-        const includeAtmos = getConfigSection("filtering").include_atmos === true;
-        const slots = includeAtmos ? ["stereo", "spatial"] : ["stereo"];
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
         const wantedInt = wanted ? 1 : 0;
         const upsert = db.prepare(`
             INSERT INTO release_group_slots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(artist_mbid, release_group_mbid, slot) DO UPDATE SET
+            ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
+              artist_mbid = excluded.artist_mbid,
               wanted = excluded.wanted,
               updated_at = CURRENT_TIMESTAMP
         `);
@@ -40,77 +50,77 @@ export class AlbumCommandService {
         return true;
     }
 
-    private static resolveSelectedProviderAlbumId(albumOrReleaseGroupId: string): string | null {
-        const album = db.prepare("SELECT id FROM albums WHERE id = ?").get(albumOrReleaseGroupId) as any;
-        if (album) {
-            return albumOrReleaseGroupId;
+    private static resolveSelectedProviderAlbumSelections(
+        albumOrReleaseGroupId: string,
+        requestedSlot?: string | null,
+    ): AlbumSlotSelection[] {
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        const normalizedRequestedSlot = String(requestedSlot || "").trim().toLowerCase();
+        const preferredSlots = normalizedRequestedSlot === "spatial"
+            ? ["spatial"]
+            : normalizedRequestedSlot === "stereo"
+                ? ["stereo"]
+                : includeSpatial ? ["stereo", "spatial"] : ["stereo"];
+        const placeholders = preferredSlots.map(() => "?").join(",");
+        const rows = db.prepare(`
+            SELECT
+              rgs.slot,
+              rgs.selected_provider,
+              rgs.selected_provider_id,
+              rgs.quality,
+              rgs.provider_data,
+              rg.title,
+              a.name AS artist_name
+            FROM release_group_slots
+            rgs
+            JOIN mb_release_groups rg ON rg.mbid = rgs.release_group_mbid
+            LEFT JOIN artists a ON a.mbid = rg.artist_mbid
+            WHERE rgs.release_group_mbid = ?
+              AND rgs.wanted = 1
+              AND rgs.selected_provider IS NOT NULL
+              AND rgs.selected_provider_id IS NOT NULL
+              AND rgs.slot IN (${placeholders})
+            ORDER BY
+              CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              rgs.updated_at DESC
+        `).all(albumOrReleaseGroupId, ...preferredSlots) as Array<Omit<AlbumSlotSelection, "selected_provider_id" | "slot"> & {
+            slot?: string | null;
+            selected_provider_id?: string | number | null;
+        }>;
+
+        const seenSlots = new Set<string>();
+        const selections: AlbumSlotSelection[] = [];
+        for (const row of rows) {
+            const slot = String(row.slot || "").toLowerCase();
+            if ((slot !== "stereo" && slot !== "spatial") || seenSlots.has(slot) || row.selected_provider_id == null) {
+                continue;
+            }
+            seenSlots.add(slot);
+            selections.push({
+                ...row,
+                slot,
+                selected_provider_id: String(row.selected_provider_id),
+            });
         }
 
-        const includeAtmos = getConfigSection("filtering").include_atmos === true;
-        const preferredSlots = includeAtmos ? ["stereo", "spatial"] : ["stereo"];
-        const placeholders = preferredSlots.map(() => "?").join(",");
-        const row = db.prepare(`
-            SELECT selected_provider_id
-            FROM release_group_slots
-            WHERE release_group_mbid = ?
-              AND wanted = 1
-              AND selected_provider = 'tidal'
-              AND selected_provider_id IS NOT NULL
-              AND slot IN (${placeholders})
-            ORDER BY
-              CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-              updated_at DESC
-            LIMIT 1
-        `).get(albumOrReleaseGroupId, ...preferredSlots) as { selected_provider_id?: string | number | null } | undefined;
-
-        return row?.selected_provider_id == null ? null : String(row.selected_provider_id);
+        return selections;
     }
 
-    /** Set album + unlocked tracks monitored state */
+    /** Set release-group slot wanted state. Provider albums are selected offers, not catalog identity. */
     static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
-        const albumExists = db.prepare("SELECT id FROM albums WHERE id = ?").get(albumId) as any;
-
-        if (!albumExists) {
-            if (this.setReleaseGroupWanted(albumId, monitored)) {
-                return { success: true, albumId, monitored };
-            }
-            if (monitored) {
-                TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
-                return { success: true, albumId, monitored, message: 'Album not yet in library; scan queued', status: 202 };
-            }
-            return { success: false, albumId, monitored, message: 'Album not found', status: 404 };
+        if (this.setReleaseGroupWanted(albumId, monitored)) {
+            return { success: true, albumId, monitored };
         }
 
-        const monitorInt = monitored ? 1 : 0;
-        db.prepare(`
-      UPDATE albums
-      SET monitor = ?,
-          monitored_at = CASE
-            WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
-            ELSE monitored_at
-          END
-      WHERE id = ?
-    `).run(monitorInt, monitorInt, albumId);
-
-        db.prepare(`
-      UPDATE media
-      SET monitor = ?,
-          monitored_at = CASE
-            WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
-            ELSE monitored_at
-          END
-      WHERE album_id = ?
-        AND type != 'Music Video'
-        AND COALESCE(monitor_lock, 0) = 0
-    `).run(monitorInt, monitorInt, albumId);
-
-        refreshAlbumState(albumId);
-        return { success: true, albumId, monitored };
+        return { success: false, albumId, monitored, message: 'Release group not found', status: 404 };
     }
 
     /** Monitor + lock a single track, optionally queue download */
     static async monitorTrack(trackId: string, shouldDownload: boolean): Promise<{ success: boolean; monitored_track?: string; trackId?: string; albumId?: string; jobId?: number | null; message?: string; status?: number }> {
-        const trackData = await getTrack(trackId);
+        const providerTrack = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
+        const trackData = (providerTrack.raw && typeof providerTrack.raw === "object")
+            ? providerTrack.raw as any
+            : providerTrack as any;
         const albumId = trackData?.album_id ? String(trackData.album_id) : null;
         if (!albumId) {
             return { success: false, message: 'Track missing album info', status: 404 };
@@ -161,88 +171,58 @@ export class AlbumCommandService {
         return { success: true, monitored_track: trackId, jobId };
     }
 
-    /** Lock album + all audio tracks as wanted, optionally queue download */
-    static async addAlbum(albumId: string, shouldDownload: boolean): Promise<{ success: boolean; albumId?: string; jobId?: number | null; status?: number; message?: string }> {
-        const resolvedAlbumId = this.resolveSelectedProviderAlbumId(albumId);
-        if (!resolvedAlbumId) {
-            if (this.releaseGroupExists(albumId)) {
-                return {
-                    success: false,
-                    status: 409,
-                    message: "No provider offer is selected for this release group yet. Connect a provider and refresh the artist before downloading.",
-                };
-            }
-            return { success: false, status: 404, message: 'Album not found' };
+    /** Mark a release group wanted and queue its selected provider offer. */
+    static async addAlbum(albumId: string, shouldDownload: boolean, requestedSlot?: string | null): Promise<{ success: boolean; albumId?: string; jobId?: number | null; jobIds?: number[]; status?: number; message?: string }> {
+        if (!this.releaseGroupExists(albumId)) {
+            return { success: false, status: 404, message: 'Release group not found' };
         }
 
-        let album = db.prepare(`
-      SELECT a.id, a.title, a.cover, a.quality, ar.name as artist_name
-      FROM albums a
-      LEFT JOIN artists ar ON ar.id = a.artist_id
-      WHERE a.id = ?
-    `).get(resolvedAlbumId) as any;
-
-        if (!album) {
-            await RefreshAlbumService.scanShallow(resolvedAlbumId, {
-                includeSimilarAlbums: false,
-                seedSimilarAlbums: false,
-                resolveMusicBrainz: false,
-            });
-            album = db.prepare(`
-        SELECT a.id, a.title, a.cover, a.quality, ar.name as artist_name
-        FROM albums a
-        LEFT JOIN artists ar ON ar.id = a.artist_id
-        WHERE a.id = ?
-      `).get(resolvedAlbumId) as any;
+        this.setReleaseGroupWanted(albumId, true);
+        const selections = this.resolveSelectedProviderAlbumSelections(albumId, requestedSlot);
+        if (selections.length === 0) {
+            return {
+                success: false,
+                status: 409,
+                message: requestedSlot
+                    ? `No ${requestedSlot} provider offer is selected for this release group yet.`
+                    : "No provider offer is selected for this release group yet. Connect a provider and refresh the artist before downloading.",
+            };
         }
 
-        if (!album) {
-            return { success: false, status: 404, message: 'Album not found' };
-        }
-
-        db.prepare(`
-      UPDATE albums
-      SET monitor = 1,
-          monitor_lock = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-          locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)
-      WHERE id = ?
-    `).run(resolvedAlbumId);
-
-        db.prepare(`
-      UPDATE media
-      SET monitor = 1,
-          monitor_lock = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-          locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)
-      WHERE album_id = ? AND type != 'Music Video'
-    `).run(resolvedAlbumId);
-
-        refreshAlbumState(resolvedAlbumId);
-
-        let jobId: number | null = null;
+        const jobIds: number[] = [];
         if (shouldDownload) {
-            const albumArtists = db.prepare(`
-        SELECT a.name
-        FROM album_artists aa
-        JOIN artists a ON a.id = aa.artist_id
-        WHERE aa.album_id = ?
-      `).all(resolvedAlbumId) as any[];
-            const artistNames = albumArtists.map((a: any) => a.name);
+            for (const selection of selections) {
+                let providerData: any = null;
+                try {
+                    providerData = selection.provider_data ? JSON.parse(selection.provider_data) : null;
+                } catch {
+                    providerData = null;
+                }
 
-            jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                url: `https://listen.tidal.com/album/${resolvedAlbumId}`,
-                type: 'album',
-                tidalId: resolvedAlbumId,
-                title: album.title,
-                artist: album.artist_name || artistNames[0] || 'Unknown',
-                artists: artistNames,
-                cover: album.cover || null,
-                quality: album.quality || null,
-            }, resolvedAlbumId, 0, 1);
+                const providerAlbumId = selection.selected_provider_id;
+                const artistName = selection.artist_name || providerData?.artist?.name || 'Unknown Artist';
+                const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+                    url: `https://listen.tidal.com/album/${providerAlbumId}`,
+                    type: 'album',
+                    provider: selection.selected_provider || "tidal",
+                    providerId: providerAlbumId,
+                    releaseGroupMbid: albumId,
+                    albumId,
+                    libraryRoot: selection.slot === "spatial" ? "spatial" : "music",
+                    slot: selection.slot,
+                    tidalId: providerAlbumId,
+                    title: selection.title || providerData?.title || 'Unknown Album',
+                    artist: artistName,
+                    artists: [artistName].filter(Boolean),
+                    cover: providerData?.cover || null,
+                    quality: selection.quality || providerData?.quality || null,
+                    description: `${selection.title || providerData?.title || 'Unknown Album'} by ${artistName} (${selection.slot})`,
+                }, `${albumId}:${selection.slot}`, 0, 1);
+                jobIds.push(jobId);
+            }
         }
 
-        return { success: true, albumId: resolvedAlbumId, jobId };
+        return { success: true, albumId, jobId: jobIds[0] ?? null, jobIds };
     }
 
     /** Update album monitored and/or monitor_lock state */
@@ -251,73 +231,13 @@ export class AlbumCommandService {
             return { success: true };
         }
 
-        const albumExists = db.prepare("SELECT id FROM albums WHERE id = ?").get(albumId) as any;
-        if (!albumExists && this.releaseGroupExists(albumId)) {
+        if (this.releaseGroupExists(albumId)) {
             if (monitored !== undefined) {
                 this.setReleaseGroupWanted(albumId, monitored);
             }
             return { success: true, albumId, monitored };
         }
-        if (!albumExists && monitored === true) {
-            TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
-            return { success: true, albumId, monitored, status: 202, message: 'Album not yet in library; scan queued' };
-        }
-        if (!albumExists) {
-            return { success: false, status: 404, message: 'Album not found' };
-        }
-
-        if (monitored !== undefined) {
-            const monitorInt = monitored ? 1 : 0;
-            db.prepare(`
-        UPDATE albums
-        SET monitor = ?,
-            monitored_at = CASE
-              WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
-              ELSE monitored_at
-            END
-        WHERE id = ?
-      `).run(monitorInt, monitorInt, albumId);
-
-            db.prepare(`
-        UPDATE media
-        SET monitor = ?,
-            monitored_at = CASE
-              WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
-              ELSE monitored_at
-            END
-        WHERE album_id = ?
-          AND type != 'Music Video'
-          AND COALESCE(monitor_lock, 0) = 0
-      `).run(monitorInt, monitorInt, albumId);
-        }
-
-        if (monitorLock !== undefined) {
-            const lockInt = monitorLock ? 1 : 0;
-
-            db.prepare(`
-        UPDATE albums
-        SET monitor_lock = ?,
-            locked_at = CASE
-              WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP)
-              ELSE NULL
-            END
-        WHERE id = ?
-      `).run(lockInt, lockInt, albumId);
-
-            db.prepare(`
-        UPDATE media
-        SET monitor_lock = ?,
-            locked_at = CASE
-              WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP)
-              ELSE NULL
-            END
-        WHERE album_id = ?
-          AND type != 'Music Video'
-      `).run(lockInt, lockInt, albumId);
-        }
-
-        refreshAlbumState(albumId);
-        return { success: true };
+        return { success: false, status: 404, message: 'Release group not found' };
     }
 
 }

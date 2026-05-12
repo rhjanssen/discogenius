@@ -93,13 +93,16 @@ function resolveQueueItemContentType(job: QueueJobRow): QueueItemContract["type"
 }
 
 function getJobTidalId(job: QueueJobRow): string | null {
-  return getOptionalString(job.ref_id) ?? getOptionalString(job.payload?.tidalId);
+  return getOptionalString(job.payload?.providerId)
+    ?? getOptionalString(job.payload?.tidalId)
+    ?? getOptionalString(job.ref_id);
 }
 
 function getJobAlbumId(job: QueueJobRow): string | null {
   const payloadAlbumId = getOptionalString(
     job.payload?.album_id
     ?? job.payload?.albumId
+    ?? job.payload?.releaseGroupMbid
     ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
   );
   if (payloadAlbumId) {
@@ -418,6 +421,7 @@ export class DownloadQueueQueryService {
     let albumId = getOptionalString(
       job.payload?.album_id
       ?? job.payload?.albumId
+      ?? job.payload?.releaseGroupMbid
       ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumId,
     );
     let albumTitle = getOptionalString(

@@ -9,16 +9,14 @@ import {
   Title2,
   Title3,
   Body1,
-  Link,
   makeStyles,
   mergeClasses,
   tokens,
-  shorthands,
 } from "@fluentui/react-components";
 import {
-  ArrowRight24Regular,
   Door24Regular,
   Open24Regular,
+  ArrowRight24Regular,
   WeatherMoon24Regular,
   WeatherSunny24Regular,
   DesktopMac24Regular,
@@ -30,7 +28,7 @@ import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
 const logo = "/assets/images/logo.png";
 const tidalIcon = "/assets/images/tidal_icon.svg";
-const appleIcon = "/assets/images/apple_icon.svg";
+const appleIcon = "/assets/images/apple_music_icon.svg";
 const amazonIcon = "/assets/images/amazon_icon.svg";
 const spotifyIcon = "/assets/images/spotify_icon.svg";
 const youtubeIcon = "/assets/images/youtube_icon.svg";
@@ -38,12 +36,12 @@ const deezerIcon = "/assets/images/deezer_icon.svg";
 
 const useStyles = makeStyles({
   container: {
-    minHeight: '100%',
+    minHeight: '100vh',
     width: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: tokens.spacingVerticalL,
+    padding: `clamp(${tokens.spacingVerticalL}, 5vw, 72px)`,
     boxSizing: 'border-box',
     position: 'relative',
     zIndex: 1,
@@ -57,98 +55,130 @@ const useStyles = makeStyles({
   },
   card: {
     width: '100%',
-    maxWidth: '900px',
-    paddingTop: tokens.spacingVerticalXXL,
-    paddingRight: tokens.spacingVerticalXXL,
-    paddingBottom: tokens.spacingVerticalXXL,
-    paddingLeft: tokens.spacingVerticalXXL,
+    maxWidth: '1260px',
+    padding: 0,
     overflow: 'visible',
-    backgroundColor: tokens.colorTransparentBackground,
+    backgroundColor: 'transparent',
     boxShadow: 'none',
     border: 'none',
-    borderRadius: tokens.borderRadiusLarge,
-    '@media (max-width: 640px)': {
-      padding: tokens.spacingVerticalL,
-    },
   },
   logoContainer: {
     position: 'relative',
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: tokens.spacingVerticalXXL,
+    width: 'clamp(180px, 24vw, 300px)',
+    height: 'clamp(180px, 24vw, 300px)',
+    marginLeft: 'auto',
+    marginRight: 'auto',
+    marginBottom: tokens.spacingVerticalM,
     overflow: 'visible',
-    '@media (max-width: 640px)': {
-      marginBottom: tokens.spacingVerticalL,
-    },
   },
-  // Uses a blurred clone of the logo behind the main logo
   logoGlow: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
+    top: '50%',
+    left: '50%',
+    width: '78%',
+    aspectRatio: '1',
+    borderRadius: tokens.borderRadiusCircular,
     zIndex: 0,
-    filter: 'blur(22px) saturate(1.8) opacity(0.80)',
-    transform: 'scale(1.1)',
+    transform: 'translate(-50%, -50%)',
+    backgroundImage: 'radial-gradient(circle at 45% 45%, rgba(37, 222, 236, 0.62), rgba(117, 38, 245, 0.46) 34%, rgba(255, 122, 24, 0.42) 58%, transparent 74%)',
+    filter: 'blur(26px) saturate(1.35)',
+    opacity: 0.88,
     pointerEvents: 'none',
     '@media (max-width: 640px)': {
-      filter: 'blur(18px) saturate(1.8) opacity(0.80)',
+      filter: 'blur(22px) saturate(1.45)',
+      opacity: 0.78,
     },
   },
   logo: {
-    height: '320px',
+    height: '100%',
     width: 'auto',
+    maxWidth: '100%',
     display: 'block',
     position: 'relative',
     zIndex: 1,
-    // Add contour glow as well for better definition
-    filter: `drop-shadow(0 0 1px color-mix(in srgb, ${tokens.colorNeutralForeground1} 15%, transparent))`,
-    '@media (max-width: 640px)': {
-      height: '180px',
-    },
+    filter: `drop-shadow(0 0 2px color-mix(in srgb, ${tokens.colorNeutralForeground1} 20%, transparent))`,
   },
   header: {
     textAlign: 'center',
-    marginBottom: tokens.spacingVerticalXL,
+    marginBottom: tokens.spacingVerticalM,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
+    gap: tokens.spacingVerticalM,
     '@media (max-width: 640px)': {
-      marginBottom: tokens.spacingVerticalL,
+      marginBottom: tokens.spacingVerticalM,
     },
   },
   content: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalL,
-    '@media (min-width: 900px)': {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: tokens.spacingHorizontalXXL,
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(360px, 520px)',
+    gap: `clamp(${tokens.spacingHorizontalXXL}, 7vw, 120px)`,
+    alignItems: 'center',
+    '@media (max-width: 980px)': {
+      gridTemplateColumns: '1fr',
+      gap: tokens.spacingVerticalXXL,
     },
   },
   leftColumn: {
-    flex: '1',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     textAlign: 'center',
+    gap: tokens.spacingVerticalM,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
+    minWidth: 0,
+  },
+  leftCopy: {
+    width: '100%',
+    maxWidth: '560px',
+  },
+  brandTitle: {
+    display: 'block',
+    fontSize: 'clamp(36px, 4.8vw, 56px)',
+    lineHeight: 1.08,
+    letterSpacing: 0,
+    fontWeight: tokens.fontWeightBold,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  leftBody: {
+    display: 'block',
+    color: tokens.colorNeutralForeground2,
+    lineHeight: 1.7,
+    maxWidth: '520px',
+    marginLeft: 'auto',
+    marginRight: 'auto',
   },
   rightColumn: {
-    flex: '1',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
     width: '100%',
+    display: 'flex',
+    justifyContent: 'center',
+    padding: `${tokens.spacingVerticalL} 0`,
   },
   infoBox: {
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     padding: tokens.spacingVerticalXL,
     textAlign: 'center',
+  },
+  stateHeader: {
+    marginBottom: tokens.spacingVerticalL,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+  },
+  stateBody: {
+    color: tokens.colorNeutralForeground2,
+  },
+  centeredBody: {
+    textAlign: 'center',
+    marginTop: tokens.spacingVerticalM,
+    color: tokens.colorNeutralForeground2,
+  },
+  fullWidthButton: {
+    width: '100%',
   },
   codeDisplay: {
     backgroundColor: tokens.colorNeutralBackground2,
@@ -161,7 +191,7 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeHero800,
     fontFamily: tokens.fontFamilyMonospace,
     fontWeight: tokens.fontWeightBold,
-    letterSpacing: '0.2em',
+    letterSpacing: 0,
   },
   waitingText: {
     display: 'flex',
@@ -170,47 +200,103 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     color: tokens.colorNeutralForeground2,
   },
-  tidalIcon: {
-    width: '20px',
-    height: '20px',
-    borderRadius: tokens.borderRadiusSmall,
-    objectFit: 'cover',
+  providerCard: {
+    width: '100%',
+    maxWidth: '520px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: tokens.spacingVerticalM,
+    padding: `clamp(${tokens.spacingVerticalXL}, 4vw, 48px)`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: 'rgba(13, 14, 26, 0.72)',
+    border: `${tokens.strokeWidthThin} solid rgba(168, 131, 255, 0.32)`,
+    boxShadow: '0 34px 90px rgba(0,0,0,0.36)',
+    backdropFilter: 'blur(28px) saturate(1.25)',
+    '@media (max-width: 900px)': {
+      padding: tokens.spacingVerticalL,
+    },
+  },
+  providerHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+    textAlign: 'left',
+  },
+  providerBadge: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+    letterSpacing: 0,
+    fontWeight: tokens.fontWeightSemibold,
+    textTransform: 'uppercase',
   },
   providerButtonList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    width: 'min(100%, 360px)',
-    alignSelf: 'center',
+    gap: tokens.spacingVerticalS,
   },
   providerButtonContent: {
     display: 'flex',
     alignItems: 'center',
-    gap: tokens.spacingHorizontalM,
+    gap: tokens.spacingHorizontalL,
     width: '100%',
   },
   providerButtonText: {
     flexGrow: 1,
     textAlign: 'left',
+    color: tokens.colorNeutralForeground1,
+  },
+  providerSoonTag: {
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
   },
   providerIcon: {
-    width: '24px',
-    height: '24px',
+    width: '28px',
+    height: '28px',
     objectFit: 'contain',
   },
+  providerIconPanel: {
+    width: '42px',
+    height: '42px',
+    display: 'grid',
+    placeItems: 'center',
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  actionButton: {
+    width: '100%',
+    minHeight: '62px',
+    justifyContent: 'flex-start',
+    paddingLeft: tokens.spacingHorizontalM,
+    paddingRight: tokens.spacingHorizontalM,
+  },
+  providerButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    color: tokens.colorNeutralForeground1,
+    border: `1px solid rgba(255, 255, 255, 0.12)`,
+    boxShadow: 'none',
+    '&:hover': {
+      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+      color: tokens.colorNeutralForeground1,
+    },
+  },
   tidalButton: {
-    backgroundColor: '#000000',
-    color: '#ffffff',
-    border: 'none',
-    boxShadow: tokens.shadow4,
-    '&:hover': { backgroundColor: '#1a1a1a', color: '#ffffff' },
+    backgroundColor: 'rgba(255, 255, 255, 0.065)',
+    color: tokens.colorNeutralForeground1,
+    border: '1px solid rgba(255, 255, 255, 0.18)',
+    boxShadow: 'none',
+    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)', color: tokens.colorNeutralForeground1 },
   },
   appleButton: {
     background: 'linear-gradient(135deg, #fa233b 0%, #fb5c74 42%, #a855f7 100%)',
     color: '#ffffff',
     border: 'none',
     boxShadow: tokens.shadow4,
-    '&:hover': { filter: 'brightness(1.1)', color: '#ffffff' },
+    '&:hover': { filter: 'brightness(1.08)', color: '#ffffff' },
   },
   amazonButton: {
     backgroundColor: '#00a8e1',
@@ -234,14 +320,23 @@ const useStyles = makeStyles({
     '&:hover': { backgroundColor: '#ff335c', color: '#ffffff' },
   },
   deezerButton: {
-    backgroundColor: '#ef5466',
+    backgroundColor: '#222222',
     color: '#ffffff',
     border: 'none',
     boxShadow: tokens.shadow4,
-    '&:hover': { backgroundColor: '#ff6b7d', color: '#ffffff' },
+    '&:hover': { backgroundColor: '#3b3b3b', color: '#ffffff' },
   },
   skipButton: {
     alignSelf: 'center',
+    minHeight: '44px',
+    color: '#c9b6ff',
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  panelFooter: {
+    borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+    paddingTop: tokens.spacingVerticalM,
+    display: 'flex',
+    justifyContent: 'center',
   },
 });
 
@@ -260,7 +355,7 @@ const Auth = () => {
   const location = useLocation();
   const { toast } = useToast();
   const { theme, setTheme, setBrandKeyColor } = useTheme();
-  const { setArtwork, colors } = useUltraBlurContext();
+  const { setArtwork, colors, isDarkMode } = useUltraBlurContext();
 
   const isLikelyNavigationAbort = (error: any) => {
     const failedFetch = String(error?.message || '').includes('Failed to fetch');
@@ -286,9 +381,9 @@ const Auth = () => {
     navigate(`${pathname}${search}${hash}`, { replace: true });
   }, [location.state, navigate]);
 
-  const refreshTidalAuthStatusCache = useCallback((status: AuthStatusContract) => {
-    queryClient.setQueryData(["tidalAuthStatus"], status);
-    void queryClient.invalidateQueries({ queryKey: ["tidalAuthStatus"] });
+  const refreshProviderAuthStatusCache = useCallback((status: AuthStatusContract) => {
+    queryClient.setQueryData(["providerAuthStatus"], status);
+    void queryClient.invalidateQueries({ queryKey: ["providerAuthStatus"] });
   }, [queryClient]);
 
   // Clear artwork and brand color on auth page (use logo colors)
@@ -309,7 +404,7 @@ const Auth = () => {
         setAuthStatus(status);
 
         if (isConnectedStatus(status)) {
-          refreshTidalAuthStatusCache(status);
+          refreshProviderAuthStatusCache(status);
           navigateAfterAuth();
           return;
         }
@@ -332,7 +427,7 @@ const Auth = () => {
 
     checkExistingConnection();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnectedStatus, navigateAfterAuth, refreshTidalAuthStatusCache]);
+  }, [isConnectedStatus, navigateAfterAuth, refreshProviderAuthStatusCache]);
 
   useEffect(() => {
     return () => {
@@ -369,7 +464,7 @@ const Auth = () => {
             refreshPollRef.current = null;
           }
           setRefreshing(false);
-          refreshTidalAuthStatusCache(status);
+          refreshProviderAuthStatusCache(status);
           navigateAfterAuth();
           return;
         }
@@ -497,7 +592,7 @@ const Auth = () => {
           title: "Already Connected!",
           description: "You are already logged in to TIDAL.",
         });
-        refreshTidalAuthStatusCache(status);
+        refreshProviderAuthStatusCache(status);
         navigateAfterAuth();
         return;
       }
@@ -567,7 +662,7 @@ const Auth = () => {
               title: "Connected!",
               description: `Welcome ${authData.user?.username || 'user'}!`,
             });
-            refreshTidalAuthStatusCache(status);
+            refreshProviderAuthStatusCache(status);
             navigateAfterAuth();
           } else {
             // Continue polling
@@ -610,25 +705,28 @@ const Auth = () => {
     }
   };
 
-  const providerButtons = [
-    {
-      key: "tidal",
-      name: "TIDAL",
-      className: styles.tidalButton,
-      enabled: true,
-      logoUrl: tidalIcon,
-      onClick: connectTidal,
-    },
-    { key: "apple", name: "Apple Music", className: styles.appleButton, enabled: false, logoUrl: appleIcon },
-    { key: "amazon", name: "Amazon Music", className: styles.amazonButton, enabled: false, logoUrl: amazonIcon },
-    { key: "spotify", name: "Spotify", className: styles.spotifyButton, enabled: false, logoUrl: spotifyIcon },
-    { key: "youtube", name: "YouTube Music", className: styles.youtubeButton, enabled: false, logoUrl: youtubeIcon },
-    { key: "deezer", name: "Deezer", className: styles.deezerButton, enabled: false, logoUrl: deezerIcon },
-  ];
+  const providerButtons = [{
+    key: "tidal",
+    name: "TIDAL",
+    className: styles.tidalButton,
+    logoUrl: tidalIcon,
+    available: true,
+    onClick: connectTidal,
+  }, {
+    key: "apple", name: "Apple Music", className: styles.appleButton, logoUrl: appleIcon, available: false,
+  }, {
+    key: "amazon", name: "Amazon Music", className: styles.amazonButton, logoUrl: amazonIcon, available: false,
+  }, {
+    key: "spotify", name: "Spotify", className: styles.spotifyButton, logoUrl: spotifyIcon, available: false,
+  }, {
+    key: "youtube", name: "YouTube Music", className: styles.youtubeButton, logoUrl: youtubeIcon, available: false,
+  }, {
+    key: "deezer", name: "Deezer", className: styles.deezerButton, logoUrl: deezerIcon, available: false,
+  }];
 
   return (
     <>
-      <UltraBlurBackground colors={colors} />
+      <UltraBlurBackground colors={colors} isDarkMode={isDarkMode} />
       <div className={styles.container}>
         <div className={styles.themeToggle}>
           <Button
@@ -656,13 +754,13 @@ const Auth = () => {
             <div className={styles.content}>
               <div className={styles.header}>
                 <div className={styles.logoContainer}>
-                  <img src={logo} alt="" role="presentation" className={styles.logoGlow} />
+                  <div aria-hidden="true" className={styles.logoGlow} />
                   <img src={logo} alt="Discogenius" className={styles.logo} />
                 </div>
                 <Title2>
                   {authStatus.mode === "mock" ? "Mock provider mode is active" : "Disconnected local-library mode"}
                 </Title2>
-                <Body1 style={{ textAlign: "center", marginTop: tokens.spacingVerticalM, color: tokens.colorNeutralForeground2 }}>
+                <Body1 className={styles.centeredBody}>
                   {authStatus.message || "Discogenius can load the local library without a live TIDAL session."}
                 </Body1>
               </div>
@@ -671,7 +769,7 @@ const Auth = () => {
                 appearance="primary"
                 onClick={navigateAfterAuth}
                 size="large"
-                style={{ width: '100%' }}
+                className={styles.fullWidthButton}
               >
                 Open Discogenius
               </Button>
@@ -680,9 +778,9 @@ const Auth = () => {
 
           {!connecting && !userCode && !authStatus?.authBypassed && refreshing && (
             <div className={styles.infoBox}>
-              <div style={{ marginBottom: tokens.spacingVerticalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+              <div className={styles.stateHeader}>
                 <Title3>Refreshing TIDAL session</Title3>
-                <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
+                <Body1 className={styles.stateBody}>
                   Restoring your provider session before continuing.
                 </Body1>
               </div>
@@ -696,58 +794,69 @@ const Auth = () => {
           {!connecting && !userCode && !authStatus?.authBypassed && !refreshing && (
             <div className={styles.content}>
               <div className={styles.leftColumn}>
-                <div className={styles.header}>
-                  <div className={styles.logoContainer}>
-                    {/* Dynamic glow using blurred copy of logo */}
-                    <img src={logo} alt="" role="presentation" className={styles.logoGlow} />
-                    <img src={logo} alt="Discogenius" className={styles.logo} />
-                  </div>
-                  <Title2>Welcome to Discogenius</Title2>
-                  <Body1 style={{ textAlign: "center", marginTop: tokens.spacingVerticalM, color: tokens.colorNeutralForeground2 }}>
-                    Connect TIDAL for availability, previews, followed artists, and downloads. You can also skip this and add artists from MusicBrainz first.
+                <div className={styles.logoContainer}>
+                  <div aria-hidden="true" className={styles.logoGlow} />
+                  <img src={logo} alt="Discogenius" className={styles.logo} />
+                </div>
+                <div className={styles.leftCopy}>
+                  <Text as="h1" className={styles.brandTitle}>Welcome to Discogenius</Text>
+                  <Body1 className={styles.leftBody}>
+                    Connect a streaming service to enable downloading, or skip for now and add your wanted artists first.
                   </Body1>
                 </div>
               </div>
 
               <div className={styles.rightColumn}>
-                <div className={styles.providerButtonList} data-test="dsp-button-list">
-                  {providerButtons.map((providerButton) => (
+                <div className={styles.providerCard} data-test="dsp-button-list">
+                  <div className={styles.providerHeader}>
+                    <Text weight="semibold" className={styles.providerBadge}>Streaming service</Text>
+                  </div>
+
+                  <div className={styles.providerButtonList}>
+                    {providerButtons.map((providerButton) => (
+                      <Button
+                        key={providerButton.key}
+                        appearance="outline"
+                        disabled={!providerButton.available}
+                        onClick={providerButton.available ? providerButton.onClick : undefined}
+                        className={mergeClasses(styles.providerButton, providerButton.className, styles.actionButton)}
+                        size="large"
+                        icon={
+                          <div className={styles.providerIconPanel}>
+                            <img src={providerButton.logoUrl} alt="" className={styles.providerIcon} />
+                          </div>
+                        }
+                        iconPosition="before"
+                      >
+                        <div className={styles.providerButtonContent}>
+                          <span className={styles.providerButtonText}>{providerButton.name}</span>
+                          {providerButton.available ? <ArrowRight24Regular /> : <span className={styles.providerSoonTag}>Soon</span>}
+                        </div>
+                      </Button>
+                    ))}
+                  </div>
+
+                  <div className={styles.panelFooter}>
                     <Button
-                      key={providerButton.key}
-                      appearance="primary"
-                      disabled={!providerButton.enabled}
-                      onClick={providerButton.enabled ? providerButton.onClick : undefined}
-                      className={providerButton.className}
+                      appearance="subtle"
+                      onClick={navigateAfterAuth}
                       size="large"
-                      icon={<img src={providerButton.logoUrl} alt="" className={styles.providerIcon} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
-                      iconPosition="before"
-                      style={{ height: '56px', width: '100%', justifyContent: 'flex-start' }}
+                      className={styles.skipButton}
+                      icon={<Door24Regular />}
                     >
-                      <div className={styles.providerButtonContent}>
-                        <span className={styles.providerButtonText}>{providerButton.name}</span>
-                        {providerButton.enabled ? <ArrowRight24Regular /> : <Text size={200}>Soon</Text>}
-                      </div>
+                      Skip for now
                     </Button>
-                  ))}
+                  </div>
                 </div>
-                <Button
-                  appearance="subtle"
-                  onClick={navigateAfterAuth}
-                  size="large"
-                  className={styles.skipButton}
-                  style={{ marginTop: tokens.spacingVerticalL }}
-                >
-                  Skip for now
-                </Button>
               </div>
             </div>
           )}
 
           {connecting && !userCode && (
             <div className={styles.infoBox}>
-              <div style={{ marginBottom: tokens.spacingVerticalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+              <div className={styles.stateHeader}>
                 <Title3>Starting TIDAL authorization</Title3>
-                <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
+                <Body1 className={styles.stateBody}>
                   Requesting a device code from TIDAL...
                 </Body1>
               </div>
@@ -760,14 +869,14 @@ const Auth = () => {
 
           {connecting && userCode && (
             <div className={styles.infoBox}>
-              <div style={{ marginBottom: tokens.spacingVerticalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+              <div className={styles.stateHeader}>
                 <Title3>Authorize Discogenius</Title3>
-                <Body1 style={{ color: tokens.colorNeutralForeground2 }}>
+                <Body1 className={styles.stateBody}>
                   Visit the link below and enter this code to authorize:
                 </Body1>
               </div>
 
-              <div className={styles.codeDisplay} style={{ marginBottom: tokens.spacingVerticalM }}>
+              <div className={styles.codeDisplay}>
                 <Text className={styles.userCode}>
                   {userCode}
                 </Text>
@@ -781,7 +890,7 @@ const Auth = () => {
                     openVerificationWindow(verificationUrl);
                   }
                 }}
-                style={{ width: '100%', marginBottom: tokens.spacingVerticalM }}
+                className={styles.fullWidthButton}
               >
                 Open TIDAL Authorization
               </Button>

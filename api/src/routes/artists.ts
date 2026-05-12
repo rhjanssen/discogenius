@@ -346,7 +346,7 @@ router.put("/:artistId", async (req, res) => {
   }
 });
 
-router.post("/:artistId/redundancy", async (req, res) => {
+router.post("/:artistId/curate", async (req, res) => {
   try {
     const { artistId } = req.params;
     const artist = loadArtistWithEffectiveMonitor(artistId);
@@ -405,7 +405,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Get artist page from Tidal (for dynamic layout on Artist Detail Page)
+// Artist pages are MusicBrainz/DB backed; provider offers are attached separately.
 router.get("/:artistId/page", async (req, res) => {
   try {
     res.json(await ArtistQueryService.getRemoteArtistPage(req.params.artistId));

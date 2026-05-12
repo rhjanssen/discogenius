@@ -1,213 +1,66 @@
-# Curation and Deduplication Workflow
+# Curation Workflow
 
-Last updated: 2026-03-15
+Last updated: 2026-05-07
 
-## Why This Exists
+Discogenius curation is MusicBrainz release-group based. It no longer runs the old provider-album redundancy engine as a runtime fallback.
 
-Discogenius is not only a downloader. Its core differentiator is building and maintaining full artist discographies while filtering redundant overlap (duplicate editions, equal-track variants, subset releases) without losing intentional user choices.
+## Source Of Truth
 
-## End-to-End Flow
+- MusicBrainz/Lidarr metadata defines artists, release groups, releases, media, tracks, and recordings.
+- Streaming providers define availability and actionable resources.
+- `release_group_slots` connects the two by selecting provider offers for each library slot.
 
-### Entry points
+## Slots
 
-Curation can be triggered from:
+Each wanted release group can have independent slots:
 
-- Monitoring passes (managed artists)
-- Explicit curation actions
-- Refresh/scan workflows that emit scan-completion events
+- `stereo`: normal audio library target.
+- `spatial`: surround/spatial audio library target. The core uses format-agnostic wording; providers expose native labels such as `DOLBY_ATMOS`.
+- `video`: currently provider-discovered music videos, with MusicBrainz recording links added only when evidence is strong enough.
 
-### Runtime sequence
+## Runtime Flow
 
-1. A queue workflow enqueues curation-oriented jobs (ApplyCuration or CurateArtist).
-2. scheduler dispatches CurateArtist.
-3. redundancy.processAll runs the curation passes for the artist.
-4. processAll executes music curation, then optional atmos curation if enabled.
-5. Album/media monitor state is updated (respecting locks) and cascaded to tracks.
-6. Optional targeted cleanup runs (unmonitored media cleanup and metadata sidecar cleanup).
-7. Per-artist curation intentionally skips a full empty-directory sweep to keep queue throughput responsive.
-8. queueMonitoredItems can enqueue concrete download jobs for monitored-missing items.
+1. Artist add/search resolves to a MusicBrainz artist MBID through the Lidarr metadata service.
+2. Artist refresh syncs MusicBrainz release groups and release details into the `mb_*` tables.
+3. The active streaming provider supplies release offers for the artist.
+4. Provider offers are matched to MusicBrainz release groups, and to a specific MusicBrainz release when evidence supports it.
+5. Curation applies category settings to `release_group_slots.wanted`.
+6. Download Missing queues selected provider resources for wanted, missing slots.
+7. Download/import writes library files, metadata sidecars, and tags from canonical MusicBrainz identity plus provider evidence.
 
-## Key Services and Data Flow
+## Provider Matching
 
-- api/src/services/artist-workflow.ts
-  - Defines workflow phases (metadata-refresh, refresh-scan, curation, monitoring-intake, full-monitoring).
-  - Shapes payloads that decide whether curation and download queueing occur.
+Provider album matching is release-group first:
 
-- api/src/services/curation.listener.ts
-  - Event handoff from ARTIST_SCANNED and RESCAN_COMPLETED into queued curation jobs.
+- exact release evidence: UPC/barcode where available;
+- strong release evidence: track count, medium count, title/version, release year, release type, and ISRC overlap when hydrated;
+- unresolved exact release: keep the provider item matched to the release group only.
 
-- api/src/services/scheduler.ts
-  - Executes ApplyCuration (managed artist fanout) and CurateArtist (per artist).
+This is intentional. Standard, deluxe, clean, explicit, hi-res, and spatial provider albums may all belong to the same MusicBrainz release group. Discogenius should not invent exact MusicBrainz release IDs when the evidence is weak or missing.
 
-- api/src/services/curation-service.ts
-  - CurationService — core curation engine:
-  - category filtering
-  - version-group selection
-  - equal-track-set dedup
-  - subset filtering
-  - monitor/redundant writes
-  - monitor cascade and targeted optional cleanup (without a full per-artist empty-directory sweep)
-  - monitored-missing queue generation
+## Category Policy
 
-- api/src/services/task-scheduler.ts
-  - Scheduled orchestration: Lidarr-aligned per-artist pipeline (RefreshMetadata inline → per-artist RescanFolders → per-artist CurateArtist → DownloadMissing).
+Curation uses MusicBrainz release-group fields:
 
-- api/src/services/download-state.ts and api/src/services/managed-artists.ts
-  - Completion/count semantics that include monitor_lock rows as intentionally kept state.
+- primary type: album, EP, single;
+- secondary types: compilation, soundtrack, live, remix, DJ mix, demo;
+- global setting for whether spatial and videos are wanted.
 
-## Deduplication Pipeline (Implemented)
+The category policy only marks slots wanted or unwanted. It does not replace MusicBrainz grouping with provider-derived version groups.
 
-Inside redundancy.processRedundancy:
+## Queue Coupling
 
-1. Load artist albums and tracks.
-2. Split by library type quality scope:
-- music pass: stereo targets (LOSSLESS, HIRES_LOSSLESS)
-- atmos pass: DOLBY_ATMOS only
-3. Apply category inclusion filters from filtering config.
-4. If redundancy filtering is enabled:
-- group by version_group_id (fallback to title key)
-- choose best release per group by quality, explicit preference, then newest id
-5. Deduplicate equal track sets via ISRC grouping (with Atmos-specific handling).
-6. Filter subset releases (track-set subset of a kept release).
-7. Persist monitor and redundant decisions on albums (skip locked rows).
-8. Cascade monitor state to unlocked tracks.
-9. Update video monitor state from include_videos (skip locked rows).
+`queueMonitoredItems` queues selected provider resources from `release_group_slots`.
 
-## Download Queue Coupling
+- Stereo slots download into the music root.
+- Spatial slots download into the spatial root.
+- Videos download from provider video IDs until MusicBrainz video-recording coverage is strong enough to make videos fully canonical.
 
-queueMonitoredItems enqueues downloads from monitored-but-missing inventory:
+Download work stays in `download-processor.ts`; scheduled/non-download work stays in scheduler commands.
 
-- Album-level download when all tracks are monitored and missing.
-- Track-level download when only a subset is monitored.
-- Video download when include_videos is enabled.
-- Existing pending/processing jobs are checked to avoid duplicate queue work.
+## Remaining Work
 
-## Lock and Monitored Semantics
-
-### monitor
-
-- Marks records as automation scope.
-- Curation sets this for selected releases and clears it for filtered ones.
-
-### monitor_lock
-
-- Hard manual override.
-- Curation, scan/import updates, and monitor cascades do not overwrite locked rows.
-- Locked child rows are also treated as intentionally kept state in completion logic.
-
-### redundant
-
-- Stores curation reason/context for filtered releases.
-- Used to explain why a release is currently excluded from active monitoring.
-
-### Completion/count behavior
-
-- Downloaded and completion metrics include monitored rows and locked rows.
-- Artist completion remains gated by monitored artist state or explicitly locked child rows.
-
-## Config Surface Used by Curation
-
-From filtering config:
-
-- include_album, include_single, include_ep
-- include_compilation, include_soundtrack, include_live, include_remix, include_appears_on
-- include_atmos
-- include_videos
-- prefer_explicit
-- enable_redundancy_filter
-
-From monitoring config:
-
-- remove_unmonitored_files
-
-## Module and MusicBrainz Tag Determination
-
-This section defines how release module categories and MusicBrainz release-group tags are derived today.
-
-### Canonical module categories
-
-Discogenius currently uses these stable module categories for album-level grouping:
-
-- ALBUM
-- EP
-- SINGLE
-- COMPILATION
-- LIVE
-- REMIX
-- SOUNDTRACK
-- DEMO
-- APPEARS_ON
-
-DJ_MIXES remains recognized where already present, but we intentionally do not expand into less reliable secondary buckets beyond the currently supported set.
-
-### Determination precedence (per artist scan)
-
-1. Artist page modules from TIDAL (/pages/artist) are treated as strongest explicit section signals when available.
-2. Version-group propagation is then applied so secondary module signals can normalize all variants in the same release group.
-3. If page module is absent, group/type fallback applies:
-- group_type = COMPILATIONS -> APPEARS_ON
-- otherwise derive from release type (EP, SINGLE, else ALBUM)
-
-### Title-derived module heuristics
-
-For initial classification where page/module data is incomplete, title signals may set:
-
-- REMIX ("remix", "remixed", "remixes")
-- SOUNDTRACK ("soundtrack", "o.s.t.", "original score", "motion picture")
-- DEMO ("demo", "demos")
-
-These feed canonical module assignment and are later normalized by module-fixer.
-
-### MusicBrainz tag mapping
-
-albums.mb_secondary is constrained to valid MusicBrainz release-group secondary values.
-
-Current module -> mb_secondary mapping:
-
-- LIVE -> live
-- COMPILATION -> compilation
-- REMIX -> remix
-- SOUNDTRACK -> soundtrack
-- DEMO -> demo
-
-APPEARS_ON is relationship context and is not written to mb_secondary.
-
-When any mb_secondary is present, mb_primary is forced to album; otherwise primary falls back to release type (album/ep/single).
-
-MusicBrainz identifier enrichment is handled outside the curation decision itself:
-
-- artist refresh resolves `artists.mbid` and records status in `metadata_identity_status`
-- album refresh resolves `albums.mbid` and `albums.mb_release_group_id`, preferring UPC/barcode matches before text search
-- album-track identity uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available
-- import runs the identity phase before tagging, so embedded tags and NFO sidecars can include MusicBrainz and AcoustID values
-
-### Supported vs intentionally omitted
-
-Supported in module determination today:
-
-- compilation, live, remix, soundtrack, demo
-
-Intentionally omitted from module expansion for now due to inconsistent real-world behavior across toolchains/clients:
-
-- dj-mix
-- mixtape/street
-- other less reliably surfaced MusicBrainz secondary types
-
-## Implemented vs Planned
-
-### Implemented today
-
-- Queue-driven curation orchestration.
-- Event-driven handoff from scan completion into curation jobs.
-- Multi-pass music/atmos curation behavior.
-- Version-group and ISRC/subset dedup pipeline.
-- Lock-aware writes and lock-aware completion metrics.
-- Download candidate queueing from monitored-missing state.
-
-### Planned/in progress
-
-- Further decomposition of curation-service.ts into smaller focused modules.
-- More explicit history/audit persistence for curation decisions.
-- Additional typed lifecycle events around file and curation state transitions.
-
-Track these architecture changes in docs/ARCHITECTURE_WORKPLAN.md.
+- Move manual import and unmapped matching terminology from `tidalId` to provider-neutral IDs.
+- Replace provider-first video rows with canonical MusicBrainz recording links when evidence is strong.
+- Add a central artwork resolver/cache for Lidarr images, Cover Art Archive, provider artwork, and local sidecars.
+- Complete Lidarr-style rename/retag preview and apply flows for all library slots.

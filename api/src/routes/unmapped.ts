@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
 import { UnmappedFilesService } from "../services/unmapped-files.js";
-import { getVideo } from "../services/providers/tidal/tidal.js";
+import { streamingProviderManager } from "../services/providers/index.js";
 import {
     getEnumValue,
     getObjectBody,
@@ -99,9 +99,10 @@ router.post("/identify", async (req, res) => {
 
         if (entityType === "video") {
             const tidalId = getRequiredIdentifier(body, "tidalId");
-            const video = await getVideo(tidalId);
+            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const video = provider.getVideo ? await provider.getVideo(tidalId) : null;
             if (!video) {
-                return res.status(404).json({ success: false, error: `Video ${tidalId} not found` });
+                return res.status(404).json({ success: false, error: `Video ${tidalId} not found on ${provider.name}` });
             }
             res.json({ success: true, entityType: "video", candidate: video });
             return;

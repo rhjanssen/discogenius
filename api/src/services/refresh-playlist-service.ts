@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { getPlaylist, getPlaylistTracks } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 
 type PlaylistTrackValidationState = "valid" | "empty" | "partial" | "malformed";
@@ -45,6 +45,10 @@ function resolvePlaylistAlbumId(track: Record<string, unknown>): string | null {
         const albumId = (albumObj as { id?: unknown }).id;
         if (albumId !== null && albumId !== undefined) {
             return String(albumId);
+        }
+        const providerAlbumId = (albumObj as { providerId?: unknown }).providerId;
+        if (providerAlbumId !== null && providerAlbumId !== undefined) {
+            return String(providerAlbumId);
         }
     }
 
@@ -111,7 +115,7 @@ export function validatePlaylistTrackPayload(
         }
 
         const track = candidate as Record<string, unknown>;
-        const trackId = parsePlaylistTrackId(track.id);
+        const trackId = parsePlaylistTrackId(track.id ?? track.providerId);
         if (!trackId) {
             parseFailures += 1;
             continue;
@@ -167,14 +171,15 @@ export class RefreshPlaylistService {
         console.log(`[RefreshPlaylistService] scan for ${playlistId}`);
 
         const forceUpdate = options?.forceUpdate === true;
-        const tidalPlaylist = await getPlaylist(playlistId);
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        const tidalPlaylist = await provider.getPlaylist?.(playlistId);
         if (!tidalPlaylist) {
-            console.warn(`[RefreshPlaylistService] Playlist ${playlistId} not found on TIDAL`);
+            console.warn(`[RefreshPlaylistService] Playlist ${playlistId} not found on ${provider.name}`);
             return;
         }
 
         const resolvedPlaylistUuid = String(tidalPlaylist.uuid || playlistId);
-        const playlistTrackResponse = await getPlaylistTracks(playlistId);
+        const playlistTrackResponse = await provider.getPlaylistTracks?.(playlistId) ?? [];
         const validation = validatePlaylistTrackPayload(tidalPlaylist.numberOfTracks, playlistTrackResponse);
 
         if (validation.state === "malformed") {

@@ -45,6 +45,7 @@ const useStyles = makeStyles({
 
 interface UltraBlurBackgroundProps {
   colors: UltraBlurColors;
+  isDarkMode: boolean;
   transitionDuration?: number;
 }
 
@@ -62,7 +63,6 @@ function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<string> {
 
 export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const styles = useStyles();
-  const [isDark, setIsDark] = useState(true);
 
   const [frontUrl, setFrontUrl] = useState<string | null>(null);
   const [backUrl, setBackUrl] = useState<string | null>(null);
@@ -73,34 +73,6 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const frontRef = useRef<string | null>(null);
   const backRef = useRef<string | null>(null);
   const cleanupTimerRef = useRef<number | null>(null);
-
-  // Detect theme changes
-  useEffect(() => {
-    const checkTheme = () => {
-      const isDarkMode = document.documentElement.classList.contains('dark') ||
-        (document.documentElement.classList.contains('system') &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches) ||
-        (!document.documentElement.classList.contains('light') &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches);
-      setIsDark(isDarkMode);
-    };
-
-    checkTheme();
-
-    const observer = new MutationObserver(checkTheme);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class']
-    });
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    mediaQuery.addEventListener('change', checkTheme);
-
-    return () => {
-      observer.disconnect();
-      mediaQuery.removeEventListener('change', checkTheme);
-    };
-  }, []);
 
   useEffect(() => {
     frontRef.current = frontUrl;
@@ -227,7 +199,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
         />
       )}
 
-      <div className={mergeClasses(styles.overlay, isDark ? styles.overlayDark : styles.overlayLight)} />
+      <div className={mergeClasses(styles.overlay, props.isDarkMode ? styles.overlayDark : styles.overlayLight)} />
     </div>
   );
 }

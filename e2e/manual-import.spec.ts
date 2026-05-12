@@ -107,7 +107,7 @@ test.describe('Manual import flow', () => {
       });
     });
 
-    await page.route('**/api/tidal/albums/555/tracks', async (route) => {
+    await page.route('**/api/providers/tidal/albums/555/tracks', async (route) => {
       await route.fulfill({
         json: [
           { tidal_id: '9001', title: 'First Song', track_number: 1, volume_number: 1, duration: 180 },
@@ -159,4 +159,3 @@ test.describe('Manual import flow', () => {
     await expect(dialog.getByTitle('02 - Second Song.flac')).toBeVisible();
   });
 });
-

@@ -1,7 +1,7 @@
 import path from "path";
 import { getConfigSection, type NamingConfig } from "./config.js";
 
-export type LibraryRoot = "music" | "spatial_music" | "music_videos";
+export type LibraryRoot = "music" | "spatial" | "videos";
 
 export type NamingContext = {
   artistName: string;

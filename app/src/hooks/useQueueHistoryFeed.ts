@@ -19,6 +19,7 @@ export function useQueueHistoryFeed({ enabled = true }: UseQueueHistoryFeedOptio
         refreshErrorFallbackMessage: "Failed to refresh queue history.",
         fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({ limit, offset, timeoutMs }),
         getItemId: (item) => item.id,
+        refetchIntervalMs: 5_000,
         enabled,
     });
 

@@ -129,5 +129,5 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(videoNfo, /<musicvideo>/);
     assert.match(videoNfo, /<musicbrainzartistid>artist-mbid-100<\/musicbrainzartistid>/);
     assert.match(videoNfo, /<musicbrainzalbumid>album-mbid-200<\/musicbrainzalbumid>/);
-    assert.match(videoNfo, /<uniqueid type="TidalVideo" default="true">400<\/uniqueid>/);
+    assert.match(videoNfo, /<uniqueid type="tidalVideo" default="true">400<\/uniqueid>/);
 });

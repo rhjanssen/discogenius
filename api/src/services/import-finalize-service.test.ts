@@ -16,7 +16,7 @@ let libraryFilesModule: typeof import("./library-files.js");
 function writeTestConfig() {
   const config = configModule.readConfig();
   config.path.music_path = path.join(tempDir, "library", "music");
-  config.path.atmos_path = path.join(tempDir, "library", "atmos");
+  config.path.spatial_path = path.join(tempDir, "library", "spatial");
   config.path.video_path = path.join(tempDir, "library", "videos");
   config.naming.artist_folder = "{artistName}";
   config.naming.album_track_path_single = "{albumTitle}/{trackNumber00} - {trackTitle}";
@@ -70,7 +70,7 @@ function seedImportedTrack(fileName = "track-one.flac") {
 
 before(async () => {
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
-  fs.mkdirSync(path.join(tempDir, "library", "atmos"), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   dbModule = await import("../database.js");
@@ -94,7 +94,7 @@ beforeEach(() => {
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
-  fs.mkdirSync(path.join(tempDir, "library", "atmos"), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   writeTestConfig();

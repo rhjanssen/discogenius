@@ -34,10 +34,14 @@ export interface LidarrRelease {
   Title: string;
   Status: string;
   Country: string[];
+  Barcode?: string;
+  barcode?: string;
   Label: string[];
   Media: Array<{ Position: number; Format: string; Name: string }>;
   ReleaseDate: string;
   TrackCount: number;
+  MediumCount?: number;
+  MediaCount?: number;
   Disambiguation: string;
   Tracks: LidarrTrack[];
 }
@@ -155,6 +159,82 @@ export class LidarrMetadataService {
       disambiguation: string | null;
     }>;
 
+    const releaseRows = rows.length === 0
+      ? []
+      : db.prepare(`
+        SELECT
+          r.mbid,
+          r.release_group_mbid,
+          r.barcode,
+          r.date,
+          r.track_count,
+          r.media_count,
+          rec.isrcs AS recording_isrcs
+        FROM mb_releases r
+        LEFT JOIN mb_tracks t ON t.release_mbid = r.mbid
+        LEFT JOIN mb_recordings rec ON rec.mbid = t.recording_mbid
+        WHERE r.release_group_mbid IN (${rows.map(() => "?").join(",")})
+      `).all(...rows.map((row) => row.mbid)) as Array<{
+        mbid: string;
+        release_group_mbid: string;
+        barcode: string | null;
+        date: string | null;
+        track_count: number | null;
+        media_count: number | null;
+        recording_isrcs: string | null;
+      }>;
+    const releasesByReleaseGroup = new Map<string, Array<NonNullable<MusicBrainzReleaseGroupForMatching["releases"]>[number]>>();
+    const releaseEvidenceByMbid = new Map<string, {
+      releaseGroupMbid: string;
+      mbid: string;
+      barcode: string | null;
+      date: string | null;
+      trackCount: number | null;
+      mediaCount: number | null;
+      isrcs: Set<string>;
+    }>();
+    for (const release of releaseRows) {
+      const evidence = releaseEvidenceByMbid.get(release.mbid) || {
+        releaseGroupMbid: release.release_group_mbid,
+        mbid: release.mbid,
+        barcode: release.barcode,
+        date: release.date,
+        trackCount: release.track_count,
+        mediaCount: release.media_count,
+        isrcs: new Set<string>(),
+      };
+      const rawIsrcs = String(release.recording_isrcs || "").trim();
+      const values = rawIsrcs.startsWith("[") ? [rawIsrcs] : rawIsrcs.split(",");
+      for (const value of values) {
+        try {
+          const parsed = JSON.parse(value || "[]");
+          if (Array.isArray(parsed)) {
+            parsed.forEach((isrc) => {
+              const normalized = String(isrc || "").trim();
+              if (normalized) evidence.isrcs.add(normalized);
+            });
+          }
+        } catch {
+          const normalized = String(value || "").trim();
+          if (normalized) evidence.isrcs.add(normalized);
+        }
+      }
+      releaseEvidenceByMbid.set(release.mbid, evidence);
+    }
+
+    for (const release of releaseEvidenceByMbid.values()) {
+      const list = releasesByReleaseGroup.get(release.releaseGroupMbid) || [];
+      list.push({
+        mbid: release.mbid,
+        barcode: release.barcode,
+        date: release.date,
+        trackCount: release.trackCount,
+        mediaCount: release.mediaCount,
+        isrcs: Array.from(release.isrcs),
+      });
+      releasesByReleaseGroup.set(release.releaseGroupMbid, list);
+    }
+
     return rows.map((row) => {
       let secondaryTypes: string[] = [];
       try {
@@ -171,6 +251,7 @@ export class LidarrMetadataService {
         secondaryTypes,
         firstReleaseDate: row.first_release_date,
         disambiguation: row.disambiguation,
+        releases: releasesByReleaseGroup.get(row.mbid) || [],
       };
     });
   }
@@ -233,14 +314,19 @@ export class LidarrMetadataService {
 
     db.transaction(() => {
       const insertRelease = db.prepare(`
-        INSERT INTO mb_releases (mbid, release_group_mbid, artist_mbid, title, status, country, date, disambiguation, track_count, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO mb_releases (
+          mbid, release_group_mbid, artist_mbid, title, status, country,
+          date, barcode, disambiguation, media_count, track_count, data, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
           status = excluded.status,
           country = excluded.country,
           date = excluded.date,
+          barcode = excluded.barcode,
           disambiguation = excluded.disambiguation,
+          media_count = excluded.media_count,
           track_count = excluded.track_count,
           data = excluded.data,
           updated_at = CURRENT_TIMESTAMP
@@ -288,7 +374,9 @@ export class LidarrMetadataService {
           release.Status || null,
           JSON.stringify(release.Country || []),
           release.ReleaseDate || null,
+          release.Barcode || release.barcode || null,
           release.Disambiguation || null,
+          release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
           release.TrackCount ?? (release.Tracks || []).length,
           JSON.stringify(release),
         );

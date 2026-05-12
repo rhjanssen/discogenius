@@ -1,18 +1,18 @@
-import type { IProvider } from "./provider-interface.js";
-import { tidalProvider } from "./tidal/tidal-provider.js";
+import type { StreamingProvider } from "./streaming-provider.js";
+import { tidalStreamingProvider } from "./tidal/tidal-provider.js";
 
-class ProviderManager {
-  private readonly providers = new Map<string, IProvider>();
+class StreamingProviderManager {
+  private readonly providers = new Map<string, StreamingProvider>();
 
   constructor() {
-    this.registerProvider(tidalProvider);
+    this.registerStreamingProvider(tidalStreamingProvider);
   }
 
-  registerProvider(provider: IProvider): void {
+  registerStreamingProvider(provider: StreamingProvider): void {
     this.providers.set(provider.id, provider);
   }
 
-  getProvider(id: string): IProvider {
+  getStreamingProvider(id: string): StreamingProvider {
     const provider = this.providers.get(id);
     if (!provider) {
       throw new Error(`Provider not found: ${id}`);
@@ -20,13 +20,13 @@ class ProviderManager {
     return provider;
   }
 
-  getAllProviders(): IProvider[] {
+  getAllStreamingProviders(): StreamingProvider[] {
     return Array.from(this.providers.values());
   }
 
-  getDefaultProvider(): IProvider {
-    return this.getProvider("tidal");
+  getDefaultStreamingProvider(): StreamingProvider {
+    return this.getStreamingProvider("tidal");
   }
 }
 
-export const providerManager = new ProviderManager();
+export const streamingProviderManager = new StreamingProviderManager();

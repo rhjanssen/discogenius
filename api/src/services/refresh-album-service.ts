@@ -1,10 +1,4 @@
 import { db } from "../database.js";
-import {
-    getAlbumCredits,
-    getAlbumItemsCredits,
-    getAlbumReview,
-    getAlbumSimilar,
-} from "./providers/tidal/tidal.js";
 import { getConfigSection } from "./config.js";
 import { createCooperativeBatcher } from "../utils/concurrent.js";
 import { resolveArtistFolderForPersistence } from "./artist-paths.js";
@@ -12,15 +6,16 @@ import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
 import type { ProviderReleaseGroupMatch } from "./metadata/provider-release-group-matcher.js";
-import { providerManager } from "./providers/index.js";
-import type { ProviderAlbum, ProviderTrack } from "./providers/provider-interface.js";
+import { streamingProviderManager } from "./providers/index.js";
+import type { ProviderAlbum, ProviderTrack } from "./providers/streaming-provider.js";
+import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
     artistId: string;
 };
 
-function providerAlbumToLegacyAlbumRow(providerAlbum: ProviderAlbum): any {
+function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
     const raw = providerAlbum.raw;
     if (raw && typeof raw === "object" && "tidal_id" in raw) {
         return raw;
@@ -50,7 +45,7 @@ function providerAlbumToLegacyAlbumRow(providerAlbum: ProviderAlbum): any {
     };
 }
 
-function providerTrackToLegacyTrackRow(providerTrack: ProviderTrack): any {
+function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
     const raw = providerTrack.raw;
     if (raw && typeof raw === "object" && "tidal_id" in raw) {
         return raw;
@@ -77,8 +72,7 @@ function providerTrackToLegacyTrackRow(providerTrack: ProviderTrack): any {
 }
 
 function getProviderLibrarySlot(quality?: string | null): string {
-    const normalized = String(quality || "").toUpperCase();
-    return normalized === "DOLBY_ATMOS" || normalized === "SONY_360RA" ? "spatial" : "stereo";
+    return isSpatialAudioQuality(quality) ? "spatial" : "stereo";
 }
 
 function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
@@ -158,7 +152,7 @@ export class RefreshAlbumService {
             return;
         }
 
-        const albumData = providerAlbumToLegacyAlbumRow(await providerManager.getDefaultProvider().getAlbum(albumId));
+        const albumData = providerAlbumToAlbumMetadataRow(await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
 
         const primaryArtistId = albumData.artist_id || artistId;
@@ -318,23 +312,21 @@ export class RefreshAlbumService {
 
         if (shouldRefreshReview) {
             try {
-                const review = await getAlbumReview(albumId);
-                const reviewText = review?.text ?? null;
-                const reviewSource = review?.source ?? null;
-                const reviewUpdated = review?.lastUpdated ?? null;
+                const provider = streamingProviderManager.getDefaultStreamingProvider();
+                const reviewText = await provider.getAlbumReview?.(albumId);
 
-                if (review !== null && review !== undefined) {
+                if (reviewText !== null && reviewText !== undefined) {
                     db.prepare(`
                         UPDATE albums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
-                    `).run(reviewText ?? "", reviewSource, reviewUpdated, albumId);
+                    `).run(reviewText ?? "", provider.id, new Date().toISOString(), albumId);
                 } else if (options.forceUpdate === true || existing?.review_text == null) {
                     db.prepare(`
                         UPDATE albums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
-                    `).run("", reviewSource, reviewUpdated, albumId);
+                    `).run("", provider.id, new Date().toISOString(), albumId);
                 }
             } catch (error) {
                 console.warn(`[RefreshAlbumService] Failed to fetch review for album ${albumId}:`, error);
@@ -356,7 +348,10 @@ export class RefreshAlbumService {
         }
 
         try {
-            const credits = await getAlbumCredits(albumId);
+            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const credits = provider.getAlbumCredits
+                ? await provider.getAlbumCredits(albumId)
+                : [];
             if (credits && credits.length > 0) {
                 db.prepare("UPDATE albums SET credits = ? WHERE id = ?")
                     .run(JSON.stringify(credits), albumId);
@@ -366,7 +361,10 @@ export class RefreshAlbumService {
         }
 
         try {
-            const trackCreditsMap = await getAlbumItemsCredits(albumId);
+            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const trackCreditsMap = provider.getAlbumTrackCredits
+                ? await provider.getAlbumTrackCredits(albumId)
+                : new Map<string, any[]>();
             if (trackCreditsMap.size > 0) {
                 const updateTrackCredits = db.prepare("UPDATE media SET credits = ? WHERE id = ? AND album_id = ?");
                 db.transaction(() => {
@@ -388,8 +386,8 @@ export class RefreshAlbumService {
         albumId: string,
         options: { resolveMusicBrainz?: boolean } = {},
     ): Promise<void> {
-        const tracks = (await providerManager.getDefaultProvider().getAlbumTracks(albumId))
-            .map(providerTrackToLegacyTrackRow);
+        const tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(albumId))
+            .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
         const album = db.prepare("SELECT id, artist_id, type, monitor FROM albums WHERE id = ?").get(albumId) as any;
@@ -730,6 +728,7 @@ export class RefreshAlbumService {
         if (matchedReleaseGroup) {
             db.prepare(`
                 UPDATE albums SET
+                    mbid = COALESCE(?, mbid),
                     mb_release_group_id = ?,
                     mb_primary = COALESCE(?, mb_primary),
                     mb_secondary = COALESCE(?, mb_secondary),
@@ -741,6 +740,7 @@ export class RefreshAlbumService {
                     musicbrainz_match_method = ?
                 WHERE id = ?
             `).run(
+                releaseGroupMatch?.releaseMbid || null,
                 matchedReleaseGroup.mbid,
                 primaryTypeFromProviderMatch(releaseGroupMatch),
                 secondaryTypeFromProviderMatch(releaseGroupMatch),
@@ -753,9 +753,9 @@ export class RefreshAlbumService {
         db.prepare(`
             INSERT INTO provider_items (
                 provider, entity_type, provider_id, title, version, explicit, quality,
-                upc, duration, release_date, artist_mbid, release_group_mbid, library_slot,
+                upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
                 match_status, match_confidence, match_method, match_evidence, data, updated_at
-            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = excluded.version,
@@ -766,6 +766,7 @@ export class RefreshAlbumService {
                 release_date = excluded.release_date,
                 artist_mbid = excluded.artist_mbid,
                 release_group_mbid = excluded.release_group_mbid,
+                release_mbid = excluded.release_mbid,
                 library_slot = excluded.library_slot,
                 match_status = excluded.match_status,
                 match_confidence = excluded.match_confidence,
@@ -784,6 +785,7 @@ export class RefreshAlbumService {
             album.release_date || null,
             matchedArtistMbid,
             matchedReleaseGroup?.mbid || null,
+            releaseGroupMatch?.releaseMbid || null,
             getProviderLibrarySlot(album.quality),
             releaseGroupMatch?.status || "unmatched",
             releaseGroupMatch?.confidence ?? null,
@@ -815,7 +817,10 @@ export class RefreshAlbumService {
         forceUpdate: boolean = false,
     ): Promise<SimilarAlbumSeed[]> {
         try {
-            const similarAlbums = await getAlbumSimilar(albumId);
+            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const similarAlbums = provider.getSimilarAlbums
+                ? await provider.getSimilarAlbums(albumId)
+                : [];
             const ids = new Set<string>();
             const pairs: SimilarAlbumSeed[] = [];
 
@@ -874,8 +879,9 @@ export class RefreshAlbumService {
             const transaction = db.transaction((items: any[]) => {
                 deleteRelations.run(albumId);
                 for (const similarAlbum of items) {
-                    const similarAlbumId = similarAlbum?.tidal_id?.toString?.() ?? String(similarAlbum?.tidal_id ?? "");
-                    const similarArtistId = similarAlbum?.artist_id?.toString?.() ?? String(similarAlbum?.artist_id ?? "");
+                    const albumRow = providerAlbumToAlbumMetadataRow(similarAlbum);
+                    const similarAlbumId = albumRow?.tidal_id?.toString?.() ?? String(albumRow?.tidal_id ?? "");
+                    const similarArtistId = albumRow?.artist_id?.toString?.() ?? String(albumRow?.artist_id ?? "");
                     if (!similarAlbumId || !similarArtistId) continue;
                     if (similarAlbumId === String(albumId)) continue;
                     if (ids.has(similarAlbumId)) continue;
@@ -883,22 +889,22 @@ export class RefreshAlbumService {
                     pairs.push({ albumId: similarAlbumId, artistId: similarArtistId });
                     upsertArtist.run(
                         similarArtistId,
-                        similarAlbum?.artist_name || "Unknown Artist",
+                        albumRow?.artist_name || "Unknown Artist",
                         resolveArtistFolderForPersistence({
                             artistId: similarArtistId,
-                            artistName: similarAlbum?.artist_name || "Unknown Artist",
+                            artistName: albumRow?.artist_name || "Unknown Artist",
                         }),
                     );
                     upsertAlbum.run(
                         similarAlbumId,
                         similarArtistId,
-                        similarAlbum?.title || "Unknown Album",
-                        similarAlbum?.release_date || null,
-                        similarAlbum?.type || "ALBUM",
-                        similarAlbum?.explicit ? 1 : 0,
-                        similarAlbum?.quality || null,
-                        similarAlbum?.cover || null,
-                        similarAlbum?.popularity || null,
+                        albumRow?.title || "Unknown Album",
+                        albumRow?.release_date || null,
+                        albumRow?.type || "ALBUM",
+                        albumRow?.explicit ? 1 : 0,
+                        albumRow?.quality || null,
+                        albumRow?.cover || null,
+                        albumRow?.popularity || null,
                     );
                     insertRelation.run(albumId, similarAlbumId);
                 }

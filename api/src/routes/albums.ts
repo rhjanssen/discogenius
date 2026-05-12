@@ -4,6 +4,7 @@ import { AlbumCommandService } from "../services/album-command-service.js";
 import {
   getObjectBody,
   getOptionalBoolean,
+  getOptionalString,
   getRequiredIdentifier,
   isRequestValidationError,
   rejectUnknownKeys,
@@ -38,17 +39,8 @@ const parseOptionalMonitored = (value: unknown): boolean => {
   return value === undefined ? true : Boolean(value);
 };
 
-/**
- * Albums routes - updated for new schema where:
- * - 'id' is the primary key (INT, TIDAL album id)
- * - 'cover' replaces 'cover_id'
- * - 'quality' replaces 'audio_quality'
- * - 'type' replaces 'album_type'
- * - 'monitor' replaces 'monitored'
- * - 'media' table replaces 'tracks' table
- */
-
-// Get all albums with pagination
+// MusicBrainz release-group album routes. Provider IDs are handled as selected
+// offers by command/download services, not as catalog identity.
 router.get("/", (req, res) => {
   try {
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
@@ -170,11 +162,13 @@ router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     const albumId = getRequiredIdentifier(body, "id");
+    const slot = getOptionalString(body, "slot");
     const shouldDownload = body.download !== undefined
       ? Boolean(body.download)
       : true;
+    rejectUnknownKeys(body, ["id", "download", "slot"], "Album add");
 
-    const result = await AlbumCommandService.addAlbum(albumId, shouldDownload);
+    const result = await AlbumCommandService.addAlbum(albumId, shouldDownload, slot);
 
     if (result.status === 404) {
       return res.status(404).json({ detail: result.message || "Album not found" });

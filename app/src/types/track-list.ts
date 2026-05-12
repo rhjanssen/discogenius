@@ -8,6 +8,8 @@ export interface TrackAlbumRef {
 
 export interface TrackListItem {
   id: string;
+  preview_provider?: string | null;
+  preview_provider_track_id?: string | null;
   title: string;
   version?: string | null;
   duration: number;

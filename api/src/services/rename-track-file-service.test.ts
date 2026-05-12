@@ -16,7 +16,7 @@ let renameTrackFileServiceModule: typeof import("./rename-track-file-service.js"
 function writeTestConfig() {
   const config = configModule.readConfig();
   config.path.music_path = path.join(tempDir, "library", "music");
-  config.path.atmos_path = path.join(tempDir, "library", "atmos");
+  config.path.spatial_path = path.join(tempDir, "library", "spatial");
   config.path.video_path = path.join(tempDir, "library", "videos");
   config.naming.artist_folder = "{artistName}";
   config.naming.album_track_path_single = "{albumTitle}/{trackNumber00} - {trackTitle}";
@@ -67,7 +67,7 @@ function seedTrackedFile() {
 
 before(async () => {
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
-  fs.mkdirSync(path.join(tempDir, "library", "atmos"), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   dbModule = await import("../database.js");
@@ -90,7 +90,7 @@ beforeEach(() => {
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
-  fs.mkdirSync(path.join(tempDir, "library", "atmos"), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "videos"), { recursive: true });
 
   writeTestConfig();
@@ -167,6 +167,26 @@ test("RenameTrackFileService applies the same quality-token path shown in previe
   assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
   assert.equal(path.resolve(trackedFile.expectedPath), path.resolve(expectedPath));
   assert.equal(trackedFile.needsRename, 0);
+});
+
+test("RenameTrackFileService accepts library root aliases for rename status and apply", () => {
+  const seeded = seedTrackedFile();
+
+  const statusByAlias = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ libraryRoot: "music" }, 10);
+  assert.equal(statusByAlias.total, 1);
+  assert.equal(statusByAlias.renameNeeded, 1);
+
+  const statusByPath = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ libraryRoot: configModule.Config.getMusicPath() }, 10);
+  assert.equal(statusByPath.total, 1);
+  assert.equal(statusByPath.renameNeeded, 1);
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFilesByQuery({ libraryRoot: "music" });
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(seeded.expectedPath), true);
+
+  const statusAfter = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ libraryRoot: "music" }, 10);
+  assert.equal(statusAfter.total, 1);
+  assert.equal(statusAfter.renameNeeded, 0);
 });
 
 test("RenameTrackFileService keeps the stored artist path canonical until path updates are applied explicitly", () => {

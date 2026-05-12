@@ -1,6 +1,5 @@
 import { db } from "../database.js";
 import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
-import { getArtist, getArtistPage } from "./providers/tidal/tidal.js";
 import {
     getAlbumDownloadStats,
     getAlbumDownloadStatsMap,
@@ -159,6 +158,18 @@ const RELEASE_GROUP_BUCKETS = {
     REMIX: "ARTIST_REMIXES",
 } as const;
 
+const duplicateProviderArtistPredicate = `NOT (
+    a.mbid IS NOT NULL
+    AND TRIM(CAST(a.mbid AS TEXT)) != ''
+    AND CAST(a.id AS TEXT) != CAST(a.mbid AS TEXT)
+    AND EXISTS (
+        SELECT 1
+        FROM artists canonical_artist
+        WHERE canonical_artist.mbid = a.mbid
+          AND CAST(canonical_artist.id AS TEXT) = CAST(canonical_artist.mbid AS TEXT)
+    )
+)`;
+
 export class ArtistQueryService {
     static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
@@ -177,7 +188,7 @@ export class ArtistQueryService {
         let countQuery = "SELECT COUNT(*) as total FROM artists a";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
-        const where: string[] = [];
+        const where: string[] = [duplicateProviderArtistPredicate];
 
         if (search) {
             where.push("a.name LIKE ?");
@@ -326,6 +337,8 @@ export class ArtistQueryService {
     }
 
     static getArtistActivity(artistId: string): ArtistActivitySnapshot {
+        const artist = loadArtistWithEffectiveMonitor(artistId);
+        const artistMbid = artist?.mbid ? String(artist.mbid) : artistId;
         const directJobs = db.prepare(`
       SELECT id, type, status, ref_id, created_at, started_at
       FROM job_queue
@@ -357,6 +370,16 @@ export class ArtistQueryService {
         AND jq.status IN ('pending', 'processing')
     `).all(artistId) as any[];
 
+        const releaseGroupSlotJobs = db.prepare(`
+      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM job_queue jq
+      INNER JOIN mb_release_groups rg
+        ON rg.mbid = json_extract(jq.payload, '$.releaseGroupMbid')
+      WHERE rg.artist_mbid = ?
+        AND jq.type IN ('DownloadAlbum', 'ImportDownload')
+        AND jq.status IN ('pending', 'processing')
+    `).all(artistMbid) as any[];
+
         const libraryRescanJob = db.prepare(`
       SELECT id, type, status, ref_id, created_at, started_at
       FROM job_queue
@@ -367,7 +390,7 @@ export class ArtistQueryService {
     `).get() as any | undefined;
 
         const allJobs = new Map<number, any>();
-        for (const job of [...directJobs, ...albumJobs, ...albumDownloadJobs, ...mediaDownloadJobs]) {
+        for (const job of [...directJobs, ...albumJobs, ...albumDownloadJobs, ...mediaDownloadJobs, ...releaseGroupSlotJobs]) {
             allJobs.set(job.id, job);
         }
         if (libraryRescanJob) {
@@ -444,20 +467,11 @@ export class ArtistQueryService {
     }
 
     static async getRemoteArtistPage(artistId: string): Promise<any> {
-        const [pageData, artistData] = await Promise.all([
-            getArtistPage(artistId),
-            getArtist(artistId),
-        ]);
-
-        return {
-            ...pageData,
-            artistInfo: {
-                name: artistData.name,
-                picture: artistData.picture,
-                popularity: artistData.popularity,
-                url: artistData.url,
-            },
-        };
+        const page = await this.getArtistPageDb(artistId);
+        if (!page) {
+            throw new Error(`Artist not found: ${artistId}`);
+        }
+        return page;
     }
 
     static async getArtistPageDb(artistId: string): Promise<any | null> {
@@ -478,20 +492,7 @@ export class ArtistQueryService {
         }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
-        const albums = db.prepare(`
-      SELECT 
-        a.*,
-        pa.name as artist_name,
-        aa.type as relationship_type,
-        aa.group_type as group_type,
-        aa.module as aa_module
-      FROM albums a
-      LEFT JOIN artists pa ON pa.id = a.artist_id
-      JOIN album_artists aa ON a.id = aa.album_id
-      WHERE aa.artist_id = ?
-      GROUP BY a.id
-      ORDER BY a.release_date DESC
-    `).all(artistId) as any[];
+        const albums: any[] = [];
 
         const videos = db.prepare("SELECT * FROM media WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
         const musicBrainzReleaseGroups = artist.mbid
@@ -500,9 +501,23 @@ export class ArtistQueryService {
           rg.*,
           COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
           COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-          COALESCE(stereo.wanted, spatial.wanted, ?) AS wanted,
-          selected_album.cover AS selected_cover,
-          selected_album.explicit AS selected_explicit,
+          stereo.selected_provider_id AS stereo_provider_id,
+          stereo.selected_release_mbid AS stereo_release_mbid,
+          stereo.quality AS stereo_quality,
+          stereo.match_status AS stereo_match_status,
+          stereo.match_method AS stereo_match_method,
+          stereo.provider_data AS stereo_provider_data,
+          spatial.selected_provider_id AS spatial_provider_id,
+          spatial.selected_release_mbid AS spatial_release_mbid,
+          spatial.quality AS spatial_quality,
+          spatial.match_status AS spatial_match_status,
+          spatial.match_method AS spatial_match_method,
+          spatial.provider_data AS spatial_provider_data,
+          CASE
+            WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
+            WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
+            ELSE 0
+          END AS wanted,
           rg.data
         FROM mb_release_groups rg
         LEFT JOIN release_group_slots stereo
@@ -511,18 +526,9 @@ export class ArtistQueryService {
         LEFT JOIN release_group_slots spatial
           ON spatial.release_group_mbid = rg.mbid
          AND spatial.slot = 'spatial'
-        LEFT JOIN albums selected_album
-          ON selected_album.id = COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)
         WHERE rg.artist_mbid = ?
-          AND NOT EXISTS (
-            SELECT 1
-            FROM albums a
-            JOIN album_artists aa ON aa.album_id = a.id
-            WHERE aa.artist_id = ?
-              AND a.mb_release_group_id = rg.mbid
-          )
         ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-      `).all(artist.effective_monitor ? 1 : 0, artist.mbid, artistId) as any[]
+      `).all(artist.mbid) as any[]
             : [];
 
         let similarArtists: any[] = [];
@@ -661,7 +667,7 @@ export class ArtistQueryService {
         const releaseGroupCards = musicBrainzReleaseGroups.map((row) => {
             const bucketKey = releaseGroupBucket(row);
             const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
-            const monitored = Boolean(row.wanted ?? artist.effective_monitor);
+            const monitored = Boolean(row.wanted);
             
             let lidarrCover: string | null = null;
             try {
@@ -673,18 +679,40 @@ export class ArtistQueryService {
                 // ignore
             }
 
-            const coverUrl = lidarrCover || row.selected_cover || (row.mbid ? `https://coverartarchive.org/release-group/${row.mbid}/front-500` : null);
+            const selectedProviderData = (() => {
+                const raw = row.stereo_provider_data || row.spatial_provider_data;
+                if (!raw) return null;
+                try {
+                    return typeof raw === "string" ? JSON.parse(raw) : raw;
+                } catch {
+                    return null;
+                }
+            })() as { cover?: string | null; explicit?: boolean | number | null } | null;
+            const providerCover = selectedProviderData?.cover || null;
+            const coverArtArchiveUrl = row.mbid ? `https://coverartarchive.org/release-group/${row.mbid}/front-500` : null;
+            const coverUrl = lidarrCover || providerCover || coverArtArchiveUrl;
 
             return {
                 id: String(row.mbid),
                 title: row.title,
                 cover: coverUrl,
                 cover_id: coverUrl,
+                provider_cover_id: providerCover,
                 release_date: row.first_release_date || null,
                 type: primaryType,
                 album_type: primaryType,
-                explicit: Boolean(row.selected_explicit),
+                explicit: Boolean(selectedProviderData?.explicit),
                 quality: row.selected_quality || null,
+                stereo_provider_id: row.stereo_provider_id || null,
+                stereo_release_mbid: row.stereo_release_mbid || null,
+                stereo_quality: row.stereo_quality || null,
+                stereo_match_status: row.stereo_match_status || null,
+                stereo_match_method: row.stereo_match_method || null,
+                spatial_provider_id: row.spatial_provider_id || null,
+                spatial_release_mbid: row.spatial_release_mbid || null,
+                spatial_quality: row.spatial_quality || null,
+                spatial_match_status: row.spatial_match_status || null,
+                spatial_match_method: row.spatial_match_method || null,
                 artist_id: String(artist.id),
                 artist_name: String(artist.name || "Unknown Artist"),
                 mb_release_group_id: String(row.mbid),

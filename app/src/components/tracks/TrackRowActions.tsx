@@ -19,7 +19,7 @@ interface TrackRowActionsProps {
   isDownloaded: boolean;
   isDownloading?: boolean;
   canShowInfo: boolean;
-  onPlay: (event: MouseEvent<HTMLButtonElement>) => void;
+  onPlay?: (event: MouseEvent<HTMLButtonElement>) => void;
   onToggleMonitor?: (event: MouseEvent<HTMLButtonElement>) => void;
   onToggleLock?: (event: MouseEvent<HTMLButtonElement>) => void;
   onShowInfo?: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -53,13 +53,14 @@ export function TrackRowActions({
 
   return (
     <div className={mergeClasses(styles.root, className)}>
-      <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
+      <Tooltip content={onPlay ? (isPlaying ? "Stop" : "Play") : "No preview available"} relationship="label">
         <Button
           appearance="subtle"
           aria-label={isPlaying ? "Stop track" : "Play track"}
           data-testid={isPlaying ? "track-stop" : "track-play"}
           icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
           size="small"
+          disabled={!onPlay}
           onClick={onPlay}
         />
       </Tooltip>

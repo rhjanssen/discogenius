@@ -37,6 +37,14 @@ export interface AlbumContract {
   type?: string;
   album_type?: string;
   quality?: string | null;
+  stereo_provider_id?: string | null;
+  stereo_quality?: string | null;
+  stereo_match_status?: string | null;
+  spatial_provider_id?: string | null;
+  spatial_quality?: string | null;
+  spatial_match_status?: string | null;
+  selected_provider_id?: string | null;
+  source?: string;
   is_monitored: boolean;
   is_downloaded: boolean;
   downloaded?: number;
@@ -173,6 +181,14 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     type: expectOptionalString(record.type, `${label}.type`),
     album_type: expectOptionalString(record.album_type, `${label}.album_type`),
     quality: expectNullableString(record.quality, `${label}.quality`),
+    stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
+    stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
+    stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
+    spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
+    spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
+    spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
+    selected_provider_id: expectOptionalString(record.selected_provider_id, `${label}.selected_provider_id`) ?? null,
+    source: expectOptionalString(record.source, `${label}.source`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
     downloaded: expectOptionalNumber(record.downloaded, `${label}.downloaded`),

@@ -16,7 +16,7 @@ import {
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { useTidalConnection } from "@/hooks/useTidalConnection";
+import { useProviderConnection } from "@/hooks/useProviderConnection";
 import GlobalSearch from "./GlobalSearch";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
@@ -367,10 +367,10 @@ const Layout = () => {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
-  const { colors } = useUltraBlurContext();
+  const { colors, isDarkMode: ultraBlurIsDarkMode } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
-  const { status } = useTidalConnection();
+  const { status } = useProviderConnection();
   const isAuthRoute = location.pathname === "/auth";
 
   const showProviderModeBanner = Boolean(status?.canAccessShell && !status?.remoteCatalogAvailable);
@@ -399,7 +399,7 @@ const Layout = () => {
 
   return (
     <>
-      <UltraBlurBackground colors={colors} />
+      <UltraBlurBackground colors={colors} isDarkMode={ultraBlurIsDarkMode} />
       <div className={styles.wrapper}>
         {!isAuthRoute ? (
           <nav className={mergeClasses(styles.nav, isDarkMode ? styles.navDark : styles.navLight)}>

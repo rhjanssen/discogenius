@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "../database.js";
 import { getProviderAuthMode } from "../services/provider-auth-mode.js";
 import { lidarrMetadataService, type LidarrArtist } from "../services/metadata/lidarr-metadata-service.js";
-import { providerManager } from "../services/providers/index.js";
+import { streamingProviderManager } from "../services/providers/index.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -45,14 +45,24 @@ const inDb = (tidalId: string, table: string): boolean => {
     return !!db.prepare(`SELECT 1 FROM ${actualTable} WHERE id = ?`).get(tidalId);
 };
 
-function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null } | undefined {
-    return db.prepare("SELECT id, monitor FROM artists WHERE mbid = ? LIMIT 1").get(mbid) as
-        { id: string | number; monitor: number | null } | undefined;
+function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
+    return db.prepare("SELECT id, monitor, picture, cover_image_url FROM artists WHERE mbid = ? LIMIT 1").get(mbid) as
+        { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
 }
 
 function coverArtArchiveReleaseGroupUrl(mbid: string | null | undefined): string | null {
     const trimmed = String(mbid || "").trim();
     return trimmed ? `https://coverartarchive.org/release-group/${trimmed}/front-500` : null;
+}
+
+function parseProviderArtworkFromSlotData(value: unknown): string | null {
+    if (!value) return null;
+    try {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value;
+        return typeof parsed?.cover === "string" && parsed.cover.trim() ? parsed.cover : null;
+    } catch {
+        return null;
+    }
 }
 
 function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContract {
@@ -69,7 +79,7 @@ function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContr
         name: artist.artistname,
         type: "artist",
         subtitle: details || null,
-        imageId: lidarrMetadataService.getArtistImageUrl(artist),
+        imageId: localArtist?.cover_image_url || localArtist?.picture || lidarrMetadataService.getArtistImageUrl(artist),
         monitored: Boolean(localArtist?.monitor),
         in_library: Boolean(localArtist),
         quality: null,
@@ -139,7 +149,7 @@ router.get("/", async (req, res) => {
         }
 
         const providerAuthMode = getProviderAuthMode();
-        const provider = providerManager.getDefaultProvider();
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
         const hasRemoteAuth = providerAuthMode === "live" && Boolean(provider.isAuthenticated?.());
         const includeProviderCatalog =
             req.query.provider === "true" ||
@@ -161,7 +171,7 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        `SELECT id, name, COALESCE(picture, cover_image_url) AS picture, monitor
+                        `SELECT id, name, COALESCE(cover_image_url, picture) AS picture, monitor
                          FROM artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
@@ -196,16 +206,14 @@ router.get("/", async (req, res) => {
              rg.first_release_date AS release_date,
              rg.primary_type,
              a.name AS artist_name,
-	             selected_album.cover AS cover,
-	             selected_album.quality AS quality,
+             slot.provider_data,
+             slot.quality AS quality,
 	             COALESCE(slot.wanted, a.monitor, 0) AS monitored
 	           FROM mb_release_groups rg
 	           LEFT JOIN artists a ON a.mbid = rg.artist_mbid
 	           LEFT JOIN release_group_slots slot
              ON slot.release_group_mbid = rg.mbid
             AND slot.slot = 'stereo'
-           LEFT JOIN albums selected_album
-             ON selected_album.id = slot.selected_provider_id
 	           WHERE rg.title LIKE ? ESCAPE '\\'
 	           ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
 	           LIMIT ?`
@@ -215,43 +223,13 @@ router.get("/", async (req, res) => {
                 results.albums.push(...localReleaseGroups.map((row: any) => formatSearchResult({
                     id: row.id,
                     name: row.title,
-                    cover_id: row.cover || coverArtArchiveReleaseGroupUrl(row.id),
+                    cover_id: parseProviderArtworkFromSlotData(row.provider_data) || coverArtArchiveReleaseGroupUrl(row.id),
                     artist_name: row.artist_name,
                     release_date: row.release_date,
                     quality: row.quality,
                     monitored: !!row.monitored,
                     in_library: true,
                 }, 'album')));
-
-                const seenReleaseGroupMbids = new Set(localReleaseGroups.map((row: any) => String(row.id)));
-                const localAlbums = db
-                    .prepare(
-                        `SELECT a.id, a.title, a.cover, a.monitor, a.mb_release_group_id, ar.name as artist_name
-           FROM albums a
-           LEFT JOIN artists ar ON ar.id = a.artist_id
-               WHERE a.title LIKE ? ESCAPE '\\'
-                 AND (
-                   a.mb_release_group_id IS NULL
-                   OR NOT EXISTS (
-                     SELECT 1
-                     FROM mb_release_groups rg
-                     WHERE rg.mbid = a.mb_release_group_id
-                   )
-                 )
-           ORDER BY a.release_date DESC LIMIT ?`
-                    )
-                    .all(like, limit) as any[];
-
-                results.albums.push(...localAlbums
-                    .filter((row: any) => !row.mb_release_group_id || !seenReleaseGroupMbids.has(String(row.mb_release_group_id)))
-                    .map((row: any) => formatSearchResult({
-                        id: row.id,
-                        name: row.title,
-                        cover_id: row.cover,
-                        artist_name: row.artist_name,
-                        monitored: !!row.monitor,
-                        in_library: true,
-                    }, 'album')));
             }
 
             if (requestedTypeSet.has("tracks")) {

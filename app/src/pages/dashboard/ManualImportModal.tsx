@@ -375,7 +375,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
         setIsLoadingTracks(true);
 
         try {
-            const tracks = await api.getTidalAlbumTracks(getResultId(result)) as any[];
+            const tracks = await api.getProviderAlbumTracks('tidal', getResultId(result)) as any[];
             setAlbumTracks(tracks);
 
             if (targetFiles.length === 0 || tracks.length === 0) {

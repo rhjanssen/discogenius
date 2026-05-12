@@ -5,7 +5,6 @@ import {
     Select,
     Switch,
     Checkbox,
-    Avatar,
     Spinner,
     Text,
     Title1,
@@ -33,18 +32,21 @@ import {
     ArrowSync24Regular,
     ArrowSortDownLines24Regular,
     QuestionCircle24Regular,
+    Checkmark24Regular,
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { useTidalConnection } from "@/hooks/useTidalConnection";
+import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
+import { useQuery } from "@tanstack/react-query";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
+import { QualityBadge } from "@/components/ui/QualityBadge";
 
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
@@ -69,6 +71,17 @@ type NamingToken = {
 };
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
+const PROVIDER_ICONS: Record<string, string> = {
+    tidal: "/assets/images/tidal_icon.svg",
+    apple: "/assets/images/apple_music_icon.svg",
+    apple_music: "/assets/images/apple_music_icon.svg",
+    amazon: "/assets/images/amazon_icon.svg",
+    amazon_music: "/assets/images/amazon_icon.svg",
+    spotify: "/assets/images/spotify_icon.svg",
+    youtube: "/assets/images/youtube_icon.svg",
+    youtube_music: "/assets/images/youtube_icon.svg",
+    deezer: "/assets/images/deezer_icon.svg",
+};
 
 const ARTIST_NAMING_TOKENS: NamingToken[] = [
     { section: "Artist", token: "{Artist Name}", example: "Daft Punk" },
@@ -154,7 +167,7 @@ const NAMING_HELP: Record<
         title: "Multi-volume Album Track Path",
         description: "Relative path (inside the artist folder) for tracks in multi-volume albums. Include album folder + optional disc folder + track filename (without extension).",
         tokens: [
-            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}", example: "Discovery (2001)/02-01 - One More Time", mode: "replace" },
+            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}", example: "Discovery (2001)/201 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{medium:00}/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/02/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
             ...ALBUM_NAMING_TOKENS,
@@ -488,8 +501,83 @@ const useStyles = makeStyles({
     profileActions: {
         display: 'flex',
         justifyContent: 'flex-end',
+        gap: tokens.spacingHorizontalS,
+        flexWrap: 'wrap',
         marginLeft: 'auto',
         flexShrink: 0,
+    },
+    providerStatusRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: tokens.spacingHorizontalM,
+        flex: 1,
+        minWidth: '220px',
+    },
+    providerIconBox: {
+        width: '48px',
+        height: '48px',
+        borderRadius: tokens.borderRadiusMedium,
+        display: 'grid',
+        placeItems: 'center',
+        backgroundColor: tokens.colorNeutralBackground3,
+        flexShrink: 0,
+    },
+    providerIcon: {
+        width: '30px',
+        height: '30px',
+        objectFit: 'contain',
+    },
+    capabilityList: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: tokens.spacingHorizontalXS,
+        rowGap: tokens.spacingVerticalXS,
+        justifyContent: 'flex-end',
+        [MEDIA.mobile]: {
+            justifyContent: 'flex-start',
+        },
+    },
+    capabilityGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(180px, 1fr))',
+        gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+        width: '100%',
+        [MEDIA.mobile]: {
+            gridTemplateColumns: '1fr',
+        },
+    },
+    capabilityRow: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: tokens.spacingHorizontalM,
+        minHeight: '28px',
+    },
+    capabilityLabel: {
+        color: tokens.colorNeutralForeground1,
+    },
+    capabilityIconOn: {
+        color: tokens.colorPaletteGreenForeground1,
+        flexShrink: 0,
+    },
+    capabilityIconOff: {
+        color: tokens.colorPaletteRedForeground1,
+        flexShrink: 0,
+    },
+    capabilityValue: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        minWidth: '34px',
+    },
+    providerActionRow: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: tokens.spacingHorizontalM,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     signOutButton: {
         minHeight: '36px',
@@ -653,7 +741,17 @@ const SettingsPage = () => {
         flushNamingSettings,
         accountSettings,
     } = useUserSettings();
-    const { isConnected: tidalConnected, isLoading: tidalLoading } = useTidalConnection();
+    const { isConnected: providerConnected, isLoading: providerLoading } = useProviderConnection();
+    const {
+        data: streamingProviders,
+        isLoading: providersLoading,
+        refetch: refetchStreamingProviders,
+    } = useQuery({
+        queryKey: ["streamingProviders"],
+        queryFn: () => api.getStreamingProviders(),
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+    });
     const { isAuthActive, signOut } = useAppAuth();
     const { theme, setTheme } = useTheme();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
@@ -938,10 +1036,11 @@ const SettingsPage = () => {
                 include_live: true,
                 include_remix: false,
                 include_appears_on: false,
-                include_atmos: false,
+                include_spatial: false,
                 include_videos: true,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
+                require_provider_availability: true,
             });
         }
     };
@@ -1129,12 +1228,21 @@ const SettingsPage = () => {
         }
     };
 
-    const handleDisconnectTidal = async () => {
+    const handleDisconnectProvider = async (providerId: string, providerName: string) => {
         try {
-            await api.logoutTidal();
-            navigate("/auth");
+            await api.logoutProvider(providerId);
+            await refetchStreamingProviders();
+            toast({
+                title: `${providerName} disconnected`,
+                description: "Provider availability, previews, followed artists, and downloads are disabled until you reconnect.",
+            });
         } catch (error) {
-            console.error('Error disconnecting TIDAL:', error);
+            console.error(`Error disconnecting ${providerName}:`, error);
+            toast({
+                title: "Disconnect failed",
+                description: error instanceof Error ? error.message : `Could not disconnect ${providerName}.`,
+                variant: "destructive",
+            });
         }
     };
 
@@ -1163,7 +1271,7 @@ const SettingsPage = () => {
         }
     };
 
-    if (loading || tidalLoading) {
+    if (loading || providerLoading || providersLoading) {
         return (
             <div className={styles.container}>
                 <Spinner size="large" className={styles.loadingState} />
@@ -1381,81 +1489,126 @@ const SettingsPage = () => {
             <div className={styles.sectionsContainer} data-testid="settings-sections">
 
 
-                {accountSettings && (
-                    <SettingsSection
-                        id="account"
-                        title="Account"
-                        description="Tidal connection and import actions."
-                        className={styles.section}
-                    >
-                        <div className={styles.card}>
-                            <div className={styles.profileRow}>
-                                <div className={styles.profileInfo}>
-                                    <Avatar
-                                        name={accountSettings.fullName || accountSettings.username}
-                                        image={accountSettings.picture ? { src: accountSettings.picture } : undefined}
-                                        size={64}
-                                    />
-                                    <div className={styles.profileDetails}>
-                                        <Text weight="semibold" size={400}>
-                                            {accountSettings.firstName && accountSettings.lastName
-                                                ? `${accountSettings.firstName} ${accountSettings.lastName}`
-                                                : accountSettings.fullName || accountSettings.username}
-                                        </Text>
-                                        {accountSettings.email && (
-                                            <Caption1 className={styles.mutedText}>
-                                                {accountSettings.email}
-                                            </Caption1>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className={styles.profileActions}>
-                                    <Tooltip content="Disconnect your TIDAL account" relationship="label">
-                                        <Button
-                                            appearance="outline"
-                                            className={styles.signOutButton}
-                                            icon={<DoorArrowLeft24Regular />}
-                                            onClick={handleDisconnectTidal}
-                                        >
-                                            Disconnect TIDAL
-                                        </Button>
-                                    </Tooltip>
-                                    {isAuthActive ? (
-                                        <Tooltip content="Sign out of Discogenius app access" relationship="label">
-                                            <Button
-                                                appearance="subtle"
-                                                className={styles.signOutButton}
-                                                icon={<DoorArrowLeft24Regular />}
-                                                onClick={handleSignOut}
-                                            >
-                                                Sign out
-                                            </Button>
-                                        </Tooltip>
-                                    ) : null}
-                                </div>
-                            </div>
-                            <div className={styles.row}>
-                                <div className={styles.rowContent}>
-                                    <Text weight="semibold">Import Followed Artists</Text>
-                                    <Text size={200} className={styles.mutedText}>
-                                        Add all artists you follow on Tidal to your library
-                                    </Text>
-                                </div>
-                                <Button
-                                    appearance="outline"
-                                    icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
-                                    onClick={handleImportFollowed}
-                                    disabled={importing}
-                                    className={styles.inlineActionButton}
-                                >
-                                    {importing ? "Importing..." : "Import"}
-                                </Button>
-                            </div>
-                        </div>
-                    </SettingsSection>
-                )}
+                <SettingsSection
+                    id="streaming-providers"
+                    title="Streaming Providers"
+                    description="Manage availability, previews, followed-artist import, playlist import, downloads, and provider capabilities."
+                    className={styles.section}
+                >
+                    <div className={styles.card}>
+                        {(streamingProviders?.providers ?? []).map((provider) => {
+                            const capabilityRows = [
+                                { label: "Lossless audio", enabled: Boolean(provider.capabilities.hasLossless) },
+                                { label: "Spatial audio", enabled: Boolean(provider.capabilities.hasSpatialAudio), value: provider.capabilities.spatialFormats?.length ? provider.capabilities.spatialFormats.map((format) => <QualityBadge key={format} quality={format} size="small" />) : null },
+                                { label: "Music videos", enabled: Boolean(provider.capabilities.hasVideo) },
+                                { label: "Track previews", enabled: Boolean(provider.management.canPreviewTracks) },
+                                { label: "Video previews", enabled: Boolean(provider.management.canPreviewVideos) },
+                                { label: "Followed artists", enabled: Boolean(provider.management.canImportFollowedArtists) },
+                                { label: "Playlists", enabled: Boolean(provider.management.canImportPlaylists) },
+                                { label: "Music downloads", enabled: Boolean(provider.management.canDownloadMusic) },
+                                { label: "Video downloads", enabled: Boolean(provider.management.canDownloadVideos) },
+                            ];
+                            const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
 
-                {!accountSettings && isAuthActive ? (
+                            return (
+                                <React.Fragment key={provider.id}>
+                                    <div className={styles.profileRow}>
+                                        <div className={styles.providerStatusRow}>
+                                            <div className={styles.providerIconBox}>
+                                                {icon ? (
+                                                    <img src={icon} alt="" className={styles.providerIcon} />
+                                                ) : (
+                                                    <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
+                                                )}
+                                            </div>
+                                            <div className={styles.profileDetails}>
+                                                <div className={styles.optionIconRow}>
+                                                    <Text weight="semibold" size={400}>{provider.name}</Text>
+                                                    <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
+                                                        {provider.authenticated ? "Connected" : "Not connected"}
+                                                    </Badge>
+                                                    {provider.isDefault ? (
+                                                        <Badge appearance="tint" color="informative">Default</Badge>
+                                                    ) : null}
+                                                </div>
+                                                {provider.id === "tidal" && accountSettings?.username ? (
+                                                    <Caption1 className={styles.mutedText}>
+                                                        Signed in as {accountSettings.fullName || accountSettings.username}
+                                                    </Caption1>
+                                                ) : (
+                                                    <Caption1 className={styles.mutedText}>
+                                                        {provider.authenticated
+                                                            ? "Provider features are available."
+                                                            : "Connect this provider to enable provider-backed features."}
+                                                    </Caption1>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className={styles.profileActions}>
+                                            {provider.management.canAuthenticate && !provider.authenticated ? (
+                                                <Button
+                                                    appearance="primary"
+                                                    className={styles.signOutButton}
+                                                    onClick={() => navigate("/auth")}
+                                                >
+                                                    Connect
+                                                </Button>
+                                            ) : null}
+                                            {provider.management.canDisconnect && provider.authenticated ? (
+                                                <Button
+                                                    appearance="outline"
+                                                    className={styles.signOutButton}
+                                                    icon={<DoorArrowLeft24Regular />}
+                                                    onClick={() => handleDisconnectProvider(provider.id, provider.name)}
+                                                >
+                                                    Disconnect
+                                                </Button>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                    <div className={styles.providerActionRow}>
+                                        <div className={styles.rowContent}>
+                                            <Text weight="semibold">Capabilities</Text>
+                                            <div className={styles.capabilityGrid}>
+                                                {capabilityRows.map((capability) => (
+                                                    <div key={capability.label} className={styles.capabilityRow}>
+                                                        <Text size={200} className={styles.capabilityLabel}>{capability.label}</Text>
+                                                        <span className={styles.capabilityValue}>
+                                                            {capability.value && capability.enabled
+                                                                ? capability.value
+                                                                : capability.enabled
+                                                                    ? <Checkmark24Regular className={styles.capabilityIconOn} />
+                                                                    : <Dismiss24Regular className={styles.capabilityIconOff} />}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </React.Fragment>
+                            );
+                        })}
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Import Followed Artists</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Resolve followed provider artists to MusicBrainz artists, then queue Lidarr-style metadata intake.
+                                </Text>
+                            </div>
+                            <Button
+                                appearance="outline"
+                                icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
+                                onClick={handleImportFollowed}
+                                disabled={importing || !providerConnected}
+                                className={styles.inlineActionButton}
+                            >
+                                {importing ? "Importing..." : "Import"}
+                            </Button>
+                        </div>
+                    </div>
+                </SettingsSection>
+
+                {isAuthActive ? (
                     <SettingsSection
                         id="app-access"
                         title="App Access"
@@ -1511,10 +1664,10 @@ const SettingsPage = () => {
                         </RadioGroup>
                         <Divider className={styles.divider} />
                         {renderToggleRow({
-                            title: "Dolby Atmos",
-                            description: "Download Atmos versions alongside stereo. Disabling unmonitors Atmos releases on next curation.",
-                            checked: curationConfig?.include_atmos === true,
-                            onChange: (checked) => updateCuration({ include_atmos: checked }),
+                            title: "Spatial audio",
+                            description: "Download spatial or surround versions alongside stereo. Disabling unmonitors spatial releases on next curation.",
+                            checked: curationConfig?.include_spatial === true,
+                            onChange: (checked) => updateCuration({ include_spatial: checked }),
                         })}
                     </div>
                 </SettingsSection>
@@ -1593,6 +1746,12 @@ const SettingsPage = () => {
                             description: "Unmonitor singles when their tracks appear on a full album",
                             checked: curationConfig?.enable_redundancy_filter !== false,
                             onChange: (checked) => updateCuration({ enable_redundancy_filter: checked }),
+                        })}
+                        {renderToggleRow({
+                            title: "Require Provider Availability",
+                            description: "Only monitor releases with a matched provider offer. Disable this for Lidarr-style monitoring before availability is known.",
+                            checked: curationConfig?.require_provider_availability !== false,
+                            onChange: (checked) => updateCuration({ require_provider_availability: checked }),
                         })}
                         <div className={styles.row}>
                             <Button
@@ -2125,14 +2284,14 @@ const SettingsPage = () => {
                         <div className={styles.divider} />
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Atmos Library Path</Text>
+                                <Text weight="semibold">Spatial Library Path</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Dolby Atmos surround library
+                                    Spatial and surround music library
                                 </Text>
                             </div>
                             <Input
-                                value={pathSettings?.atmos_path || ''}
-                                onChange={(_, data) => updatePathSettings({ atmos_path: data.value })}
+                                value={pathSettings?.spatial_path || ''}
+                                onChange={(_, data) => updatePathSettings({ spatial_path: data.value })}
                                 className={styles.pathInput}
                             />
                         </div>

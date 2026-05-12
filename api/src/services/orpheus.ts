@@ -423,7 +423,7 @@ export function getOrpheusCapabilitySnapshot(): BackendCapabilitySnapshot {
         capabilities: {
             audio: true,
             video: false,
-            atmos: true,
+            spatialAudio: true,
             highResAudio: true,
             playlists: true,
         },

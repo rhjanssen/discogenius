@@ -56,7 +56,7 @@ When architecture behavior changes, update docs in the same change:
 
 - docs/ARCHITECTURE.md for current-state architecture behavior
 - docs/ARCHITECTURE_WORKPLAN.md for planned architecture work
-- docs/CURATION_DEDUPLICATION.md when curation/redundancy semantics change
+- docs/CURATION_DEDUPLICATION.md when release-group slot curation semantics change
 - docs/README.md if documentation ownership/scope changes
 
 Keep docs concise, implementation-grounded, and non-duplicative.

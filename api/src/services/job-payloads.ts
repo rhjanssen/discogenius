@@ -54,6 +54,9 @@ export interface QueuePayloadCommon {
   id?: string;
   ids?: number[];
   tidalId?: string;
+  provider?: string;
+  providerId?: string;
+  releaseGroupMbid?: string;
   type?: string;
   title?: string;
   description?: string;
@@ -99,6 +102,7 @@ export interface QueuePayloadCommon {
   url?: string | null;
   path?: string | null;
   libraryRoot?: string;
+  slot?: "stereo" | "spatial" | string;
   fileTypes?: string[];
   files?: unknown[];
   originalJobId?: number;
@@ -246,4 +250,3 @@ export interface RetagArtistJobPayload extends QueuePayloadCommon {
   artistId?: string;
   artistIds?: string[];
 }
-

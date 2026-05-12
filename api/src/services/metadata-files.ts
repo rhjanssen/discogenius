@@ -1,12 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../database.js';
-import { tidalApiRequest, getCountryCode, getAlbumReview, getArtistBio, getArtist, getAlbum, getVideo } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 
 /**
- * Clean Tidal text by removing [wimpLink] tags and normalizing line breaks.
+ * Clean provider text by removing TIDAL-style [wimpLink] tags and normalizing line breaks.
  */
-function cleanTidalText(text: string): string {
+function cleanProviderText(text: string): string {
     const normalized = text
         .replace(/\r\n/g, "\n")
         .replace(/<br\s*\/?>/gi, "\n");
@@ -50,7 +50,7 @@ function warnNfoFallback(entity: string, id: string, error: unknown): void {
 
 async function getArtistForNfo(artistId: string) {
     try {
-        return await getArtist(artistId);
+        return await streamingProviderManager.getDefaultStreamingProvider().getArtist(artistId);
     } catch (error) {
         warnNfoFallback("artist", artistId, error);
         const row = db.prepare(`
@@ -62,7 +62,6 @@ async function getArtistForNfo(artistId: string) {
         if (!row) throw error;
         return {
             id: String(row.id),
-            tidal_id: String(row.id),
             name: row.name || "Unknown Artist",
             picture: row.picture || null,
             popularity: row.popularity || 0,
@@ -74,19 +73,19 @@ async function getArtistForNfo(artistId: string) {
 
 async function getArtistBioTextForNfo(artistId: string): Promise<string> {
     try {
-        const bio = await getArtistBio(artistId);
-        if (bio?.text) return cleanTidalText(bio.text);
+        const bio = await streamingProviderManager.getDefaultStreamingProvider().getArtistBio?.(artistId);
+        if (bio) return cleanProviderText(bio);
     } catch (error) {
         warnNfoFallback("artist biography", artistId, error);
     }
 
     const row = db.prepare("SELECT bio_text FROM artists WHERE id = ?").get(artistId) as { bio_text?: string | null } | undefined;
-    return row?.bio_text ? cleanTidalText(row.bio_text) : "";
+    return row?.bio_text ? cleanProviderText(row.bio_text) : "";
 }
 
 async function getAlbumForNfo(albumId: string) {
     try {
-        return await getAlbum(albumId);
+        return await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
     } catch (error) {
         warnNfoFallback("album", albumId, error);
         const row = db.prepare(`
@@ -119,7 +118,6 @@ async function getAlbumForNfo(albumId: string) {
         const artistName = row.artist_name || "Unknown Artist";
         return {
             id: String(row.id),
-            tidal_id: String(row.id),
             title: row.title || "Unknown Album",
             url: `https://tidal.com/album/${row.id}`,
             cover: row.cover || null,
@@ -156,19 +154,23 @@ async function getAlbumForNfo(albumId: string) {
 
 async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
     try {
-        const review = await getAlbumReview(albumId);
-        if (review?.text) return cleanTidalText(review.text);
+        const review = await streamingProviderManager.getDefaultStreamingProvider().getAlbumReview?.(albumId);
+        if (review) return cleanProviderText(review);
     } catch (error) {
         warnNfoFallback("album review", albumId, error);
     }
 
     const row = db.prepare("SELECT review_text FROM albums WHERE id = ?").get(albumId) as { review_text?: string | null } | undefined;
-    return row?.review_text ? cleanTidalText(row.review_text) : "";
+    return row?.review_text ? cleanProviderText(row.review_text) : "";
 }
 
 async function getVideoForNfo(videoId: string) {
     try {
-        return await getVideo(videoId);
+        const video = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
+        if (!video) {
+            throw new Error(`Provider video ${videoId} not found`);
+        }
+        return video;
     } catch (error) {
         warnNfoFallback("video", videoId, error);
         const row = db.prepare(`
@@ -196,7 +198,6 @@ async function getVideoForNfo(videoId: string) {
         const artistName = row.artist_name || null;
         return {
             id: String(row.id),
-            tidal_id: String(row.id),
             title: row.title || "Unknown Video",
             artist_id: artistId,
             artist_name: artistName,
@@ -213,13 +214,6 @@ async function getVideoForNfo(videoId: string) {
             type: "Music Video",
         };
     }
-}
-
-/**
- * Convert UUID to path format (abc-def-ghi -> abc/def/ghi)
- */
-function uuidToPath(uuid: string): string {
-    return uuid.replace(/-/g, '/');
 }
 
 type VideoThumbnailResolution =
@@ -241,6 +235,31 @@ const normalizeVideoThumbnailResolution = (resolution: VideoThumbnailResolution)
     return resolution;
 };
 
+async function downloadProviderArtwork(
+    url: string | null | undefined,
+    outputPath: string,
+    label: string,
+): Promise<void> {
+    if (!url) {
+        console.log(`ℹ️ [METADATA] No ${label} available, skipping.`);
+        return;
+    }
+
+    console.log(`📥 [METADATA] Downloading ${label}: ${url}`);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+        console.log(`⚠️ [METADATA] Failed to download ${label}: ${response.statusText}`);
+        return;
+    }
+
+    const buffer = await response.arrayBuffer();
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, Buffer.from(buffer));
+
+    console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
+}
+
 /**
  * Download album cover at specified resolution
  * @param albumId - Tidal album ID
@@ -252,37 +271,12 @@ export async function downloadAlbumCover(
     resolution: 80 | 160 | 320 | 640 | 1280 | 'origin',
     outputPath: string
 ): Promise<void> {
-    const cc = await getCountryCode();
-    const album = await tidalApiRequest(`/albums/${albumId}?countryCode=${cc}`) as any;
-    const coverUuid = album.cover;
-
-    if (!coverUuid) {
-        console.log(`ℹ️ [METADATA] No album cover available for album ${albumId}, skipping.`);
-        return;
-    }
-
-    const coverPath = uuidToPath(coverUuid);
-    let url: string;
-
-    if (resolution === 'origin') {
-        url = `https://resources.tidal.com/images/${coverPath}/origin.jpg`;
-    } else {
-        url = `https://resources.tidal.com/images/${coverPath}/${resolution}x${resolution}.jpg`;
-    }
-
-    console.log(`📥 [METADATA] Downloading album cover: ${url}`);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        console.log(`⚠️ [METADATA] Failed to download album cover for ${albumId}: ${response.statusText}`);
-        return;
-    }
-
-    const buffer = await response.arrayBuffer();
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, Buffer.from(buffer));
-
-    console.log(`✅ [METADATA] Album cover saved: ${outputPath}`);
+    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+        entityType: "album",
+        providerId: albumId,
+        size: resolution,
+    });
+    await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`);
 }
 
 /**
@@ -296,11 +290,6 @@ export async function downloadAlbumVideoCover(
     resolution: number | "origin",
     outputPath: string
 ): Promise<void> {
-    if (!videoCoverId) {
-        console.log(`ℹ️ [METADATA] No album video cover available, skipping.`);
-        return;
-    }
-
     const allowed = [80, 160, 320, 640, 1280];
     const numericResolution = typeof resolution === "number" ? resolution : Number(resolution);
     const safeResolution = resolution === "origin"
@@ -309,23 +298,13 @@ export async function downloadAlbumVideoCover(
             ? (allowed.find((size) => size >= numericResolution) ?? allowed[allowed.length - 1])
             : 320);
 
-    const coverPath = uuidToPath(videoCoverId);
-    const sizeStr = safeResolution === "origin" ? "origin" : `${safeResolution}x${safeResolution}`;
-    const url = `https://resources.tidal.com/videos/${coverPath}/${sizeStr}.mp4`;
-
-    console.log(`📥 [METADATA] Downloading album video cover: ${url}`);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        console.log(`⚠️ [METADATA] Failed to download album video cover: ${response.statusText}`);
-        return;
-    }
-
-    const buffer = await response.arrayBuffer();
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, Buffer.from(buffer));
-
-    console.log(`✅ [METADATA] Album video cover saved: ${outputPath}`);
+    const size = safeResolution === "origin" ? "origin" : `${safeResolution}x${safeResolution}`;
+    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+        entityType: "albumVideoCover",
+        imageId: videoCoverId,
+        size,
+    });
+    await downloadProviderArtwork(url, outputPath, "album video cover");
 }
 
 /**
@@ -340,31 +319,12 @@ export async function downloadArtistPicture(
     resolution: 160 | 320 | 480 | 750,
     outputPath: string
 ): Promise<void> {
-    const cc = await getCountryCode();
-    const artist = await tidalApiRequest(`/artists/${artistId}?countryCode=${cc}`) as any;
-    const pictureUuid = artist.picture;
-
-    if (!pictureUuid) {
-        console.log(`ℹ️ [METADATA] No artist picture available for artist ${artistId}, skipping.`);
-        return;
-    }
-
-    const picturePath = uuidToPath(pictureUuid);
-    const url = `https://resources.tidal.com/images/${picturePath}/${resolution}x${resolution}.jpg`;
-
-    console.log(`📥 [METADATA] Downloading artist picture: ${url}`);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        console.log(`⚠️ [METADATA] Failed to download artist picture for ${artistId}: ${response.statusText}`);
-        return;
-    }
-
-    const buffer = await response.arrayBuffer();
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, Buffer.from(buffer));
-
-    console.log(`✅ [METADATA] Artist picture saved: ${outputPath}`);
+    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+        entityType: "artist",
+        providerId: artistId,
+        size: resolution,
+    });
+    await downloadProviderArtwork(url, outputPath, `artist picture for ${artistId}`);
 }
 
 /**
@@ -379,29 +339,13 @@ export async function downloadVideoThumbnail(
     resolution: VideoThumbnailResolution,
     outputPath: string
 ): Promise<void> {
-    if (!imageId) {
-        console.log(`ℹ️ [METADATA] No video thumbnail available, skipping.`);
-        return;
-    }
-
-    const imagePath = uuidToPath(imageId);
     const normalizedResolution = normalizeVideoThumbnailResolution(resolution);
-    const [width, height] = normalizedResolution.split('x');
-    const url = `https://resources.tidal.com/images/${imagePath}/${width}x${height}.jpg`;
-
-    console.log(`📥 [METADATA] Downloading video thumbnail: ${url}`);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        console.log(`⚠️ [METADATA] Failed to download video thumbnail: ${response.statusText}`);
-        return;
-    }
-
-    const buffer = await response.arrayBuffer();
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, Buffer.from(buffer));
-
-    console.log(`✅ [METADATA] Video thumbnail saved: ${outputPath}`);
+    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+        entityType: "video",
+        imageId,
+        size: normalizedResolution,
+    });
+    await downloadProviderArtwork(url, outputPath, "video thumbnail");
 }
 
 /**
@@ -415,14 +359,7 @@ export async function getTrackLyrics(trackId: string): Promise<{
     provider: string;
 } | null> {
     try {
-        const cc = await getCountryCode();
-        const data = await tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`) as any;
-
-        return {
-            text: data?.lyrics || '',
-            subtitles: data?.subtitles || '', // Synchronized lyrics (LRC format)
-            provider: data?.lyricsProvider || ''
-        };
+        return await streamingProviderManager.getDefaultStreamingProvider().getLyrics?.(trackId) ?? null;
     } catch (error: any) {
         console.error(`❌ [METADATA] Failed to fetch lyrics for track ${trackId}:`, error.message);
         return null;
@@ -457,6 +394,7 @@ export async function saveArtistNfoFile(
     artistId: string,
     outputPath: string
 ): Promise<void> {
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
     const artist = await getArtistForNfo(artistId);
     const bioText = await getArtistBioTextForNfo(artistId);
     const localArtist = db.prepare(`
@@ -481,7 +419,7 @@ export async function saveArtistNfoFile(
         xmlElement("outline", bioText),
         xmlElement("musicbrainzartistid", localArtist?.mbid),
         xmlUniqueId("MusicBrainzArtist", localArtist?.mbid, true),
-        xmlUniqueId("TidalArtist", artistId),
+        xmlUniqueId(`${provider.id}Artist`, artistId),
         ...albums.map((album) => {
             const year = String(album.release_date || "").match(/^\d{4}/)?.[0] || "";
             return `  <album>\n${[
@@ -503,6 +441,7 @@ export async function saveAlbumNfoFile(
     albumId: string,
     outputPath: string
 ): Promise<void> {
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
     const album = await getAlbumForNfo(albumId);
     const reviewText = await getAlbumReviewTextForNfo(albumId);
     const localAlbum = db.prepare(`
@@ -524,9 +463,10 @@ export async function saveAlbumNfoFile(
         mbid: string | null;
     }>;
     const year = album.releaseDate ? album.releaseDate.substring(0, 4) : "";
-    const artists = Array.isArray(album.artists) && album.artists.length > 0
-        ? album.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
-        : [album.artist_name || album.artist?.name || "Unknown"];
+    const albumRecord = album as any;
+    const artists = Array.isArray(albumRecord.artists) && albumRecord.artists.length > 0
+        ? albumRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
+        : [albumRecord.artist_name || albumRecord.artist?.name || "Unknown"];
 
     const elements = [
         xmlElement("title", album.title),
@@ -543,7 +483,7 @@ export async function saveAlbumNfoFile(
         xmlUniqueId("MusicBrainzAlbum", localAlbum?.mbid, true),
         xmlUniqueId("MusicBrainzReleaseGroup", localAlbum?.mb_release_group_id),
         xmlUniqueId("MusicBrainzAlbumArtist", localAlbum?.artist_mbid),
-        xmlUniqueId("TidalAlbum", albumId),
+        xmlUniqueId(`${provider.id}Album`, albumId),
         ...tracks.map((track) => {
             const trackElements = [
                 xmlElement("disc", track.volume_number || 1),
@@ -568,26 +508,32 @@ export async function saveVideoNfoFile(
     videoId: string,
     outputPath: string
 ): Promise<void> {
+    const provider = streamingProviderManager.getDefaultStreamingProvider();
     const video = await getVideoForNfo(videoId);
-    const artistRow = video.artist_id
-        ? db.prepare("SELECT mbid FROM artists WHERE id = ?").get(video.artist_id) as { mbid?: string | null } | undefined
+    const videoRecord = video as any;
+    const videoArtistId = videoRecord.artist_id || videoRecord.artist?.providerId || null;
+    const videoArtistName = videoRecord.artist_name || videoRecord.artist?.name || null;
+    const videoAlbumId = videoRecord.album_id || null;
+    const videoReleaseDate = videoRecord.release_date || videoRecord.releaseDate || null;
+    const artistRow = videoArtistId
+        ? db.prepare("SELECT mbid FROM artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
-    const albumRow = video.album_id
-        ? db.prepare("SELECT title, mbid, mb_release_group_id FROM albums WHERE id = ?").get(video.album_id) as {
+    const albumRow = videoAlbumId
+        ? db.prepare("SELECT title, mbid, mb_release_group_id FROM albums WHERE id = ?").get(videoAlbumId) as {
             title?: string | null;
             mbid?: string | null;
             mb_release_group_id?: string | null;
         } | undefined
         : undefined;
-    const year = String(video.release_date || "").match(/^\d{4}/)?.[0] || "";
-    const artistNames = Array.isArray(video.artists) && video.artists.length > 0
-        ? video.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
-        : [video.artist_name || "Unknown Artist"];
+    const year = String(videoReleaseDate || "").match(/^\d{4}/)?.[0] || "";
+    const artistNames = Array.isArray(videoRecord.artists) && videoRecord.artists.length > 0
+        ? videoRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
+        : [videoArtistName || "Unknown Artist"];
 
     const elements = [
         xmlElement("title", video.title),
         xmlElement("year", year),
-        xmlElement("releasedate", video.release_date),
+        xmlElement("releasedate", videoReleaseDate),
         ...artistNames.map((artistName: unknown) => xmlElement("artist", artistName)),
         xmlElement("album", albumRow?.title),
         xmlElement("musicbrainzartistid", artistRow?.mbid),
@@ -596,7 +542,7 @@ export async function saveVideoNfoFile(
         xmlUniqueId("MusicBrainzArtist", artistRow?.mbid),
         xmlUniqueId("MusicBrainzAlbum", albumRow?.mbid),
         xmlUniqueId("MusicBrainzReleaseGroup", albumRow?.mb_release_group_id),
-        xmlUniqueId("TidalVideo", videoId, true),
+        xmlUniqueId(`${provider.id}Video`, videoId, true),
     ].filter((element): element is string => element !== null);
 
     const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<musicvideo>\n${elements.join("\n")}\n</musicvideo>\n`;

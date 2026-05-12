@@ -1,23 +1,27 @@
 import {
-  IProvider,
+  StreamingProvider,
+  ProviderArtworkRequest,
   ProviderAlbum,
   ProviderArtist,
+  ProviderLyrics,
   ProviderReleaseGroupSearch,
   ProviderSearchOptions,
   ProviderSearchResults,
   ProviderTrack,
   ProviderVideo,
-} from "../provider-interface.js";
+} from "../streaming-provider.js";
 import * as tidal from "./tidal.js";
-import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "../../playback.js";
+import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "./tidal-playback.js";
+import { hasSpatialAudioQuality } from "../../../utils/spatial-audio.js";
 
-export class TidalProvider implements IProvider {
+export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
   readonly name = "TIDAL";
   readonly capabilities = {
     hasVideo: true,
     hasLossless: true,
-    hasAtmos: true,
+    hasSpatialAudio: true,
+    spatialFormats: ["DOLBY_ATMOS"],
   };
 
   isAuthenticated(): boolean {
@@ -55,6 +59,10 @@ export class TidalProvider implements IProvider {
 
   async getArtistVideos(id: string | number): Promise<ProviderVideo[]> {
     return (await tidal.getArtistVideos(String(id))).map(this.mapVideo);
+  }
+
+  async getArtistCatalogPage(id: string | number): Promise<any> {
+    return tidal.getArtistPage(String(id));
   }
 
   async getFollowedArtists(): Promise<ProviderArtist[]> {
@@ -122,9 +130,71 @@ export class TidalProvider implements IProvider {
     return res?.text ?? null;
   }
 
+  async getSimilarArtists(id: string | number): Promise<ProviderArtist[]> {
+    const res = await tidal.getArtistSimilar(String(id));
+    return (Array.isArray(res) ? res : []).map(this.mapArtist);
+  }
+
   async getAlbumReview(id: string | number): Promise<string | null> {
     const res = await tidal.getAlbumReview(String(id));
     return res?.text ?? null;
+  }
+
+  async getSimilarAlbums(id: string | number): Promise<ProviderAlbum[]> {
+    const res = await tidal.getAlbumSimilar(String(id));
+    return (Array.isArray(res) ? res : []).map(this.mapAlbum);
+  }
+
+  async getAlbumCredits(id: string | number): Promise<any[]> {
+    const res = await tidal.getAlbumCredits(String(id));
+    return Array.isArray(res) ? res : [];
+  }
+
+  async getAlbumTrackCredits(id: string | number): Promise<Map<string, any[]>> {
+    return tidal.getAlbumItemsCredits(String(id));
+  }
+
+  async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
+    if (request.entityType === "album") {
+      if (request.imageId) {
+        return this.tidalImageUrl("images", request.imageId, this.normalizeSquareSize(request.size, 640));
+      }
+      const album = await tidal.getAlbum(String(request.providerId || ""));
+      return this.tidalImageUrl("images", album?.cover, this.normalizeSquareSize(request.size, "origin"));
+    }
+
+    if (request.entityType === "artist") {
+      if (request.imageId) {
+        return this.tidalImageUrl("images", request.imageId, this.normalizeSquareSize(request.size, 750));
+      }
+      const artist = await tidal.getArtist(String(request.providerId || ""));
+      return this.tidalImageUrl("images", artist?.picture, this.normalizeSquareSize(request.size, 750));
+    }
+
+    if (request.entityType === "video") {
+      return this.tidalImageUrl("images", request.imageId, this.normalizeVideoSize(request.size));
+    }
+
+    if (request.entityType === "albumVideoCover") {
+      return this.tidalImageUrl("videos", request.imageId, this.normalizeSquareSize(request.size, "origin"), "mp4");
+    }
+
+    return null;
+  }
+
+  async getLyrics(trackId: string | number): Promise<ProviderLyrics | null> {
+    try {
+      const cc = tidal.getCountryCode();
+      const data = await tidal.tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`) as any;
+      return {
+        text: data?.lyrics || "",
+        subtitles: data?.subtitles || "",
+        provider: data?.lyricsProvider || this.name,
+        raw: data,
+      };
+    } catch {
+      return null;
+    }
   }
 
   logout() {
@@ -156,8 +226,40 @@ export class TidalProvider implements IProvider {
   }
 
   private isSpatialQuality(quality?: string | null, tags: string[] = []): boolean {
-    const values = [quality, ...tags].map((value) => String(value || "").toUpperCase());
-    return values.includes("DOLBY_ATMOS") || values.includes("SONY_360RA");
+    return hasSpatialAudioQuality([quality, ...tags]);
+  }
+
+  private uuidToPath(uuid: string | null | undefined): string | null {
+    const trimmed = String(uuid || "").trim();
+    return trimmed ? trimmed.replace(/-/g, "/") : null;
+  }
+
+  private tidalImageUrl(
+    resourceType: "images" | "videos",
+    uuid: string | null | undefined,
+    size: string | number | null | undefined,
+    extension = "jpg",
+  ): string | null {
+    const imagePath = this.uuidToPath(uuid);
+    if (!imagePath) return null;
+    return `https://resources.tidal.com/${resourceType}/${imagePath}/${size || "origin"}.${extension}`;
+  }
+
+  private normalizeSquareSize(size: string | number | null | undefined, fallback: number | "origin"): string {
+    if (size === "origin") return "origin";
+    const numeric = typeof size === "number" ? size : Number(size);
+    if (!Number.isFinite(numeric)) {
+      return fallback === "origin" ? "origin" : `${fallback}x${fallback}`;
+    }
+
+    return `${numeric}x${numeric}`;
+  }
+
+  private normalizeVideoSize(size: string | number | null | undefined): string {
+    const normalized = String(size || "1080x720");
+    if (normalized === "origin" || normalized === "1280x720") return "1080x720";
+    if (normalized === "640x360") return "480x320";
+    return normalized;
   }
 
   private mapArtist(artist: any): ProviderArtist {
@@ -245,9 +347,11 @@ export class TidalProvider implements IProvider {
       quality: video.quality || null,
       explicit: video.explicit == null ? null : Boolean(video.explicit),
       url: video.url,
+      isrc: video.isrc || null,
+      recordingMbid: video.mbid || video.recording_mbid || null,
       raw: video,
     };
   }
 }
 
-export const tidalProvider = new TidalProvider();
+export const tidalStreamingProvider = new TidalProvider();

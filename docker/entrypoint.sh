@@ -75,7 +75,7 @@ prepare_writable_dirs() {
   ensure_dir /downloads
   ensure_dir /library
   ensure_dir /library/music
-  ensure_dir /library/atmos
+  ensure_dir /library/spatial
   ensure_dir /library/videos
 
   # Clean up stale runtime dir from pre-1.2 installations (Orpheus is now baked into the image)

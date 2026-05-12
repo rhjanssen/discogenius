@@ -36,7 +36,7 @@ import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
-import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
+import { getAlbumCover, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -44,6 +44,7 @@ import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
 import { MediaCard } from "@/components/cards/MediaCard";
+import { QualityBadge } from "@/components/ui/QualityBadge";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
@@ -53,6 +54,7 @@ import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
+import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import {
   compactDetailActionButtonStyles,
   detailActionButtonRadiusStyles,
@@ -444,6 +446,19 @@ const useStyles = makeStyles({
     right: tokens.spacingHorizontalS,
     zIndex: 2,
   },
+  slotBadgeStack: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: tokens.spacingVerticalXXS,
+  },
+  slotBadgeRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: tokens.spacingHorizontalXXS,
+    maxWidth: "140px",
+  },
   monitorIndicator: {
     position: "absolute",
     bottom: tokens.spacingVerticalS,
@@ -588,7 +603,7 @@ const ArtistPage = () => {
   }, [artistId]);
 
   // Filters - start with onlyMonitored, but will be updated based on data
-  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'atmos' | 'video'>('all');
+  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>('all');
   const [statusFilters, setStatusFilters] = useState<StatusFilters>({ ...defaultStatusFilters, onlyMonitored: true });
   const [filterInitialized, setFilterInitialized] = useState(false);
   const [topTracksExpanded, setTopTracksExpanded] = useState(false);
@@ -601,9 +616,9 @@ const ArtistPage = () => {
   const artistLocalFiles = Array.isArray(artistInfo?.files) ? artistInfo.files : [];
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
-  // Get artist picture UUID for utility function (DB stores as picture, Tidal API returns as picture)
-  const artistPictureId = artistInfo?.picture || pageData?.artistInfo?.picture;
-  const artistPictureUrl = getArtistPicture(artistPictureId, 'large');
+  const artistPictureUrl = artistInfo
+    ? ((artistInfo as any).cover_image_url || artistInfo.picture || (pageData?.artistInfo as any)?.cover_image_url || pageData?.artistInfo?.picture || null)
+    : undefined;
   const artistBrandColor = useArtworkBrandColor({
     artworkUrl: artistPictureUrl,
     deriveBrandFromArtwork: true,
@@ -724,7 +739,7 @@ const ArtistPage = () => {
     setCurating(true);
     dispatchActivityRefresh();
     try {
-      const result: any = await api.processRedundancy(artistId);
+      const result: any = await api.curateArtist(artistId);
       toast({
         title: "Curation queued",
         description: result?.message || "Queued artist curation.",
@@ -847,17 +862,35 @@ const ArtistPage = () => {
     // Library Type Filter
     if (libraryFilter === 'video') return null;
 
-    const quality = item.quality || item.derived_quality;
-    const isAtmos = String(quality || '').toUpperCase() === 'DOLBY_ATMOS';
+    const hasStereoOffer = Boolean(item.stereo_provider_id);
+    const hasSpatialOffer = Boolean(item.spatial_provider_id);
+    const quality = libraryFilter === "spatial"
+      ? (item.spatial_quality || item.quality || item.derived_quality)
+      : libraryFilter === "stereo"
+        ? (item.stereo_quality || item.quality || item.derived_quality)
+        : (item.quality || item.stereo_quality || item.spatial_quality || item.derived_quality);
+    const isSpatial = isSpatialAudioQuality(quality);
 
-    if (libraryFilter === 'stereo' && isAtmos) return null;
-    if (libraryFilter === 'atmos' && !isAtmos) return null;
+    if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
+    if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const imageUrl = getAlbumCover(item.cover_id, 'small');
+    const imageUrl = item.cover_art_url || getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
-    const subtitle = [item.artist_name || artistName, year || ''].filter(Boolean).join(' · ');
-    const itemProgress = getProgressByTidalId(String(tidalId));
-    const statusBadge = isLocked ? (
+    const subtitle = item.source === "musicbrainz"
+      ? [year || ""].filter(Boolean).join(' · ')
+      : [item.artist_name || artistName, year || ''].filter(Boolean).join(' · ');
+    const itemProgress = getProgressByTidalId(String(item.stereo_provider_id || ""))
+      || getProgressByTidalId(String(item.spatial_provider_id || ""))
+      || getProgressByTidalId(String(tidalId));
+    const releaseGroupSlotBadge = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
+      ? (
+        <div className={styles.slotBadgeRow}>
+          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
+          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
+        </div>
+      )
+      : null;
+    const stateBadge = isLocked ? (
       <Badge appearance="filled" color="informative" icon={<LockClosed24Regular />}>
         Locked
       </Badge>
@@ -865,7 +898,10 @@ const ArtistPage = () => {
       <WarningBadge>
         Redundant
       </WarningBadge>
-    ) : undefined);
+    ) : null);
+    const statusBadge = releaseGroupSlotBadge || stateBadge
+      ? <div className={styles.slotBadgeStack}>{releaseGroupSlotBadge}{stateBadge}</div>
+      : undefined;
 
     return (
       <MediaCard
@@ -876,7 +912,7 @@ const ArtistPage = () => {
         title={albumTitle}
         subtitle={subtitle}
         explicit={item.explicit}
-        quality={quality as any}
+        quality={item.source === "musicbrainz" ? undefined : (quality as any)}
         monitored={isAlbumMonitored}
         onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, tidalId, !isAlbumMonitored)}
         statusBadge={statusBadge}
@@ -891,8 +927,7 @@ const ArtistPage = () => {
   const renderArtistCard = (item: any) => {
     const tidalId = item.id?.toString?.() ?? String(item.id);
     const name = item.name || "Unknown Artist";
-    const pictureId = item.picture || null;
-    const imageUrl = pictureId ? getArtistPicture(pictureId, 'medium') : null;
+    const imageUrl = item.cover_image_url || item.picture || null;
 
     return (
       <Card
@@ -927,7 +962,7 @@ const ArtistPage = () => {
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
 
     // Library filter
-    if (libraryFilter === 'stereo' || libraryFilter === 'atmos') return null;
+    if (libraryFilter === 'stereo' || libraryFilter === 'spatial') return null;
 
     // Status filter - monitoring
     const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;
@@ -1012,8 +1047,8 @@ const ArtistPage = () => {
     return tracks.filter((track) => {
       const quality = (track.quality || '').toString().toUpperCase();
 
-      if (libraryFilter === 'atmos' && quality !== 'DOLBY_ATMOS') return false;
-      if (libraryFilter === 'stereo' && quality === 'DOLBY_ATMOS') return false;
+      if (libraryFilter === 'spatial' && !isSpatialAudioQuality(quality)) return false;
+      if (libraryFilter === 'stereo' && isSpatialAudioQuality(quality)) return false;
 
       const isTrackMonitored = Boolean(track.is_monitored ?? track.monitor);
       const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;

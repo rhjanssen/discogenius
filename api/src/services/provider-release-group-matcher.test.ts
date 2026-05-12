@@ -11,6 +11,15 @@ const releaseGroups = [
         primaryType: "Album",
         secondaryTypes: [],
         firstReleaseDate: "2022-02-04",
+        releases: [
+            {
+                mbid: "db967b8b-99c1-4adf-8d12-f0ab285390b3",
+                barcode: "602445123456",
+                trackCount: 13,
+                mediaCount: 1,
+                isrcs: ["GBUM72108111", "GBUM72108112"],
+            },
+        ],
     },
     {
         mbid: "9a2e82b9-aaaa-4a1d-98ef-19f0641ce38a",
@@ -18,6 +27,30 @@ const releaseGroups = [
         primaryType: "Album",
         secondaryTypes: [],
         firstReleaseDate: "2019-06-14",
+        releases: [],
+    },
+];
+
+const ampersandReleaseGroups = [
+    {
+        mbid: "b35978dd-8069-4c75-b9e0-6f6327900823",
+        title: "&",
+        primaryType: "Album",
+        secondaryTypes: [],
+        firstReleaseDate: "2024-10-25",
+        releases: [
+            { mbid: "ampersand-album-release", trackCount: 14, mediaCount: 1 },
+        ],
+    },
+    {
+        mbid: "64589d51-4d3a-48ac-89cd-e268eb5c6117",
+        title: "“&” (Ampersand), Part One",
+        primaryType: "EP",
+        secondaryTypes: [],
+        firstReleaseDate: "2024-07-26",
+        releases: [
+            { mbid: "ampersand-part-one-release", trackCount: 4, mediaCount: 1 },
+        ],
     },
 ];
 
@@ -46,6 +79,92 @@ test("marks exact title and type matches as verified", () => {
     assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
 });
 
+test("uses UPC evidence to verify a provider album against a MusicBrainz release", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "upc-match",
+        title: "Give Me the Future (Dolby Atmos)",
+        releaseDate: "2022-02-04",
+        type: "ALBUM",
+        upc: "602445123456",
+        trackCount: 13,
+        volumeCount: 1,
+    }, releaseGroups);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.method, "musicbrainz-release-upc");
+    assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.equal(match.evidence.matchedReleaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
+});
+
+test("matches symbolic MusicBrainz release-group titles before partial provider editions", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "394021126",
+        title: "“&” (Ampersand)",
+        releaseDate: "2024-10-25",
+        type: "ALBUM",
+        trackCount: 14,
+        volumeCount: 1,
+    }, ampersandReleaseGroups);
+
+    assert.equal(match.releaseGroup?.mbid, "b35978dd-8069-4c75-b9e0-6f6327900823");
+    assert.equal(match.evidence.trackCountMatched, true);
+    assert.equal(match.evidence.typeMatched, true);
+});
+
+test("does not select a one-track provider single as the full release-group slot", () => {
+    const releaseGroups = [{
+        mbid: "no-bad-days-rg",
+        title: "No Bad Days",
+        primaryType: "Single",
+        secondaryTypes: [],
+        firstReleaseDate: "2021-11-19",
+        releases: [{ mbid: "no-bad-days-ep", trackCount: 4, mediaCount: 1 }],
+    }];
+    const oneTrackMatch = matchProviderAlbumToReleaseGroup({
+        providerId: "single",
+        title: "No Bad Days",
+        releaseDate: "2021-11-19",
+        type: "SINGLE",
+        trackCount: 1,
+        volumeCount: 1,
+    }, releaseGroups);
+    const fourTrackMatch = matchProviderAlbumToReleaseGroup({
+        providerId: "ep",
+        title: "No Bad Days",
+        releaseDate: "2021-11-19",
+        type: "SINGLE",
+        trackCount: 4,
+        volumeCount: 1,
+    }, releaseGroups);
+
+    const selections = selectReleaseGroupSlotAlbums([
+        { providerId: "single", title: "No Bad Days", quality: "HIRES_LOSSLESS", trackCount: 1, volumeCount: 1 },
+        { providerId: "ep", title: "No Bad Days", quality: "LOSSLESS", trackCount: 4, volumeCount: 1 },
+    ], new Map([
+        ["single", oneTrackMatch],
+        ["ep", fourTrackMatch],
+    ]), { includeSpatial: false });
+
+    assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "ep");
+});
+
+test("uses ISRC overlap and track count as fallback evidence", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "isrc-match",
+        title: "Give Me the Future Deluxe",
+        releaseDate: "2022-02-04",
+        type: "ALBUM",
+        isrcs: ["GBUM72108111", "GBUM72108112"],
+        trackCount: 13,
+        volumeCount: 1,
+    }, releaseGroups);
+
+    assert.equal(match.status, "probable");
+    assert.equal(match.method, "musicbrainz-recording-isrc");
+    assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.equal(match.evidence.isrcOverlap, 2);
+});
+
 test("does not force weak provider rows into an MB release group", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "1",
@@ -66,7 +185,7 @@ test("selects separate stereo and spatial provider offers for the same release g
         type: "ALBUM",
     }, releaseGroups);
     const spatial = matchProviderAlbumToReleaseGroup({
-        providerId: "atmos",
+        providerId: "spatial",
         title: "Give Me The Future + Dreams Of The Past",
         releaseDate: "2022-08-26",
         type: "ALBUM",
@@ -75,13 +194,13 @@ test("selects separate stereo and spatial provider offers for the same release g
     const selections = selectReleaseGroupSlotAlbums([
         { providerId: "stereo-lossless", title: "Give Me The Future + Dreams Of The Past", quality: "LOSSLESS", trackCount: 27, volumeCount: 3 },
         { providerId: "stereo-hires", title: "Give Me The Future + Dreams Of The Past", quality: "HIRES_LOSSLESS", trackCount: 27, volumeCount: 3 },
-        { providerId: "atmos", title: "Give Me The Future + Dreams Of The Past", quality: "DOLBY_ATMOS", trackCount: 27, volumeCount: 3 },
+        { providerId: "spatial", title: "Give Me The Future + Dreams Of The Past", quality: "DOLBY_ATMOS", trackCount: 27, volumeCount: 3 },
     ], new Map([
         ["stereo-lossless", stereo],
         ["stereo-hires", stereo],
-        ["atmos", spatial],
+        ["spatial", spatial],
     ]), { includeSpatial: true });
 
     assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "stereo-hires");
-    assert.equal(selections.find((selection) => selection.slot === "spatial")?.album.providerId, "atmos");
+    assert.equal(selections.find((selection) => selection.slot === "spatial")?.album.providerId, "spatial");
 });

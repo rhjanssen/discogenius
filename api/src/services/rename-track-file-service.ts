@@ -3,7 +3,7 @@ import path from "path";
 import { db } from "../database.js";
 import { Config } from "./config.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
-import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
   LibraryFilesService,
   removeEmptyParents,
@@ -43,6 +43,20 @@ type RenameFileEvent = {
   previousPath: string;
 };
 
+function getLibraryRootFilterValues(libraryRoot: string | null | undefined): string[] {
+  const raw = String(libraryRoot || "").trim();
+  if (!raw) {
+    return [];
+  }
+
+  const key = resolveLibraryRootKey(raw, raw);
+  if (!key) {
+    return [raw];
+  }
+
+  return Array.from(new Set([key, getCurrentLibraryRootPath(key), raw]));
+}
+
 function moveFileCrossDevice(sourcePath: string, destPath: string) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   try {
@@ -70,8 +84,11 @@ export class RenameTrackFileService {
       params.push(options.albumId);
     }
     if (options.libraryRoot) {
-      where.push("library_root = ?");
-      params.push(options.libraryRoot);
+      const rootValues = getLibraryRootFilterValues(options.libraryRoot);
+      if (rootValues.length > 0) {
+        where.push(`library_root IN (${rootValues.map(() => "?").join(",")})`);
+        params.push(...rootValues);
+      }
     }
     if (options.fileTypes && options.fileTypes.length > 0) {
       where.push(`file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
@@ -364,12 +381,12 @@ export class RenameTrackFileService {
     const roots = [Config.getMusicPath(), Config.getVideoPath()].filter(Boolean);
 
     try {
-      const atmosPath = Config.getAtmosPath();
-      if (atmosPath) {
-        roots.push(atmosPath);
+      const spatialPath = Config.getSpatialPath();
+      if (spatialPath) {
+        roots.push(spatialPath);
       }
     } catch {
-      // Atmos path may not be configured.
+      // Spatial path may not be configured.
     }
 
     let removed = 0;

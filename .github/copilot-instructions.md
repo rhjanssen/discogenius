@@ -107,7 +107,7 @@ Skills live in `.github/skills` and should be loaded when relevant:
 - **Location**: User/dev documentation lives in `README.md` and `docs/`.
 - **Architecture canon**: Keep current-state architecture in `docs/ARCHITECTURE.md`.
 - **Architecture backlog**: Keep architecture consolidation/Lidarr-alignment work in `docs/ARCHITECTURE_WORKPLAN.md`.
-- **Curation canon**: Keep curation/redundancy semantics in `docs/CURATION_DEDUPLICATION.md`.
+- **Curation canon**: Keep release-group slot curation semantics in `docs/CURATION_DEDUPLICATION.md`.
 - **Roadmap scope**: Keep `docs/ROADMAP.md` forward-looking; do not use it as implemented-feature history.
 - **Alpha release planning**: `docs/RELEASE_DISTRIBUTION_PLAN.md` is alpha operational guidance and should not be treated as a required document in the cleaned public 1.0 runtime repo.
 - **Updates**: When changing significant logic (e.g., UltraBlur, monitoring), update the relevant MD file in `docs/`.

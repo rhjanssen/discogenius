@@ -1,6 +1,6 @@
 import levenshtein from "fast-levenshtein";
 import munkres from "munkres-js";
-import { getAlbumTracks } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 
 export interface IdentifiableFile {
@@ -250,7 +250,7 @@ export class IdentificationService {
             const distance = distances[rowIndex][colIndex];
 
             if (distance.normalizedDistance <= this.MAX_ACCEPTABLE_DISTANCE) {
-                mappedTracks[file.id] = track.tidal_id ? track.tidal_id.toString() : track.id.toString();
+                mappedTracks[file.id] = (track.tidal_id ?? track.id ?? track.providerId).toString();
                 acceptedDistances.push(distance.normalizedDistance);
             }
         });
@@ -281,7 +281,8 @@ export class IdentificationService {
     }
 
     public static async identifyUnmappedFiles(files: IdentifiableFile[], tidalAlbumId: string): Promise<AlbumIdentificationResult> {
-        const tracks = await getAlbumTracks(tidalAlbumId) as any[];
+        const tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(tidalAlbumId))
+            .map((track) => (track.raw && typeof track.raw === "object" ? track.raw : track)) as any[];
         return this.solveAssignments(files, tracks);
     }
 

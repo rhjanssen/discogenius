@@ -18,10 +18,10 @@ import { db } from "../database.js";
  *   LOSSLESS       -> 16-bit 44.1kHz FLAC
  *   HIRES_LOSSLESS -> up to 24-bit 192kHz FLAC
  * 
- * DOLBY_ATMOS is treated as a separate media type (like music videos), not a quality tier.
- * Albums can have both stereo and Atmos versions downloaded separately.
- * tidal-dl-ng's download_dolby_atmos is hardcoded to true; curation (include_atmos) controls
- * whether Atmos items are monitored and kept in the library.
+ * Spatial audio is treated as a separate media slot (like music videos), not a quality tier.
+ * Albums can have both stereo and spatial versions downloaded separately.
+ * tidal-dl-ng's download_dolby_atmos is hardcoded to true; curation (include_spatial) controls
+ * whether spatial items are monitored and kept in the library.
  */
 
 /**

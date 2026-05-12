@@ -1,9 +1,10 @@
 import React from "react";
 import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { tidalBadgeColor } from "@/theme/theme";
+import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 
 // Standard quality values we store in DB (no underscore in HIRES)
-export type AudioQuality = "LOSSLESS" | "HIRES_LOSSLESS" | "DOLBY_ATMOS";
+export type AudioQuality = string;
 
 interface QualityBadgeProps {
     quality: string;
@@ -19,7 +20,7 @@ const useStyles = makeStyles({
             display: "none",
         },
     },
-    atmos: {
+    spatial: {
         backgroundColor: "#000000",
         color: "#ffffff",
     },
@@ -64,15 +65,14 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     const styles = useStyles();
 
     // Normalize input string
-    const normalizedQuality = quality?.toUpperCase();
+    const normalizedQuality = normalizeQualityTag(quality);
 
     let badgeClass = styles.default;
     let badgeText = quality;
 
-    // Tidal only returns three quality tags: LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
-    if (normalizedQuality === "DOLBY_ATMOS") {
-        badgeClass = styles.atmos;
-        badgeText = "Atmos";
+    if (isSpatialAudioQuality(normalizedQuality)) {
+        badgeClass = styles.spatial;
+        badgeText = "Spatial";
     } else if (normalizedQuality === "HIRES_LOSSLESS") {
         badgeClass = styles.hiRes;
         badgeText = "24-BIT";

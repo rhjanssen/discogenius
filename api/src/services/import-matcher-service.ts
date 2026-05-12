@@ -1,11 +1,12 @@
 import path from "path";
 import { db } from "../database.js";
-import { getAlbum, getArtistVideos, getTrack, getVideo, searchTidal } from "./providers/tidal/tidal.js";
 import { IdentificationService, type AlbumCandidateMatch, type IdentifiableFile } from "./identification-service.js";
 import { ImportDecisionEngine } from "./import-decision/engine.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 import { extractTrackStem } from "./import-discovery.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import { hasSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { streamingProviderManager } from "./providers/index.js";
 import type {
     ImportCandidate,
     LocalGroup,
@@ -34,7 +35,7 @@ type MatchEvidenceSignals = {
 export class ImportMatcherService {
     async findMatches(
         groups: LocalGroup[],
-        context: "music" | "atmos" | "video" = "music",
+        context: "music" | "spatial" | "video" = "music",
         options?: { onProgress?: (event: RootFolderImportProgressEvent) => void },
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<ImportCandidate[]> {
@@ -75,14 +76,16 @@ export class ImportMatcherService {
 
     async findMatchesForGroup(
         group: LocalGroup,
-        context: "music" | "atmos" | "video" = "music",
+        context: "music" | "spatial" | "video" = "music",
         mode: ImportDecisionMode = "NewDownload",
     ): Promise<TidalMatch[]> {
         return this.matchGroup(group, context, mode);
     }
 
     private getCandidateKey(candidate: any): string | null {
-        const directId = candidate?.id?.toString?.();
+        const directId = candidate?.id?.toString?.()
+            ?? candidate?.tidal_id?.toString?.()
+            ?? candidate?.providerId?.toString?.();
         if (directId) {
             return directId;
         }
@@ -94,6 +97,48 @@ export class ImportMatcherService {
         }
 
         return `${artistId}:${title}`;
+    }
+
+    private async searchProvider(query: string, type: "albums" | "tracks" | "videos", limit: number): Promise<any[]> {
+        const results = await streamingProviderManager.getDefaultStreamingProvider().search(query, {
+            types: [type],
+            limit,
+        });
+        const items = type === "albums"
+            ? results.albums
+            : type === "tracks"
+                ? results.tracks
+                : results.videos;
+
+        return (items || []).map((item: any) => item?.raw || item);
+    }
+
+    private async getProviderAlbum(albumId: string): Promise<any | null> {
+        const album = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
+        return album?.raw || album || null;
+    }
+
+    private async getProviderTrack(trackId: string): Promise<any | null> {
+        const track = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
+        return track?.raw || track || null;
+    }
+
+    private async getProviderVideo(videoId: string): Promise<any | null> {
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        if (!provider.getVideo) {
+            return null;
+        }
+        const video = await provider.getVideo(videoId);
+        return video?.raw || video || null;
+    }
+
+    private async getProviderArtistVideos(artistId: string): Promise<any[]> {
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        if (!provider.getArtistVideos) {
+            return [];
+        }
+        const videos = await provider.getArtistVideos(artistId);
+        return videos.map((video: any) => video?.raw || video);
     }
 
     private mergeCandidates(...sources: any[][]): any[] {
@@ -261,7 +306,7 @@ export class ImportMatcherService {
 
     private async getDirectIdentifierCandidates(
         identifiers: DirectGroupIdentifiers,
-        context: "music" | "atmos" | "video"
+        context: "music" | "spatial" | "video"
     ): Promise<any[]> {
         const resolvedCandidates: any[] = [];
         const uniqueAlbumIds = Array.from(new Set(identifiers.albumIds));
@@ -270,12 +315,12 @@ export class ImportMatcherService {
 
         if (context === "video" && uniqueVideoIds.length === 1) {
             try {
-                const video = await getVideo(uniqueVideoIds[0]);
+                const video = await this.getProviderVideo(uniqueVideoIds[0]);
                 if (video) {
                     resolvedCandidates.push(video);
                 }
             } catch (error) {
-                console.warn(`[Import] Failed to resolve embedded TIDAL video ID ${uniqueVideoIds[0]}:`, error);
+                console.warn(`[Import] Failed to resolve embedded provider video ID ${uniqueVideoIds[0]}:`, error);
             }
         }
 
@@ -285,12 +330,12 @@ export class ImportMatcherService {
 
         if (uniqueAlbumIds.length === 1) {
             try {
-                const album = await getAlbum(uniqueAlbumIds[0]);
+                const album = await this.getProviderAlbum(uniqueAlbumIds[0]);
                 if (album) {
                     resolvedCandidates.push(album);
                 }
             } catch (error) {
-                console.warn(`[Import] Failed to resolve embedded TIDAL album ID ${uniqueAlbumIds[0]}:`, error);
+                console.warn(`[Import] Failed to resolve embedded provider album ID ${uniqueAlbumIds[0]}:`, error);
             }
         }
 
@@ -299,12 +344,13 @@ export class ImportMatcherService {
 
             for (const trackId of identifiers.trackIds) {
                 try {
-                    const track = await getTrack(trackId);
-                    if (track?.album_id) {
-                        albumIdsFromTracks.add(String(track.album_id));
+                    const track = await this.getProviderTrack(trackId);
+                    const albumId = track?.album_id ?? track?.album?.id ?? track?.album?.providerId;
+                    if (albumId) {
+                        albumIdsFromTracks.add(String(albumId));
                     }
                 } catch (error) {
-                    console.warn(`[Import] Failed to resolve embedded TIDAL track ID ${trackId}:`, error);
+                    console.warn(`[Import] Failed to resolve embedded provider track ID ${trackId}:`, error);
                 }
 
                 if (albumIdsFromTracks.size > 1) {
@@ -315,20 +361,19 @@ export class ImportMatcherService {
             if (albumIdsFromTracks.size === 1) {
                 const [albumId] = Array.from(albumIdsFromTracks);
                 try {
-                    const album = await getAlbum(albumId);
+                    const album = await this.getProviderAlbum(albumId);
                     if (album) {
                         resolvedCandidates.push(album);
                     }
                 } catch (error) {
-                    console.warn(`[Import] Failed to resolve album ${albumId} from embedded TIDAL track IDs:`, error);
+                    console.warn(`[Import] Failed to resolve album ${albumId} from embedded provider track IDs:`, error);
                 }
             }
         }
 
         if (uniqueUpcs.length === 1) {
             try {
-                const searchResults = await searchTidal(uniqueUpcs[0], "albums", 5);
-                const searchCandidates = Array.isArray(searchResults) ? searchResults : [];
+                const searchCandidates = await this.searchProvider(uniqueUpcs[0], "albums", 5);
                 const exactUpcMatch = searchCandidates.find((candidate) =>
                     this.normalizeBarcode(candidate?.upc) === uniqueUpcs[0]
                 );
@@ -346,7 +391,7 @@ export class ImportMatcherService {
 
     private async getFingerprintCandidates(
         group: LocalGroup,
-        context: "music" | "atmos" | "video"
+        context: "music" | "spatial" | "video"
     ): Promise<{ candidates: any[]; strongCandidateIds: Set<string>; trackHintsByCandidateId: Map<string, Record<string, string>> }> {
         if (context === "video") {
             return { candidates: [], strongCandidateIds: new Set<string>(), trackHintsByCandidateId: new Map<string, Record<string, string>>() };
@@ -380,7 +425,7 @@ export class ImportMatcherService {
 
         for (const row of rows) {
             try {
-                const album = await getAlbum(String(row.album_id));
+                const album = await this.getProviderAlbum(String(row.album_id));
                 if (!album) {
                     continue;
                 }
@@ -465,10 +510,9 @@ export class ImportMatcherService {
 
                 let trackResults: any[] = [];
                 try {
-                    const searchResults = await searchTidal(query, "tracks", 10);
-                    trackResults = Array.isArray(searchResults) ? searchResults : [];
+                    trackResults = await this.searchProvider(query, "tracks", 10);
                 } catch (error) {
-                    console.warn(`[Import] Failed to search TIDAL tracks for fingerprint query "${query}":`, error);
+                    console.warn(`[Import] Failed to search provider tracks for fingerprint query "${query}":`, error);
                     continue;
                 }
 
@@ -482,7 +526,7 @@ export class ImportMatcherService {
                     let trackDetails: any = trackResult;
                     if (!trackDetails?.isrc) {
                         try {
-                            trackDetails = await getTrack(trackId);
+                            trackDetails = await this.getProviderTrack(trackId);
                         } catch (error) {
                             console.warn(`[Import] Failed to hydrate fingerprint-matched track ${trackId}:`, error);
                             continue;
@@ -522,7 +566,7 @@ export class ImportMatcherService {
 
                     try {
                         if (!albumsById.has(albumId)) {
-                            const album = await getAlbum(albumId);
+                            const album = await this.getProviderAlbum(albumId);
                             if (!album) {
                                 continue;
                             }
@@ -576,7 +620,7 @@ export class ImportMatcherService {
     private scoreCandidates(
         group: LocalGroup,
         candidates: any[],
-        context: "music" | "atmos" | "video",
+        context: "music" | "spatial" | "video",
         itemType: "album" | "video",
         evidence?: MatchEvidenceSignals,
         albumEvidence?: Map<string, AlbumMatchEvidence>,
@@ -693,7 +737,7 @@ export class ImportMatcherService {
     private calculateReleaseCompatibilityAdjustment(
         group: LocalGroup,
         candidate: any,
-        context: "music" | "atmos" | "video",
+        context: "music" | "spatial" | "video",
         itemType: "album" | "video",
     ): number {
         if (itemType === "video") {
@@ -703,15 +747,17 @@ export class ImportMatcherService {
         let adjustment = 0;
         const localLooksSpatial = this.groupSuggestsSpatialAudio(group);
         const localExplicitPreference = this.getLocalExplicitPreference(group);
-        const candidateIsAtmos = candidate?.quality === "DOLBY_ATMOS"
-            || candidate?.audio_quality === "DOLBY_ATMOS"
-            || candidate?.audioModes?.includes?.("DOLBY_ATMOS");
+        const candidateIsSpatial = hasSpatialAudioQuality([
+            candidate?.quality,
+            candidate?.audio_quality,
+            ...(Array.isArray(candidate?.audioModes) ? candidate.audioModes : []),
+        ]);
 
-        if (context === "music" && candidateIsAtmos && !localLooksSpatial) {
+        if (context === "music" && candidateIsSpatial && !localLooksSpatial) {
             adjustment -= 0.18;
         }
 
-        if (context === "atmos" && candidateIsAtmos) {
+        if (context === "spatial" && candidateIsSpatial) {
             adjustment += 0.08;
         }
 
@@ -806,14 +852,15 @@ export class ImportMatcherService {
 
             let trackResults: any[] = [];
             try {
-                const results = await searchTidal(query, "tracks", 5);
-                trackResults = Array.isArray(results) ? results : [];
+                trackResults = await this.searchProvider(query, "tracks", 5);
             } catch {
                 continue;
             }
 
             for (const track of trackResults) {
-                const albumId = track?.album_id?.toString?.();
+                const albumId = track?.album_id?.toString?.()
+                    ?? track?.album?.id?.toString?.()
+                    ?? track?.album?.providerId?.toString?.();
                 if (!albumId || seenAlbumIds.has(albumId)) {
                     continue;
                 }
@@ -827,7 +874,7 @@ export class ImportMatcherService {
                 seenAlbumIds.add(albumId);
 
                 try {
-                    const album = await getAlbum(albumId);
+                    const album = await this.getProviderAlbum(albumId);
                     if (album) {
                         albums.push(album);
                     }
@@ -842,7 +889,7 @@ export class ImportMatcherService {
 
     private async matchGroup(
         group: LocalGroup,
-        context: "music" | "atmos" | "video",
+        context: "music" | "spatial" | "video",
         mode: ImportDecisionMode = "NewDownload"
     ): Promise<TidalMatch[]> {
         const { artist, album } = group.commonTags;
@@ -866,8 +913,7 @@ export class ImportMatcherService {
         const query = queryParts.join(" ");
         let searchCandidates: any[] = [];
         try {
-            const results = await searchTidal(query, context === "video" ? "videos" : "albums", 5);
-            searchCandidates = Array.isArray(results) ? results : [];
+            searchCandidates = await this.searchProvider(query, context === "video" ? "videos" : "albums", 5);
         } catch {
             searchCandidates = [];
         }
@@ -877,7 +923,7 @@ export class ImportMatcherService {
             const artistId = this.resolveArtistIdByName(artist);
             if (artistId) {
                 try {
-                    artistVideosCandidates = (await getArtistVideos(artistId)).slice(0, 30);
+                    artistVideosCandidates = (await this.getProviderArtistVideos(artistId)).slice(0, 30);
                 } catch (error) {
                     console.warn("[Import] Failed to fetch artist-scoped videos:", error);
                 }
@@ -985,7 +1031,7 @@ export class ImportMatcherService {
             .trim();
     }
 
-    private calculateScore(group: LocalGroup, tidalAlbum: any, context: "music" | "atmos" | "video"): number {
+    private calculateScore(group: LocalGroup, tidalAlbum: any, context: "music" | "spatial" | "video"): number {
         const localArtist = normalizeComparableText(group.commonTags.artist);
         const localAlbum = normalizeComparableText(group.commonTags.album);
         const tidalArtist = normalizeComparableText(tidalAlbum.artist?.name || tidalAlbum.artists?.[0]?.name);
@@ -1032,15 +1078,19 @@ export class ImportMatcherService {
             else if (trackDiff > 5) score -= 0.1;
         }
 
-        if (context === "atmos") {
-            const isAtmos = tidalAlbum.quality === "DOLBY_ATMOS" ||
-                (tidalAlbum.audioModes && tidalAlbum.audioModes.includes("DOLBY_ATMOS"));
-            if (isAtmos) score += 0.2;
+        if (context === "spatial") {
+            const isSpatial = hasSpatialAudioQuality([
+                tidalAlbum.quality,
+                ...(Array.isArray(tidalAlbum.audioModes) ? tidalAlbum.audioModes : []),
+            ]);
+            if (isSpatial) score += 0.2;
             else score -= 0.3;
         } else if (context === "music") {
-            const isAtmos = tidalAlbum.quality === "DOLBY_ATMOS" ||
-                (tidalAlbum.audioModes && tidalAlbum.audioModes.includes("DOLBY_ATMOS"));
-            if (isAtmos && !localLooksSpatial) {
+            const isSpatial = hasSpatialAudioQuality([
+                tidalAlbum.quality,
+                ...(Array.isArray(tidalAlbum.audioModes) ? tidalAlbum.audioModes : []),
+            ]);
+            if (isSpatial && !localLooksSpatial) {
                 score -= 0.18;
             }
         }

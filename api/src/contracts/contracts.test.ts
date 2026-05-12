@@ -78,10 +78,11 @@ test("config contract parsers normalize expected public settings shapes", () => 
     include_live: true,
     include_remix: false,
     include_appears_on: false,
-    include_atmos: false,
+    include_spatial: false,
     include_videos: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
+    require_provider_availability: true,
   });
   assert.equal(curation.include_videos, true);
 });
@@ -461,6 +462,5 @@ test("history contract parser validates audit event payloads", () => {
   assert.equal(history.items[0].eventType, "TrackFileImported");
   assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });
-
 
 

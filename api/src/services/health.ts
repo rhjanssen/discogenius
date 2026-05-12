@@ -26,7 +26,7 @@ export interface HealthDiagnosticsSnapshot {
     download: HealthCheckResult;
     library: {
       music: HealthCheckResult;
-      atmos: HealthCheckResult;
+      spatial: HealthCheckResult;
       video: HealthCheckResult;
     };
     runtime: {
@@ -95,9 +95,9 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     kind: "dir",
     displayName: "Music library directory",
   });
-  const atmosPathCheck = checkWritablePath("paths.library.atmos", Config.getAtmosPath(), {
+  const spatialPathCheck = checkWritablePath("paths.library.spatial", Config.getSpatialPath(), {
     kind: "dir",
-    displayName: "Atmos library directory",
+    displayName: "Spatial library directory",
   });
   const videoPathCheck = checkWritablePath("paths.library.video", Config.getVideoPath(), {
     kind: "dir",
@@ -155,7 +155,7 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       databasePathCheck,
       downloadPathCheck,
       musicPathCheck,
-      atmosPathCheck,
+      spatialPathCheck,
       videoPathCheck,
       orpheusRuntimeCheck,
       orpheusStateCheck,
@@ -179,7 +179,7 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       download: downloadPathCheck,
       library: {
         music: musicPathCheck,
-        atmos: atmosPathCheck,
+        spatial: spatialPathCheck,
         video: videoPathCheck,
       },
       runtime: {

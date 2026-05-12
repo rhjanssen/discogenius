@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { TaskQueueService } from "../services/queue.js";
 import { CommandManager } from "../services/command.js";
-import { getRateLimitMetrics } from "../services/providers/tidal/tidal.js";
+import { streamingProviderManager } from "../services/providers/index.js";
 import { getActivitySummary } from "../services/command-history.js";
 import type { StatusOverviewContract, TaskQueueStatContract } from "../contracts/status.js";
 
@@ -23,7 +23,7 @@ router.get("/", (req, res) => {
                 isTypeExclusive: c.definition.isTypeExclusive,
                 requiresDiskAccess: c.definition.requiresDiskAccess,
             })),
-            rateLimitMetrics: getRateLimitMetrics(),
+            rateLimitMetrics: streamingProviderManager.getDefaultStreamingProvider().getRateLimitMetrics?.(),
         };
         res.json(payload);
     } catch (error: any) {

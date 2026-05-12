@@ -1,4 +1,4 @@
-import { refreshTidalToken, loadToken, shouldRefreshToken } from "./providers/tidal/tidal.js";
+import { streamingProviderManager } from "./providers/index.js";
 
 // Check every 30 minutes (in milliseconds)
 export const TOKEN_CHECK_INTERVAL = 30 * 60 * 1000;
@@ -46,8 +46,12 @@ export function stopTokenRefreshInterval() {
  * Check if token needs refresh and refresh if needed
  */
 async function checkAndRefreshToken() {
+    const providers = streamingProviderManager
+        .getAllStreamingProviders()
+        .filter((provider) => provider.refreshProviderToken);
+
     try {
-        await refreshTidalToken();
+        await Promise.all(providers.map((provider) => provider.refreshProviderToken?.()));
     } catch (error) {
         console.error('[TOKEN] Failed to refresh token:', error);
     }

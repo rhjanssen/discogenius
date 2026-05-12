@@ -29,8 +29,8 @@ import type { StatusFilters } from "@/utils/statusFilters";
 
 interface FilterMenuProps {
     // Library type filter (single selection)
-    libraryFilter?: 'all' | 'stereo' | 'atmos' | 'video';
-    onLibraryFilterChange?: (filter: 'all' | 'stereo' | 'atmos' | 'video') => void;
+    libraryFilter?: 'all' | 'stereo' | 'spatial' | 'video';
+    onLibraryFilterChange?: (filter: 'all' | 'stereo' | 'spatial' | 'video') => void;
 
     // Status filters
     statusFilters?: StatusFilters;
@@ -184,10 +184,10 @@ const FilterMenu = ({
                                 Stereo Only
                             </MenuItem>
                             <MenuItem
-                                onClick={() => onLibraryFilterChange?.('atmos')}
-                                icon={libraryFilter === 'atmos' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                onClick={() => onLibraryFilterChange?.('spatial')}
+                                icon={libraryFilter === 'spatial' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
                             >
-                                Atmos Only
+                                Spatial Only
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('video')}
@@ -298,4 +298,3 @@ const FilterMenu = ({
 };
 
 export default FilterMenu;
-

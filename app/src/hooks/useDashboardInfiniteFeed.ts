@@ -17,6 +17,7 @@ type UseDashboardInfiniteFeedOptions<TItem> = {
     fetchPage: (args: { limit: number; offset: number; timeoutMs: number }) => Promise<FeedPage<TItem>>;
     getItemId: (item: TItem) => string | number;
     enabled?: boolean;
+    refetchIntervalMs?: number | false;
 };
 
 const DASHBOARD_FEED_GLOBAL_EVENTS = [
@@ -38,6 +39,7 @@ export function useDashboardInfiniteFeed<TItem>({
     fetchPage,
     getItemId,
     enabled = true,
+    refetchIntervalMs = false,
 }: UseDashboardInfiniteFeedOptions<TItem>) {
     useDebouncedQueryInvalidation({
         queryKeys: [queryKey],
@@ -62,6 +64,7 @@ export function useDashboardInfiniteFeed<TItem>({
         ),
         staleTime: 5_000,
         refetchOnWindowFocus: false,
+        refetchInterval: refetchIntervalMs,
         retry: 1,
         placeholderData: (previousData) => previousData,
         enabled,

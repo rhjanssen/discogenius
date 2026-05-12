@@ -94,15 +94,16 @@ export interface FilteringConfig {
   include_live: boolean;               // album + live secondary
   include_remix: boolean;              // album + remix secondary
   include_appears_on: boolean;         // Appears on other artists' releases
-  include_atmos: boolean;              // Include Dolby Atmos/Sony 360RA
+  include_spatial: boolean;            // Include spatial/surround releases
   include_videos: boolean;             // Monitor music videos
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
+  require_provider_availability: boolean; // Only monitor slots with provider availability
 }
 
 export interface PathConfig {
   music_path: string;
-  atmos_path: string;
+  spatial_path: string;
   video_path: string;
 }
 
@@ -166,7 +167,6 @@ export interface QualityConfig {
   embed_synced_lyrics?: boolean;
   upgrade_existing_files: boolean;
   convert_video_mp4?: boolean;
-  download_dolby_atmos?: boolean;
   extract_flac?: boolean;
 }
 
@@ -205,7 +205,6 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_synced_lyrics: true,
     upgrade_existing_files: false,
     convert_video_mp4: true,
-    download_dolby_atmos: false,
     extract_flac: true,
   },
   filtering: {
@@ -219,18 +218,19 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_live: true,               // Enable by default (was false)
     include_remix: true,              // Enable by default (was false)
     include_appears_on: false,        // Only this is disabled by default
-    include_atmos: false,
+    include_spatial: false,
     include_videos: false,
+    require_provider_availability: true,
   },
   path: {
     music_path: "./library/music",
-    atmos_path: "./library/atmos",
+    spatial_path: "./library/spatial",
     video_path: "./library/videos",
   },
   naming: {
     artist_folder: "{artistName} {mbid-{artistMbId}}",
     album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
-    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:00}-{track:00} - {Track CleanTitle}",
+    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}",
     video_file: "{Artist CleanName} - {Video CleanTitle} {tidal-{videoId}}",
   },
   metadata: {
@@ -414,12 +414,12 @@ export class Config {
   }
 
   /**
-   * Get resolved atmos library path
+   * Get resolved spatial library path
    */
-  static getAtmosPath(): string {
+  static getSpatialPath(): string {
     const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.atmos_path || './library/atmos';
-    return Config.resolvePath(configuredPath, 'library/atmos');
+    const configuredPath = pathConfig.spatial_path || './library/spatial';
+    return Config.resolvePath(configuredPath, 'library/spatial');
   }
 
   /**

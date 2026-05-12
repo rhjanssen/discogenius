@@ -12,16 +12,17 @@ const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mkv", ".mov", ".avi", ".ts", ".webm"]);
 const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
-const ATMOS_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
-const ATMOS_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
+const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
+const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
+const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
 
-function isAtmosAudioCodec(codec: string | null | undefined): boolean {
+function isSpatialAudioCodec(codec: string | null | undefined): boolean {
     const normalizedCodec = String(codec ?? "")
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "");
 
-    return ATMOS_AUDIO_CODEC_PREFIXES.some((prefix) => normalizedCodec === prefix || normalizedCodec.startsWith(prefix));
+    return SPATIAL_AUDIO_CODEC_PREFIXES.some((prefix) => normalizedCodec === prefix || normalizedCodec.startsWith(prefix));
 }
 
 function resolveFfmpegBinary(): string {
@@ -101,6 +102,50 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
         };
 
         const extension = path.extname(filePath).toLowerCase();
+        if (
+            FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)
+            || isSpatialAudioCodec(metrics.codec)
+            || metrics.channels == null
+        ) {
+            const ffprobeBin = resolveFfprobeBinary();
+            const audioProbe = await new Promise<Partial<AudioMetrics>>((resolve) => {
+                exec(
+                    `"${ffprobeBin}" -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels,bits_per_sample,bit_rate,duration -of json "${filePath}"`,
+                    (error, stdout) => {
+                        if (error || !stdout) {
+                            resolve({});
+                            return;
+                        }
+
+                        try {
+                            const data = JSON.parse(stdout);
+                            const stream = Array.isArray(data?.streams) ? data.streams[0] : null;
+                            resolve({
+                                codec: stream?.codec_name || undefined,
+                                sampleRate: stream?.sample_rate == null ? undefined : Number(stream.sample_rate),
+                                channels: stream?.channels == null ? undefined : Number(stream.channels),
+                                bitDepth: stream?.bits_per_sample == null || Number(stream.bits_per_sample) <= 0 ? undefined : Number(stream.bits_per_sample),
+                                bitrate: stream?.bit_rate == null ? undefined : Number(stream.bit_rate),
+                                duration: stream?.duration == null ? undefined : Number(stream.duration),
+                            });
+                        } catch {
+                            resolve({});
+                        }
+                    },
+                );
+            });
+
+            Object.assign(metrics, {
+                ...audioProbe,
+                codec: audioProbe.codec || metrics.codec,
+                sampleRate: audioProbe.sampleRate || metrics.sampleRate,
+                bitDepth: audioProbe.bitDepth || metrics.bitDepth,
+                bitrate: audioProbe.bitrate || metrics.bitrate,
+                duration: audioProbe.duration || metrics.duration,
+                channels: audioProbe.channels || metrics.channels,
+            });
+        }
+
         if (!VIDEO_EXTENSIONS.has(extension)) {
             return metrics;
         }
@@ -145,8 +190,8 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     const { sampleRate, bitDepth, bitrate, codec } = metrics;
     const codecName = codec?.toLowerCase() || '';
 
-    // Dolby Atmos
-    if (isAtmosAudioCodec(codecName)) {
+    // Provider spatial formats currently arrive as Dolby container codecs.
+    if (isSpatialAudioCodec(codecName)) {
         return 'DOLBY_ATMOS';
     }
 
@@ -181,12 +226,12 @@ export function requiresBrowserCompatibleAudioStream(source: BrowserCompatibleAu
     }
 
     const codec = String(source.codec ?? '').trim().toLowerCase();
-    if (isAtmosAudioCodec(codec)) {
+    if (isSpatialAudioCodec(codec)) {
         return true;
     }
 
     const extension = String(source.extension ?? '').trim().toLowerCase();
-    return ATMOS_AUDIO_EXTENSIONS.has(extension);
+    return SPATIAL_AUDIO_EXTENSIONS.has(extension);
 }
 
 export function deriveVideoQuality(metrics: AudioMetrics): string | null {

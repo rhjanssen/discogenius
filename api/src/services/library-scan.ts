@@ -143,7 +143,7 @@ type FullLibraryScanProgress = {
     totalFiles?: number;
 };
 
-type LibraryRootKey = "music" | "spatial_music" | "music_videos";
+type LibraryRootKey = "music" | "spatial" | "videos";
 
 /** Pre-built file index from a single-pass root walk, keyed by lowercased folder name. */
 type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folderKey → files)
@@ -425,13 +425,13 @@ export class DiskScanService {
         const fileIndex: RootFileIndex = new Map();
         const musicPath = Config.getMusicPath();
         const videoPath = Config.getVideoPath();
-        const atmosPath = Config.getAtmosPath();
+        const spatialPath = Config.getSpatialPath();
 
         if (usePrebuiltRootIndex) {
             fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
             fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
-            if (atmosPath) {
-                fileIndex.set(atmosPath, await this.buildRootFileIndex(atmosPath));
+            if (spatialPath) {
+                fileIndex.set(spatialPath, await this.buildRootFileIndex(spatialPath));
             }
         }
 
@@ -606,12 +606,12 @@ export class DiskScanService {
         // Scan each library root where this artist might have files
         const roots: Array<{ key: LibraryRootKey; dir: string }> = [
             { key: "music", dir: path.join(Config.getMusicPath(), artistFolder) },
-            { key: "music_videos", dir: path.join(Config.getVideoPath(), artistFolder) },
+            { key: "videos", dir: path.join(Config.getVideoPath(), artistFolder) },
         ];
 
-        const atmosPath = Config.getAtmosPath();
-        if (atmosPath) {
-            roots.push({ key: "spatial_music", dir: path.join(atmosPath, artistFolder) });
+        const spatialPath = Config.getSpatialPath();
+        if (spatialPath) {
+            roots.push({ key: "spatial", dir: path.join(spatialPath, artistFolder) });
         }
 
         const scanTargetsByDir = new Map<string, {
@@ -628,8 +628,8 @@ export class DiskScanService {
 
             const rootPath = key === "music"
                 ? Config.getMusicPath()
-                : key === "spatial_music"
-                    ? Config.getAtmosPath()
+                : key === "spatial"
+                    ? Config.getSpatialPath()
                     : Config.getVideoPath();
             if (!rootPath) continue;
 
@@ -983,8 +983,8 @@ export class DiskScanService {
         const roots = new Set<string>();
         roots.add(Config.getMusicPath());
         roots.add(Config.getVideoPath());
-        const atmosPath = Config.getAtmosPath();
-        if (atmosPath) roots.add(atmosPath);
+        const spatialPath = Config.getSpatialPath();
+        if (spatialPath) roots.add(spatialPath);
 
         // Collect all unique top-level folder names across all roots
         const seenFolders = new Map<string, string>(); // lowercase → original name

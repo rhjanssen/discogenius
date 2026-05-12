@@ -6,6 +6,7 @@ import { downloadProcessor } from "./download-processor.js";
 import { normalizeAudioQualityTag } from "./quality.js";
 import { UpgradableSpecification } from "./upgradable-specification.js";
 import { readIntEnv } from "../utils/env.js";
+import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 
 export type UpgradeResult = {
     tracks: number;
@@ -88,9 +89,9 @@ export class UpgraderService {
                     currentQuality: row.current_quality,
                     extension: row.current_extension,
                 });
-            } else if (normalizedCurrentQuality === "DOLBY_ATMOS") {
-                // Atmos files are managed by curation (include_atmos toggle), not the upgrader.
-                // When Atmos is disabled, curation unmonitors the items and
+            } else if (isSpatialAudioQuality(normalizedCurrentQuality)) {
+                // Spatial files are managed by curation (include_spatial toggle), not the upgrader.
+                // When spatial audio is disabled, curation unmonitors the items and
                 // remove_unmonitored_files handles file deletion.
                 continue;
             } else {

@@ -23,13 +23,13 @@ import metadataRouter from "./routes/metadata.js";
 import monitoringRouter from "./routes/monitoring.js";
 import playbackRouter from "./routes/playback.js";
 import playlistsRouter from "./routes/playlists.js";
+import providersRouter from "./routes/providers.js";
 import taskQueueRouter from "./routes/queue.js";
 import retagRouter from "./routes/retag.js";
 import searchRouter from "./routes/search.js";
 import statsRouter from "./routes/stats.js";
 import statusRouter from "./routes/status.js";
 import systemTaskRouter from "./routes/system-task.js";
-import tidalRouter from "./routes/tidal.js";
 import tracksRouter from "./routes/tracks.js";
 import ultraBlurRouter from "./routes/ultrablur.js";
 import unmappedRouter from "./routes/unmapped.js";
@@ -39,7 +39,6 @@ import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./s
 import { initCurationListeners } from "./services/curation.listener.js";
 import { downloadProcessor } from "./services/download-processor.js";
 import { startMonitoring } from "./services/task-scheduler.js";
-import { setupTidalProxy } from "./services/proxy.js";
 import {
   getRuntimeDiagnosticsSnapshot,
   startRuntimeDiagnostics,
@@ -166,7 +165,6 @@ if (startupHealthSnapshot.status !== "healthy") {
   }
 }
 initCurationListeners();
-setupTidalProxy(app);
 
 app.use((req, res, next) => {
   const finishTracking = trackRuntimeRequest(req.method, req.originalUrl || req.path);
@@ -189,12 +187,12 @@ app.use("/services/ultrablur", ultraBlurRouter);
 app.use("/api/auth", authMiddleware, authRouter);
 app.use("/api/config", authMiddleware, configRouter);
 app.use("/api/search", authMiddleware, searchRouter);
-app.use("/api/tidal", authMiddleware, tidalRouter);
 app.use("/api/artists", authMiddleware, artistsRouter);
 app.use("/api/albums", authMiddleware, albumsRouter);
 app.use("/api/tracks", authMiddleware, tracksRouter);
 app.use("/api/videos", authMiddleware, videosRouter);
 app.use("/api/playlists", authMiddleware, playlistsRouter);
+app.use("/api/providers", authMiddleware, providersRouter);
 app.use("/api/retag", authMiddleware, retagRouter);
 app.use("/api/stats", authMiddleware, statsRouter);
 app.use("/api", downloadQueueRouter);
