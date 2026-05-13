@@ -242,6 +242,38 @@ function scoreProviderTrackMatch(track: AlbumTrackContract, providerTrack: Provi
     return volumeScore + trackScore + titleScore + durationScore;
 }
 
+function normalizeLibraryFileFromRow(row: any) {
+    return {
+        id: Number(row.file_id ?? row.id),
+        artist_id: row.artist_id == null ? null : String(row.artist_id),
+        album_id: row.file_album_id == null ? row.album_id == null ? null : String(row.album_id) : String(row.file_album_id),
+        media_id: row.file_media_id == null ? row.media_id == null ? null : String(row.media_id) : String(row.file_media_id),
+        canonical_artist_mbid: row.canonical_artist_mbid == null ? null : String(row.canonical_artist_mbid),
+        canonical_release_group_mbid: row.canonical_release_group_mbid == null ? null : String(row.canonical_release_group_mbid),
+        canonical_release_mbid: row.canonical_release_mbid == null ? null : String(row.canonical_release_mbid),
+        canonical_track_mbid: row.canonical_track_mbid == null ? null : String(row.canonical_track_mbid),
+        canonical_recording_mbid: row.canonical_recording_mbid == null ? null : String(row.canonical_recording_mbid),
+        provider: row.provider == null ? null : String(row.provider),
+        provider_entity_type: row.provider_entity_type == null ? null : String(row.provider_entity_type),
+        provider_id: row.provider_id == null ? null : String(row.provider_id),
+        library_slot: row.library_slot == null ? null : String(row.library_slot),
+        file_type: String(row.file_type),
+        file_path: String(row.file_path),
+        relative_path: row.relative_path == null ? undefined : String(row.relative_path),
+        filename: row.filename == null ? undefined : String(row.filename),
+        extension: row.extension == null ? undefined : String(row.extension),
+        quality: row.quality == null ? null : String(row.quality),
+        library_root: row.library_root == null ? undefined : String(row.library_root),
+        file_size: row.file_size == null ? undefined : Number(row.file_size),
+        bitrate: row.bitrate == null ? undefined : Number(row.bitrate),
+        sample_rate: row.sample_rate == null ? undefined : Number(row.sample_rate),
+        bit_depth: row.bit_depth == null ? undefined : Number(row.bit_depth),
+        channels: row.channels == null ? undefined : Number(row.channels),
+        codec: row.codec == null ? undefined : String(row.codec),
+        duration: row.duration == null ? undefined : Number(row.duration),
+    };
+}
+
 function attachLocalFilesToTracks(
     tracks: AlbumTrackContract[],
     providerAlbumIds: string[],
@@ -265,6 +297,15 @@ function attachLocalFilesToTracks(
         lf.artist_id,
         lf.album_id AS file_album_id,
         lf.media_id AS file_media_id,
+        lf.canonical_artist_mbid,
+        lf.canonical_release_group_mbid,
+        lf.canonical_release_mbid,
+        lf.canonical_track_mbid,
+        lf.canonical_recording_mbid,
+        lf.provider,
+        lf.provider_entity_type,
+        lf.provider_id,
+        lf.library_slot,
         lf.file_type,
         lf.file_path,
         lf.relative_path,
@@ -304,26 +345,7 @@ function attachLocalFilesToTracks(
         const matches = rowsByPosition.get(key) || [];
         const files = matches
             .filter((row) => row.file_id != null)
-            .map((row) => ({
-                id: Number(row.file_id),
-                artist_id: row.artist_id == null ? null : String(row.artist_id),
-                album_id: row.file_album_id == null ? null : String(row.file_album_id),
-                media_id: row.file_media_id == null ? null : String(row.file_media_id),
-                file_type: String(row.file_type),
-                file_path: String(row.file_path),
-                relative_path: row.relative_path == null ? undefined : String(row.relative_path),
-                filename: row.filename == null ? undefined : String(row.filename),
-                extension: row.extension == null ? undefined : String(row.extension),
-                quality: row.quality == null ? null : String(row.quality),
-                library_root: row.library_root == null ? undefined : String(row.library_root),
-                file_size: row.file_size == null ? undefined : Number(row.file_size),
-                bitrate: row.bitrate == null ? undefined : Number(row.bitrate),
-                sample_rate: row.sample_rate == null ? undefined : Number(row.sample_rate),
-                bit_depth: row.bit_depth == null ? undefined : Number(row.bit_depth),
-                channels: row.channels == null ? undefined : Number(row.channels),
-                codec: row.codec == null ? undefined : String(row.codec),
-                duration: row.duration == null ? undefined : Number(row.duration),
-            }));
+            .map((row) => normalizeLibraryFileFromRow(row));
         const bestMedia = matches[0] || null;
 
         return {
@@ -334,6 +356,88 @@ function attachLocalFilesToTracks(
             downloaded: files.length > 0 || track.downloaded,
             is_downloaded: files.length > 0 || track.is_downloaded,
             files: files.length > 0 ? files : track.files,
+        };
+    });
+}
+
+function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackContract[] {
+    const trackMbids = Array.from(new Set(
+        tracks
+            .map((track) => String(track.musicbrainz_track_id || track.id || "").trim())
+            .filter(Boolean)
+    ));
+    if (trackMbids.length === 0) {
+        return tracks;
+    }
+
+    const placeholders = trackMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT
+        lf.id AS file_id,
+        lf.artist_id,
+        lf.album_id AS file_album_id,
+        lf.media_id AS file_media_id,
+        lf.canonical_artist_mbid,
+        lf.canonical_release_group_mbid,
+        lf.canonical_release_mbid,
+        lf.canonical_track_mbid,
+        lf.canonical_recording_mbid,
+        lf.provider,
+        lf.provider_entity_type,
+        lf.provider_id,
+        lf.library_slot,
+        lf.file_type,
+        lf.file_path,
+        lf.relative_path,
+        lf.filename,
+        lf.extension,
+        lf.quality,
+        lf.library_root,
+        lf.file_size,
+        lf.bitrate,
+        lf.sample_rate,
+        lf.bit_depth,
+        lf.channels,
+        lf.codec,
+        lf.duration
+      FROM library_files lf
+      WHERE lf.canonical_track_mbid IN (${placeholders})
+        AND lf.file_type IN ('track', 'lyrics')
+      ORDER BY lf.file_type ASC, lf.id ASC
+    `).all(...trackMbids) as any[];
+
+    if (rows.length === 0) {
+        return tracks;
+    }
+
+    const filesByTrackMbid = new Map<string, any[]>();
+    for (const row of rows) {
+        const key = String(row.canonical_track_mbid);
+        const list = filesByTrackMbid.get(key) || [];
+        list.push(normalizeLibraryFileFromRow(row));
+        filesByTrackMbid.set(key, list);
+    }
+
+    return tracks.map((track) => {
+        const trackMbid = String(track.musicbrainz_track_id || track.id || "");
+        const canonicalFiles = filesByTrackMbid.get(trackMbid) || [];
+        if (canonicalFiles.length === 0) {
+            return track;
+        }
+
+        const canonicalFileIds = new Set(canonicalFiles.map((file) => file.id));
+        const files = [
+            ...canonicalFiles,
+            ...(track.files || []).filter((file) => !canonicalFileIds.has(file.id)),
+        ];
+        const primaryFile = canonicalFiles.find((file) => file.file_type === "track") || canonicalFiles[0];
+
+        return {
+            ...track,
+            quality: primaryFile?.quality || track.quality,
+            downloaded: true,
+            is_downloaded: true,
+            files,
         };
     });
 }
@@ -417,7 +521,8 @@ async function buildReleaseGroupTrackContracts(
     ].map((value) => String(value || "").trim()).filter(Boolean);
     const providerId = String(releaseGroup.selected_provider || "").trim() || null;
     const canonicalTracks = getReleaseTrackContracts(release.mbid, releaseGroup.mbid, album.title, album.artist_name);
-    const withLocalFiles = attachLocalFilesToTracks(canonicalTracks, providerAlbumIds, providerId);
+    const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks);
+    const withLocalFiles = attachLocalFilesToTracks(withCanonicalFiles, providerAlbumIds, providerId);
     return attachProviderPreviewTracks(withLocalFiles, releaseGroup);
 }
 

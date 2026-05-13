@@ -24,10 +24,11 @@ const useStyles = makeStyles({
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackgroundAlpha2} 74%, ${tokens.colorBrandBackground2} 26%)`,
         backdropFilter: "blur(10px)",
         borderRadius: tokens.borderRadiusMedium,
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+        border: `${tokens.strokeWidthThin} solid color-mix(in srgb, ${tokens.colorNeutralStrokeAlpha2} 64%, ${tokens.colorBrandStroke1} 36%)`,
+        boxShadow: `0 8px 24px color-mix(in srgb, ${tokens.colorBrandForeground1} 16%, transparent)`,
         width: "100%",
         boxSizing: "border-box",
         "@media (min-width: 640px)": {
@@ -36,6 +37,14 @@ const useStyles = makeStyles({
     },
     playButton: {
         flexShrink: 0,
+        color: tokens.colorBrandForeground1,
+        ":hover": {
+            color: tokens.colorBrandForeground2,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        },
+        ":active": {
+            color: tokens.colorBrandForeground2,
+        },
     },
     timeText: {
         fontSize: tokens.fontSizeBase200,
@@ -58,7 +67,7 @@ const useStyles = makeStyles({
     scrubberTrack: {
         width: "100%",
         height: "4px",
-        backgroundColor: tokens.colorNeutralStroke2,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralStroke2} 70%, ${tokens.colorBrandStroke1} 30%)`,
         borderRadius: tokens.borderRadiusCircular,
         position: "relative",
         overflow: "hidden",

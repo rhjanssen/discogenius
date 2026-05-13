@@ -38,6 +38,15 @@ export interface TrackRow {
 interface LibraryFileRow {
   id: number;
   media_id: number | string | null;
+  canonical_artist_mbid?: string | null;
+  canonical_release_group_mbid?: string | null;
+  canonical_release_mbid?: string | null;
+  canonical_track_mbid?: string | null;
+  canonical_recording_mbid?: string | null;
+  provider?: string | null;
+  provider_entity_type?: string | null;
+  provider_id?: string | null;
+  library_slot?: string | null;
   file_type: string;
   file_path: string;
   relative_path?: string;
@@ -86,6 +95,15 @@ function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
   return {
     id: file.id,
     media_id: file.media_id == null ? null : String(file.media_id),
+    canonical_artist_mbid: file.canonical_artist_mbid ?? null,
+    canonical_release_group_mbid: file.canonical_release_group_mbid ?? null,
+    canonical_release_mbid: file.canonical_release_mbid ?? null,
+    canonical_track_mbid: file.canonical_track_mbid ?? null,
+    canonical_recording_mbid: file.canonical_recording_mbid ?? null,
+    provider: file.provider ?? null,
+    provider_entity_type: file.provider_entity_type ?? null,
+    provider_id: file.provider_id ?? null,
+    library_slot: file.library_slot ?? null,
     file_type: file.file_type,
     file_path: file.file_path,
     relative_path: file.relative_path,
@@ -155,6 +173,9 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     const placeholders = trackIds.map(() => "?").join(",");
     const files = db.prepare(`
       SELECT id, media_id, file_type, file_path, relative_path, filename, extension,
+             canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+             canonical_track_mbid, canonical_recording_mbid,
+             provider, provider_entity_type, provider_id, library_slot,
              quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
       FROM library_files
       WHERE media_id IN (${placeholders})
@@ -283,6 +304,15 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       bit_depth,
       codec,
       duration,
+      canonical_artist_mbid,
+      canonical_release_group_mbid,
+      canonical_release_mbid,
+      canonical_track_mbid,
+      canonical_recording_mbid,
+      provider,
+      provider_entity_type,
+      provider_id,
+      library_slot,
       created_at,
       modified_at
     FROM library_files

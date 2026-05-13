@@ -179,6 +179,12 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalM,
     },
   },
+  metadataBadges: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    flexWrap: "wrap",
+  },
   metadataSeparator: {
     width: "4px",
     height: "4px",
@@ -458,6 +464,23 @@ const AlbumPage = () => {
   const hasStereoOffer = Boolean(album?.stereo_provider_id);
   const hasSpatialOffer = Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
+  const headerQualityBadges = useMemo(() => {
+    const badges: Array<{ key: string; quality: string }> = [];
+
+    if (album?.stereo_quality) {
+      badges.push({ key: "stereo", quality: album.stereo_quality });
+    }
+
+    if (album?.spatial_quality && !badges.some((badge) => badge.quality === album.spatial_quality)) {
+      badges.push({ key: "spatial", quality: album.spatial_quality });
+    }
+
+    if (badges.length === 0 && album?.quality) {
+      badges.push({ key: "primary", quality: album.quality });
+    }
+
+    return badges;
+  }, [album?.quality, album?.spatial_quality, album?.stereo_quality]);
 
   useLayoutEffect(() => {
     if (!albumId) {
@@ -711,8 +734,16 @@ const AlbumPage = () => {
               </div>
 
               <div className={styles.metadata}>
-                <QualityBadge quality={album.quality} />
-                <div className={styles.metadataSeparator} />
+                {headerQualityBadges.length > 0 ? (
+                  <>
+                    <div className={styles.metadataBadges}>
+                      {headerQualityBadges.map((badge) => (
+                        <QualityBadge key={badge.key} quality={badge.quality} />
+                      ))}
+                    </div>
+                    <div className={styles.metadataSeparator} />
+                  </>
+                ) : null}
                 <Text>{new Date(album.release_date).getFullYear()}</Text>
                 <div className={styles.metadataSeparator} />
                 <Text>{tracks.length} Tracks</Text>
@@ -842,6 +873,7 @@ const AlbumPage = () => {
           <TrackList
             tracks={tracks}
             showArtist={showTrackArtists}
+            showQuality={false}
             showVolumeHeaders
             contextArtistName={album.artist_name}
             contextAlbumTitle={album.title}

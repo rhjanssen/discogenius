@@ -22,6 +22,7 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
   showCover?: boolean;
   showArtist?: boolean;
   showAlbum?: boolean;
+  showQuality?: boolean;
   showVolumeHeaders?: boolean;
   contextArtistName?: string | null;
   contextAlbumTitle?: string | null;
@@ -184,6 +185,7 @@ const TrackList = <T extends TrackListItem>({
   showCover = false,
   showArtist = false,
   showAlbum = false,
+  showQuality = true,
   showVolumeHeaders = false,
   contextArtistName,
   contextAlbumTitle,
@@ -259,8 +261,8 @@ const TrackList = <T extends TrackListItem>({
                     {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
                     {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
                     <Text className={styles.metaText}>{durationText}</Text>
-                    {track.quality ? <Text className={styles.separator}>•</Text> : null}
-                    {track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
+                    {showQuality && track.quality ? <Text className={styles.separator}>•</Text> : null}
+                    {showQuality && track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
                   </div>
                 </div>
 

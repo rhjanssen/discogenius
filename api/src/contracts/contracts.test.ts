@@ -152,6 +152,15 @@ test("library files response parser keeps list payloads typed", () => {
     artist_id: "11",
     album_id: "22",
     media_id: "33",
+    canonical_artist_mbid: undefined,
+    canonical_release_group_mbid: undefined,
+    canonical_release_mbid: undefined,
+    canonical_track_mbid: undefined,
+    canonical_recording_mbid: undefined,
+    provider: undefined,
+    provider_entity_type: undefined,
+    provider_id: undefined,
+    library_slot: undefined,
     file_type: "video",
     file_path: "E:/videos/file.mp4",
     relative_path: undefined,
@@ -462,5 +471,3 @@ test("history contract parser validates audit event payloads", () => {
   assert.equal(history.items[0].eventType, "TrackFileImported");
   assert.equal(history.items[0].data?.importedPath, "E:/music/Queen of NY.flac");
 });
-
-

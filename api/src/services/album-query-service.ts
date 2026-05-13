@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { getAlbumDownloadStatsMap } from "./download-state.js";
+import { getReleaseGroupDownloadStatsMap } from "./download-state.js";
 import {
     MusicBrainzReleaseGroupReadService,
     normalizeMusicBrainzReleaseGroupAlbum,
@@ -17,25 +17,35 @@ function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string
     return "COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)";
 }
 
-function selectedProviderAlbumDownloadedPredicate(selectedProviderAlbumExpression: string): string {
+function releaseGroupDownloadedPredicate(libraryFilter: string): string {
+    const selectedReleaseExpression = libraryFilter === "spatial"
+        ? "spatial.selected_release_mbid"
+        : libraryFilter === "stereo"
+            ? "stereo.selected_release_mbid"
+            : "COALESCE(stereo.selected_release_mbid, spatial.selected_release_mbid)";
+    const slotFilter = libraryFilter === "spatial"
+        ? "AND lf.library_slot = 'spatial'"
+        : libraryFilter === "stereo"
+            ? "AND lf.library_slot = 'stereo'"
+            : "AND COALESCE(lf.library_slot, 'stereo') IN ('stereo', 'spatial')";
+
     return `
-  ${selectedProviderAlbumExpression} IS NOT NULL
+  ${selectedReleaseExpression} IS NOT NULL
   AND EXISTS (
     SELECT 1
-    FROM media m
-    WHERE CAST(m.album_id AS TEXT) = CAST(${selectedProviderAlbumExpression} AS TEXT)
-      AND m.type != 'Music Video'
+    FROM mb_tracks t
+    WHERE t.release_mbid = ${selectedReleaseExpression}
   )
   AND NOT EXISTS (
     SELECT 1
-    FROM media m
-    WHERE CAST(m.album_id AS TEXT) = CAST(${selectedProviderAlbumExpression} AS TEXT)
-      AND m.type != 'Music Video'
+    FROM mb_tracks t
+    WHERE t.release_mbid = ${selectedReleaseExpression}
       AND NOT EXISTS (
         SELECT 1
         FROM library_files lf
-        WHERE CAST(lf.media_id AS TEXT) = CAST(m.id AS TEXT)
+        WHERE lf.canonical_track_mbid = t.mbid
           AND lf.file_type = 'track'
+          ${slotFilter}
       )
   )
 `;
@@ -131,7 +141,7 @@ export class AlbumQueryService {
         const downloadedFilter = input.downloaded;
         const libraryFilter = input.libraryFilter || "all";
         const selectedProviderAlbumExpression = selectedProviderAlbumExpressionForFilter(libraryFilter);
-        const selectedDownloadedPredicate = selectedProviderAlbumDownloadedPredicate(selectedProviderAlbumExpression);
+        const selectedDownloadedPredicate = releaseGroupDownloadedPredicate(libraryFilter);
         const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
@@ -173,10 +183,13 @@ export class AlbumQueryService {
           LIMIT ? OFFSET ?
         `;
         const rows = db.prepare(query).all(...params, limit, offset) as any[];
-        const selectedProviderIds = rows
-            .map((row) => row.selected_provider_id == null ? null : String(row.selected_provider_id))
+        const releaseGroupMbids = rows
+            .map((row) => row.mbid == null ? null : String(row.mbid))
             .filter((value): value is string => Boolean(value));
-        const downloadStats = getAlbumDownloadStatsMap(selectedProviderIds);
+        const downloadStats = getReleaseGroupDownloadStatsMap(
+            releaseGroupMbids,
+            libraryFilter === "spatial" ? "spatial" : libraryFilter === "stereo" ? "stereo" : null,
+        );
 
         const countQuery = `
           SELECT COUNT(*) AS count
@@ -194,8 +207,8 @@ export class AlbumQueryService {
 
         return {
             items: rows.map((row) => {
-                const providerId = row.selected_provider_id == null ? null : String(row.selected_provider_id);
-                const stats = providerId ? downloadStats.get(providerId) : null;
+                const releaseGroupMbid = row.mbid == null ? null : String(row.mbid);
+                const stats = releaseGroupMbid ? downloadStats.get(releaseGroupMbid) : null;
                 return normalizeReleaseGroupListRow(
                     row,
                     stats?.downloadedPercent ?? 0,

@@ -563,6 +563,13 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       ensureProviderNeutralIdentitySchema();
     },
   },
+  {
+    version: 10,
+    description: "add canonical MusicBrainz and provider identity columns to library files",
+    up: () => {
+      ensureLibraryFileCanonicalIdentitySchema();
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -941,6 +948,136 @@ function ensureProviderNeutralIdentitySchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist_type_date ON mb_release_groups(artist_mbid, primary_type, first_release_date DESC)");
 }
 
+function ensureLibraryFileCanonicalIdentitySchema(): void {
+  addColumnIfMissing("library_files", "canonical_artist_mbid", "TEXT");
+  addColumnIfMissing("library_files", "canonical_release_group_mbid", "TEXT");
+  addColumnIfMissing("library_files", "canonical_release_mbid", "TEXT");
+  addColumnIfMissing("library_files", "canonical_track_mbid", "TEXT");
+  addColumnIfMissing("library_files", "canonical_recording_mbid", "TEXT");
+  addColumnIfMissing("library_files", "provider", "TEXT");
+  addColumnIfMissing("library_files", "provider_entity_type", "TEXT");
+  addColumnIfMissing("library_files", "provider_id", "TEXT");
+  addColumnIfMissing("library_files", "library_slot", "TEXT");
+
+  db.exec(`
+    UPDATE library_files
+    SET
+      canonical_artist_mbid = COALESCE(
+        canonical_artist_mbid,
+        (SELECT a.mbid FROM artists a WHERE CAST(a.id AS TEXT) = CAST(library_files.artist_id AS TEXT) LIMIT 1)
+      ),
+      canonical_release_group_mbid = COALESCE(
+        canonical_release_group_mbid,
+        (SELECT a.mb_release_group_id FROM albums a WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT) LIMIT 1),
+        (
+          SELECT r.release_group_mbid
+          FROM albums a
+          JOIN mb_releases r ON r.mbid = a.mbid
+          WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT)
+          LIMIT 1
+        ),
+        (
+          SELECT a.mb_release_group_id
+          FROM media m
+          JOIN albums a ON CAST(a.id AS TEXT) = CAST(m.album_id AS TEXT)
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        ),
+        (
+          SELECT r.release_group_mbid
+          FROM media m
+          JOIN mb_tracks t ON t.mbid = m.mbid
+          JOIN mb_releases r ON r.mbid = t.release_mbid
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        )
+      ),
+      canonical_release_mbid = COALESCE(
+        canonical_release_mbid,
+        (
+          SELECT r.mbid
+          FROM albums a
+          JOIN mb_releases r ON r.mbid = a.mbid
+          WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT)
+          LIMIT 1
+        ),
+        (
+          SELECT t.release_mbid
+          FROM media m
+          JOIN mb_tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        )
+      ),
+      canonical_track_mbid = COALESCE(
+        canonical_track_mbid,
+        (
+          SELECT t.mbid
+          FROM media m
+          JOIN mb_tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        )
+      ),
+      canonical_recording_mbid = COALESCE(
+        canonical_recording_mbid,
+        (
+          SELECT t.recording_mbid
+          FROM media m
+          JOIN mb_tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        ),
+        (
+          SELECT r.mbid
+          FROM media m
+          JOIN mb_recordings r ON r.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          LIMIT 1
+        )
+      ),
+      provider = COALESCE(provider, CASE
+        WHEN artist_id IS NOT NULL OR album_id IS NOT NULL OR media_id IS NOT NULL THEN 'tidal'
+        ELSE NULL
+      END),
+      provider_entity_type = COALESCE(provider_entity_type, CASE
+        WHEN LOWER(COALESCE(file_type, '')) LIKE '%video%' THEN 'video'
+        WHEN media_id IS NOT NULL THEN 'track'
+        WHEN album_id IS NOT NULL THEN 'album'
+        WHEN artist_id IS NOT NULL THEN 'artist'
+        ELSE NULL
+      END),
+      provider_id = COALESCE(provider_id, CASE
+        WHEN LOWER(COALESCE(file_type, '')) LIKE '%video%' AND media_id IS NOT NULL THEN CAST(media_id AS TEXT)
+        WHEN media_id IS NOT NULL THEN CAST(media_id AS TEXT)
+        WHEN album_id IS NOT NULL THEN CAST(album_id AS TEXT)
+        WHEN artist_id IS NOT NULL THEN CAST(artist_id AS TEXT)
+        ELSE NULL
+      END),
+      library_slot = COALESCE(library_slot, CASE
+        WHEN LOWER(COALESCE(file_type, '')) LIKE '%video%'
+          OR LOWER(COALESCE(library_root, '')) LIKE '%video%' THEN 'video'
+        WHEN UPPER(COALESCE(quality, '')) IN ('DOLBY_ATMOS', 'ATMOS', 'SONY_360RA', '360RA')
+          OR UPPER(COALESCE(quality, '')) LIKE '%SPATIAL%'
+          OR UPPER(COALESCE(quality, '')) LIKE '%SURROUND%'
+          OR UPPER(COALESCE(quality, '')) LIKE '%IMMERSIVE%'
+          OR UPPER(COALESCE(quality, '')) LIKE '%ATMOS%'
+          OR LOWER(COALESCE(library_root, '')) LIKE '%spatial%'
+          OR LOWER(COALESCE(library_root, '')) LIKE '%atmos%' THEN 'spatial'
+        WHEN file_type IN ('track', 'cover', 'nfo', 'lyrics', 'bio', 'review') THEN 'stereo'
+        ELSE NULL
+      END)
+  `);
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_artist ON library_files(canonical_artist_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release_group ON library_files(canonical_release_group_mbid, library_slot)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release ON library_files(canonical_release_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_track ON library_files(canonical_track_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_recording ON library_files(canonical_recording_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_provider_resource ON library_files(provider, provider_entity_type, provider_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_slot_type ON library_files(library_slot, file_type)");
+}
+
 type MigrationRunSummary = {
   fromVersion: number;
   toVersion: number;
@@ -1208,8 +1345,8 @@ export function initDatabase() {
   // Media artist relationship
   db.exec(`
     CREATE TABLE IF NOT EXISTS media_artists (
-      media_id INT NOT NULL,             -- TIDAL track or video id
-      artist_id INT NOT NULL,            -- TIDAL artist id
+      media_id INT NOT NULL,             -- provider-native track or video id
+      artist_id INT NOT NULL,            -- provider-native artist id
       type TEXT NOT NULL,                -- contribution type
       PRIMARY KEY (media_id, artist_id),
       FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
@@ -1253,9 +1390,22 @@ export function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
       -- Linkage (at least artist_id required, then either media_id for tracks/videos)
-      artist_id INT NOT NULL,            -- TIDAL artist id (always required)
+      artist_id INT NOT NULL,            -- provider-native compatibility artist id
       album_id INT,                      -- provider-native album id (for tracks)
-      media_id INT,                      -- TIDAL track or video id (links to media table)
+      media_id INT,                      -- provider-native track or video id (links to media table)
+
+      -- Canonical identity (MusicBrainz/Lidarr-style managed graph)
+      canonical_artist_mbid TEXT,
+      canonical_release_group_mbid TEXT,
+      canonical_release_mbid TEXT,
+      canonical_track_mbid TEXT,
+      canonical_recording_mbid TEXT,
+
+      -- Provider resource that produced or owns this file
+      provider TEXT,
+      provider_entity_type TEXT,
+      provider_id TEXT,
+      library_slot TEXT,                 -- stereo, spatial, video
       
       -- File Location
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file in library
@@ -1309,6 +1459,7 @@ export function initDatabase() {
   ensureMetadataIdentitySchema();
   ensureMusicBrainzProviderSchema();
   ensureProviderNeutralIdentitySchema();
+  ensureLibraryFileCanonicalIdentitySchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (Local Files not mapped to TIDAL)
@@ -1638,6 +1789,13 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_fingerprint ON library_files(fingerprint)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_acoustid_id ON library_files(acoustid_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_media_id_file_type ON library_files(media_id, file_type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_artist ON library_files(canonical_artist_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release_group ON library_files(canonical_release_group_mbid, library_slot)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release ON library_files(canonical_release_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_track ON library_files(canonical_track_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_recording ON library_files(canonical_recording_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_provider_resource ON library_files(provider, provider_entity_type, provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_slot_type ON library_files(library_slot, file_type)`);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 

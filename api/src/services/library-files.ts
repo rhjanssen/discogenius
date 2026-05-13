@@ -7,6 +7,7 @@ import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPat
 import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
+import { resolveLibraryFileIdentity, type LibrarySlot } from "./library-file-identity.js";
 
 type LibraryFileRow = {
   id: number;
@@ -129,6 +130,15 @@ export type LibraryFileUpsertParams = {
   channels?: number | null;
   fingerprint?: string | null;
   removeFromUnmapped?: boolean;
+  canonicalArtistMbid?: string | null;
+  canonicalReleaseGroupMbid?: string | null;
+  canonicalReleaseMbid?: string | null;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
+  provider?: string | null;
+  providerEntityType?: string | null;
+  providerId?: string | null;
+  librarySlot?: LibrarySlot | string | null;
 };
 
 type ResolvableLibraryFileRow = {
@@ -697,6 +707,7 @@ export class LibraryFilesService {
     }
 
     const expectedPath = params.expectedPath || params.filePath;
+    const canonicalIdentity = resolveLibraryFileIdentity(params);
 
     if (params.mediaId && (params.fileType === "track" || params.fileType === "video")) {
       const existingRow = db.prepare(`
@@ -713,6 +724,15 @@ export class LibraryFilesService {
           SET artist_id = ?,
               album_id = ?,
               media_id = ?,
+              canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
+              canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
+              canonical_release_mbid = COALESCE(?, canonical_release_mbid),
+              canonical_track_mbid = COALESCE(?, canonical_track_mbid),
+              canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
+              provider = COALESCE(?, provider),
+              provider_entity_type = COALESCE(?, provider_entity_type),
+              provider_id = COALESCE(?, provider_id),
+              library_slot = COALESCE(?, library_slot),
               file_path = ?,
               relative_path = ?,
               library_root = ?,
@@ -737,6 +757,15 @@ export class LibraryFilesService {
           params.artistId,
           params.albumId || null,
           params.mediaId || null,
+          canonicalIdentity.canonicalArtistMbid,
+          canonicalIdentity.canonicalReleaseGroupMbid,
+          canonicalIdentity.canonicalReleaseMbid,
+          canonicalIdentity.canonicalTrackMbid,
+          canonicalIdentity.canonicalRecordingMbid,
+          canonicalIdentity.provider,
+          canonicalIdentity.providerEntityType,
+          canonicalIdentity.providerId,
+          canonicalIdentity.librarySlot,
           params.filePath,
           relativePath,
           params.libraryRoot,
@@ -819,6 +848,15 @@ export class LibraryFilesService {
           SET artist_id = ?,
               album_id = ?,
               media_id = ?,
+              canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
+              canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
+              canonical_release_mbid = COALESCE(?, canonical_release_mbid),
+              canonical_track_mbid = COALESCE(?, canonical_track_mbid),
+              canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
+              provider = COALESCE(?, provider),
+              provider_entity_type = COALESCE(?, provider_entity_type),
+              provider_id = COALESCE(?, provider_id),
+              library_slot = COALESCE(?, library_slot),
               file_path = ?,
               relative_path = ?,
               library_root = ?,
@@ -843,6 +881,15 @@ export class LibraryFilesService {
           params.artistId,
           params.albumId || null,
           params.mediaId || null,
+          canonicalIdentity.canonicalArtistMbid,
+          canonicalIdentity.canonicalReleaseGroupMbid,
+          canonicalIdentity.canonicalReleaseMbid,
+          canonicalIdentity.canonicalTrackMbid,
+          canonicalIdentity.canonicalRecordingMbid,
+          canonicalIdentity.provider,
+          canonicalIdentity.providerEntityType,
+          canonicalIdentity.providerId,
+          canonicalIdentity.librarySlot,
           params.filePath,
           relativePath,
           params.libraryRoot,
@@ -911,6 +958,9 @@ export class LibraryFilesService {
     const insert = db.prepare(`
       INSERT INTO library_files (
         artist_id, album_id, media_id,
+        canonical_artist_mbid, canonical_release_group_mbid,
+        canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+        provider, provider_entity_type, provider_id, library_slot,
         file_path, relative_path, library_root,
         filename, extension, file_size,
         file_type, quality,
@@ -920,6 +970,9 @@ export class LibraryFilesService {
         fingerprint
       ) VALUES (
         ?, ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?,
         ?, ?,
@@ -931,6 +984,15 @@ export class LibraryFilesService {
         artist_id = excluded.artist_id,
         album_id = excluded.album_id,
         media_id = excluded.media_id,
+        canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, library_files.canonical_artist_mbid),
+        canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, library_files.canonical_release_group_mbid),
+        canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, library_files.canonical_release_mbid),
+        canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, library_files.canonical_track_mbid),
+        canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, library_files.canonical_recording_mbid),
+        provider = COALESCE(excluded.provider, library_files.provider),
+        provider_entity_type = COALESCE(excluded.provider_entity_type, library_files.provider_entity_type),
+        provider_id = COALESCE(excluded.provider_id, library_files.provider_id),
+        library_slot = COALESCE(excluded.library_slot, library_files.library_slot),
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         filename = excluded.filename,
@@ -955,6 +1017,15 @@ export class LibraryFilesService {
       params.artistId,
       params.albumId || null,
       params.mediaId || null,
+      canonicalIdentity.canonicalArtistMbid,
+      canonicalIdentity.canonicalReleaseGroupMbid,
+      canonicalIdentity.canonicalReleaseMbid,
+      canonicalIdentity.canonicalTrackMbid,
+      canonicalIdentity.canonicalRecordingMbid,
+      canonicalIdentity.provider,
+      canonicalIdentity.providerEntityType,
+      canonicalIdentity.providerId,
+      canonicalIdentity.librarySlot,
       params.filePath,
       relativePath,
       params.libraryRoot,

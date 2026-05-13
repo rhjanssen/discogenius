@@ -15,6 +15,15 @@ export interface LibraryFileContract {
   artist_id?: string | null;
   album_id?: string | null;
   media_id?: string | null;
+  canonical_artist_mbid?: string | null;
+  canonical_release_group_mbid?: string | null;
+  canonical_release_mbid?: string | null;
+  canonical_track_mbid?: string | null;
+  canonical_recording_mbid?: string | null;
+  provider?: string | null;
+  provider_entity_type?: string | null;
+  provider_id?: string | null;
+  library_slot?: string | null;
   file_type: string;
   file_path: string;
   relative_path?: string;
@@ -120,6 +129,15 @@ function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFi
     artist_id: artistId === undefined ? undefined : artistId === null ? null : String(artistId),
     album_id: albumId === undefined ? undefined : albumId === null ? null : String(albumId),
     media_id: mediaId === undefined ? undefined : mediaId === null ? null : String(mediaId),
+    canonical_artist_mbid: expectNullableString(record.canonical_artist_mbid, `${indexLabel}.canonical_artist_mbid`),
+    canonical_release_group_mbid: expectNullableString(record.canonical_release_group_mbid, `${indexLabel}.canonical_release_group_mbid`),
+    canonical_release_mbid: expectNullableString(record.canonical_release_mbid, `${indexLabel}.canonical_release_mbid`),
+    canonical_track_mbid: expectNullableString(record.canonical_track_mbid, `${indexLabel}.canonical_track_mbid`),
+    canonical_recording_mbid: expectNullableString(record.canonical_recording_mbid, `${indexLabel}.canonical_recording_mbid`),
+    provider: expectNullableString(record.provider, `${indexLabel}.provider`),
+    provider_entity_type: expectNullableString(record.provider_entity_type, `${indexLabel}.provider_entity_type`),
+    provider_id: expectNullableString(record.provider_id, `${indexLabel}.provider_id`),
+    library_slot: expectNullableString(record.library_slot, `${indexLabel}.library_slot`),
     file_type: expectString(record.file_type, `${indexLabel}.file_type`),
     file_path: expectString(record.file_path, `${indexLabel}.file_path`),
     relative_path: expectOptionalString(record.relative_path, `${indexLabel}.relative_path`),

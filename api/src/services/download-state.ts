@@ -57,6 +57,10 @@ function mediaCacheKey(mediaId: string, fileType: DownloadableFileType) {
   return `${fileType}:${mediaId}`;
 }
 
+function releaseGroupCacheKey(releaseGroupMbid: string, slot?: string | null) {
+  return `release-group:${slot || "any"}:${releaseGroupMbid}`;
+}
+
 function toAlbumStats(albumId: string, totalTracks: number, downloadedTracks: number): AlbumDownloadStats {
   const normalizedTotalTracks = Math.max(0, totalTracks);
   const normalizedDownloadedTracks = Math.max(0, downloadedTracks);
@@ -92,6 +96,25 @@ function toArtistStats(artistId: string, totalItems: number, downloadedItems: nu
 export function invalidateAlbumDownloadStatus(albumId: string): void {
   if (!albumId) return;
   albumStatsCache.delete(String(albumId));
+
+  const album = db.prepare(`
+    SELECT mb_release_group_id
+    FROM albums
+    WHERE CAST(id AS TEXT) = ?
+    LIMIT 1
+  `).get(String(albumId)) as { mb_release_group_id?: string | null } | undefined;
+  if (album?.mb_release_group_id) {
+    invalidateReleaseGroupDownloadStatus(album.mb_release_group_id);
+  }
+}
+
+export function invalidateReleaseGroupDownloadStatus(releaseGroupMbid: string): void {
+  if (!releaseGroupMbid) return;
+  for (const key of Array.from(albumStatsCache.keys())) {
+    if (key.endsWith(`:${releaseGroupMbid}`)) {
+      albumStatsCache.delete(key);
+    }
+  }
 }
 
 export function invalidateArtistDownloadStatus(artistId: string): void {
@@ -205,6 +228,89 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
 
 export function getAlbumDownloadStats(albumId: string | number): AlbumDownloadStats {
   return getAlbumDownloadStatsMap([albumId]).get(String(albumId)) ?? toAlbumStats(String(albumId), 0, 0);
+}
+
+export function getReleaseGroupDownloadStatsMap(
+  releaseGroupMbids: Array<string | number>,
+  slot?: "stereo" | "spatial" | "video" | null,
+): Map<string, AlbumDownloadStats> {
+  const ids = uniqueIds(releaseGroupMbids);
+  const result = new Map<string, AlbumDownloadStats>();
+  const missing: string[] = [];
+
+  for (const id of ids) {
+    const cached = getCached(albumStatsCache, releaseGroupCacheKey(id, slot));
+    if (cached) {
+      result.set(id, cached);
+    } else {
+      missing.push(id);
+    }
+  }
+
+  if (missing.length > 0) {
+    const values = missing.map(() => "(?)").join(", ");
+    const normalizedSlot = slot === "spatial" ? "spatial" : slot === "video" ? "video" : slot === "stereo" ? "stereo" : null;
+    const slotFilter = normalizedSlot
+      ? `AND lf.library_slot = '${normalizedSlot}'`
+      : "AND COALESCE(lf.library_slot, 'stereo') IN ('stereo', 'spatial')";
+    const rows = db.prepare(`
+      WITH target_release_groups(release_group_mbid) AS (
+        VALUES ${values}
+      ),
+      selected_releases AS (
+        SELECT
+          trg.release_group_mbid,
+          COALESCE(
+            ${normalizedSlot === "spatial" ? "spatial.selected_release_mbid" : "stereo.selected_release_mbid"},
+            ${normalizedSlot === "spatial" ? "stereo.selected_release_mbid" : "spatial.selected_release_mbid"},
+            (
+              SELECT r.mbid
+              FROM mb_releases r
+              WHERE r.release_group_mbid = trg.release_group_mbid
+              ORDER BY COALESCE(r.track_count, 0) DESC, COALESCE(r.date, '') DESC, r.mbid ASC
+              LIMIT 1
+            )
+          ) AS release_mbid
+        FROM target_release_groups trg
+        LEFT JOIN release_group_slots stereo
+          ON stereo.release_group_mbid = trg.release_group_mbid
+         AND stereo.slot = 'stereo'
+        LEFT JOIN release_group_slots spatial
+          ON spatial.release_group_mbid = trg.release_group_mbid
+         AND spatial.slot = 'spatial'
+      )
+      SELECT
+        sr.release_group_mbid,
+        COUNT(DISTINCT t.mbid) AS total_tracks,
+        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
+      FROM selected_releases sr
+      LEFT JOIN mb_tracks t
+        ON t.release_mbid = sr.release_mbid
+      LEFT JOIN library_files lf
+        ON lf.canonical_track_mbid = t.mbid
+       AND lf.file_type = 'track'
+       ${slotFilter}
+      GROUP BY sr.release_group_mbid
+    `).all(...missing) as Array<{
+      release_group_mbid: string;
+      total_tracks: number;
+      downloaded_tracks: number;
+    }>;
+
+    const statsByReleaseGroup = new Map(rows.map((row) => [String(row.release_group_mbid), row]));
+    for (const releaseGroupMbid of missing) {
+      const row = statsByReleaseGroup.get(releaseGroupMbid);
+      const stats = toAlbumStats(
+        releaseGroupMbid,
+        Number(row?.total_tracks || 0),
+        Number(row?.downloaded_tracks || 0),
+      );
+      setCached(albumStatsCache, releaseGroupCacheKey(releaseGroupMbid, slot), stats);
+      result.set(releaseGroupMbid, stats);
+    }
+  }
+
+  return result;
 }
 
 export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Map<string, ArtistDownloadStats> {

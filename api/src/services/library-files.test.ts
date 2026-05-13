@@ -12,6 +12,7 @@ let dbModule: typeof import("../database.js");
 let configModule: typeof import("./config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let artistPathsModule: typeof import("./artist-paths.js");
+let downloadStateModule: typeof import("./download-state.js");
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -41,6 +42,7 @@ before(async () => {
   configModule = await import("./config.js");
   libraryFilesModule = await import("./library-files.js");
   artistPathsModule = await import("./artist-paths.js");
+  downloadStateModule = await import("./download-state.js");
 
   writeTestConfig();
 });
@@ -168,4 +170,88 @@ test("backfillArtistPaths assigns unique folders when multiple legacy artists ar
     { id: 1, path: "Air" },
     { id: 2, path: "Air (2)" },
   ]);
+});
+
+test("upsertLibraryFile stores canonical MusicBrainz and provider identity for imported tracks", () => {
+  dbModule.db.prepare(`
+    INSERT INTO mb_artists (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+  dbModule.db.prepare(`
+    INSERT INTO mb_release_groups (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+  dbModule.db.prepare(`
+    INSERT INTO mb_releases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1);
+  dbModule.db.prepare(`
+    INSERT INTO mb_recordings (mbid, title)
+    VALUES (?, ?)
+  `).run("recording-mbid-1", "Bohemian Rhapsody");
+  dbModule.db.prepare(`
+    INSERT INTO mb_tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
+
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(1, "Queen", "artist-mbid-1", "Queen", 1);
+  dbModule.db.prepare(`
+    INSERT INTO albums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor, mbid, mb_release_group_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(10, 1, "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, "release-mbid-1", "rg-mbid-1");
+  dbModule.db.prepare(`
+    INSERT INTO media (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(100, 1, 10, "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, "track-mbid-1");
+
+  const filePath = path.join(configModule.Config.getMusicPath(), "Queen", "01 - Bohemian Rhapsody.flac");
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath,
+    libraryRoot: configModule.Config.getMusicPath(),
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+
+  const row = dbModule.db.prepare(`
+    SELECT
+      canonical_artist_mbid,
+      canonical_release_group_mbid,
+      canonical_release_mbid,
+      canonical_track_mbid,
+      canonical_recording_mbid,
+      provider,
+      provider_entity_type,
+      provider_id,
+      library_slot
+    FROM library_files
+    WHERE id = ?
+  `).get(id) as Record<string, string | null>;
+
+  assert.deepEqual(row, {
+    canonical_artist_mbid: "artist-mbid-1",
+    canonical_release_group_mbid: "rg-mbid-1",
+    canonical_release_mbid: "release-mbid-1",
+    canonical_track_mbid: "track-mbid-1",
+    canonical_recording_mbid: "recording-mbid-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "100",
+    library_slot: "stereo",
+  });
+
+  const stats = downloadStateModule.getReleaseGroupDownloadStatsMap(["rg-mbid-1"]).get("rg-mbid-1");
+  assert.equal(stats?.totalTracks, 1);
+  assert.equal(stats?.downloadedTracks, 1);
+  assert.equal(stats?.isDownloaded, true);
 });

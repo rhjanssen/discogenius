@@ -4,6 +4,7 @@ import { db } from "../database.js";
 import { Config } from "./config.js";
 import { embedVideoThumbnail } from "./audioUtils.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
+import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 
 export type ImportedDirectoryMapping = {
     destDir: string;
@@ -62,6 +63,9 @@ export async function finalizeImportedDirectories(params: {
     const upsertMovedSidecar = db.prepare(`
         INSERT INTO library_files (
             artist_id, album_id, media_id,
+            canonical_artist_mbid, canonical_release_group_mbid,
+            canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+            provider, provider_entity_type, provider_id, library_slot,
             file_path, relative_path, library_root,
             filename, extension, file_size, duration,
             file_type, quality, needs_rename,
@@ -69,6 +73,9 @@ export async function finalizeImportedDirectories(params: {
             modified_at, verified_at
         ) VALUES (
             @artistId, @albumId, @mediaId,
+            @canonicalArtistMbid, @canonicalReleaseGroupMbid,
+            @canonicalReleaseMbid, @canonicalTrackMbid, @canonicalRecordingMbid,
+            @provider, @providerEntityType, @providerId, @librarySlot,
             @filePath, @relativePath, @libraryRoot,
             @filename, @extension, @fileSize, 0,
             @fileType, @quality, 0,
@@ -79,6 +86,15 @@ export async function finalizeImportedDirectories(params: {
             artist_id = excluded.artist_id,
             album_id = excluded.album_id,
             media_id = excluded.media_id,
+            canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, library_files.canonical_artist_mbid),
+            canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, library_files.canonical_release_group_mbid),
+            canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, library_files.canonical_release_mbid),
+            canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, library_files.canonical_track_mbid),
+            canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, library_files.canonical_recording_mbid),
+            provider = COALESCE(excluded.provider, library_files.provider),
+            provider_entity_type = COALESCE(excluded.provider_entity_type, library_files.provider_entity_type),
+            provider_id = COALESCE(excluded.provider_id, library_files.provider_id),
+            library_slot = COALESCE(excluded.library_slot, library_files.library_slot),
             relative_path = excluded.relative_path,
             library_root = excluded.library_root,
             filename = excluded.filename,
@@ -170,10 +186,28 @@ export async function finalizeImportedDirectories(params: {
                     siblingMediaFiles.find((row) => path.parse(row.file_path).name === stem)
                     || (imageFileType === "video_thumbnail" ? siblingMediaFiles[0] || null : null);
 
+                const sidecarIdentity = resolveLibraryFileIdentity({
+                    artistId: mapping.artistId,
+                    albumId: linkedMedia?.album_id || mapping.albumId,
+                    mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
+                    fileType,
+                    quality: linkedMedia?.quality || null,
+                    libraryRoot: mapping.libraryRootPath,
+                });
+
                 upsertMovedSidecar.run({
                     artistId: mapping.artistId,
                     albumId: linkedMedia?.album_id || mapping.albumId,
                     mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
+                    canonicalArtistMbid: sidecarIdentity.canonicalArtistMbid,
+                    canonicalReleaseGroupMbid: sidecarIdentity.canonicalReleaseGroupMbid,
+                    canonicalReleaseMbid: sidecarIdentity.canonicalReleaseMbid,
+                    canonicalTrackMbid: sidecarIdentity.canonicalTrackMbid,
+                    canonicalRecordingMbid: sidecarIdentity.canonicalRecordingMbid,
+                    provider: sidecarIdentity.provider,
+                    providerEntityType: sidecarIdentity.providerEntityType,
+                    providerId: sidecarIdentity.providerId,
+                    librarySlot: sidecarIdentity.librarySlot,
                     filePath: targetPath,
                     relativePath,
                     libraryRoot: mapping.libraryRootPath,
