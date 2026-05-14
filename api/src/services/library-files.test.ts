@@ -121,6 +121,29 @@ test("resolveArtistFolderForPersistence disambiguates same-name artists outside 
   assert.equal(resolved, "Phoenix (2)");
 });
 
+test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
+  writeTestConfig({ artistFolder: "{artistName} {mbid-{artistMbId}}" });
+
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "artist-mbid-1",
+    "Bastille",
+    "artist-mbid-1",
+    "Bastille {mbid-artist-mbid-1}",
+    1,
+  );
+
+  const resolved = artistPathsModule.resolveArtistFolderForPersistence({
+    artistId: 4526830,
+    artistName: "Bastille",
+    artistMbId: "artist-mbid-1",
+  });
+
+  assert.equal(resolved, "Bastille {mbid-artist-mbid-1}");
+});
+
 test("resolveArtistFolderForPersistence avoids nested folder collisions for generated artist paths", () => {
   writeTestConfig({ artistFolder: "Artists/{artistName}" });
 
@@ -145,6 +168,19 @@ test("shouldReapplyArtistPathTemplate detects legacy generated folders once arti
     artistName: "Queen",
     artistMbId: "artist-mbid-1",
     existingPath: "Queen",
+  });
+
+  assert.equal(shouldReapply, true);
+});
+
+test("shouldReapplyArtistPathTemplate detects obsolete provider-id disambiguators for canonical artists", () => {
+  writeTestConfig({ artistFolder: "{artistName} {mbid-{artistMbId}}" });
+
+  const shouldReapply = artistPathsModule.shouldReapplyArtistPathTemplate({
+    artistId: 4526830,
+    artistName: "Bastille",
+    artistMbId: "artist-mbid-1",
+    existingPath: "Bastille {mbid-artist-mbid-1} (4526830)",
   });
 
   assert.equal(shouldReapply, true);
@@ -254,4 +290,119 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
   assert.equal(stats?.totalTracks, 1);
   assert.equal(stats?.downloadedTracks, 1);
   assert.equal(stats?.isDownloaded, true);
+});
+
+test("upsertLibraryFile merges duplicate path and media identity rows during rescan", () => {
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, path, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run(1, "Queen", "Queen", 1);
+  dbModule.db.prepare(`
+    INSERT INTO albums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(10, 1, "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 2, 1, 0, 3551, 1);
+  dbModule.db.prepare(`
+    INSERT INTO media (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    100, 1, 10, "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1,
+    101, 1, 10, "Love of My Life", 2, 1, 0, "Track", "LOSSLESS", 219, 1,
+  );
+
+  const root = configModule.Config.getMusicPath();
+  const targetPath = path.join(root, "Queen", "01 - Bohemian Rhapsody.flac");
+  const stalePath = path.join(root, "Queen", "old.flac");
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, "audio");
+  fs.writeFileSync(stalePath, "audio");
+
+  dbModule.db.prepare(`
+    INSERT INTO library_files (
+      artist_id, album_id, media_id, file_path, relative_path, library_root,
+      filename, extension, file_size, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    1, 10, 101, targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
+    1, 10, 100, stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
+  );
+
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: targetPath,
+    libraryRoot: root,
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+
+  const rows = dbModule.db.prepare(`
+    SELECT id, media_id, file_path
+    FROM library_files
+    ORDER BY id
+  `).all() as Array<{ id: number; media_id: number; file_path: string }>;
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.id, id);
+  assert.equal(rows[0]?.media_id, 100);
+  assert.equal(rows[0]?.file_path, targetPath);
+});
+
+test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, path, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run(1, "Queen", "Queen", 1);
+  dbModule.db.prepare(`
+    INSERT INTO albums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    10, 1, "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1,
+    11, 1, "Sheer Heart Attack", "1974-11-08", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1,
+  );
+
+  const root = configModule.Config.getMusicPath();
+  const targetPath = path.join(root, "Queen", "A Night at the Opera", "cover.jpg");
+  const stalePath = path.join(root, "Queen", "old-cover.jpg");
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, "cover");
+  fs.writeFileSync(stalePath, "cover");
+
+  dbModule.db.prepare(`
+    INSERT INTO library_files (
+      artist_id, album_id, media_id, file_path, relative_path, library_root,
+      filename, extension, file_size, file_type, quality
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL), (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)
+  `).run(
+    1, 11, targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "jpg", 5, "cover",
+    1, 10, stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "jpg", 5, "cover",
+  );
+
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: null,
+    filePath: targetPath,
+    libraryRoot: root,
+    fileType: "cover",
+    quality: null,
+  });
+
+  const rows = dbModule.db.prepare(`
+    SELECT id, album_id, file_type, file_path
+    FROM library_files
+    ORDER BY id
+  `).all() as Array<{ id: number; album_id: number; file_type: string; file_path: string }>;
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.id, id);
+  assert.equal(rows[0]?.album_id, 10);
+  assert.equal(rows[0]?.file_type, "cover");
+  assert.equal(rows[0]?.file_path, targetPath);
 });

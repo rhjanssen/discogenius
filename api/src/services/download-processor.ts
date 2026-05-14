@@ -840,11 +840,28 @@ export class DownloadProcessor {
 
             // Organize into library (dispatched to the import/finalization queue)
             TaskQueueService.addJob(JobTypes.ImportDownload, {
+                provider: payload.provider,
+                providerId: payload.providerId ?? tidalId,
+                releaseGroupMbid: payload.releaseGroupMbid,
+                canonicalTrackMbid: payload.canonicalTrackMbid,
+                canonicalRecordingMbid: payload.canonicalRecordingMbid,
+                slot: payload.slot,
                 type,
                 tidalId,
                 path: this.currentDownloadPath,
                 quality: payload.quality ?? null,
                 qualityProfile: payload.qualityProfile,
+                title: payload.title,
+                artist: payload.artist,
+                artists: payload.artists,
+                artistId: payload.artistId,
+                artist_id: payload.artist_id,
+                albumId: payload.albumId,
+                album_id: payload.album_id,
+                albumTitle: payload.albumTitle,
+                album_title: payload.album_title,
+                cover: payload.cover,
+                url: payload.url,
                 resolved,
                 originalJobId: job.id
             }, tidalId, Math.max(job.priority, 100), job.trigger, job.queue_order);

@@ -12,6 +12,7 @@ export enum AppEvent {
     JOB_UPDATED = 'job.updated',
     JOB_DELETED = 'job.deleted',
     QUEUE_CLEARED = 'queue.cleared',
+    HISTORY_ADDED = 'history.added',
 
     // Scanner Events
     ARTIST_SCANNED = 'artist.scanned',
@@ -81,6 +82,7 @@ export interface AppEventPayloadMap {
     [AppEvent.JOB_UPDATED]: JobEventPayload;
     [AppEvent.JOB_DELETED]: JobEventPayload;
     [AppEvent.QUEUE_CLEARED]: undefined;
+    [AppEvent.HISTORY_ADDED]: Record<string, unknown>;
     [AppEvent.ARTIST_SCANNED]: ArtistScannedEventPayload;
     [AppEvent.ALBUM_SCANNED]: Record<string, unknown>;
     [AppEvent.RESCAN_COMPLETED]: RescanCompletedEventPayload;

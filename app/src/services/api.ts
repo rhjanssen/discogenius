@@ -127,6 +127,23 @@ export type StreamingProviderStatus = {
   authenticated: boolean;
   remoteCatalogAvailable: boolean;
   capabilities: {
+    catalogSearch: boolean;
+    artistCatalog: boolean;
+    followedArtists: boolean;
+    playlists: boolean;
+    audioPreviews: boolean;
+    audioDownloads: boolean;
+    lossyStereo: boolean;
+    losslessStereo: boolean;
+    hiResStereo: boolean;
+    spatialAudio: boolean;
+    lyrics: boolean;
+    musicVideos: boolean;
+    videoPreviews: boolean;
+    videoDownloads: boolean;
+    artwork: boolean;
+    editorialMetadata: boolean;
+    providerIds: boolean;
     hasVideo: boolean;
     hasLossless?: boolean;
     hasSpatialAudio?: boolean;
@@ -142,6 +159,27 @@ export type StreamingProviderStatus = {
     canDownloadMusic: boolean;
     canDownloadVideos: boolean;
   };
+};
+
+export type QueueDownloadRequest = {
+  url?: string | null;
+  type: string;
+  tidalId?: string | null;
+  provider?: string | null;
+  providerId?: string | null;
+  releaseGroupMbid?: string | null;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
+  slot?: string | null;
+  title?: string | null;
+  artist?: string | null;
+  artists?: string[];
+  albumId?: string | null;
+  albumTitle?: string | null;
+  artistId?: string | null;
+  cover?: string | null;
+  quality?: string | null;
+  description?: string | null;
 };
 
 class ApiClient {
@@ -818,11 +856,22 @@ class ApiClient {
    */
   async signTrackPreviewStream(
     trackId: string,
-    options?: { provider?: string | null; quality?: string | null },
+    options?: {
+      provider?: string | null;
+      quality?: string | null;
+      releaseGroupMbid?: string | null;
+      canonicalTrackMbid?: string | null;
+      canonicalRecordingMbid?: string | null;
+      slot?: string | null;
+    },
   ): Promise<string> {
     const queryParams = new URLSearchParams();
     if (options?.provider) queryParams.set('provider', options.provider);
     if (options?.quality) queryParams.set('quality', options.quality);
+    if (options?.releaseGroupMbid) queryParams.set('releaseGroupMbid', options.releaseGroupMbid);
+    if (options?.canonicalTrackMbid) queryParams.set('canonicalTrackMbid', options.canonicalTrackMbid);
+    if (options?.canonicalRecordingMbid) queryParams.set('canonicalRecordingMbid', options.canonicalRecordingMbid);
+    if (options?.slot) queryParams.set('slot', options.slot);
     const query = queryParams.toString();
     const data = await this.request(`/playback/stream/sign/${trackId}${query ? `?${query}` : ''}`);
     // The returned url is relative (/api/playback/stream/play/...), make it absolute
@@ -1081,10 +1130,10 @@ class ApiClient {
     return this.request(`/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
   }
 
-  async addToQueue(url: string, type: string, tidalId?: string) {
+  async addToQueue(url: string | null | undefined, type: string, tidalId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
     return this.request('/queue', {
       method: 'POST',
-      body: JSON.stringify({ url, type, tidalId }),
+      body: JSON.stringify({ ...payload, url, type, tidalId }),
     });
   }
 
@@ -1316,6 +1365,7 @@ class ApiClient {
 
     const knownEvents = [
       'job.added', 'job.updated', 'job.deleted', 'queue.cleared',
+      'history.added',
       'artist.scanned', 'album.scanned', 'rescan.completed', 'config.updated',
       'file.added', 'file.deleted', 'file.upgraded'
     ];

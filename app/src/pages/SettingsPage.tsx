@@ -42,11 +42,10 @@ import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQuery } from "@tanstack/react-query";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { api } from "@/services/api";
+import { api, type StreamingProviderStatus } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
-import { QualityBadge } from "@/components/ui/QualityBadge";
 
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
@@ -539,8 +538,9 @@ const useStyles = makeStyles({
     },
     capabilityGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(180px, 1fr))',
-        gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+        gridTemplateColumns: 'repeat(2, minmax(160px, 1fr))',
+        columnGap: tokens.spacingHorizontalL,
+        rowGap: tokens.spacingVerticalXS,
         width: '100%',
         [MEDIA.mobile]: {
             gridTemplateColumns: '1fr',
@@ -549,12 +549,11 @@ const useStyles = makeStyles({
     capabilityRow: {
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: tokens.spacingHorizontalM,
+        gap: tokens.spacingHorizontalS,
         minHeight: '28px',
     },
     capabilityLabel: {
-        color: tokens.colorNeutralForeground1,
+        color: tokens.colorNeutralForeground2,
     },
     capabilityIconOn: {
         color: tokens.colorPaletteGreenForeground1,
@@ -566,9 +565,12 @@ const useStyles = makeStyles({
     },
     capabilityValue: {
         display: 'flex',
-        justifyContent: 'flex-end',
+        justifyContent: 'center',
         alignItems: 'center',
-        minWidth: '34px',
+        width: '20px',
+        height: '20px',
+        order: -1,
+        flexShrink: 0,
     },
     providerActionRow: {
         display: 'flex',
@@ -1477,6 +1479,128 @@ const SettingsPage = () => {
         { key: "include_remix", title: "Remixes", description: "Remix albums and collections" },
     ] as const;
 
+    const getProviderCapabilities = (provider: StreamingProviderStatus) => [
+        { label: "Catalog search", enabled: Boolean(provider.capabilities.catalogSearch) },
+        { label: "Artist catalog", enabled: Boolean(provider.capabilities.artistCatalog) },
+        { label: "Followed artists", enabled: Boolean(provider.capabilities.followedArtists) },
+        { label: "Playlists", enabled: Boolean(provider.capabilities.playlists) },
+        { label: "Audio previews", enabled: Boolean(provider.capabilities.audioPreviews) },
+        { label: "Audio downloads", enabled: Boolean(provider.capabilities.audioDownloads) },
+        { label: "Lossy stereo", enabled: Boolean(provider.capabilities.lossyStereo) },
+        { label: "Lossless stereo", enabled: Boolean(provider.capabilities.losslessStereo) },
+        { label: "Hi-res stereo", enabled: Boolean(provider.capabilities.hiResStereo) },
+        { label: "Spatial audio", enabled: Boolean(provider.capabilities.spatialAudio) },
+        { label: "Lyrics", enabled: Boolean(provider.capabilities.lyrics) },
+        { label: "Music videos", enabled: Boolean(provider.capabilities.musicVideos) },
+        { label: "Video previews", enabled: Boolean(provider.capabilities.videoPreviews) },
+        { label: "Video downloads", enabled: Boolean(provider.capabilities.videoDownloads) },
+        { label: "Artwork", enabled: Boolean(provider.capabilities.artwork) },
+        { label: "Editorial metadata", enabled: Boolean(provider.capabilities.editorialMetadata) },
+        { label: "Provider IDs", enabled: Boolean(provider.capabilities.providerIds) },
+    ];
+
+    const streamingProvidersSection = (
+        <SettingsSection
+            id="streaming-providers"
+            title="Streaming Providers"
+            description="Manage availability, previews, followed-artist import, playlist import, downloads, and provider capabilities."
+            className={styles.section}
+            actions={
+                <Button
+                    appearance="outline"
+                    icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
+                    onClick={handleImportFollowed}
+                    disabled={importing || !providerConnected}
+                    className={styles.inlineActionButton}
+                >
+                    {importing ? "Importing..." : "Import followed"}
+                </Button>
+            }
+        >
+            <div className={styles.card}>
+                {(streamingProviders?.providers ?? []).map((provider) => {
+                    const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
+
+                    return (
+                        <React.Fragment key={provider.id}>
+                            <div className={styles.profileRow}>
+                                <div className={styles.providerStatusRow}>
+                                    <div className={styles.providerIconBox}>
+                                        {icon ? (
+                                            <img src={icon} alt="" className={styles.providerIcon} />
+                                        ) : (
+                                            <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
+                                        )}
+                                    </div>
+                                    <div className={styles.profileDetails}>
+                                        <div className={styles.optionIconRow}>
+                                            <Text weight="semibold" size={400}>{provider.name}</Text>
+                                            <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
+                                                {provider.authenticated ? "Connected" : "Not connected"}
+                                            </Badge>
+                                            {provider.isDefault ? (
+                                                <Badge appearance="tint" color="informative">Default</Badge>
+                                            ) : null}
+                                        </div>
+                                        {provider.id === "tidal" && accountSettings?.username ? (
+                                            <Caption1 className={styles.mutedText}>
+                                                Signed in as {accountSettings.fullName || accountSettings.username}
+                                            </Caption1>
+                                        ) : (
+                                            <Caption1 className={styles.mutedText}>
+                                                {provider.authenticated
+                                                    ? "Provider features are available."
+                                                    : "Connect this provider to enable provider-backed features."}
+                                            </Caption1>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className={styles.profileActions}>
+                                    {provider.management.canAuthenticate && !provider.authenticated ? (
+                                        <Button
+                                            appearance="primary"
+                                            className={styles.signOutButton}
+                                            onClick={() => navigate("/auth")}
+                                        >
+                                            Connect
+                                        </Button>
+                                    ) : null}
+                                    {provider.management.canDisconnect && provider.authenticated ? (
+                                        <Button
+                                            appearance="outline"
+                                            className={styles.signOutButton}
+                                            icon={<DoorArrowLeft24Regular />}
+                                            onClick={() => handleDisconnectProvider(provider.id, provider.name)}
+                                        >
+                                            Disconnect
+                                        </Button>
+                                    ) : null}
+                                </div>
+                            </div>
+                            <div className={styles.providerActionRow}>
+                                <div className={styles.rowContent}>
+                                    <Text weight="semibold">Capabilities</Text>
+                                    <div className={styles.capabilityGrid}>
+                                        {getProviderCapabilities(provider).map((capability) => (
+                                            <div key={capability.label} className={styles.capabilityRow}>
+                                                <span className={styles.capabilityValue}>
+                                                    {capability.enabled
+                                                        ? <Checkmark24Regular className={styles.capabilityIconOn} />
+                                                        : <Dismiss24Regular className={styles.capabilityIconOff} />}
+                                                </span>
+                                                <Text size={200} className={styles.capabilityLabel}>{capability.label}</Text>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </React.Fragment>
+                    );
+                })}
+            </div>
+        </SettingsSection>
+    );
+
     return (
         <div className={styles.container}>
             <div className={styles.header}>
@@ -1488,125 +1612,6 @@ const SettingsPage = () => {
 
             <div className={styles.sectionsContainer} data-testid="settings-sections">
 
-
-                <SettingsSection
-                    id="streaming-providers"
-                    title="Streaming Providers"
-                    description="Manage availability, previews, followed-artist import, playlist import, downloads, and provider capabilities."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        {(streamingProviders?.providers ?? []).map((provider) => {
-                            const capabilityRows = [
-                                { label: "Lossless audio", enabled: Boolean(provider.capabilities.hasLossless) },
-                                { label: "Spatial audio", enabled: Boolean(provider.capabilities.hasSpatialAudio), value: provider.capabilities.spatialFormats?.length ? provider.capabilities.spatialFormats.map((format) => <QualityBadge key={format} quality={format} size="small" />) : null },
-                                { label: "Music videos", enabled: Boolean(provider.capabilities.hasVideo) },
-                                { label: "Track previews", enabled: Boolean(provider.management.canPreviewTracks) },
-                                { label: "Video previews", enabled: Boolean(provider.management.canPreviewVideos) },
-                                { label: "Followed artists", enabled: Boolean(provider.management.canImportFollowedArtists) },
-                                { label: "Playlists", enabled: Boolean(provider.management.canImportPlaylists) },
-                                { label: "Music downloads", enabled: Boolean(provider.management.canDownloadMusic) },
-                                { label: "Video downloads", enabled: Boolean(provider.management.canDownloadVideos) },
-                            ];
-                            const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
-
-                            return (
-                                <React.Fragment key={provider.id}>
-                                    <div className={styles.profileRow}>
-                                        <div className={styles.providerStatusRow}>
-                                            <div className={styles.providerIconBox}>
-                                                {icon ? (
-                                                    <img src={icon} alt="" className={styles.providerIcon} />
-                                                ) : (
-                                                    <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
-                                                )}
-                                            </div>
-                                            <div className={styles.profileDetails}>
-                                                <div className={styles.optionIconRow}>
-                                                    <Text weight="semibold" size={400}>{provider.name}</Text>
-                                                    <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
-                                                        {provider.authenticated ? "Connected" : "Not connected"}
-                                                    </Badge>
-                                                    {provider.isDefault ? (
-                                                        <Badge appearance="tint" color="informative">Default</Badge>
-                                                    ) : null}
-                                                </div>
-                                                {provider.id === "tidal" && accountSettings?.username ? (
-                                                    <Caption1 className={styles.mutedText}>
-                                                        Signed in as {accountSettings.fullName || accountSettings.username}
-                                                    </Caption1>
-                                                ) : (
-                                                    <Caption1 className={styles.mutedText}>
-                                                        {provider.authenticated
-                                                            ? "Provider features are available."
-                                                            : "Connect this provider to enable provider-backed features."}
-                                                    </Caption1>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className={styles.profileActions}>
-                                            {provider.management.canAuthenticate && !provider.authenticated ? (
-                                                <Button
-                                                    appearance="primary"
-                                                    className={styles.signOutButton}
-                                                    onClick={() => navigate("/auth")}
-                                                >
-                                                    Connect
-                                                </Button>
-                                            ) : null}
-                                            {provider.management.canDisconnect && provider.authenticated ? (
-                                                <Button
-                                                    appearance="outline"
-                                                    className={styles.signOutButton}
-                                                    icon={<DoorArrowLeft24Regular />}
-                                                    onClick={() => handleDisconnectProvider(provider.id, provider.name)}
-                                                >
-                                                    Disconnect
-                                                </Button>
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                    <div className={styles.providerActionRow}>
-                                        <div className={styles.rowContent}>
-                                            <Text weight="semibold">Capabilities</Text>
-                                            <div className={styles.capabilityGrid}>
-                                                {capabilityRows.map((capability) => (
-                                                    <div key={capability.label} className={styles.capabilityRow}>
-                                                        <Text size={200} className={styles.capabilityLabel}>{capability.label}</Text>
-                                                        <span className={styles.capabilityValue}>
-                                                            {capability.value && capability.enabled
-                                                                ? capability.value
-                                                                : capability.enabled
-                                                                    ? <Checkmark24Regular className={styles.capabilityIconOn} />
-                                                                    : <Dismiss24Regular className={styles.capabilityIconOff} />}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </React.Fragment>
-                            );
-                        })}
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Import Followed Artists</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Resolve followed provider artists to MusicBrainz artists, then queue Lidarr-style metadata intake.
-                                </Text>
-                            </div>
-                            <Button
-                                appearance="outline"
-                                icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
-                                onClick={handleImportFollowed}
-                                disabled={importing || !providerConnected}
-                                className={styles.inlineActionButton}
-                            >
-                                {importing ? "Importing..." : "Import"}
-                            </Button>
-                        </div>
-                    </div>
-                </SettingsSection>
 
                 {isAuthActive ? (
                     <SettingsSection
@@ -2178,13 +2183,6 @@ const SettingsPage = () => {
                         </div>
 
                         {renderToggleRow({
-                            title: "Embed TIDAL URL",
-                            description: "Write the TIDAL track URL into audio metadata",
-                            checked: metadataSettings?.write_tidal_url ?? true,
-                            onChange: (checked) => updateMetadataSettings({ write_tidal_url: checked }),
-                        })}
-
-                        {renderToggleRow({
                             title: "Audio Fingerprinting",
                             description: "Generate fpcalc fingerprints and match tracks via AcoustID and MusicBrainz",
                             checked: metadataSettings?.enable_fingerprinting === true,
@@ -2636,6 +2634,8 @@ const SettingsPage = () => {
                         </RadioGroup>
                     </div>
                 </SettingsSection>
+
+                {streamingProvidersSection}
 
                 {/* About */}
                 <SettingsSection

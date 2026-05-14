@@ -25,7 +25,6 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { getTidalImage, getArtistPicture } from "@/utils/tidalImages";
-import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -328,10 +327,18 @@ const VideoPage = () => {
     });
 
     const handleDownload = async () => {
-        const url = tidalUrl("video", videoId!);
-        await addToQueue(url, "video", videoId!, {
+        await addToQueue(null, "video", videoId!, {
             successTitle: "Download queued",
             successDescription: video?.title || "Video",
+            payload: {
+                provider: "tidal",
+                providerId: videoId!,
+                title: video?.title ?? null,
+                artist: video?.artist_name ?? null,
+                artistId: video?.artist_id ?? null,
+                cover: video?.cover ?? video?.cover_id ?? null,
+                quality: video?.quality ?? null,
+            },
         });
     };
 

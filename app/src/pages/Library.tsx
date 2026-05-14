@@ -69,7 +69,6 @@ import {
   dispatchLibraryUpdated,
   dispatchMonitorStateChanged,
 } from "@/utils/appEvents";
-import { tidalUrl } from "@/utils/tidalUrl";
 import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 
@@ -634,7 +633,7 @@ const Library = () => {
     }
 
     const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableAlbums, async (album: any) => {
-      await addToQueue(tidalUrl("album", album.id), "album", album.id);
+      await api.addAlbum(String(album.id));
     });
 
     if (succeeded > 0) {
@@ -688,7 +687,20 @@ const Library = () => {
     }
 
     const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableTracks, async (track: any) => {
-      await addToQueue(tidalUrl("track", track.id), "track", track.id);
+      const providerTrackId = String(track.preview_provider_track_id ?? track.provider_id ?? track.providerId ?? track.id ?? "").trim();
+      await addToQueue(null, "track", providerTrackId, {
+        payload: {
+          provider: track.preview_provider ?? track.provider ?? "tidal",
+          providerId: providerTrackId,
+          title: track.title,
+          artist: track.artist_name,
+          albumId: track.album_id,
+          albumTitle: track.album_title,
+          artistId: track.artist_id,
+          cover: track.album_cover ?? track.cover_url ?? null,
+          quality: track.quality ?? null,
+        },
+      });
     });
 
     if (succeeded > 0) {
@@ -742,7 +754,19 @@ const Library = () => {
     }
 
     const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableVideos, async (video: any) => {
-      await addToQueue(tidalUrl("video", video.id), "video", video.id);
+      const providerVideoId = String(video.provider_id ?? video.providerId ?? video.id ?? "").trim();
+      await addToQueue(null, "video", providerVideoId, {
+        payload: {
+          provider: video.provider ?? "tidal",
+          providerId: providerVideoId,
+          title: video.title,
+          artist: video.artist_name,
+          albumId: video.album_id,
+          artistId: video.artist_id,
+          cover: video.cover ?? video.cover_id ?? null,
+          quality: video.quality ?? null,
+        },
+      });
     });
 
     if (succeeded > 0) {
@@ -798,8 +822,7 @@ const Library = () => {
     e.stopPropagation(); // Prevent card click navigation
 
 
-    const albumUrl = tidalUrl('album', album.id);
-    await addToQueue(albumUrl, 'album', album.id);
+    await api.addAlbum(String(album.id));
   };
 
   const { setBrandKeyColor } = useTheme();
@@ -920,7 +943,7 @@ const Library = () => {
   // Render a single artist card
   const renderArtistCard = (artist: any) => {
     const albumCount = artist.album_count ?? 0;
-    const imageUrl = artist.cover_image_url || artist.picture || null;
+    const imageUrl = artist.picture || artist.cover_image_url || null;
     const itemProgress = getProgressByTidalId(String(artist.id));
     return (
       <MediaCard
@@ -1007,7 +1030,7 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (artist: any) => {
-        const src = artist.cover_image_url || artist.picture;
+        const src = artist.picture || artist.cover_image_url;
         return src ? (
           <img src={src} alt={artist.name} className={dgCell.thumbnailCircle} />
         ) : (
@@ -1162,9 +1185,8 @@ const Library = () => {
     e.stopPropagation();
 
 
-    const albumUrl = tidalUrl('album', album.id);
-    await addToQueue(albumUrl, 'album', album.id);
-  }, [addToQueue]);
+    await api.addAlbum(String(album.id));
+  }, []);
 
   const albumColumns = useMemo<DataGridColumn[]>(() => [
     {
@@ -1313,7 +1335,17 @@ const Library = () => {
                 icon: <ArrowDownload24Regular />,
                 onClick: (event) => {
                   event.stopPropagation();
-                  void addToQueue(tidalUrl("video", video.id), "video", video.id);
+                  const providerVideoId = String(video.provider_id ?? video.providerId ?? video.id ?? "").trim();
+                  void addToQueue(null, "video", providerVideoId, {
+                    payload: {
+                      provider: video.provider ?? "tidal",
+                      providerId: providerVideoId,
+                      title: video.title,
+                      artist: video.artist_name,
+                      cover: video.cover ?? video.cover_id ?? null,
+                      quality: video.quality ?? null,
+                    },
+                  });
                 },
                 hidden: (video.is_downloaded ?? video.downloaded) ? true : false,
               },
@@ -2011,7 +2043,19 @@ const Library = () => {
                     videos={videos}
                     loading={videosLoading}
                     onToggleMonitor={(video) => toggleVideoMonitor(video.id, !video.is_monitored)}
-                    onDownload={(video) => void addToQueue(tidalUrl("video", video.id), "video", video.id)}
+                    onDownload={(video) => {
+                      const providerVideoId = String((video as any).provider_id ?? (video as any).providerId ?? video.id ?? "").trim();
+                      void addToQueue(null, "video", providerVideoId, {
+                        payload: {
+                          provider: (video as any).provider ?? "tidal",
+                          providerId: providerVideoId,
+                          title: video.title,
+                          artist: (video as any).artist_name,
+                          cover: (video as any).cover ?? (video as any).cover_id ?? null,
+                          quality: video.quality ?? null,
+                        },
+                      });
+                    }}
                     onOpenVideo={(video) => navigate(`/video/${video.id}`)}
                   />
                 ) : (

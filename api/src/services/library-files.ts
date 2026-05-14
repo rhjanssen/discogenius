@@ -719,6 +719,14 @@ export class LibraryFilesService {
       `).get(params.mediaId, params.fileType, params.filePath) as ExistingLibraryFileIdentity | undefined;
 
       if (existingRow) {
+        const rowToUpdate = existingPathRow && existingPathRow.id !== existingRow.id
+          ? existingPathRow
+          : existingRow;
+
+        if (rowToUpdate.id !== existingRow.id) {
+          db.prepare("DELETE FROM library_files WHERE id = ?").run(existingRow.id);
+        }
+
         db.prepare(`
           UPDATE library_files
           SET artist_id = ?,
@@ -786,19 +794,19 @@ export class LibraryFilesService {
           params.codec || null,
           params.channels || null,
           params.fingerprint || null,
-          existingRow.id,
+          rowToUpdate.id,
         );
 
         db.prepare(`
           DELETE FROM library_files
           WHERE media_id = ? AND file_type = ? AND id != ?
-        `).run(params.mediaId, params.fileType, existingRow.id);
+        `).run(params.mediaId, params.fileType, rowToUpdate.id);
 
         if (params.removeFromUnmapped !== false) {
           db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(params.filePath);
         }
 
-        if (hasMeaningfulLibraryFileChange(existingRow, {
+        if (hasMeaningfulLibraryFileChange(rowToUpdate, {
           artistId: params.artistId,
           albumId: params.albumId || null,
           mediaId: params.mediaId || null,
@@ -817,12 +825,12 @@ export class LibraryFilesService {
             filePath: params.filePath,
             libraryRoot: params.libraryRoot,
             quality: params.quality || null,
-            previousPath: existingRow.file_path,
-            previousQuality: existingRow.quality || null,
+            previousPath: rowToUpdate.file_path,
+            previousQuality: rowToUpdate.quality || null,
           });
         }
 
-        return existingRow.id;
+        return rowToUpdate.id;
       }
     }
 
@@ -842,6 +850,17 @@ export class LibraryFilesService {
           WHERE id = ?
           LIMIT 1
         `).get(existingTrackedAssetId) as ExistingLibraryFileIdentity | undefined;
+        const rowToUpdate = existingPathRow && existingPathRow.id !== existingTrackedAssetId
+          ? existingPathRow
+          : existingTrackedAsset;
+
+        if (!rowToUpdate) {
+          return existingTrackedAssetId;
+        }
+
+        if (rowToUpdate.id !== existingTrackedAssetId) {
+          db.prepare("DELETE FROM library_files WHERE id = ?").run(existingTrackedAssetId);
+        }
 
         db.prepare(`
           UPDATE library_files
@@ -910,7 +929,7 @@ export class LibraryFilesService {
           params.codec || null,
           params.channels || null,
           params.fingerprint || null,
-          existingTrackedAssetId,
+          rowToUpdate.id,
         );
 
         if (params.removeFromUnmapped !== false) {
@@ -925,8 +944,8 @@ export class LibraryFilesService {
         });
 
         if (
-          existingTrackedAsset
-          && hasMeaningfulLibraryFileChange(existingTrackedAsset, {
+          rowToUpdate
+          && hasMeaningfulLibraryFileChange(rowToUpdate, {
             artistId: params.artistId,
             albumId: params.albumId || null,
             mediaId: params.mediaId || null,
@@ -938,7 +957,7 @@ export class LibraryFilesService {
           })
         ) {
           this.emitFileUpgraded({
-            libraryFileId: existingTrackedAsset.id,
+            libraryFileId: rowToUpdate.id,
             artistId: params.artistId,
             albumId: params.albumId || null,
             mediaId: params.mediaId || null,
@@ -946,12 +965,12 @@ export class LibraryFilesService {
             filePath: params.filePath,
             libraryRoot: params.libraryRoot,
             quality: params.quality || null,
-            previousPath: existingTrackedAsset.file_path,
-            previousQuality: existingTrackedAsset.quality || null,
+            previousPath: rowToUpdate.file_path,
+            previousQuality: rowToUpdate.quality || null,
           });
         }
 
-        return existingTrackedAssetId;
+        return rowToUpdate.id;
       }
     }
 

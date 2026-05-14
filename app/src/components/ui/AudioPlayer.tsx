@@ -24,11 +24,12 @@ const useStyles = makeStyles({
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackgroundAlpha2} 74%, ${tokens.colorBrandBackground2} 26%)`,
-        backdropFilter: "blur(10px)",
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackgroundAlpha2} 82%, transparent)`,
+        backdropFilter: "blur(14px) saturate(115%)",
+        WebkitBackdropFilter: "blur(14px) saturate(115%)",
         borderRadius: tokens.borderRadiusMedium,
-        border: `${tokens.strokeWidthThin} solid color-mix(in srgb, ${tokens.colorNeutralStrokeAlpha2} 64%, ${tokens.colorBrandStroke1} 36%)`,
-        boxShadow: `0 8px 24px color-mix(in srgb, ${tokens.colorBrandForeground1} 16%, transparent)`,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+        boxShadow: tokens.shadow4,
         width: "100%",
         boxSizing: "border-box",
         "@media (min-width: 640px)": {
@@ -37,9 +38,9 @@ const useStyles = makeStyles({
     },
     playButton: {
         flexShrink: 0,
-        color: tokens.colorBrandForeground1,
+        color: tokens.colorNeutralForeground1,
         ":hover": {
-            color: tokens.colorBrandForeground2,
+            color: tokens.colorNeutralForeground1,
             backgroundColor: tokens.colorNeutralBackgroundAlpha2,
         },
         ":active": {
@@ -67,7 +68,7 @@ const useStyles = makeStyles({
     scrubberTrack: {
         width: "100%",
         height: "4px",
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralStroke2} 70%, ${tokens.colorBrandStroke1} 30%)`,
+        backgroundColor: tokens.colorNeutralStroke2,
         borderRadius: tokens.borderRadiusCircular,
         position: "relative",
         overflow: "hidden",
@@ -90,6 +91,11 @@ const useStyles = makeStyles({
         transition: "transform 0.1s ease",
         ":hover": {
             transform: "translate(-50%, -50%) scale(1.2)",
+        },
+        ":focus-visible": {
+            outlineStyle: "solid",
+            outlineWidth: tokens.strokeWidthThick,
+            outlineColor: tokens.colorBrandStroke1,
         },
     },
     audioElement: {

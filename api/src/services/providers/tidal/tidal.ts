@@ -8,6 +8,7 @@ import {
   refreshStoredTidalToken,
 } from "./tidal-auth.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
+const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 const TIDAL_HIFI_BASE = "https://api.tidalhifi.com/v1";
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1/oauth2";
 const TIDAL_CLIENT_TOKEN = "wdgaB1CilGA-S_sj"; // Public client token used by TIDAL web clients
@@ -92,6 +93,7 @@ export function saveToken(token: TidalToken) {
 
 let lastRefreshAttempt = 0;
 const REFRESH_COOLDOWN_MS = 60_000;
+let tokenRefreshPromise: Promise<void> | null = null;
 
 let lastUserInfoCache: any = null;
 let lastUserInfoFetchedAt = 0;
@@ -636,55 +638,8 @@ export function shouldRefreshToken(token: TidalToken | null): boolean {
  * Base Tidal API request with auth handling
  */
 export async function tidalApiRequest(endpoint: string): Promise<unknown> {
-  const token = loadToken();
-  if (!token) throw new Error("Not authenticated");
-
-  const doFetch = async (accessToken: string) => {
-    const url = `${TIDAL_API_BASE}${endpoint}`;
-    console.log(`[TidalAPI] Requesting: ${url}`);
-    const response = await tidalFetchWithRetry(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        "X-Tidal-Token": TIDAL_CLIENT_TOKEN,
-      },
-    }, url);
-    console.log(`[TidalAPI] Response: ${response.status} ${response.statusText} for ${url}`);
-    return response;
-  };
-
-  let response = await doFetch(token.access_token);
-
-  if (!response.ok && response.status === 401) {
-    console.log('[TidalAPI] 401 Unauthorized, attempting to refresh token...');
-    await refreshTidalToken(true);
-    const newToken = loadToken();
-    if (newToken) {
-      response = await doFetch(newToken.access_token);
-    }
-
-    if (!response.ok && response.status === 401) {
-      throw new Error("Tidal API error: Unauthorized - Token expired and refresh failed");
-    }
-  }
-
-  if (!response.ok) {
-    let detail = `Tidal API error: ${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json() as any;
-      if (body?.userMessage) detail = body.userMessage;
-      else if (body?.status || body?.subStatus) {
-        detail = `Tidal API error: ${body.status || response.status} (subStatus ${body.subStatus})`;
-      }
-    } catch {
-      /* ignore */
-    }
-    const error = new Error(detail) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-
-  return response.json();
+  const response = await tidalRawRequest(TIDAL_API_BASE, endpoint, {}, `v1:${endpoint}`);
+  return parseTidalJsonResponse(response);
 }
 
 /**
@@ -701,6 +656,76 @@ export async function refreshTidalToken(force: boolean = false): Promise<void> {
 
   console.log('🕖 [TIDAL] Refreshing TIDAL token...');
   await refreshStoredTidalToken();
+}
+
+async function refreshTidalTokenOnce(force: boolean = true): Promise<void> {
+  if (!tokenRefreshPromise) {
+    tokenRefreshPromise = refreshTidalToken(force).finally(() => {
+      tokenRefreshPromise = null;
+    });
+  }
+
+  return tokenRefreshPromise;
+}
+
+async function tidalRawRequest(
+  baseUrl: string,
+  endpoint: string,
+  options: RequestInit = {},
+  context = endpoint,
+): Promise<Response> {
+  const token = loadToken();
+  if (!token?.access_token) throw new Error("Not authenticated");
+
+  const url = `${baseUrl}${endpoint}`;
+  const makeRequest = (accessToken: string) => {
+    const headers = new Headers(options.headers as any);
+    headers.set("Authorization", `Bearer ${accessToken}`);
+    headers.set("Accept", headers.get("Accept") || "application/json");
+    headers.set("X-Tidal-Token", headers.get("X-Tidal-Token") || TIDAL_CLIENT_TOKEN);
+    return tidalFetchWithRetry(url, {
+      ...options,
+      headers,
+    }, context);
+  };
+
+  let response = await makeRequest(token.access_token);
+
+  if (response.status === 401) {
+    console.log(`[TidalAPI] 401 Unauthorized for ${context}, refreshing token once...`);
+    await refreshTidalTokenOnce(true);
+    const refreshedToken = loadToken();
+    if (refreshedToken?.access_token && refreshedToken.access_token !== token.access_token) {
+      response = await makeRequest(refreshedToken.access_token);
+    }
+  }
+
+  return response;
+}
+
+async function parseTidalJsonResponse(response: Response): Promise<unknown> {
+  if (!response.ok) {
+    let detail = `Tidal API error: ${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json() as any;
+      if (body?.userMessage) detail = body.userMessage;
+      else if (body?.status || body?.subStatus) {
+        detail = `Tidal API error: ${body.status || response.status} (subStatus ${body.subStatus ?? "n/a"})`;
+      }
+    } catch {
+      /* ignore */
+    }
+    const error = new Error(detail) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function tidalApiRequestV2(endpoint: string, options: RequestInit = {}): Promise<unknown> {
+  const response = await tidalRawRequest(TIDAL_API_BASE_V2, endpoint, options, `v2:${endpoint}`);
+  return parseTidalJsonResponse(response);
 }
 
 // Paginated API request - fetches all items by following pagination
@@ -859,40 +884,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
     locale: "en_US",
   });
 
-  const doSearch = async (accessToken: string) => {
-    const res = await tidalFetchWithRetry(`${TIDAL_API_BASE}/search?${searchParams.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        "X-Tidal-Token": TIDAL_CLIENT_TOKEN,
-      },
-    }, `search:${searchParams.get("query") || "query"}`);
-
-    if (res.ok) return res.json();
-
-    let body: any = null;
-    try {
-      body = await res.json();
-    } catch {
-      /* ignore */
-    }
-
-    // Refresh once when subStatus 11003 indicates an expired token
-    if (res.status === 401 && body?.subStatus === 11003) {
-      await refreshTidalToken();
-      const refreshedToken = loadToken();
-      if (refreshedToken?.access_token) {
-        return doSearch(refreshedToken.access_token);
-      }
-    }
-
-    const detail =
-      body?.userMessage ||
-      (body?.status || res.status === 401 ? `Tidal API error: ${body?.status || res.status} (subStatus ${body?.subStatus ?? "n/a"})` : `Tidal API error: ${res.status} ${res.statusText}`);
-    throw new Error(detail);
-  };
-
-  const data = await doSearch(token.access_token) as any;
+  const data = await tidalApiRequestV2(`/search?${searchParams.toString()}`) as any;
 
   const mapArtist = (item: any) => {
     return {

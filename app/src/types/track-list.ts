@@ -23,6 +23,9 @@ export interface TrackListItem {
   cover_url?: string | null;
   artist_id?: string | null;
   artist_name?: string | null;
+  musicbrainz_track_id?: string | null;
+  musicbrainz_recording_id?: string | null;
+  musicbrainz_release_id?: string | null;
   created_at?: string | null;
   downloaded?: boolean;
   is_downloaded?: boolean;

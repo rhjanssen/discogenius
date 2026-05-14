@@ -25,6 +25,7 @@ const DASHBOARD_FEED_GLOBAL_EVENTS = [
     "job.updated",
     "job.deleted",
     "queue.cleared",
+    "history.added",
     "config.updated",
     "file.added",
     "file.deleted",
@@ -58,7 +59,7 @@ export function useDashboardInfiniteFeed<TItem>({
         }),
         initialPageParam: 0,
         getNextPageParam: (lastPage) => (
-            lastPage.hasMore
+            lastPage.hasMore && lastPage.items.length > 0
                 ? lastPage.offset + lastPage.items.length
                 : undefined
         ),

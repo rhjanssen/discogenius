@@ -3,6 +3,7 @@ import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
 import { updateAlbumDownloadStatus, updateArtistDownloadStatus, updateArtistDownloadStatusFromMedia } from "./download-state.js";
 import { CurationService } from "./curation-service.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -310,8 +311,10 @@ function queueAlbumDownloads(albumIds: string[]): number[] {
         const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
 
         const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-            url: `https://listen.tidal.com/album/${albumId}`,
+            url: buildStreamingMediaUrl("album", albumId),
             type: "album",
+            provider: "tidal",
+            providerId: albumId,
             tidalId: albumId,
             title: displayTitle,
             artist: primaryArtist,
@@ -367,8 +370,10 @@ function queueTrackDownloads(trackIds: string[]): number[] {
         const artistName = String(track.artist_name || "Unknown").trim() || "Unknown";
 
         const jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
-            url: `https://listen.tidal.com/track/${trackId}`,
+            url: buildStreamingMediaUrl("track", trackId),
             type: "track",
+            provider: "tidal",
+            providerId: trackId,
             tidalId: trackId,
             title: displayTitle,
             artist: artistName,
@@ -413,8 +418,10 @@ function queueVideoDownloads(videoIds: string[]): number[] {
         const artistName = String(video.artist_name || "Unknown").trim() || "Unknown";
 
         const jobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
-            url: `https://listen.tidal.com/video/${videoId}`,
+            url: buildStreamingMediaUrl("video", videoId),
             type: "video",
+            provider: "tidal",
+            providerId: videoId,
             tidalId: videoId,
             title,
             artist: artistName,

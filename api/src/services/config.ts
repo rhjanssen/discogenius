@@ -223,9 +223,9 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     require_provider_availability: true,
   },
   path: {
-    music_path: "./library/music",
-    spatial_path: "./library/spatial",
-    video_path: "./library/videos",
+    music_path: "/library/stereo-music",
+    spatial_path: "/library/spatial-music",
+    video_path: "/library/music-videos",
   },
   naming: {
     artist_folder: "{artistName} {mbid-{artistMbId}}",
@@ -409,8 +409,8 @@ export class Config {
    */
   static getMusicPath(): string {
     const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.music_path || './library/music';
-    return Config.resolvePath(configuredPath, 'library/music');
+    const configuredPath = pathConfig.music_path || '/library/stereo-music';
+    return Config.resolvePath(configuredPath, 'library/stereo-music');
   }
 
   /**
@@ -418,8 +418,8 @@ export class Config {
    */
   static getSpatialPath(): string {
     const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.spatial_path || './library/spatial';
-    return Config.resolvePath(configuredPath, 'library/spatial');
+    const configuredPath = pathConfig.spatial_path || '/library/spatial-music';
+    return Config.resolvePath(configuredPath, 'library/spatial-music');
   }
 
   /**
@@ -427,8 +427,8 @@ export class Config {
    */
   static getVideoPath(): string {
     const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.video_path || './library/videos';
-    return Config.resolvePath(configuredPath, 'library/videos');
+    const configuredPath = pathConfig.video_path || '/library/music-videos';
+    return Config.resolvePath(configuredPath, 'library/music-videos');
   }
 
   static getAppConfig(): AppConfig {

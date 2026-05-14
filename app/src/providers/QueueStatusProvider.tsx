@@ -144,6 +144,9 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     void queryClient.invalidateQueries({ queryKey: ["queue"] });
     void queryClient.invalidateQueries({ queryKey: ["queueDetails"] });
     void queryClient.invalidateQueries({ queryKey: ["queueHistoryFeed"] });
+    void queryClient.refetchQueries({ queryKey: ["queue"] });
+    void queryClient.refetchQueries({ queryKey: ["queueDetails"] });
+    void queryClient.refetchQueries({ queryKey: ["queueHistoryFeed"] });
   }, [queryClient]);
 
   const updateProgressState = useCallback((updater: (previous: ProgressState) => ProgressState) => {
@@ -331,9 +334,9 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     };
   }, [applyQueueStatus, fetchQueueStatus, invalidateQueueQueries, scheduleStatusRefresh, updateProgressState]);
 
-  const addToQueue = useCallback(async (url: string, type: string, tidalId?: string, options?: AddToQueueOptions) => {
+  const addToQueue = useCallback(async (url: string | null | undefined, type: string, tidalId?: string | null, options?: AddToQueueOptions) => {
     try {
-      await api.addToQueue(url, type, tidalId);
+      await api.addToQueue(url, type, tidalId, options?.payload);
       if (!options?.silent) {
         toastRef.current({
           title: options?.successTitle ?? "Added to queue",
@@ -342,6 +345,11 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       }
       scheduleStatusRefresh(0);
       invalidateQueueQueries();
+      await Promise.allSettled([
+        queryClient.refetchQueries({ queryKey: ["queue"] }),
+        queryClient.refetchQueries({ queryKey: ["queueDetails"] }),
+        queryClient.refetchQueries({ queryKey: ["queueHistoryFeed"] }),
+      ]);
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error("Error adding to queue:", error);
@@ -352,7 +360,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       });
       throw error;
     }
-  }, [invalidateQueueQueries, scheduleStatusRefresh]);
+  }, [invalidateQueueQueries, queryClient, scheduleStatusRefresh]);
 
   const processItem = useCallback(async (id: number) => {
     try {

@@ -1,4 +1,5 @@
 import { db } from "../database.js";
+import { appEvents, AppEvent } from "./app-events.js";
 
 export const HISTORY_EVENT_TYPES = {
   Unknown: "Unknown",
@@ -125,7 +126,18 @@ export function recordHistoryEvent(input: RecordHistoryEventInput): number {
     dataJson,
   );
 
-  return Number(result.lastInsertRowid || 0);
+  const id = Number(result.lastInsertRowid || 0);
+  appEvents.emit(AppEvent.HISTORY_ADDED, {
+    id,
+    eventType: input.eventType,
+    artistId: input.artistId ?? null,
+    albumId: input.albumId ?? null,
+    mediaId: input.mediaId ?? null,
+    libraryFileId: input.libraryFileId ?? null,
+    sourceTitle: input.sourceTitle ?? null,
+  });
+
+  return id;
 }
 
 export function listHistoryEvents(options: ListHistoryEventsOptions = {}): ListHistoryEventsResult {

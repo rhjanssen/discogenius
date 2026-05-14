@@ -3,9 +3,10 @@ import { DOWNLOAD_JOB_TYPES, JobTypes, TaskQueueService } from '../services/queu
 import { downloadProcessor } from '../services/download-processor.js';
 import { downloadEvents } from '../services/download-events.js';
 import { authMiddleware } from '../middleware/auth.js';
-import { buildStreamingMediaUrl } from '../services/download-routing.js';
+import { buildStreamingMediaUrl, parseStreamingUrl, type DownloadMediaType } from '../services/download-routing.js';
 import { shouldQueueRedownloadForFailedImport } from '../services/download-recovery.js';
 import { DownloadQueueQueryService } from '../services/download-queue-query-service.js';
+import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../services/provider-track-resolver.js';
 import type {
     DownloadAlbumJobPayload,
     DownloadPlaylistJobPayload,
@@ -297,6 +298,36 @@ router.get('/queue/history', async (req: Request, res: Response) => {
     }
 });
 
+function getQueueRequestString(value: unknown): string | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return String(value);
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+    return null;
+}
+
+function getQueueRequestStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+
+    const values = value
+        .map((item) => getQueueRequestString(item))
+        .filter((item): item is string => item !== null);
+
+    return values.length > 0 ? values : undefined;
+}
+
+function normalizeDownloadMediaType(value: unknown): DownloadMediaType | null {
+    const normalized = getQueueRequestString(value)?.toLowerCase();
+    return normalized === 'track' || normalized === 'video' || normalized === 'album' || normalized === 'playlist'
+        ? normalized
+        : null;
+}
+
 router.post('/queue/reorder', async (req: Request, res: Response) => {
     try {
         const rawJobIds: unknown[] = Array.isArray(req.body?.jobIds) ? req.body.jobIds : [];
@@ -362,41 +393,107 @@ router.post('/queue/reorder', async (req: Request, res: Response) => {
  */
 router.post('/queue', async (req: Request, res: Response) => {
     try {
-        const { url, type, tidalId } = req.body;
+        const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+        const url = getQueueRequestString(body.url);
+        const requestedType = normalizeDownloadMediaType(body.type);
+        const requestedProviderId = getQueueRequestString(body.providerId);
+        const requestedTidalId = getQueueRequestString(body.tidalId);
 
-        if (!url && !tidalId) {
-            return res.status(400).json({ error: 'Either url or tidalId is required' });
+        const parsedUrl = url ? parseStreamingUrl(url) : null;
+        const contentType = requestedType ?? parsedUrl?.type ?? 'track';
+        const releaseGroupMbid = getQueueRequestString(body.releaseGroupMbid);
+        let canonicalTrackMbid = getQueueRequestString(body.canonicalTrackMbid);
+        const canonicalRecordingMbid = getQueueRequestString(body.canonicalRecordingMbid);
+        let resolvedProviderId = requestedProviderId ?? requestedTidalId ?? parsedUrl?.sourceId ?? null;
+        let resolvedProvider = getQueueRequestString(body.provider) ?? parsedUrl?.streamingSource ?? 'tidal';
+        let resolvedSlot = getQueueRequestString(body.slot);
+        let resolvedQuality = getQueueRequestString(body.quality);
+
+        if (contentType === 'track' && resolvedProviderId && looksLikeMusicBrainzMbid(resolvedProviderId)) {
+            canonicalTrackMbid ||= resolvedProviderId;
+            resolvedProviderId = null;
         }
 
-        const parsedType =
-            typeof type === 'string' && (type === 'track' || type === 'video' || type === 'album')
-                ? type
-                : null;
-
-        // Parse URL if provided (use to infer missing pieces, but don't override explicit params)
-        const urlMatch = typeof url === 'string' ? url.match(/\/(track|video|album)\/(\d+)/) : null;
-        const urlType = urlMatch ? (urlMatch[1] as 'track' | 'video' | 'album') : null;
-        const urlTidalId = urlMatch ? urlMatch[2] : null;
-
-        const contentType: 'track' | 'video' | 'album' = parsedType ?? urlType ?? 'track';
-        const resolvedTidalId = (tidalId ?? urlTidalId)?.toString?.() ?? null;
-
-        if (!resolvedTidalId) {
-            return res.status(400).json({ error: 'Unable to determine tidalId' });
+        if (contentType === 'track' && !resolvedProviderId) {
+            const resolvedTrack = await resolveProviderTrackForCanonicalTrack({
+                releaseGroupMbid,
+                canonicalTrackMbid,
+                canonicalRecordingMbid,
+                provider: resolvedProvider,
+                slot: resolvedSlot,
+                title: getQueueRequestString(body.title),
+            });
+            if (!resolvedTrack) {
+                return res.status(409).json({
+                    error: 'Provider match missing',
+                    message: 'This MusicBrainz track is not matched to a provider track yet. Refresh and curate the artist before downloading.',
+                });
+            }
+            resolvedProvider = resolvedTrack.provider;
+            resolvedProviderId = resolvedTrack.providerTrackId;
+            resolvedSlot = resolvedSlot ?? resolvedTrack.slot;
+            resolvedQuality = resolvedQuality ?? resolvedTrack.quality;
         }
 
-        const jobType =
-            contentType === 'video' ? JobTypes.DownloadVideo : contentType === 'album' ? JobTypes.DownloadAlbum : JobTypes.DownloadTrack;
+        if (!url && !requestedProviderId && !requestedTidalId && !resolvedProviderId) {
+            return res.status(400).json({
+                error: 'Either url, providerId, tidalId, or a resolvable canonical track is required',
+            });
+        }
 
-        // Create payload
+        if (!resolvedProviderId) {
+            return res.status(400).json({ error: 'Unable to determine providerId' });
+        }
+
         const payload = {
-            tidalId: resolvedTidalId,
-            url: url || `https://listen.tidal.com/${contentType}/${resolvedTidalId}`,
+            provider: resolvedProvider,
+            providerId: resolvedProviderId,
+            tidalId: resolvedProviderId,
+            url: url || buildStreamingMediaUrl(contentType, resolvedProviderId),
             type: contentType,
+            releaseGroupMbid: releaseGroupMbid ?? undefined,
+            canonicalTrackMbid: canonicalTrackMbid ?? undefined,
+            canonicalRecordingMbid: canonicalRecordingMbid ?? undefined,
+            slot: resolvedSlot ?? undefined,
+            title: getQueueRequestString(body.title) ?? undefined,
+            artist: getQueueRequestString(body.artist) ?? getQueueRequestString(body.artistName) ?? undefined,
+            artists: getQueueRequestStringArray(body.artists),
+            artistId: getQueueRequestString(body.artistId) ?? undefined,
+            artist_id: getQueueRequestString(body.artist_id) ?? getQueueRequestString(body.artistId) ?? undefined,
+            albumId: getQueueRequestString(body.albumId) ?? getQueueRequestString(body.releaseGroupMbid) ?? undefined,
+            album_id: getQueueRequestString(body.album_id) ?? getQueueRequestString(body.albumId) ?? getQueueRequestString(body.releaseGroupMbid) ?? undefined,
+            albumTitle: getQueueRequestString(body.albumTitle) ?? undefined,
+            album_title: getQueueRequestString(body.album_title) ?? getQueueRequestString(body.albumTitle) ?? undefined,
+            cover: getQueueRequestString(body.cover) ?? undefined,
+            quality: resolvedQuality,
+            description: getQueueRequestString(body.description) ?? undefined,
         };
 
-        // Add to queue
-        const jobId = TaskQueueService.addJob(jobType, payload, resolvedTidalId);
+        const queueRefId = contentType === 'album' && payload.releaseGroupMbid && payload.slot
+            ? `${payload.releaseGroupMbid}:${payload.slot}`
+            : resolvedProviderId;
+        let jobId: number;
+        if (contentType === 'album') {
+            jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+                ...payload,
+                type: 'album',
+            } satisfies DownloadAlbumJobPayload, queueRefId);
+        } else if (contentType === 'video') {
+            jobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
+                ...payload,
+                type: 'video',
+            } satisfies DownloadVideoJobPayload, queueRefId);
+        } else if (contentType === 'playlist') {
+            jobId = TaskQueueService.addJob(JobTypes.DownloadPlaylist, {
+                ...payload,
+                type: 'playlist',
+            } satisfies DownloadPlaylistJobPayload, queueRefId);
+        } else {
+            jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
+                ...payload,
+                type: 'track',
+            } satisfies DownloadTrackJobPayload, queueRefId);
+        }
 
 
         // Trigger queue processing if not already running

@@ -5,6 +5,7 @@ export type AddToQueueOptions = {
   successTitle?: string;
   successDescription?: string;
   silent?: boolean;
+  payload?: Record<string, unknown>;
 };
 
 export type QueueStatusContextType = {
@@ -15,7 +16,7 @@ export type QueueStatusContextType = {
   progressByTidalId: Map<string, DownloadProgress>;
   getProgress: (jobId: number) => DownloadProgress | undefined;
   getProgressByTidalId: (tidalId: string) => DownloadProgress | undefined;
-  addToQueue: (url: string, type: string, tidalId?: string, options?: AddToQueueOptions) => Promise<void>;
+  addToQueue: (url: string | null | undefined, type: string, tidalId?: string | null, options?: AddToQueueOptions) => Promise<void>;
   processItem: (id: number) => Promise<void>;
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;

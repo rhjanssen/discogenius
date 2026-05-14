@@ -57,6 +57,8 @@ export interface QueuePayloadCommon {
   provider?: string;
   providerId?: string;
   releaseGroupMbid?: string;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
   type?: string;
   title?: string;
   description?: string;
@@ -67,6 +69,7 @@ export interface QueuePayloadCommon {
   artistName?: string;
   albumId?: string;
   albumTitle?: string;
+  album_title?: string;
   albumVersion?: string | null;
   album?: string;
   album_id?: string;

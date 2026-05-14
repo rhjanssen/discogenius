@@ -14,7 +14,6 @@ import {
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
 import { getTidalImage } from "@/utils/tidalImages";
-import { tidalUrl } from "@/utils/tidalUrl";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
@@ -279,8 +278,9 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
       onOpenVideo(video);
       return;
     }
-    const url = video.url || tidalUrl('video', video.id);
-    window.open(url, "_blank", "noopener,noreferrer");
+    if (video.url) {
+      window.open(video.url, "_blank", "noopener,noreferrer");
+    }
   };
 
   const handleArtistClick = (e: React.MouseEvent, artistId: string) => {
@@ -398,4 +398,3 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
 };
 
 export default VideoGrid;
-

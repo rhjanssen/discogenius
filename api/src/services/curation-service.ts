@@ -6,6 +6,7 @@ import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import { normalizeComparableText } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderTrack } from "./providers/streaming-provider.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -335,10 +336,14 @@ export class CurationService {
         releaseGroups: ReleaseGroupForCuration[],
         includedReleaseGroupIds: Set<string>,
         slotRows: ReleaseGroupSlotRow[],
+        requireProviderAvailability: boolean,
     ): Promise<Set<string>> {
         const slottedReleaseGroupIds = new Set(slotRows.map((slot) => slot.release_group_mbid).filter(Boolean));
         const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
-        const albumReleaseGroups = included.filter((releaseGroup) => !this.isSingleOrEp(releaseGroup));
+        const albumReleaseGroups = included.filter((releaseGroup) =>
+            !this.isSingleOrEp(releaseGroup)
+            && (!requireProviderAvailability || slottedReleaseGroupIds.has(releaseGroup.mbid))
+        );
         const candidateReleaseGroups = included.filter((releaseGroup) =>
             this.isSingleOrEp(releaseGroup) && slottedReleaseGroupIds.has(releaseGroup.mbid)
         );
@@ -432,6 +437,7 @@ export class CurationService {
             releaseGroups,
             includedReleaseGroupIds,
             slotRows,
+            requireProviderAvailability,
         );
         for (const releaseGroupMbid of redundantReleaseGroupIds) {
             includedReleaseGroupIds.delete(releaseGroupMbid);
@@ -606,10 +612,11 @@ export class CurationService {
 
             const albumTitleFull = formatAlbumTitle(album.title, album.version);
             const artistName = album.artist_name || artistNames[0] || 'Unknown';
+            const provider = album.provider || "tidal";
             TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                url: `https://listen.tidal.com/album/${albumId}`,
+                url: buildStreamingMediaUrl("album", albumId, provider as any),
                 type: 'album',
-                provider: album.provider || "tidal",
+                provider,
                 providerId: albumId,
                 releaseGroupMbid: album.releaseGroupMbid || undefined,
                 albumId: album.releaseGroupMbid || undefined,
@@ -732,7 +739,7 @@ export class CurationService {
                 const title = video.video_title || 'Unknown Video';
 
                 TaskQueueService.addJob(JobTypes.DownloadVideo, {
-                    url: `https://listen.tidal.com/video/${videoId}`,
+                    url: buildStreamingMediaUrl("video", videoId),
                     type: 'video',
                     provider: "tidal",
                     providerId: videoId,

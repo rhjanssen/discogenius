@@ -1,4 +1,21 @@
 export interface ProviderCapabilities {
+  catalogSearch: boolean;
+  artistCatalog: boolean;
+  followedArtists: boolean;
+  playlists: boolean;
+  audioPreviews: boolean;
+  audioDownloads: boolean;
+  lossyStereo: boolean;
+  losslessStereo: boolean;
+  hiResStereo: boolean;
+  spatialAudio: boolean;
+  lyrics: boolean;
+  musicVideos: boolean;
+  videoPreviews: boolean;
+  videoDownloads: boolean;
+  artwork: boolean;
+  editorialMetadata: boolean;
+  providerIds: boolean;
   hasVideo: boolean;
   hasLossless?: boolean;
   hasSpatialAudio?: boolean;

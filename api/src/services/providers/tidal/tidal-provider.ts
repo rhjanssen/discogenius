@@ -18,6 +18,23 @@ export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
   readonly name = "TIDAL";
   readonly capabilities = {
+    catalogSearch: true,
+    artistCatalog: true,
+    followedArtists: true,
+    playlists: true,
+    audioPreviews: true,
+    audioDownloads: true,
+    lossyStereo: true,
+    losslessStereo: true,
+    hiResStereo: true,
+    spatialAudio: true,
+    lyrics: true,
+    musicVideos: true,
+    videoPreviews: true,
+    videoDownloads: true,
+    artwork: true,
+    editorialMetadata: true,
+    providerIds: true,
     hasVideo: true,
     hasLossless: true,
     hasSpatialAudio: true,
@@ -222,7 +239,11 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async apiRequest<T = any>(endpoint: string, options?: any): Promise<T> {
-    return tidal.tidalApiRequest(endpoint) as Promise<T>;
+    const useV2 = typeof endpoint === "string" && endpoint.startsWith("/v2/");
+    const normalizedEndpoint = useV2 ? endpoint.slice(3) : endpoint;
+    return (useV2
+      ? tidal.tidalApiRequestV2(normalizedEndpoint, options)
+      : tidal.tidalApiRequest(normalizedEndpoint)) as Promise<T>;
   }
 
   private isSpatialQuality(quality?: string | null, tags: string[] = []): boolean {

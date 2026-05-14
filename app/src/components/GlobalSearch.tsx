@@ -25,7 +25,6 @@ import { useSearch, SearchResultItem } from "@/hooks/useSearch";
 import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { getTidalImage } from "@/utils/tidalImages";
-import { tidalUrl } from "@/utils/tidalUrl";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
@@ -488,16 +487,16 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 return;
             }
 
-            const typeMap: Record<string, string> = {
-                track: 'track',
-                video: 'video',
-                artist: 'artist',
-            };
-            const urlType = typeMap[item.type] || 'track';
-            const url = tidalUrl(urlType as any, item.tidalId);
-            await addToQueue(url, item.type, item.tidalId, {
+            await addToQueue(null, item.type, item.tidalId, {
                 successTitle: "Added to queue",
                 successDescription: `${item.name} will be downloaded shortly`,
+                payload: {
+                    provider: "tidal",
+                    providerId: item.tidalId,
+                    title: item.name,
+                    artist: item.subtitle,
+                    cover: item.imageId ?? null,
+                },
             });
         } catch (error) {
             console.error("Error adding to queue:", error);
@@ -805,4 +804,3 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 };
 
 export default GlobalSearch;
-

@@ -3,6 +3,7 @@ import { streamingProviderManager } from "./providers/index.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 import { updateAlbumDownloadStatus } from "./download-state.js";
 import { getConfigSection } from "./config.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 
 function refreshAlbumState(albumId: string) {
     if (!albumId) return;
@@ -157,15 +158,18 @@ export class AlbumCommandService {
 
         let jobId: number | null = null;
         if (shouldDownload) {
+            const trackProviderId = String(trackId);
             jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
-                url: `https://listen.tidal.com/track/${trackId}`,
+                url: buildStreamingMediaUrl("track", trackProviderId),
                 type: 'track',
-                tidalId: trackId,
+                provider: "tidal",
+                providerId: trackProviderId,
+                tidalId: trackProviderId,
                 title: track?.title || trackData.title || 'Unknown',
                 artist: track?.artist_name || trackData.artist_name || 'Unknown',
                 cover: track?.album_cover || null,
                 quality: track?.quality || null,
-            }, trackId.toString(), 0, 1);
+            }, trackProviderId, 0, 1);
         }
 
         return { success: true, monitored_track: trackId, jobId };
@@ -201,10 +205,11 @@ export class AlbumCommandService {
 
                 const providerAlbumId = selection.selected_provider_id;
                 const artistName = selection.artist_name || providerData?.artist?.name || 'Unknown Artist';
+                const provider = selection.selected_provider || "tidal";
                 const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                    url: `https://listen.tidal.com/album/${providerAlbumId}`,
+                    url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
                     type: 'album',
-                    provider: selection.selected_provider || "tidal",
+                    provider,
                     providerId: providerAlbumId,
                     releaseGroupMbid: albumId,
                     albumId,

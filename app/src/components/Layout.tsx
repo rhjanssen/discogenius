@@ -126,10 +126,10 @@ const useStyles = makeStyles({
   logoSection: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalS,
+    gap: tokens.spacingHorizontalXS,
     minWidth: 0,
     "@media (min-width: 640px)": {
-      gap: tokens.spacingHorizontalM,
+      gap: tokens.spacingHorizontalS,
     },
   },
   logoButton: {
@@ -152,8 +152,8 @@ const useStyles = makeStyles({
     objectFit: "contain",
     flexShrink: 0,
     "@media (min-width: 640px)": {
-      height: "40px",
-      width: "40px",
+      height: "36px",
+      width: "36px",
     },
   },
   logoTitle: {

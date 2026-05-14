@@ -18,6 +18,7 @@ import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worke
 import { streamingProviderManager } from "../services/providers/index.js";
 import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../services/providers/streaming-provider.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from "../services/provider-track-resolver.js";
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
@@ -52,11 +53,11 @@ function signUrl(providerId: string, id: string, expires: number, quality?: stri
  * GET /stream/sign/:trackId
  * Returns a signed URL valid for 5 minutes.
  */
-router.get("/stream/sign/:trackId", authMiddleware, (req: Request, res: Response) => {
-    const trackId = req.params.trackId as string;
+router.get("/stream/sign/:trackId", authMiddleware, async (req: Request, res: Response) => {
+    let trackId = req.params.trackId as string;
     if (!trackId) return res.status(400).json({ error: "Missing trackId" });
     const requestedQuality = req.query.quality;
-    const quality = normalizePlaybackQuality(requestedQuality);
+    let quality = normalizePlaybackQuality(requestedQuality);
 
     if (requestedQuality !== undefined && !quality) {
         return res.status(400).json({ error: "Unsupported playback quality" });
@@ -68,6 +69,25 @@ router.get("/stream/sign/:trackId", authMiddleware, (req: Request, res: Response
         providerId = provider.id;
         if (!provider.getPlaybackInfo) {
             return res.status(501).json({ error: `${provider.name} does not support track preview` });
+        }
+
+        const releaseGroupMbid = String(req.query.releaseGroupMbid ?? "").trim();
+        const canonicalTrackMbid = String(req.query.canonicalTrackMbid ?? "").trim();
+        const canonicalRecordingMbid = String(req.query.canonicalRecordingMbid ?? "").trim();
+        if (releaseGroupMbid && (canonicalTrackMbid || canonicalRecordingMbid || looksLikeMusicBrainzMbid(trackId))) {
+            const resolved = await resolveProviderTrackForCanonicalTrack({
+                releaseGroupMbid,
+                canonicalTrackMbid: canonicalTrackMbid || (looksLikeMusicBrainzMbid(trackId) ? trackId : null),
+                canonicalRecordingMbid: canonicalRecordingMbid || null,
+                provider: providerId,
+                slot: String(req.query.slot ?? "").trim() || null,
+            });
+            if (!resolved) {
+                return res.status(409).json({ error: "Provider track match not found" });
+            }
+            providerId = resolved.provider;
+            trackId = resolved.providerTrackId;
+            quality = quality ?? normalizePlaybackQuality(resolved.quality);
         }
     } catch (error: any) {
         return res.status(404).json({ error: error?.message || "Provider not found" });

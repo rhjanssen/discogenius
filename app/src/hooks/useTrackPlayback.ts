@@ -15,6 +15,9 @@ export interface PlayableTrack {
   id: string;
   preview_provider?: string | null;
   preview_provider_track_id?: string | null;
+  album_id?: string | null;
+  musicbrainz_track_id?: string | null;
+  musicbrainz_recording_id?: string | null;
   quality?: string | null;
   files?: PlayableTrackFile[] | null;
   downloaded?: boolean;
@@ -125,6 +128,10 @@ export function useTrackPlayback() {
     return track.preview_provider || undefined;
   }, []);
 
+  const looksLikeMusicBrainzMbid = useCallback((value: string | null | undefined) => (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim())
+  ), []);
+
   const getPlaybackSrc = useCallback((track: PlayableTrack) => {
     const audioFile = getTrackAudioFile(track);
     if (audioFile && !shouldUseSignedPreview(track)) {
@@ -145,12 +152,15 @@ export function useTrackPlayback() {
       const url = await api.signTrackPreviewStream(getPreviewTrackId(track), {
         provider: getPreviewProviderId(track),
         quality: preferredQuality ?? undefined,
+        releaseGroupMbid: looksLikeMusicBrainzMbid(track.album_id) ? track.album_id : undefined,
+        canonicalTrackMbid: track.musicbrainz_track_id ?? (looksLikeMusicBrainzMbid(track.id) ? track.id : undefined),
+        canonicalRecordingMbid: track.musicbrainz_recording_id ?? undefined,
       });
       setSignedStreamUrls((previous) => new Map(previous).set(track.id, url));
     } finally {
       signingTrackIdsRef.current.delete(track.id);
     }
-  }, [getPreviewProviderId, getPreviewTrackId]);
+  }, [getPreviewProviderId, getPreviewTrackId, looksLikeMusicBrainzMbid]);
 
   const toggleTrackPlayback = useCallback(async (track: PlayableTrack, event?: MouseEvent) => {
     event?.stopPropagation();

@@ -24,19 +24,27 @@ function sanitizeSegment(input: string): string {
     .trim();
 }
 
-function artistPathExistsForOtherArtist(candidatePath: string, artistId?: string | number | null): boolean {
-  const existing = db.prepare("SELECT id FROM artists WHERE path = ? LIMIT 1").get(candidatePath) as { id: number | string } | undefined;
-  if (!existing) return false;
-  if (artistId == null) return true;
-  return String(existing.id) !== String(artistId);
-}
-
-function artistPathConflictsForOtherArtist(candidatePath: string, artistId?: string | number | null): boolean {
-  if (artistPathExistsForOtherArtist(candidatePath, artistId)) {
+function isSameCanonicalArtist(existing: { id: number | string; mbid?: string | null }, artistId?: string | number | null, artistMbId?: string | null): boolean {
+  if (artistId != null && String(existing.id) === String(artistId)) {
     return true;
   }
 
-  return findArtistPathConflict(candidatePath, artistId) !== null;
+  return Boolean(artistMbId && existing.mbid && String(existing.mbid) === String(artistMbId));
+}
+
+function artistPathExistsForOtherArtist(candidatePath: string, artistId?: string | number | null, artistMbId?: string | null): boolean {
+  const existing = db.prepare("SELECT id, mbid FROM artists WHERE path = ? LIMIT 1").get(candidatePath) as
+    { id: number | string; mbid?: string | null } | undefined;
+  if (!existing) return false;
+  return !isSameCanonicalArtist(existing, artistId, artistMbId);
+}
+
+function artistPathConflictsForOtherArtist(candidatePath: string, artistId?: string | number | null, artistMbId?: string | null): boolean {
+  if (artistPathExistsForOtherArtist(candidatePath, artistId, artistMbId)) {
+    return true;
+  }
+
+  return findArtistPathConflict(candidatePath, artistId, artistMbId) !== null;
 }
 
 function splitArtistPath(pathValue: string): string[] {
@@ -80,20 +88,21 @@ export function normalizeArtistFolderInput(rawPath: string): string {
   return path.join(...segments);
 }
 
-export function findArtistPathConflict(candidatePath: string, artistId?: string | number | null): ArtistPathConflict | null {
+export function findArtistPathConflict(candidatePath: string, artistId?: string | number | null, artistMbId?: string | null): ArtistPathConflict | null {
   const normalizedCandidate = normalizeComparablePath(candidatePath);
   if (!normalizedCandidate) {
     return null;
   }
 
-  const artists = db.prepare("SELECT id, name, path FROM artists WHERE path IS NOT NULL").all() as Array<{
+  const artists = db.prepare("SELECT id, name, mbid, path FROM artists WHERE path IS NOT NULL").all() as Array<{
     id: number | string;
     name: string | null;
+    mbid?: string | null;
     path: string | null;
   }>;
 
   for (const artist of artists) {
-    if (artistId != null && String(artist.id) === String(artistId)) {
+    if (isSameCanonicalArtist(artist, artistId, artistMbId)) {
       continue;
     }
 
@@ -131,9 +140,9 @@ export function findArtistPathConflict(candidatePath: string, artistId?: string 
 
 export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string {
   const basePath = resolveArtistFolder(seed.artistName, seed.artistMbId);
-  const baseConflict = findArtistPathConflict(basePath, seed.artistId);
+  const baseConflict = findArtistPathConflict(basePath, seed.artistId, seed.artistMbId);
 
-  if (!baseConflict && !artistPathExistsForOtherArtist(basePath, seed.artistId)) {
+  if (!baseConflict && !artistPathExistsForOtherArtist(basePath, seed.artistId, seed.artistMbId)) {
     return basePath;
   }
 
@@ -145,7 +154,7 @@ export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string 
 
   if (seed.artistId) {
     const artistIdCandidate = buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, `(${seed.artistId})`);
-    if (!artistPathConflictsForOtherArtist(artistIdCandidate, seed.artistId)) {
+    if (!artistPathConflictsForOtherArtist(artistIdCandidate, seed.artistId, seed.artistMbId)) {
       return artistIdCandidate;
     }
   }
@@ -153,7 +162,7 @@ export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string 
   let index = 1;
   while (index < 100) {
     const candidatePath = buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, `(${index})`);
-    if (!artistPathConflictsForOtherArtist(candidatePath, seed.artistId)) {
+    if (!artistPathConflictsForOtherArtist(candidatePath, seed.artistId, seed.artistMbId)) {
       return candidatePath;
     }
     index += 1;
@@ -189,6 +198,17 @@ export function shouldReapplyArtistPathTemplate(seed: ArtistFolderSeed): boolean
 
   if (normalizeComparablePath(existingPath) === normalizeComparablePath(currentTemplatePath)) {
     return false;
+  }
+
+  if (seed.artistId) {
+    const providerDisambiguatedPath = buildDisambiguatedArtistPath(
+      currentTemplatePath,
+      Math.max(0, splitArtistPath(currentTemplatePath).length - 1),
+      `(${seed.artistId})`,
+    );
+    if (normalizeComparablePath(existingPath) === normalizeComparablePath(providerDisambiguatedPath)) {
+      return true;
+    }
   }
 
   const legacyTemplatePath = resolveArtistFolderFromTemplate({

@@ -29,7 +29,7 @@ services:
       # Library directory (organized music)
       # You can map these individually to different NAS shares if needed
       - ./library:/library
-      # - /path/to/nas/music:/library/Music
-      # - /path/to/nas/spatial:/library/spatial
-      # - /path/to/nas/videos:/library/videos
+      # - /path/to/nas/stereo:/library/stereo-music
+      # - /path/to/nas/spatial:/library/spatial-music
+      # - /path/to/nas/videos:/library/music-videos
     restart: unless-stopped

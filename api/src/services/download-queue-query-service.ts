@@ -40,7 +40,7 @@ type NormalizedQueueDetailsFilters = {
 };
 
 const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
-const QUEUE_HISTORY_STATUSES: Array<"completed" | "cancelled"> = ["completed", "cancelled"];
+const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
 function getOptionalString(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {

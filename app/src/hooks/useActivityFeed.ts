@@ -26,6 +26,7 @@ export function useActivityFeed({ enabled = true }: UseActivityFeedOptions = {})
         }),
         getItemId: (item) => item.id,
         enabled,
+        refetchIntervalMs: 5_000,
     });
 
     return {
@@ -42,6 +43,5 @@ export function useActivityFeed({ enabled = true }: UseActivityFeedOptions = {})
         activityRefreshErrorMessage: query.refreshErrorMessage,
     };
 }
-
 
 

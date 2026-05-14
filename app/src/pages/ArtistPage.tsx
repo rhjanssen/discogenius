@@ -617,7 +617,7 @@ const ArtistPage = () => {
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   const artistPictureUrl = artistInfo
-    ? ((artistInfo as any).cover_image_url || artistInfo.picture || (pageData?.artistInfo as any)?.cover_image_url || pageData?.artistInfo?.picture || null)
+    ? (artistInfo.picture || (pageData?.artistInfo as any)?.picture || (artistInfo as any).cover_image_url || (pageData?.artistInfo as any)?.cover_image_url || null)
     : undefined;
   const artistBrandColor = useArtworkBrandColor({
     artworkUrl: artistPictureUrl,
@@ -927,7 +927,7 @@ const ArtistPage = () => {
   const renderArtistCard = (item: any) => {
     const tidalId = item.id?.toString?.() ?? String(item.id);
     const name = item.name || "Unknown Artist";
-    const imageUrl = item.cover_image_url || item.picture || null;
+    const imageUrl = item.picture || item.cover_image_url || null;
 
     return (
       <Card

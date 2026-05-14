@@ -10,10 +10,12 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
 let queueModule: typeof import("./queue.js");
+let downloadQueueQueryModule: typeof import("./download-queue-query-service.js");
 
 before(async () => {
     dbModule = await import("../database.js");
     queueModule = await import("./queue.js");
+    downloadQueueQueryModule = await import("./download-queue-query-service.js");
     dbModule.initDatabase();
 });
 
@@ -159,6 +161,78 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
             },
         ],
     );
+});
+
+test("download queue query surfaces pending, processing, and history items with payload metadata", () => {
+    const processingAlbumId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-1",
+            tidalId: "provider-album-1",
+            releaseGroupMbid: "release-group-1",
+            slot: "stereo",
+            title: "Processing Album",
+            artist: "Queue Artist",
+            cover: "processing-cover",
+            quality: "HIRES_LOSSLESS",
+            downloadState: { progress: 42, currentFileNum: 2, totalFiles: 5 },
+        },
+        "release-group-1:stereo",
+    );
+    const pendingAlbumId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-2",
+            tidalId: "provider-album-2",
+            releaseGroupMbid: "release-group-2",
+            slot: "spatial",
+            title: "Pending Album",
+            artist: "Queue Artist",
+            cover: "pending-cover",
+            quality: "DOLBY_ATMOS",
+        },
+        "release-group-2:spatial",
+    );
+    const completedTrackId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadTrack,
+        {
+            type: "track",
+            provider: "tidal",
+            providerId: "provider-track-1",
+            tidalId: "provider-track-1",
+            title: "Completed Track",
+            artist: "Queue Artist",
+            cover: "track-cover",
+            quality: "LOSSLESS",
+        },
+        "provider-track-1",
+    );
+
+    queueModule.TaskQueueService.markProcessing(processingAlbumId);
+    queueModule.TaskQueueService.complete(completedTrackId);
+
+    const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+    assert.equal(live.total, 2);
+    assert.deepEqual(live.items.map((item) => item.id), [processingAlbumId, pendingAlbumId]);
+    assert.equal(live.items[0]?.title, "Processing Album");
+    assert.equal(live.items[0]?.progress, 42);
+    assert.equal(live.items[0]?.currentFileNum, 2);
+    assert.equal(live.items[0]?.totalFiles, 5);
+    assert.equal(live.items[1]?.queuePosition, 1);
+    assert.equal(live.items[1]?.quality, "DOLBY_ATMOS");
+
+    const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({});
+    assert.deepEqual(details.map((item) => item.id), [processingAlbumId, pendingAlbumId]);
+
+    const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+    assert.equal(history.total, 1);
+    assert.equal(history.items[0]?.id, completedTrackId);
+    assert.equal(history.items[0]?.title, "Completed Track");
+    assert.equal(history.items[0]?.type, "track");
 });
 
 test("terminal queue jobs ignore late progress, state, complete, and fail updates", () => {

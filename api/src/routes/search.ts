@@ -79,7 +79,7 @@ function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContr
         name: artist.artistname,
         type: "artist",
         subtitle: details || null,
-        imageId: localArtist?.cover_image_url || localArtist?.picture || lidarrMetadataService.getArtistImageUrl(artist),
+        imageId: localArtist?.picture || localArtist?.cover_image_url || lidarrMetadataService.getArtistImageUrl(artist),
         monitored: Boolean(localArtist?.monitor),
         in_library: Boolean(localArtist),
         quality: null,
@@ -171,7 +171,7 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        `SELECT id, name, COALESCE(cover_image_url, picture) AS picture, monitor
+                        `SELECT id, name, COALESCE(picture, cover_image_url) AS picture, monitor
                          FROM artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
@@ -191,7 +191,7 @@ router.get("/", async (req, res) => {
                 results.artists.push(...localArtists.map((row: any) => formatSearchResult({
                     id: row.id,
                     name: row.name,
-                    picture: row.picture,
+                            picture: row.picture,
                     monitored: !!row.monitor,
                     in_library: true,
                 }, 'artist')));
