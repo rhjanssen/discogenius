@@ -19,7 +19,6 @@ import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
-import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { api } from "@/services/api";
@@ -181,7 +180,6 @@ const LibraryTrackList = ({
 }: LibraryTrackListProps) => {
   const navigate = useNavigate();
   const styles = useStyles();
-  const { toggleMonitor, toggleLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
   const {
     getPlaybackSrc,
@@ -342,6 +340,8 @@ const LibraryTrackList = ({
             const track = withLoadedFiles(rawTrack);
             const isPlaying = playingTrackId === track.id;
             const isDownloaded = isDownloadedTrack(track);
+            const hasProviderTrack = Boolean(track.preview_provider_track_id);
+            const canPlayTrack = isDownloaded || hasProviderTrack;
             const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
 
             return (
@@ -387,29 +387,15 @@ const LibraryTrackList = ({
                     isDownloaded={isDownloaded}
                     isDownloading={downloadingTracks.has(track.id)}
                     canShowInfo={canShowInfo}
-                    onPlay={(event) => toggleTrackPlayback(track, event)}
-                    onToggleMonitor={(event) => {
-                      event.stopPropagation();
-                      toggleMonitor({
-                        id: track.id,
-                        type: "track",
-                        currentStatus: isMonitoredTrack(track),
-                      });
-                    }}
-                    onToggleLock={(event) => {
-                      event.stopPropagation();
-                      toggleLock({
-                        id: track.id,
-                        type: "track",
-                        isLocked: isLockedTrack(track),
-                      });
-                    }}
+                    onPlay={canPlayTrack ? (event) => toggleTrackPlayback(track, event) : undefined}
                     onShowInfo={(event) => {
                       void openTrackInfo(track, event);
                     }}
-                    onDownload={(event) => {
-                      void handleDownloadTrack(track, event);
-                    }}
+                    onDownload={hasProviderTrack
+                      ? (event) => {
+                        void handleDownloadTrack(track, event);
+                      }
+                      : undefined}
                   />
 
                   {isPlaying ? (
@@ -452,6 +438,8 @@ const LibraryTrackList = ({
               const track = withLoadedFiles(rawTrack);
               const isPlaying = playingTrackId === track.id;
               const isDownloaded = isDownloadedTrack(track);
+              const hasProviderTrack = Boolean(track.preview_provider_track_id);
+              const canPlayTrack = isDownloaded || hasProviderTrack;
               const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
 
               return (
@@ -522,29 +510,15 @@ const LibraryTrackList = ({
                         isDownloaded={isDownloaded}
                         isDownloading={downloadingTracks.has(track.id)}
                         canShowInfo={canShowInfo}
-                        onPlay={(event) => toggleTrackPlayback(track, event)}
-                        onToggleMonitor={(event) => {
-                          event.stopPropagation();
-                          toggleMonitor({
-                            id: track.id,
-                            type: "track",
-                            currentStatus: isMonitoredTrack(track),
-                          });
-                        }}
-                        onToggleLock={(event) => {
-                          event.stopPropagation();
-                          toggleLock({
-                            id: track.id,
-                            type: "track",
-                            isLocked: isLockedTrack(track),
-                          });
-                        }}
+                        onPlay={canPlayTrack ? (event) => toggleTrackPlayback(track, event) : undefined}
                         onShowInfo={(event) => {
                           void openTrackInfo(track, event);
                         }}
-                        onDownload={(event) => {
-                          void handleDownloadTrack(track, event);
-                        }}
+                        onDownload={hasProviderTrack
+                          ? (event) => {
+                            void handleDownloadTrack(track, event);
+                          }
+                          : undefined}
                       />
                     </TableCell>
                   </TableRow>

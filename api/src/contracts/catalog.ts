@@ -44,6 +44,10 @@ export interface AlbumContract {
   spatial_quality?: string | null;
   spatial_match_status?: string | null;
   selected_provider_id?: string | null;
+  review?: string | null;
+  review_text?: string | null;
+  review_source?: string | null;
+  review_last_updated?: string | null;
   source?: string;
   is_monitored: boolean;
   is_downloaded: boolean;
@@ -188,6 +192,10 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
     selected_provider_id: expectOptionalString(record.selected_provider_id, `${label}.selected_provider_id`) ?? null,
+    review: expectNullableString(record.review, `${label}.review`),
+    review_text: expectNullableString(record.review_text, `${label}.review_text`),
+    review_source: expectNullableString(record.review_source, `${label}.review_source`),
+    review_last_updated: expectNullableString(record.review_last_updated, `${label}.review_last_updated`),
     source: expectOptionalString(record.source, `${label}.source`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),

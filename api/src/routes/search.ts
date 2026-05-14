@@ -79,7 +79,7 @@ function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContr
         name: artist.artistname,
         type: "artist",
         subtitle: details || null,
-        imageId: localArtist?.picture || localArtist?.cover_image_url || lidarrMetadataService.getArtistImageUrl(artist),
+        imageId: localArtist?.cover_image_url || localArtist?.picture || lidarrMetadataService.getArtistImageUrl(artist),
         monitored: Boolean(localArtist?.monitor),
         in_library: Boolean(localArtist),
         quality: null,

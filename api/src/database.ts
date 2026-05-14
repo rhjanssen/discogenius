@@ -77,7 +77,12 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
 }
 
 export function backfillArtistPaths(): number {
-  const artists = db.prepare("SELECT id, name, mbid FROM artists WHERE path IS NULL").all() as Array<{ id: number; name: string; mbid: string | null }>;
+  const artists = db.prepare(`
+    SELECT artists.id, artists.name, artists.mbid, mb_artists.disambiguation
+    FROM artists
+    LEFT JOIN mb_artists ON mb_artists.mbid = artists.mbid
+    WHERE artists.path IS NULL
+  `).all() as Array<{ id: number; name: string; mbid: string | null; disambiguation: string | null }>;
   if (artists.length === 0) return 0;
 
   const update = db.prepare("UPDATE artists SET path = ? WHERE id = ? AND path IS NULL");
@@ -87,6 +92,7 @@ export function backfillArtistPaths(): number {
         artistId: artist.id,
         artistName: artist.name,
         artistMbId: artist.mbid,
+        artistDisambiguation: artist.disambiguation,
       }), artist.id);
     }
   });

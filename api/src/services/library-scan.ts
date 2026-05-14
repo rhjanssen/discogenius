@@ -3,6 +3,7 @@ import path from "path";
 import { db } from "../database.js";
 import { Config, getConfigSection } from "./config.js";
 import { resolveArtistFolderFromRecord } from "./naming.js";
+import { ensureEmptyArtistFoldersIfEnabled } from "./artist-paths.js";
 import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "./library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
@@ -584,6 +585,7 @@ export class DiskScanService {
         if (!artist) return { indexed: 0 };
 
         const artistFolder = resolveArtistFolderFromRecord(artist);
+        ensureEmptyArtistFoldersIfEnabled(artistFolder);
 
         // Collect all existing file paths for this artist (for quick lookup)
         const existingPaths = new Set(

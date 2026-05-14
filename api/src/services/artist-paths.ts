@@ -1,12 +1,15 @@
 import path from "path";
+import fs from "fs";
 import { db } from "../database.js";
 import { resolveArtistFolder, resolveArtistFolderFromRecord } from "./naming.js";
+import { Config } from "./config.js";
 import { normalizeComparablePath } from "./path-utils.js";
 
 type ArtistFolderSeed = {
   artistId?: string | number | null;
   artistName: string;
   artistMbId?: string | null;
+  artistDisambiguation?: string | null;
   existingPath?: string | null;
 };
 
@@ -63,6 +66,20 @@ function buildDisambiguatedArtistPath(basePath: string, segmentIndex: number, su
   const targetIndex = Math.max(0, Math.min(segmentIndex, segments.length - 1));
   segments[targetIndex] = `${segments[targetIndex]} ${suffix}`;
   return path.join(...segments);
+}
+
+function resolveCollisionSuffixes(seed: ArtistFolderSeed): string[] {
+  const disambiguation = sanitizeSegment(String(seed.artistDisambiguation || "").trim());
+  const suffixes: string[] = [];
+  if (disambiguation) {
+    suffixes.push(`(${disambiguation})`);
+  }
+
+  for (let index = 1; index < 100; index += 1) {
+    suffixes.push(`(${index})`);
+  }
+
+  return suffixes;
 }
 
 export function normalizeArtistFolderInput(rawPath: string): string {
@@ -139,7 +156,7 @@ export function findArtistPathConflict(candidatePath: string, artistId?: string 
 }
 
 export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string {
-  const basePath = resolveArtistFolder(seed.artistName, seed.artistMbId);
+  const basePath = resolveArtistFolder(seed.artistName, seed.artistMbId, seed.artistDisambiguation);
   const baseConflict = findArtistPathConflict(basePath, seed.artistId, seed.artistMbId);
 
   if (!baseConflict && !artistPathExistsForOtherArtist(basePath, seed.artistId, seed.artistMbId)) {
@@ -152,20 +169,11 @@ export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string 
     ? Math.min(conflictSegments.length - 1, baseSegments.length - 1)
     : Math.max(0, baseSegments.length - 1);
 
-  if (seed.artistId) {
-    const artistIdCandidate = buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, `(${seed.artistId})`);
-    if (!artistPathConflictsForOtherArtist(artistIdCandidate, seed.artistId, seed.artistMbId)) {
-      return artistIdCandidate;
-    }
-  }
-
-  let index = 1;
-  while (index < 100) {
-    const candidatePath = buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, `(${index})`);
+  for (const suffix of resolveCollisionSuffixes(seed)) {
+    const candidatePath = buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, suffix);
     if (!artistPathConflictsForOtherArtist(candidatePath, seed.artistId, seed.artistMbId)) {
       return candidatePath;
     }
-    index += 1;
   }
 
   return buildDisambiguatedArtistPath(basePath, disambiguatedSegmentIndex, "(99)");
@@ -175,6 +183,7 @@ export function resolveArtistFolderForPersistence(seed: ArtistFolderSeed): strin
   const stored = resolveArtistFolderFromRecord({
     name: seed.artistName,
     mbid: seed.artistMbId ?? null,
+    disambiguation: seed.artistDisambiguation ?? null,
     path: seed.existingPath ?? null,
   });
 
@@ -183,6 +192,28 @@ export function resolveArtistFolderForPersistence(seed: ArtistFolderSeed): strin
   }
 
   return resolveArtistFolderFromTemplate(seed);
+}
+
+export function ensureEmptyArtistFoldersIfEnabled(relativeArtistPath: string): string[] {
+  if (Config.getPathConfig().create_empty_artist_folders !== true) {
+    return [];
+  }
+
+  const normalizedArtistPath = normalizeArtistFolderInput(relativeArtistPath);
+  const roots = Array.from(new Set([
+    Config.getMusicPath(),
+    Config.getSpatialPath(),
+    Config.getVideoPath(),
+  ].filter(Boolean)));
+
+  const ensured: string[] = [];
+  for (const root of roots) {
+    const target = path.join(root, normalizedArtistPath);
+    fs.mkdirSync(target, { recursive: true });
+    ensured.push(target);
+  }
+
+  return ensured;
 }
 
 export function shouldReapplyArtistPathTemplate(seed: ArtistFolderSeed): boolean {
@@ -201,12 +232,12 @@ export function shouldReapplyArtistPathTemplate(seed: ArtistFolderSeed): boolean
   }
 
   if (seed.artistId) {
-    const providerDisambiguatedPath = buildDisambiguatedArtistPath(
+    const obsoleteProviderIdPath = buildDisambiguatedArtistPath(
       currentTemplatePath,
       Math.max(0, splitArtistPath(currentTemplatePath).length - 1),
       `(${seed.artistId})`,
     );
-    if (normalizeComparablePath(existingPath) === normalizeComparablePath(providerDisambiguatedPath)) {
+    if (normalizeComparablePath(existingPath) === normalizeComparablePath(obsoleteProviderIdPath)) {
       return true;
     }
   }

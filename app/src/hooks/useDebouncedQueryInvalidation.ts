@@ -34,6 +34,7 @@ export function useDebouncedQueryInvalidation({
       timerRef.current = null;
       for (const queryKey of queryKeys) {
         void queryClient.invalidateQueries({ queryKey });
+        void queryClient.refetchQueries({ queryKey, type: "active" });
       }
     }, debounceMs);
   }, [debounceMs, enabled, queryClient, queryKeys]);

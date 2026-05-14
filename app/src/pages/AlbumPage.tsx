@@ -53,7 +53,7 @@ import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { useToast } from "@/hooks/useToast";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
-import { dispatchLibraryUpdated } from "@/utils/appEvents";
+import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
@@ -578,7 +578,7 @@ const AlbumPage = () => {
   };
 
   const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
-    if (!album) return;
+    if (!album || !hasAnyProviderOffer) return;
     setDownloadingAlbum(true);
     try {
       await api.addAlbum(album.id, slot ? { slot } : undefined);
@@ -587,7 +587,14 @@ const AlbumPage = () => {
         title: "Album added to queue",
         description: `${album.title} (${slotLabel}) will be downloaded shortly`,
       });
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ["queue"] }),
+        queryClient.invalidateQueries({ queryKey: ["queueDetails"] }),
+        queryClient.refetchQueries({ queryKey: ["queue"] }),
+        queryClient.refetchQueries({ queryKey: ["queueDetails"] }),
+      ]);
       dispatchLibraryUpdated();
+      dispatchActivityRefresh();
     } catch (error) {
       console.error("Error adding album to queue:", error);
       toast({
@@ -877,21 +884,7 @@ const AlbumPage = () => {
             showVolumeHeaders
             contextArtistName={album.artist_name}
             contextAlbumTitle={album.title}
-            onDownloadTrack={handleDownloadTrack}
-            onToggleMonitor={(track) => {
-              toggleMonitor({
-                id: track.id,
-                type: "track",
-                currentStatus: Boolean(track.is_monitored ?? track.monitor),
-              });
-            }}
-            onToggleLock={(track) => {
-              toggleLock({
-                id: track.id,
-                type: "track",
-                isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
-              });
-            }}
+            onDownloadTrack={hasAnyProviderOffer ? handleDownloadTrack : undefined}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}
           />
         )}

@@ -253,9 +253,11 @@ export class ArtistQueryService {
                 const artistId = String(artist.id);
                 const albumCounts = albumCountsByArtistId.get(artistId);
                 const trackCounts = trackCountsByArtistId.get(artistId);
+                const resolvedArtistPicture = artist.cover_image_url || artist.picture || null;
 
                 return {
                     ...artist,
+                    picture: resolvedArtistPicture,
                     album_count: Math.max(
                         Number(albumCounts?.cnt || 0),
                         artist.mbid ? Number(releaseGroupCountsByMbid.get(String(artist.mbid)) || 0) : 0,
@@ -304,7 +306,9 @@ export class ArtistQueryService {
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
-            picture: artist.picture == null ? null : String(artist.picture),
+            picture: artist.cover_image_url == null
+                ? (artist.picture == null ? null : String(artist.picture))
+                : String(artist.cover_image_url),
             cover_image_url: artist.cover_image_url == null ? null : String(artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
             bio: biography,
@@ -690,7 +694,7 @@ export class ArtistQueryService {
             })() as { cover?: string | null; explicit?: boolean | number | null } | null;
             const providerCover = selectedProviderData?.cover || null;
             const coverArtArchiveUrl = row.mbid ? `https://coverartarchive.org/release-group/${row.mbid}/front-500` : null;
-            const coverUrl = lidarrCover || providerCover || coverArtArchiveUrl;
+            const coverUrl = lidarrCover || coverArtArchiveUrl || providerCover;
 
             return {
                 id: String(row.mbid),

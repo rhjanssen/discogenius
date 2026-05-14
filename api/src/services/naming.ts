@@ -6,6 +6,7 @@ export type LibraryRoot = "music" | "spatial" | "videos";
 export type NamingContext = {
   artistName: string;
   artistMbId?: string | null;
+  artistDisambiguation?: string | null;
 
   albumTitle?: string | null;
   albumVersion?: string | null;
@@ -183,6 +184,7 @@ function buildDerived(context: NamingContext) {
   const artistName = context.artistName || "Unknown Artist";
   const artistId = context.artistId || "";
   const artistMbId = context.artistMbId || "";
+  const artistDisambiguation = context.artistDisambiguation || "";
 
   const albumTitle = context.albumTitle || "Unknown Album";
   const albumId = context.albumId || "";
@@ -218,6 +220,7 @@ function buildDerived(context: NamingContext) {
   return {
     artistName,
     artistMbId,
+    artistDisambiguation,
     artistId,
     albumTitle,
     albumId,
@@ -284,6 +287,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "artistmbid":
       baseValue = derived.artistMbId;
+      break;
+    case "artistdisambiguation":
+      baseValue = derived.artistDisambiguation;
       break;
     case "artistid":
       baseValue = derived.artistId;
@@ -514,6 +520,7 @@ const KNOWN_TOKEN_NAMES = new Set([
   "artistcleannamthe",
   "artistcleannamethe",
   "artistmbid",
+  "artistdisambiguation",
   "artistid",
   "artistnamefirstcharacter",
   "albumtitle",
@@ -672,6 +679,7 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     artistName: "Nine Inch Nails",
     artistId: "65662",
     artistMbId: "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
+    artistDisambiguation: "US industrial rock band",
     albumTitle: "The Downward Spiral",
     albumVersion: "Deluxe Edition",
     albumFullTitle: "The Downward Spiral (Deluxe Edition)",
@@ -732,13 +740,17 @@ export function getLibraryRootPath(libraryPath: string, root: LibraryRoot): stri
  * Resolve the library folder name for an artist using the active naming convention.
  * Used when an artist is first added to compute and persist `artist.path`.
  */
-export function resolveArtistFolder(artistName: string, artistMbId?: string | null): string {
+export function resolveArtistFolder(
+  artistName: string,
+  artistMbId?: string | null,
+  artistDisambiguation?: string | null,
+): string {
   const naming = getNamingConfig();
-  return renderRelativePath(naming.artist_folder, { artistName, artistMbId });
+  return renderRelativePath(naming.artist_folder, { artistName, artistMbId, artistDisambiguation });
 }
 
-export function resolveArtistFolderFromRecord(artist: { name: string; mbid?: string | null; path?: string | null }): string {
+export function resolveArtistFolderFromRecord(artist: { name: string; mbid?: string | null; disambiguation?: string | null; path?: string | null }): string {
   const stored = String(artist.path || "").trim();
   if (stored) return stored;
-  return resolveArtistFolder(artist.name, artist.mbid);
+  return resolveArtistFolder(artist.name, artist.mbid, artist.disambiguation);
 }

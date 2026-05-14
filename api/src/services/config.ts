@@ -105,6 +105,7 @@ export interface PathConfig {
   music_path: string;
   spatial_path: string;
   video_path: string;
+  create_empty_artist_folders?: boolean;
 }
 
 export interface NamingConfig {
@@ -226,6 +227,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     music_path: "/library/stereo-music",
     spatial_path: "/library/spatial-music",
     video_path: "/library/music-videos",
+    create_empty_artist_folders: false,
   },
   naming: {
     artist_folder: "{artistName} {mbid-{artistMbId}}",

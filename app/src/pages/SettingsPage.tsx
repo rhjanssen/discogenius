@@ -89,6 +89,7 @@ const ARTIST_NAMING_TOKENS: NamingToken[] = [
     { section: "Artist", token: "{Artist CleanNameThe}", example: "Daft Punk" },
     { section: "Artist", token: "{Artist NameFirstCharacter}", example: "D" },
     { section: "Artist", token: "{Artist MbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
+    { section: "Artist", token: "{Artist Disambiguation}", example: "French electronic music duo" },
     { section: "Artist", token: "{mbid-{Artist MbId}}", example: "{mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}" },
     { section: "Artist", token: "{Artist Id}", example: "8847" },
 ];
@@ -2305,6 +2306,19 @@ const SettingsPage = () => {
                                 value={pathSettings?.video_path || ''}
                                 onChange={(_, data) => updatePathSettings({ video_path: data.value })}
                                 className={styles.pathInput}
+                            />
+                        </div>
+                        <div className={styles.divider} />
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Create Empty Artist Folders</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Create artist folders in each configured library root during library scans, matching Lidarr&apos;s empty-folder option.
+                                </Text>
+                            </div>
+                            <Switch
+                                checked={Boolean(pathSettings?.create_empty_artist_folders)}
+                                onChange={(_, data) => updatePathSettings({ create_empty_artist_folders: data.checked })}
                             />
                         </div>
                     </div>

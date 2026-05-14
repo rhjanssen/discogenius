@@ -46,18 +46,26 @@ export function useTrackQueueActions() {
     try {
       const fullTitle = track.version ? `${track.title} (${track.version})` : track.title;
       const providerTrackId = String(track.preview_provider_track_id || "").trim();
+      if (!providerTrackId) {
+        toast({
+          title: "No provider track",
+          description: "This MusicBrainz track is not matched to a provider track yet.",
+          variant: "destructive",
+        });
+        return;
+      }
       const looksLikeMusicBrainzMbid = (value: string | null | undefined) => (
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim())
       );
       const releaseGroupMbid = looksLikeMusicBrainzMbid(track.album_id) ? track.album_id : null;
       const canonicalTrackMbid = track.musicbrainz_track_id ?? (looksLikeMusicBrainzMbid(track.id) ? track.id : null);
 
-      await addToQueue(null, "track", providerTrackId || null, {
+      await addToQueue(null, "track", providerTrackId, {
         successTitle: "Track added to queue",
         successDescription: `${fullTitle} will be downloaded shortly`,
         payload: {
           provider: track.preview_provider ?? "tidal",
-          providerId: providerTrackId || null,
+          providerId: providerTrackId,
           canonicalTrackMbid,
           canonicalRecordingMbid: track.musicbrainz_recording_id ?? null,
           releaseGroupMbid,

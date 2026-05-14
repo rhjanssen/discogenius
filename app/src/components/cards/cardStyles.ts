@@ -226,10 +226,6 @@ export const useGridStyles = makeStyles({
         "@media (min-width: 1200px)": {
             gridTemplateColumns: "repeat(6, 1fr)",
         },
-        // Wide: 7 columns
-        "@media (min-width: 1536px)": {
-            gridTemplateColumns: "repeat(7, 1fr)",
-        },
     },
     // Horizontal carousel for related content sections
     carousel: {

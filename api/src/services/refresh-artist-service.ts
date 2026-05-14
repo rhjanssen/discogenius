@@ -131,6 +131,7 @@ export class RefreshArtistService {
             artistId: localArtistId,
             artistName,
             artistMbId: artistMbid,
+            artistDisambiguation: artistData.disambiguation || null,
             existingPath: existing?.path ?? null,
         });
 
@@ -375,11 +376,17 @@ export class RefreshArtistService {
     }
 
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
-        const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+        const artist = db.prepare(`
+            SELECT artists.id, artists.name, artists.mbid, artists.path, mb_artists.disambiguation
+            FROM artists
+            LEFT JOIN mb_artists ON mb_artists.mbid = artists.mbid
+            WHERE artists.id = ?
+        `).get(artistId) as {
             id: number | string;
             name: string | null;
             mbid: string | null;
             path: string | null;
+            disambiguation: string | null;
         } | undefined;
 
         if (!artist?.name || !artist.mbid) {
@@ -391,6 +398,7 @@ export class RefreshArtistService {
             artistId,
             artistName: artist.name,
             artistMbId: artist.mbid,
+            artistDisambiguation: artist.disambiguation,
             existingPath,
         })) {
             return;
@@ -400,6 +408,7 @@ export class RefreshArtistService {
             artistId,
             artistName: artist.name,
             artistMbId: artist.mbid,
+            artistDisambiguation: artist.disambiguation,
         });
         db.prepare("UPDATE artists SET path = ? WHERE id = ?").run(nextPath, artistId);
     }

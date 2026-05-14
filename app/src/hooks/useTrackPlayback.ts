@@ -121,7 +121,8 @@ export function useTrackPlayback() {
   }, []);
 
   const getPreviewTrackId = useCallback((track: PlayableTrack) => {
-    return String(track.preview_provider_track_id || track.id);
+    const providerTrackId = String(track.preview_provider_track_id || "").trim();
+    return providerTrackId.length > 0 ? providerTrackId : null;
   }, []);
 
   const getPreviewProviderId = useCallback((track: PlayableTrack) => {
@@ -149,7 +150,12 @@ export function useTrackPlayback() {
     signingTrackIdsRef.current.add(track.id);
 
     try {
-      const url = await api.signTrackPreviewStream(getPreviewTrackId(track), {
+      const providerTrackId = getPreviewTrackId(track);
+      if (!providerTrackId) {
+        throw new Error("Track is not matched to a provider preview resource.");
+      }
+
+      const url = await api.signTrackPreviewStream(providerTrackId, {
         provider: getPreviewProviderId(track),
         quality: preferredQuality ?? undefined,
         releaseGroupMbid: looksLikeMusicBrainzMbid(track.album_id) ? track.album_id : undefined,

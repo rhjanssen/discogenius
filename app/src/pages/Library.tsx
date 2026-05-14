@@ -674,20 +674,21 @@ const Library = () => {
   const queueSelectedTrackDownload = async () => {
     const queueableTracks = trackSelection.selectedItems.filter((track: any) => {
       const isDownloaded = track.is_downloaded ?? track.downloaded;
-      return !isDownloaded;
+      const providerTrackId = String(track.preview_provider_track_id ?? "").trim();
+      return !isDownloaded && providerTrackId.length > 0;
     });
 
     if (queueableTracks.length === 0) {
       toast({
         title: "No downloadable tracks selected",
-        description: "All selected tracks are already downloaded.",
+        description: "Selected tracks are already downloaded or are not matched to a provider track yet.",
       });
       trackSelection.clearSelection();
       return;
     }
 
     const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableTracks, async (track: any) => {
-      const providerTrackId = String(track.preview_provider_track_id ?? track.provider_id ?? track.providerId ?? track.id ?? "").trim();
+      const providerTrackId = String(track.preview_provider_track_id ?? "").trim();
       await addToQueue(null, "track", providerTrackId, {
         payload: {
           provider: track.preview_provider ?? track.provider ?? "tidal",

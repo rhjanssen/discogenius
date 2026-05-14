@@ -119,6 +119,49 @@ async function resolveProviderCoverUrl(releaseGroup: any): Promise<string | null
     return null;
 }
 
+async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
+    review: string;
+    source: string;
+    updatedAt: string;
+} | null> {
+    const candidates = [
+        {
+            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
+            providerAlbumId: String(releaseGroup.stereo_provider_id || releaseGroup.selected_provider_id || "").trim(),
+        },
+        {
+            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
+            providerAlbumId: String(releaseGroup.spatial_provider_id || releaseGroup.selected_provider_id || "").trim(),
+        },
+    ];
+    const seen = new Set<string>();
+
+    for (const candidate of candidates) {
+        const key = `${candidate.providerId}:${candidate.providerAlbumId}`;
+        if (!candidate.providerId || !candidate.providerAlbumId || seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+
+        try {
+            const provider = streamingProviderManager.getStreamingProvider(candidate.providerId);
+            const review = await provider.getAlbumReview?.(candidate.providerAlbumId);
+            const trimmed = String(review || "").trim();
+            if (trimmed) {
+                return {
+                    review: trimmed,
+                    source: provider.id,
+                    updatedAt: new Date().toISOString(),
+                };
+            }
+        } catch {
+            // Provider editorial metadata is best-effort; canonical MB data still loads.
+        }
+    }
+
+    return null;
+}
+
 export function normalizeMusicBrainzReleaseGroupAlbum(
     releaseGroup: any,
     release: any | null,
@@ -583,6 +626,13 @@ export class MusicBrainzReleaseGroupReadService {
 
         const release = selectPreferredRelease(releaseGroupMbid);
         const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, await resolveProviderCoverUrl(releaseGroup));
+        const providerReview = await resolveProviderAlbumReview(releaseGroup);
+        if (providerReview) {
+            album.review = providerReview.review;
+            album.review_text = providerReview.review;
+            album.review_source = providerReview.source;
+            album.review_last_updated = providerReview.updatedAt;
+        }
 
         return {
             album,

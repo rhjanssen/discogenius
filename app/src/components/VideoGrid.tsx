@@ -28,13 +28,16 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "repeat(3, 1fr)",
     gap: tokens.spacingHorizontalS,
-    "@media (min-width: 480px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(4, 1fr)",
       gap: tokens.spacingHorizontalM,
     },
     "@media (min-width: 1024px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-      gap: tokens.spacingHorizontalXL,
+      gridTemplateColumns: "repeat(5, 1fr)",
+      gap: tokens.spacingHorizontalM,
+    },
+    "@media (min-width: 1280px)": {
+      gridTemplateColumns: "repeat(6, 1fr)",
     },
   },
   card: {

@@ -81,6 +81,7 @@ export interface PathConfigContract {
   music_path: string;
   spatial_path: string;
   video_path: string;
+  create_empty_artist_folders?: boolean;
 }
 
 export interface NamingConfigContract {
@@ -218,6 +219,7 @@ export function parsePathConfigContract(value: unknown): PathConfigContract {
     music_path: expectString(record.music_path, "path.music_path"),
     spatial_path: expectString(record.spatial_path, "path.spatial_path"),
     video_path: expectString(record.video_path, "path.video_path"),
+    create_empty_artist_folders: expectOptionalBoolean(record.create_empty_artist_folders, "path.create_empty_artist_folders"),
   };
 }
 

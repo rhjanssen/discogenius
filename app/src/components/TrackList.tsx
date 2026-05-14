@@ -215,6 +215,7 @@ const TrackList = <T extends TrackListItem>({
           const audioFile = getTrackAudioFile(track);
           const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
           const canPlay = Boolean(audioFile || track.preview_provider_track_id);
+          const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
           const isMonitored = isTruthy(track.is_monitored ?? track.monitor);
           const isLocked = isTruthy(track.monitor_locked ?? track.monitor_lock);
           const displayArtist = shouldShowArtist(track, showArtist, contextArtistName) ? track.artist_name : null;
@@ -292,7 +293,7 @@ const TrackList = <T extends TrackListItem>({
                       event.stopPropagation();
                       setInfoTrack(track);
                     }}
-                    onDownload={onDownloadTrack
+                    onDownload={canDownload && onDownloadTrack
                       ? (event) => {
                         event.stopPropagation();
                         onDownloadTrack(track, event);

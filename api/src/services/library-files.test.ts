@@ -17,6 +17,7 @@ let downloadStateModule: typeof import("./download-state.js");
 function writeTestConfig(overrides?: {
   artistFolder?: string;
   albumTrackPathSingle?: string;
+  createEmptyArtistFolders?: boolean;
 }) {
   const config = configModule.readConfig();
   config.path.music_path = path.join(tempDir, "library", "music");
@@ -27,6 +28,9 @@ function writeTestConfig(overrides?: {
   }
   if (overrides?.albumTrackPathSingle) {
     config.naming.album_track_path_single = overrides.albumTrackPathSingle;
+  }
+  if (overrides?.createEmptyArtistFolders !== undefined) {
+    config.path.create_empty_artist_folders = overrides.createEmptyArtistFolders;
   }
   configModule.writeConfig(config);
 }
@@ -107,7 +111,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   assert.ok(!expected.expectedPath?.includes("Queen [artist-mbid-1]"));
 });
 
-test("resolveArtistFolderForPersistence disambiguates same-name artists outside the repository layer", () => {
+test("resolveArtistFolderForPersistence disambiguates same-name artists with numeric suffixes outside the repository layer", () => {
   dbModule.db.prepare(`
     INSERT INTO artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
@@ -118,7 +122,33 @@ test("resolveArtistFolderForPersistence disambiguates same-name artists outside 
     artistName: "Phoenix",
   });
 
-  assert.equal(resolved, "Phoenix (2)");
+  assert.equal(resolved, "Phoenix (1)");
+});
+
+test("resolveArtistFolderForPersistence prefers MusicBrainz disambiguation for same-name artist collisions", () => {
+  dbModule.db.prepare(`
+    INSERT INTO artists (id, name, path, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run(1, "Phoenix", "Phoenix", 1);
+
+  const resolved = artistPathsModule.resolveArtistFolderForPersistence({
+    artistId: 2,
+    artistName: "Phoenix",
+    artistDisambiguation: "French band",
+  });
+
+  assert.equal(resolved, "Phoenix (French band)");
+});
+
+test("ensureEmptyArtistFoldersIfEnabled creates the artist folder under each configured library root", () => {
+  writeTestConfig({ createEmptyArtistFolders: true });
+
+  const ensured = artistPathsModule.ensureEmptyArtistFoldersIfEnabled(path.join("Bastille {mbid-artist-mbid-1}"));
+
+  assert.equal(ensured.length, 3);
+  assert.ok(fs.existsSync(path.join(configModule.Config.getMusicPath(), "Bastille {mbid-artist-mbid-1}")));
+  assert.ok(fs.existsSync(path.join(configModule.Config.getSpatialPath(), "Bastille {mbid-artist-mbid-1}")));
+  assert.ok(fs.existsSync(path.join(configModule.Config.getVideoPath(), "Bastille {mbid-artist-mbid-1}")));
 });
 
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
@@ -157,7 +187,7 @@ test("resolveArtistFolderForPersistence avoids nested folder collisions for gene
     artistName: "Air",
   });
 
-  assert.equal(resolved, path.join("Artists (2)", "Air"));
+  assert.equal(resolved, path.join("Artists (1)", "Air"));
 });
 
 test("shouldReapplyArtistPathTemplate detects legacy generated folders once artist MBIDs exist", () => {
@@ -186,7 +216,7 @@ test("shouldReapplyArtistPathTemplate detects obsolete provider-id disambiguator
   assert.equal(shouldReapply, true);
 });
 
-test("backfillArtistPaths assigns unique folders when multiple legacy artists are missing paths", () => {
+test("backfillArtistPaths assigns numeric folders when multiple legacy artists are missing paths", () => {
   writeTestConfig({ artistFolder: "{artistName}" });
 
   dbModule.db.prepare(`
@@ -204,7 +234,7 @@ test("backfillArtistPaths assigns unique folders when multiple legacy artists ar
   assert.equal(updated, 2);
   assert.deepEqual(rows, [
     { id: 1, path: "Air" },
-    { id: 2, path: "Air (2)" },
+    { id: 2, path: "Air (1)" },
   ]);
 });
 

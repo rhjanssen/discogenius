@@ -471,7 +471,6 @@ export async function saveAlbumNfoFile(
     const elements = [
         xmlElement("title", album.title),
         xmlElement("review", reviewText),
-        xmlElement("outline", reviewText),
         xmlElement("year", year),
         xmlElement("releasedate", album.releaseDate),
         ...artists.map((artistName: unknown) => xmlElement("artist", artistName)),

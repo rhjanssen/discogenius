@@ -72,6 +72,7 @@ const PATH_UPDATE_KEYS = [
   "music_path",
   "spatial_path",
   "video_path",
+  "create_empty_artist_folders",
 ] as const satisfies readonly (keyof PathConfigContract)[];
 
 const NAMING_UPDATE_KEYS = [

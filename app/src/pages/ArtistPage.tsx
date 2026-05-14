@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   Text,
@@ -31,7 +31,6 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
-import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -290,7 +289,6 @@ const useStyles = makeStyles({
     scrollSnapType: "x mandatory",
     "& > *": {
       scrollSnapAlign: "start",
-      // Card widths in carousel
       width: "calc((100vw - 56px) / 3)",
       flexShrink: 0,
     },
@@ -302,12 +300,12 @@ const useStyles = makeStyles({
     },
     "@media (min-width: 768px)": {
       "& > *": {
-        width: "160px",
+        width: "calc((100% - (5 * 12px)) / 6)",
       },
     },
     "@media (min-width: 900px)": {
       "& > *": {
-        width: "180px",
+        width: "calc((100% - (5 * 12px)) / 6)",
       },
     },
     // Hide scrollbar
@@ -317,18 +315,10 @@ const useStyles = makeStyles({
     },
   },
   videoGrid: {
-    gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-    "& > *": {
-      minWidth: "220px",
-      maxWidth: "280px",
-    },
-    "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-      "& > *": {
-        minWidth: "260px",
-        maxWidth: "320px",
-      },
-    },
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    "@media (min-width: 640px)": { gridTemplateColumns: "repeat(4, minmax(0, 1fr))" },
+    "@media (min-width: 900px)": { gridTemplateColumns: "repeat(5, minmax(0, 1fr))" },
+    "@media (min-width: 1200px)": { gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
   },
   sectionAction: {
     flexShrink: 0,
@@ -548,8 +538,8 @@ const ArtistPage = () => {
   const styles = useStyles();
   const { artistId } = useParams<{ artistId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { toggleMonitor, toggleLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
   // State
@@ -766,6 +756,12 @@ const ArtistPage = () => {
     dispatchActivityRefresh();
     try {
       await api.processMonitoredItems(artistId);
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ["queue"] }),
+        queryClient.invalidateQueries({ queryKey: ["queueDetails"] }),
+        queryClient.refetchQueries({ queryKey: ["queue"] }),
+        queryClient.refetchQueries({ queryKey: ["queueDetails"] }),
+      ]);
       dispatchActivityRefresh();
     } catch (error) {
       console.error("Error starting downloads:", error);
@@ -908,6 +904,7 @@ const ArtistPage = () => {
         key={tidalId}
         to={getAlbumPath(tidalId)}
         imageUrl={imageUrl}
+        fallbackImageUrl={item.provider_cover_id || null}
         alt={albumTitle}
         title={albumTitle}
         subtitle={subtitle}
@@ -1148,20 +1145,6 @@ const ArtistPage = () => {
             showAlbum
             contextArtistName={artistName}
             onDownloadTrack={handleDownloadTrack}
-            onToggleMonitor={(track) => {
-              toggleMonitor({
-                id: track.id,
-                type: "track",
-                currentStatus: Boolean(track.is_monitored ?? track.monitor),
-              });
-            }}
-            onToggleLock={(track) => {
-              toggleLock({
-                id: track.id,
-                type: "track",
-                isLocked: Boolean(track.monitor_locked ?? track.monitor_lock),
-              });
-            }}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}
             onTrackClick={(track) => {
               const albumId = track.album_id ?? track.album?.id ?? null;
@@ -1268,6 +1251,16 @@ const ArtistPage = () => {
     return mods;
   }, [pageData]);
 
+  const hasProviderMatchedItems = useMemo(() => modules.some((mod: any) => (
+    (mod.items || []).some((item: any) => Boolean(
+      item?.stereo_provider_id
+      || item?.spatial_provider_id
+      || item?.selected_provider_id
+      || item?.provider_id
+      || (item?.type === "Music Video" && item?.id)
+    ))
+  )), [modules]);
+
   if (pageLoading) {
     return (
       <DetailPageSkeleton
@@ -1300,11 +1293,13 @@ const ArtistPage = () => {
   const hasMonitoredAlbums = monitoredAlbumCount > 0;
   const needsScan = Boolean(pageData?.needs_scan ?? !pageData?.last_scanned);
   const hasBeenScanned = !needsScan;
-  const downloadActionDisabled = !hasBeenScanned || isScanBusy;
+  const downloadActionDisabled = !hasBeenScanned || isScanBusy || !hasProviderMatchedItems;
   const downloadActionTitle = !hasBeenScanned
     ? 'Get metadata first to enable downloads'
     : isScanBusy
       ? 'Wait for scan to finish'
+      : !hasProviderMatchedItems
+        ? 'No provider offers are matched yet'
       : 'Download missing releases';
   const scanActionTitle = 'Refresh & Scan';
 

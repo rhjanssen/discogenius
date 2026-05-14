@@ -18,6 +18,8 @@ export interface MediaCardProps {
     onClick?: () => void;
     /** Image URL (null for placeholder) */
     imageUrl: string | null;
+    /** Provider/local fallback image URL when the canonical artwork URL fails */
+    fallbackImageUrl?: string | null;
     /** Alt text for image */
     alt: string;
     /** Title text */
@@ -55,6 +57,7 @@ export interface MediaCardProps {
 export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     to,
     imageUrl,
+    fallbackImageUrl,
     alt,
     title,
     subtitle,
@@ -77,9 +80,11 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const navigate = useNavigate();
     const showExplicitBadge = explicit === true || explicit === 1 || explicit === "1" || explicit === "true";
     const [imageFailed, setImageFailed] = React.useState(false);
+    const [fallbackFailed, setFallbackFailed] = React.useState(false);
     React.useEffect(() => {
         setImageFailed(false);
-    }, [imageUrl]);
+        setFallbackFailed(false);
+    }, [imageUrl, fallbackImageUrl]);
 
     const handleClick = useCallback(() => {
         if (onClick) {
@@ -121,13 +126,19 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
             aria-label={title}
         >
             <div className={previewClass}>
-                {imageUrl && !imageFailed ? (
+                {(imageFailed ? (!fallbackFailed ? fallbackImageUrl : null) : imageUrl) ? (
                     <img
-                        src={imageUrl}
+                        src={(imageFailed ? fallbackImageUrl : imageUrl) as string}
                         alt={alt}
                         className={styles.cardImage}
                         loading="lazy"
-                        onError={() => setImageFailed(true)}
+                        onError={() => {
+                            if (!imageFailed && fallbackImageUrl) {
+                                setImageFailed(true);
+                            } else {
+                                setFallbackFailed(true);
+                            }
+                        }}
                     />
                 ) : (
                     placeholder || <div className={styles.placeholderBg} />
