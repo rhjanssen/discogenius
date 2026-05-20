@@ -16,7 +16,11 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
         a.monitor AS artist_monitor,
-        COALESCE(stereo.wanted, spatial.wanted, a.monitor, 0) AS wanted,
+        CASE
+          WHEN stereo.id IS NOT NULL OR spatial.id IS NOT NULL THEN
+            CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
+          ELSE COALESCE(a.monitor, 0)
+        END AS wanted,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,

@@ -255,7 +255,7 @@ export function formatJobDescription(job: JobLike): string {
                 return type === "DownloadMissing" ? summarizeQueuedDownloads(subject) : subject;
             }
 
-            if (type === "RefreshMetadata") return desc || "TIDAL metadata cache";
+            if (type === "RefreshMetadata") return desc || "MusicBrainz metadata and provider availability";
             if (type === "ApplyCuration") return desc || "Release monitoring and inclusion rules";
             if (type === "DownloadMissing") return summarizeQueuedDownloads(desc) || "Monitored library items";
             return desc || "Quality profile upgrades";

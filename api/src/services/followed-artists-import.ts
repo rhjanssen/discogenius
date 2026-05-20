@@ -1,7 +1,8 @@
 import { db } from "../database.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
-import { resolveArtistFolderForPersistence } from "./artist-paths.js";
-import { lidarrMetadataService, type LidarrArtist } from "./metadata/lidarr-metadata-service.js";
+import { resolveArtistFolderForIdentityUpdate } from "./artist-paths.js";
+import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { ProviderArtistIdentityService } from "./provider-artist-identity-service.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderArtist } from "./providers/streaming-provider.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
@@ -36,99 +37,6 @@ type FollowedArtistRow = {
     raw?: unknown;
 };
 
-function normalizeSearchText(value: string): string {
-    return value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim();
-}
-
-function bestLidarrArtistMatch(providerArtist: FollowedArtistRow, candidates: LidarrArtist[]): {
-    artist: LidarrArtist;
-    status: "verified" | "probable";
-    confidence: number;
-    method: string;
-} | null {
-    const normalizedName = normalizeSearchText(providerArtist.name);
-    const exactMatches = candidates
-        .filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName)
-        .sort((left, right) => (right.Albums?.length || 0) - (left.Albums?.length || 0));
-
-    if (exactMatches.length === 0) {
-        return null;
-    }
-
-    if (exactMatches.length === 1) {
-        return {
-            artist: exactMatches[0],
-            status: "verified",
-            confidence: 1,
-            method: "lidarr-artist-name-exact",
-        };
-    }
-
-    const [best, second] = exactMatches;
-    const bestAlbumCount = best.Albums?.length || 0;
-    const secondAlbumCount = second.Albums?.length || 0;
-    const bestHasDisambiguation = String(best.disambiguation || "").trim().length > 0;
-    const secondHasDisambiguation = String(second.disambiguation || "").trim().length > 0;
-
-    if (bestAlbumCount >= secondAlbumCount + 5 && (!bestHasDisambiguation || secondHasDisambiguation)) {
-        return {
-            artist: best,
-            status: "probable",
-            confidence: 0.78,
-            method: "lidarr-artist-name-discography-weight",
-        };
-    }
-
-    return null;
-}
-
-async function resolveMusicBrainzArtist(providerArtist: FollowedArtistRow): Promise<{
-    mbid: string | null;
-    status: "verified" | "probable";
-    confidence: number;
-    method: string;
-    reason?: string;
-} | null> {
-    if (providerArtist.mbid) {
-        return {
-            mbid: providerArtist.mbid,
-            status: "verified",
-            confidence: 1,
-            method: "provider-musicbrainz-id",
-        };
-    }
-
-    try {
-        const candidates = await lidarrMetadataService.searchArtists(providerArtist.name, 10);
-        const match = bestLidarrArtistMatch(providerArtist, candidates);
-        const normalizedName = normalizeSearchText(providerArtist.name);
-        const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;
-        if (!match && exactCount > 1) {
-            return {
-                mbid: null,
-                status: "probable",
-                confidence: 0,
-                method: "lidarr-artist-name-ambiguous",
-                reason: "musicbrainz_ambiguous",
-            };
-        }
-        return match ? {
-            mbid: match.artist.id,
-            status: match.status,
-            confidence: match.confidence,
-            method: match.method,
-        } : null;
-    } catch (error) {
-        console.warn(`[FollowedArtistsImport] Failed to match ${providerArtist.name} to Lidarr metadata:`, error);
-        return null;
-    }
-}
-
 function normalizeProviderArtist(artist: ProviderArtist): FollowedArtistRow {
     return {
         provider_id: artist.providerId,
@@ -162,100 +70,29 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
     const status = existing?.monitor === 1 ? "skipped" : existing ? "updated" : "added";
 
     const localArtistId = await RefreshArtistService.upsertMusicBrainzArtist(artist.mbid, { monitorArtist: true });
+    const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
+        artistId: localArtistId,
+        artistName: artist.name,
+        artistMbId: artist.mbid,
+        existingPath: existing?.path ?? null,
+    });
     db.prepare(`
         UPDATE artists
         SET monitor = 1,
             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-            path = COALESCE(path, ?),
+            path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END,
             picture = COALESCE(picture, ?),
             popularity = COALESCE(popularity, ?)
         WHERE id = ?
     `).run(
-        resolveArtistFolderForPersistence({
-            artistId: localArtistId,
-            artistName: artist.name,
-            artistMbId: artist.mbid,
-            existingPath: existing?.path ?? null,
-        }),
+        resolvedArtistFolder.shouldReplaceExistingPath ? 1 : 0,
+        resolvedArtistFolder.path,
+        resolvedArtistFolder.path,
         artist.picture || null,
         artist.popularity || 0,
         localArtistId,
     );
     return { status, localArtistId };
-}
-
-function storeProviderArtistIdentity(providerId: string, artist: FollowedArtistRow, localArtistId: string | null): void {
-    const matchStatus = artist.match_status || (artist.mbid ? "verified" : "provider_only");
-    const matchConfidence = artist.match_confidence ?? (artist.mbid ? 1 : 0.45);
-    const matchMethod = artist.match_method || "followed-artists-import";
-
-    db.prepare(`
-        INSERT INTO provider_items (
-            provider, entity_type, provider_id, artist_mbid,
-            title, match_status, match_confidence, match_method, data, updated_at
-        )
-        VALUES (?, 'artist', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-            artist_mbid = COALESCE(excluded.artist_mbid, provider_items.artist_mbid),
-            title = excluded.title,
-            match_status = excluded.match_status,
-            match_confidence = excluded.match_confidence,
-            match_method = excluded.match_method,
-            data = excluded.data,
-            updated_at = CURRENT_TIMESTAMP
-    `).run(
-        providerId,
-        artist.provider_id,
-        artist.mbid || null,
-        artist.name,
-        matchStatus,
-        matchConfidence,
-        matchMethod,
-        JSON.stringify(artist.raw ?? artist),
-    );
-
-    if (!localArtistId) {
-        return;
-    }
-
-    db.prepare(`
-        INSERT INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name, updated_at)
-        VALUES (?, 'artist', ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(local_id) DO UPDATE SET
-            legacy_id = COALESCE(local_entities.legacy_id, excluded.legacy_id),
-            musicbrainz_id = COALESCE(excluded.musicbrainz_id, local_entities.musicbrainz_id),
-            display_name = excluded.display_name,
-            updated_at = CURRENT_TIMESTAMP
-    `).run(
-        `artist:${localArtistId}`,
-        localArtistId,
-        artist.mbid || null,
-        artist.name,
-    );
-
-    db.prepare(`
-        INSERT INTO provider_entity_ids (
-            local_id, entity_type, provider, external_id, provider_entity_type,
-            match_status, match_confidence, match_method, data, updated_at
-        )
-        VALUES (?, 'artist', ?, ?, 'artist', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(provider, provider_entity_type, external_id) DO UPDATE SET
-            local_id = excluded.local_id,
-            entity_type = excluded.entity_type,
-            match_status = excluded.match_status,
-            match_confidence = excluded.match_confidence,
-            match_method = excluded.match_method,
-            data = excluded.data,
-            updated_at = CURRENT_TIMESTAMP
-    `).run(
-        `artist:${localArtistId}`,
-        providerId,
-        artist.provider_id,
-        matchStatus,
-        matchConfidence,
-        matchMethod,
-        JSON.stringify(artist.raw ?? artist),
-    );
 }
 
 export class FollowedArtistsImportService {
@@ -305,10 +142,18 @@ export class FollowedArtistsImportService {
             });
 
             try {
-                const mbMatch = await resolveMusicBrainzArtist(artist);
+                const identityInput = {
+                    providerId: artist.provider_id,
+                    name: artist.name,
+                    picture: artist.picture || null,
+                    popularity: artist.popularity ?? null,
+                    mbid: artist.mbid || null,
+                    raw: artist.raw,
+                };
+                const mbMatch = await ProviderArtistIdentityService.resolve(provider.id, identityInput);
                 if (mbMatch?.mbid) {
                     artist.mbid = mbMatch.mbid;
-                    artist.match_status = mbMatch.status;
+                    artist.match_status = mbMatch.status === "ambiguous" || mbMatch.status === "provider_only" ? "probable" : mbMatch.status;
                     artist.match_confidence = mbMatch.confidence;
                     artist.match_method = mbMatch.method;
                     try {
@@ -323,7 +168,12 @@ export class FollowedArtistsImportService {
                 }
 
                 const result = await ensureMonitoredArtist(artist);
-                storeProviderArtistIdentity(provider.id, artist, result.localArtistId);
+                ProviderArtistIdentityService.store(provider.id, identityInput, {
+                    mbid: artist.mbid || null,
+                    status: artist.match_status || (artist.mbid ? "verified" : "provider_only"),
+                    confidence: artist.match_confidence ?? (artist.mbid ? 1 : 0),
+                    method: artist.match_method || "followed-artists-import",
+                }, result.localArtistId);
 
                 if (result.status === "skipped") {
                     skippedCount += 1;

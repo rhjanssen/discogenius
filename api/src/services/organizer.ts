@@ -7,7 +7,7 @@ import { Config } from "./config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "./providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
-import { resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
+import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
@@ -55,6 +55,13 @@ type StagedAudioMetadata = {
   trackNumber?: number;
   volumeNumber?: number;
   isrc?: string;
+};
+
+type OrganizerArtistContext = {
+  artistId: string;
+  artistName: string;
+  artistMbId: string;
+  artistPath: string;
 };
 
 const getAlbumVideoCoverName = (albumCoverName: string) => {
@@ -133,6 +140,100 @@ export class OrganizerService {
     } catch (error) {
       console.warn(`[Organizer] Failed to reapply artist path template for ${artistId}:`, error);
     }
+  }
+
+  private static resolveCanonicalArtistForAlbum(album: any): OrganizerArtistContext {
+    const fallbackArtistId = String(album?.artist_id || "");
+    const releaseGroupMbid = String(album?.mb_release_group_id || "").trim();
+
+    let artist = releaseGroupMbid
+      ? db.prepare(`
+          SELECT
+            a.id,
+            a.name,
+            a.mbid,
+            a.path,
+            mba.disambiguation
+          FROM mb_release_groups rg
+          JOIN artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+          WHERE rg.mbid = ?
+          ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
+          LIMIT 1
+        `).get(releaseGroupMbid) as any
+      : null;
+
+    if (!artist && fallbackArtistId) {
+      const directArtist = db.prepare(`
+        SELECT
+          a.id,
+          a.name,
+          a.mbid,
+          a.path,
+          mba.disambiguation
+        FROM artists a
+        LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+        WHERE a.id = ?
+        LIMIT 1
+      `).get(fallbackArtistId) as any;
+
+      if (directArtist?.mbid) {
+        artist = db.prepare(`
+          SELECT
+            a.id,
+            a.name,
+            a.mbid,
+            a.path,
+            mba.disambiguation
+          FROM artists a
+          LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+          WHERE a.mbid = ?
+          ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
+          LIMIT 1
+        `).get(directArtist.mbid) as any;
+      } else {
+        artist = directArtist;
+      }
+    }
+
+    if (!artist?.name) {
+      return {
+        artistId: fallbackArtistId,
+        artistName: "Unknown Artist",
+        artistMbId: "",
+        artistPath: "Unknown Artist",
+      };
+    }
+
+    const artistId = String(artist.id);
+    const artistMbId = artist.mbid ? String(artist.mbid) : "";
+    let artistPath = String(artist.path || "").trim();
+    if (artistMbId) {
+      const resolved = resolveArtistFolderForIdentityUpdate({
+        artistId,
+        artistName: artist.name,
+        artistMbId,
+        artistDisambiguation: artist.disambiguation || null,
+        existingPath: artistPath || null,
+      });
+      artistPath = resolved.path;
+      if (resolved.shouldReplaceExistingPath) {
+        db.prepare("UPDATE artists SET path = ? WHERE id = ?").run(artistPath, artistId);
+      }
+    } else if (!artistPath) {
+      artistPath = resolveArtistFolderForPersistence({
+        artistId,
+        artistName: artist.name,
+      });
+      db.prepare("UPDATE artists SET path = ? WHERE id = ? AND (path IS NULL OR TRIM(path) = '')").run(artistPath, artistId);
+    }
+
+    return {
+      artistId,
+      artistName: String(artist.name || "Unknown Artist"),
+      artistMbId,
+      artistPath,
+    };
   }
 
   private static sanitizeFilename(name: string): string {
@@ -898,33 +999,16 @@ export class OrganizerService {
       const album = db.prepare("SELECT * FROM albums WHERE id = ?").get(tidalId) as any;
       if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
 
-      const artistId = String(album.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
-      let artistName = existingArtist?.name as string | undefined;
-      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
-      let artistPath = String(existingArtist?.path || "").trim();
-      if (!artistName) {
-        const remoteArtist = await this.fetchProviderArtist(artistId);
-        const fetchedArtistName = remoteArtist.name || "Unknown Artist";
-        artistName = fetchedArtistName;
-        artistPath = resolveArtistFolderForPersistence({
-          artistId,
-          artistName: fetchedArtistName,
-          artistMbId: artistMbId || null,
-        });
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
-      }
-      this.refreshArtistPathFromTemplateIfNeeded(artistId);
-      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
-
+      const artistContext = this.resolveCanonicalArtistForAlbum(album);
+      const artistId = artistContext.artistId;
+      const artistMbId = artistContext.artistMbId;
       const year = this.getReleaseYear(album.release_date);
-      const resolvedArtistName = artistName || "Unknown Artist";
+      const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
       const artistFolder = resolveArtistFolderFromRecord({
         name: resolvedArtistName,
         mbid: artistMbId || null,
-        path: artistPath || null,
+        path: artistContext.artistPath || null,
       });
 
       const isSpatial = isSpatialAudioQuality(album.quality);
@@ -1329,33 +1413,16 @@ export class OrganizerService {
       const trackRow = db.prepare("SELECT * FROM media WHERE id = ?").get(tidalId) as any;
       if (!trackRow) throw new Error(`Track ${tidalId} not found in DB after scan`);
 
-      const artistId = String(album.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
-      let artistName = existingArtist?.name as string | undefined;
-      const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
-      let artistPath = String(existingArtist?.path || "").trim();
-      if (!artistName) {
-        const remoteArtist = await this.fetchProviderArtist(artistId);
-        const fetchedArtistName = remoteArtist.name || "Unknown Artist";
-        artistName = fetchedArtistName;
-        artistPath = resolveArtistFolderForPersistence({
-          artistId,
-          artistName: fetchedArtistName,
-          artistMbId: artistMbId || null,
-        });
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
-          .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
-      }
-      this.refreshArtistPathFromTemplateIfNeeded(artistId);
-      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
-
+      const artistContext = this.resolveCanonicalArtistForAlbum(album);
+      const artistId = artistContext.artistId;
+      const artistMbId = artistContext.artistMbId;
       const year = this.getReleaseYear(album.release_date);
-      const resolvedArtistName = artistName || "Unknown Artist";
+      const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
       const artistFolder = resolveArtistFolderFromRecord({
         name: resolvedArtistName,
         mbid: artistMbId || null,
-        path: artistPath || null,
+        path: artistContext.artistPath || null,
       });
 
       const isSpatial = isSpatialAudioQuality(album.quality);

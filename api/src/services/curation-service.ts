@@ -338,14 +338,23 @@ export class CurationService {
         slotRows: ReleaseGroupSlotRow[],
         requireProviderAvailability: boolean,
     ): Promise<Set<string>> {
-        const slottedReleaseGroupIds = new Set(slotRows.map((slot) => slot.release_group_mbid).filter(Boolean));
+        const providerMatchedReleaseGroupIds = new Set(
+            slotRows
+                .filter((slot) =>
+                    String(slot.selected_provider || "").trim()
+                    && String(slot.selected_provider_id || "").trim()
+                )
+                .map((slot) => slot.release_group_mbid)
+                .filter(Boolean),
+        );
         const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
         const albumReleaseGroups = included.filter((releaseGroup) =>
             !this.isSingleOrEp(releaseGroup)
-            && (!requireProviderAvailability || slottedReleaseGroupIds.has(releaseGroup.mbid))
+            && (!requireProviderAvailability || providerMatchedReleaseGroupIds.has(releaseGroup.mbid))
         );
         const candidateReleaseGroups = included.filter((releaseGroup) =>
-            this.isSingleOrEp(releaseGroup) && slottedReleaseGroupIds.has(releaseGroup.mbid)
+            this.isSingleOrEp(releaseGroup)
+            && (!requireProviderAvailability || providerMatchedReleaseGroupIds.has(releaseGroup.mbid))
         );
 
         if (albumReleaseGroups.length === 0 || candidateReleaseGroups.length === 0) {
@@ -418,6 +427,8 @@ export class CurationService {
             console.log(`   No MusicBrainz release groups found for artist ${artistMbid}.`);
             return { newAlbums: 0, upgradedAlbums: 0 };
         }
+
+        this.ensureReleaseGroupSlotRows(artistMbid, releaseGroups, includeSpatial);
 
         const includedReleaseGroupIds = new Set<string>();
         for (const releaseGroup of releaseGroups) {
@@ -498,6 +509,35 @@ export class CurationService {
         );
 
         return { newAlbums: slotUpdates, upgradedAlbums: 0 };
+    }
+
+    private static ensureReleaseGroupSlotRows(
+        artistMbid: string,
+        releaseGroups: ReleaseGroupForCuration[],
+        includeSpatial: boolean,
+    ): void {
+        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
+        const insertMissingSlot = db.prepare(`
+            INSERT INTO release_group_slots (
+                artist_mbid,
+                release_group_mbid,
+                slot,
+                wanted,
+                match_status,
+                checked_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, 0, 'unmatched', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(release_group_mbid, slot) DO NOTHING
+        `);
+
+        db.transaction(() => {
+            for (const releaseGroup of releaseGroups) {
+                for (const slot of slots) {
+                    insertMissingSlot.run(artistMbid, releaseGroup.mbid, slot);
+                }
+            }
+        })();
     }
 
     static async queueMonitoredItems(

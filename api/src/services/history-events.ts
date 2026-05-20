@@ -33,10 +33,10 @@ export type RecordHistoryEventInput = {
 
 export type HistoryEventItem = {
   id: number;
-  artistId: number | null;
-  albumId: number | null;
-  mediaId: number | null;
-  libraryFileId: number | null;
+  artistId: string | null;
+  albumId: string | null;
+  mediaId: string | null;
+  libraryFileId: string | null;
   eventType: HistoryEventType;
   quality: string | null;
   sourceTitle: string | null;
@@ -45,9 +45,9 @@ export type HistoryEventItem = {
 };
 
 export type ListHistoryEventsOptions = {
-  artistId?: number;
-  albumId?: number;
-  mediaId?: number;
+  artistId?: number | string;
+  albumId?: number | string;
+  mediaId?: number | string;
   eventType?: HistoryEventType;
   limit?: number;
   offset?: number;
@@ -67,23 +67,17 @@ export type HistoryEventFeedItem = {
   date: string;
 };
 
-const INTEGER_STRING_PATTERN = /^\d+$/;
-
-function toNullableInt(value: number | string | null | undefined): number | null {
+function toNullableText(value: number | string | null | undefined): string | null {
   if (value === null || value === undefined) {
     return null;
   }
 
-  if (typeof value === "string" && !INTEGER_STRING_PATTERN.test(value)) {
+  const text = String(value).trim();
+  if (!text) {
     return null;
   }
 
-  const numericValue = typeof value === "number" ? value : Number.parseInt(String(value), 10);
-  if (!Number.isFinite(numericValue)) {
-    return null;
-  }
-
-  return numericValue;
+  return text;
 }
 
 function parseData(value: string | null): HistoryEventData | null {
@@ -116,10 +110,10 @@ export function recordHistoryEvent(input: RecordHistoryEventInput): number {
       data
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    toNullableInt(input.artistId),
-    toNullableInt(input.albumId),
-    toNullableInt(input.mediaId),
-    toNullableInt(input.libraryFileId),
+    toNullableText(input.artistId),
+    toNullableText(input.albumId),
+    toNullableText(input.mediaId),
+    toNullableText(input.libraryFileId),
     input.eventType,
     input.quality ?? null,
     input.sourceTitle ?? null,
@@ -145,21 +139,21 @@ export function listHistoryEvents(options: ListHistoryEventsOptions = {}): ListH
   const offset = Math.max(0, options.offset ?? 0);
 
   const whereClauses: string[] = [];
-  const whereParams: Array<number | string> = [];
+  const whereParams: string[] = [];
 
   if (options.artistId !== undefined) {
     whereClauses.push("artist_id = ?");
-    whereParams.push(options.artistId);
+    whereParams.push(String(options.artistId));
   }
 
   if (options.albumId !== undefined) {
     whereClauses.push("album_id = ?");
-    whereParams.push(options.albumId);
+    whereParams.push(String(options.albumId));
   }
 
   if (options.mediaId !== undefined) {
     whereClauses.push("media_id = ?");
-    whereParams.push(options.mediaId);
+    whereParams.push(String(options.mediaId));
   }
 
   if (options.eventType !== undefined) {
@@ -193,10 +187,10 @@ export function listHistoryEvents(options: ListHistoryEventsOptions = {}): ListH
     LIMIT ? OFFSET ?
   `).all(...whereParams, limit, offset) as Array<{
     id: number;
-    artist_id: number | null;
-    album_id: number | null;
-    media_id: number | null;
-    library_file_id: number | null;
+    artist_id: string | null;
+    album_id: string | null;
+    media_id: string | null;
+    library_file_id: string | null;
     event_type: HistoryEventType;
     quality: string | null;
     source_title: string | null;

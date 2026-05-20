@@ -284,7 +284,7 @@ export class ArtistQueryService {
     static async getArtistById(artistId: string): Promise<ArtistContract | null> {
         let artist = loadArtistWithEffectiveMonitor(artistId);
 
-        // Cold-load: seed basic metadata from TIDAL for artists not yet in the DB
+        // Cold-load: seed basic canonical metadata for artists not yet in the DB
         // (e.g. navigating from search results). Skip re-scanning existing artists
         // — staleness refresh is the scheduler's job.
         if (!artist) {
@@ -481,7 +481,7 @@ export class ArtistQueryService {
     static async getArtistPageDb(artistId: string): Promise<any | null> {
         let artist = loadArtistWithEffectiveMonitor(artistId);
 
-        // Cold-load: seed basic TIDAL metadata for not-yet-added artists so
+        // Cold-load: seed basic canonical metadata for not-yet-added artists so
         // search-result navigation works.  Existing artists are returned as-is;
         // staleness refresh is the scheduler's job.
         if (!artist) {
@@ -820,6 +820,9 @@ export class ArtistQueryService {
         return {
             artist: {
                 ...artist,
+                picture: artist.cover_image_url == null
+                    ? (artist.picture == null ? null : String(artist.picture))
+                    : String(artist.cover_image_url),
                 bio,
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,

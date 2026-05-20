@@ -49,6 +49,17 @@ type MediaRow = {
 };
 type MbTrackRow = { mbid: string; release_mbid: string; recording_mbid: string };
 type MbReleaseRow = { mbid: string; release_group_mbid: string };
+type ProviderItemRow = {
+  provider: string;
+  entity_type: string;
+  provider_id: string;
+  artist_mbid: string | null;
+  release_group_mbid: string | null;
+  release_mbid: string | null;
+  track_mbid: string | null;
+  recording_mbid: string | null;
+  library_slot: LibrarySlot | string | null;
+};
 
 function nullableText(value: unknown): string | null {
   const text = String(value ?? "").trim();
@@ -124,9 +135,27 @@ function inferProviderId(input: LibraryFileIdentityInput, providerEntityType: st
     return nullableText(input.albumId);
   }
   if (providerEntityType === "artist") {
-    return nullableText(input.artistId);
+    return null;
   }
   return nullableText(input.mediaId) ?? nullableText(input.albumId) ?? nullableText(input.artistId);
+}
+
+function getProviderItem(provider: string | null, entityType: string, providerId: unknown): ProviderItemRow | null {
+  const id = nullableText(providerId);
+  if (!id) {
+    return null;
+  }
+
+  const providerClause = provider ? "provider = ? AND" : "";
+  const params = provider ? [provider, entityType, id] : [entityType, id];
+  return (db.prepare(`
+    SELECT provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+           track_mbid, recording_mbid, library_slot
+    FROM provider_items
+    WHERE ${providerClause} entity_type = ? AND provider_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(...params) as ProviderItemRow | undefined) ?? null;
 }
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
@@ -165,12 +194,23 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
   const providerEntityType = inferProviderEntityType(input, media);
   const providerId = inferProviderId(input, providerEntityType);
   const provider = nullableText(input.provider) ?? (providerId ? "tidal" : null);
+  const providerAlbum = getProviderItem(provider, "album", albumId);
+  const providerMedia = providerEntityType
+    ? getProviderItem(provider, providerEntityType, providerId)
+    : null;
 
   return {
-    canonicalArtistMbid: nullableText(input.canonicalArtistMbid) ?? nullableText(artist?.mbid) ?? null,
+    canonicalArtistMbid:
+      nullableText(input.canonicalArtistMbid)
+      ?? nullableText(artist?.mbid)
+      ?? nullableText(providerMedia?.artist_mbid)
+      ?? nullableText(providerAlbum?.artist_mbid)
+      ?? null,
     canonicalReleaseGroupMbid:
       nullableText(input.canonicalReleaseGroupMbid)
       ?? nullableText(album?.mb_release_group_id)
+      ?? nullableText(providerMedia?.release_group_mbid)
+      ?? nullableText(providerAlbum?.release_group_mbid)
       ?? nullableText(albumRelease?.release_group_mbid)
       ?? nullableText(trackRelease?.release_group_mbid)
       ?? null,
@@ -178,21 +218,26 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       nullableText(input.canonicalReleaseMbid)
       ?? nullableText(albumRelease?.mbid)
       ?? nullableText(mediaTrack?.release_mbid)
+      ?? nullableText(providerMedia?.release_mbid)
+      ?? nullableText(providerAlbum?.release_mbid)
       ?? null,
     canonicalTrackMbid:
       nullableText(input.canonicalTrackMbid)
       ?? nullableText(mediaTrack?.mbid)
+      ?? nullableText(providerMedia?.track_mbid)
       ?? null,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
       ?? nullableText(mediaTrack?.recording_mbid)
       ?? nullableText(mediaRecording?.mbid)
+      ?? nullableText(providerMedia?.recording_mbid)
       ?? null,
-    provider,
+    provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider,
     providerEntityType,
     providerId,
     librarySlot: inferLibrarySlot({
       ...input,
+      librarySlot: input.librarySlot ?? providerMedia?.library_slot ?? providerAlbum?.library_slot,
       quality: input.quality ?? media?.quality ?? album?.quality,
     }),
   };

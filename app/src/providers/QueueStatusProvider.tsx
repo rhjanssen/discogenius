@@ -63,7 +63,7 @@ function isDownloadQueueJobType(value: unknown): boolean {
 }
 
 function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): boolean {
-  if (event.type === "queue.cleared" || event.type === "job.added") {
+  if (event.type === "queue.cleared" || event.type === "job.added" || event.type === "history.added") {
     return true;
   }
 
@@ -195,7 +195,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     progressStateRef.current = progressState;
   }, [progressState]);
 
-  const lastGlobalEvent = useGlobalEvents(["job.added", "job.updated", "job.deleted", "queue.cleared"]);
+  const lastGlobalEvent = useGlobalEvents(["job.added", "job.updated", "job.deleted", "queue.cleared", "history.added"]);
 
   useEffect(() => {
     if (!lastGlobalEvent) {
@@ -336,7 +336,35 @@ function useQueueStatusContextValue(): QueueStatusContextType {
 
   const addToQueue = useCallback(async (url: string | null | undefined, type: string, tidalId?: string | null, options?: AddToQueueOptions) => {
     try {
-      await api.addToQueue(url, type, tidalId, options?.payload);
+      const response = await api.addToQueue(url, type, tidalId, options?.payload);
+      const payload = options?.payload ?? {};
+      const payloadTidalId = typeof payload.tidalId === "string" ? payload.tidalId : undefined;
+      const payloadProviderId = typeof payload.providerId === "string" ? payload.providerId : undefined;
+      const resolvedTidalId = String(payloadProviderId || payloadTidalId || tidalId || "").trim();
+      const normalizedType = type === "video" || type === "album" || type === "playlist" || type === "track"
+        ? type
+        : "track";
+      if (response?.id && resolvedTidalId) {
+        updateProgressState((previous) => upsertProgressSnapshots(previous, [{
+          jobId: response.id,
+          tidalId: resolvedTidalId,
+          type: normalizedType,
+          quality: typeof payload.quality === "string" ? payload.quality : null,
+          title: typeof payload.title === "string"
+            ? payload.title
+            : typeof payload.albumTitle === "string"
+              ? payload.albumTitle
+              : undefined,
+          artist: typeof payload.artist === "string"
+            ? payload.artist
+            : typeof payload.artistName === "string"
+              ? payload.artistName
+              : undefined,
+          cover: typeof payload.cover === "string" ? payload.cover : null,
+          progress: 0,
+          state: "queued",
+        }]));
+      }
       if (!options?.silent) {
         toastRef.current({
           title: options?.successTitle ?? "Added to queue",
@@ -360,7 +388,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       });
       throw error;
     }
-  }, [invalidateQueueQueries, queryClient, scheduleStatusRefresh]);
+  }, [invalidateQueueQueries, queryClient, scheduleStatusRefresh, updateProgressState]);
 
   const processItem = useCallback(async (id: number) => {
     try {

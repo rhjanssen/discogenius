@@ -65,6 +65,16 @@ function parseProviderArtworkFromSlotData(value: unknown): string | null {
     }
 }
 
+function parseLidarrAlbumArtworkFromData(value: unknown): string | null {
+    if (!value) return null;
+    try {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value;
+        return lidarrMetadataService.getAlbumImageUrl(parsed);
+    } catch {
+        return null;
+    }
+}
+
 function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContract {
     const localArtist = loadArtistByMusicBrainzId(artist.id);
     const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
@@ -171,7 +181,7 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        `SELECT id, name, COALESCE(picture, cover_image_url) AS picture, monitor
+                        `SELECT id, name, COALESCE(cover_image_url, picture) AS picture, monitor
                          FROM artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
@@ -206,9 +216,11 @@ router.get("/", async (req, res) => {
              rg.first_release_date AS release_date,
              rg.primary_type,
              a.name AS artist_name,
+             rg.data,
+             slot.id AS slot_id,
              slot.provider_data,
              slot.quality AS quality,
-	             COALESCE(slot.wanted, a.monitor, 0) AS monitored
+	             CASE WHEN slot.id IS NOT NULL THEN COALESCE(slot.wanted, 0) ELSE COALESCE(a.monitor, 0) END AS monitored
 	           FROM mb_release_groups rg
 	           LEFT JOIN artists a ON a.mbid = rg.artist_mbid
 	           LEFT JOIN release_group_slots slot
@@ -223,7 +235,9 @@ router.get("/", async (req, res) => {
                 results.albums.push(...localReleaseGroups.map((row: any) => formatSearchResult({
                     id: row.id,
                     name: row.title,
-                    cover_id: parseProviderArtworkFromSlotData(row.provider_data) || coverArtArchiveReleaseGroupUrl(row.id),
+                    cover_id: parseLidarrAlbumArtworkFromData(row.data)
+                        || coverArtArchiveReleaseGroupUrl(row.id)
+                        || parseProviderArtworkFromSlotData(row.provider_data),
                     artist_name: row.artist_name,
                     release_date: row.release_date,
                     quality: row.quality,

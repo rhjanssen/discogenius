@@ -235,6 +235,54 @@ test("download queue query surfaces pending, processing, and history items with 
     assert.equal(history.items[0]?.type, "track");
 });
 
+test("download queue history collapses completed download and import jobs into one logical item", () => {
+    const downloadJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-history",
+            tidalId: "provider-album-history",
+            releaseGroupMbid: "release-group-history",
+            slot: "stereo",
+            title: "Imported Album",
+            artist: "Queue Artist",
+            cover: "album-cover",
+            quality: "LOSSLESS",
+        },
+        "release-group-history:stereo",
+    );
+    queueModule.TaskQueueService.complete(downloadJobId);
+
+    const importJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.ImportDownload,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-history",
+            tidalId: "provider-album-history",
+            releaseGroupMbid: "release-group-history",
+            slot: "stereo",
+            title: "Imported Album",
+            artist: "Queue Artist",
+            cover: "album-cover",
+            quality: "LOSSLESS",
+            path: path.join(tempDir, "download-provider-album-history"),
+            originalJobId: downloadJobId,
+        },
+        "provider-album-history",
+    );
+    queueModule.TaskQueueService.complete(importJobId);
+
+    const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+
+    assert.equal(history.total, 1);
+    assert.equal(history.items[0]?.id, importJobId);
+    assert.equal(history.items[0]?.stage, "import");
+    assert.equal(history.items[0]?.title, "Imported Album");
+    assert.equal(history.items[0]?.type, "album");
+});
+
 test("terminal queue jobs ignore late progress, state, complete, and fail updates", () => {
     const jobId = queuePendingDownload("track", "99");
     queueModule.TaskQueueService.markProcessing(jobId);

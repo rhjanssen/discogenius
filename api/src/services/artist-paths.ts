@@ -194,6 +194,26 @@ export function resolveArtistFolderForPersistence(seed: ArtistFolderSeed): strin
   return resolveArtistFolderFromTemplate(seed);
 }
 
+export function resolveArtistFolderForIdentityUpdate(seed: ArtistFolderSeed): {
+  path: string;
+  shouldReplaceExistingPath: boolean;
+} {
+  if (shouldReapplyArtistPathTemplate(seed)) {
+    return {
+      path: resolveArtistFolderFromTemplate({
+        ...seed,
+        existingPath: null,
+      }),
+      shouldReplaceExistingPath: true,
+    };
+  }
+
+  return {
+    path: resolveArtistFolderForPersistence(seed),
+    shouldReplaceExistingPath: false,
+  };
+}
+
 export function ensureEmptyArtistFoldersIfEnabled(relativeArtistPath: string): string[] {
   if (Config.getPathConfig().create_empty_artist_folders !== true) {
     return [];

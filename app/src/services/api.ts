@@ -144,9 +144,6 @@ export type StreamingProviderStatus = {
     artwork: boolean;
     editorialMetadata: boolean;
     providerIds: boolean;
-    hasVideo: boolean;
-    hasLossless?: boolean;
-    hasSpatialAudio?: boolean;
     spatialFormats?: string[];
   };
   management: {
@@ -1131,7 +1128,7 @@ class ApiClient {
   }
 
   async addToQueue(url: string | null | undefined, type: string, tidalId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
-    return this.request('/queue', {
+    return this.request<{ id: number; message: string }>('/queue', {
       method: 'POST',
       body: JSON.stringify({ ...payload, url, type, tidalId }),
     });

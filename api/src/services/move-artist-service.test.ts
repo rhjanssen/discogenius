@@ -39,19 +39,19 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
   dbModule.db.prepare(`
     INSERT INTO artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
-  `).run(1, "Artist One", artistPath, 1);
+  `).run("1", "Artist One", artistPath, 1);
 
   dbModule.db.prepare(`
     INSERT INTO albums (
       id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(10, 1, "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
+  `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO media (
       id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(100, 1, 10, "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
+  `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -121,10 +121,10 @@ test("moveArtist changes the stored folder and produces an artist-scoped rename 
   assert.equal(result?.moveFilesQueued, false);
   assert.equal(result?.renameStatus.renameNeeded, 1);
 
-  const artist = dbModule.db.prepare("SELECT path FROM artists WHERE id = ?").get(1) as { path: string };
+  const artist = dbModule.db.prepare("SELECT path FROM artists WHERE id = ?").get("1") as { path: string };
   assert.equal(artist.path, "Artist One");
 
-  const trackedFile = dbModule.db.prepare("SELECT expected_path as expectedPath FROM library_files WHERE media_id = ?").get(100) as { expectedPath: string };
+  const trackedFile = dbModule.db.prepare("SELECT expected_path as expectedPath FROM library_files WHERE media_id = ?").get("100") as { expectedPath: string };
   assert.ok(trackedFile.expectedPath.includes(path.join("Artist One", "Album One", "01 - Track One.flac")));
 });
 
@@ -156,7 +156,7 @@ test("moveArtist can rebuild the artist path from the current naming template", 
   const config = configModule.readConfig();
   config.naming.artist_folder = "{artistName} [{artistMbId}]";
   configModule.writeConfig(config);
-  dbModule.db.prepare("UPDATE artists SET mbid = ? WHERE id = ?").run("artist-mbid-1", 1);
+  dbModule.db.prepare("UPDATE artists SET mbid = ? WHERE id = ?").run("artist-mbid-1", "1");
 
   const result = moveArtistServiceModule.MoveArtistService.moveArtist({
     artistId: "1",
@@ -190,7 +190,7 @@ test("executeMoveArtistJob moves the artist folder and rebases tracked file path
     SELECT file_path as filePath, relative_path as relativePath, expected_path as expectedPath, needs_rename as needsRename
     FROM library_files
     WHERE media_id = ?
-  `).get(100) as {
+  `).get("100") as {
     filePath: string;
     relativePath: string;
     expectedPath: string;
@@ -228,7 +228,7 @@ test("executeMoveArtistJob rolls back the stored artist path when the destinatio
     }),
   );
 
-  const artist = dbModule.db.prepare("SELECT path FROM artists WHERE id = ?").get(1) as { path: string };
+  const artist = dbModule.db.prepare("SELECT path FROM artists WHERE id = ?").get("1") as { path: string };
   assert.equal(artist.path, "Old Artist");
   assert.equal(fs.existsSync(seeded.trackPath), true);
 });
@@ -238,7 +238,7 @@ test("moveArtist rejects overlapping artist folders", () => {
   dbModule.db.prepare(`
     INSERT INTO artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
-  `).run(2, "Artist Two", "Artists", 1);
+  `).run("2", "Artist Two", "Artists", 1);
 
   assert.throws(
     () => moveArtistServiceModule.MoveArtistService.moveArtist({

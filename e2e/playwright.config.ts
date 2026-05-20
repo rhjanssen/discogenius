@@ -19,12 +19,12 @@ const runtimeRoot = shouldManageServer
   : '';
 const runtimeConfigDir = runtimeRoot ? path.join(runtimeRoot, 'config') : '';
 const runtimeDownloadDir = runtimeRoot ? path.join(runtimeRoot, 'downloads') : '';
-const runtimeMusicDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'music') : '';
-const runtimeAtmosDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'atmos') : '';
-const runtimeVideoDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'videos') : '';
+const runtimeMusicDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'stereo-music') : '';
+const runtimeSpatialDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'spatial-music') : '';
+const runtimeVideoDir = runtimeRoot ? path.join(runtimeRoot, 'library', 'music-videos') : '';
 
 if (shouldManageServer) {
-  for (const dir of [runtimeConfigDir, runtimeDownloadDir, runtimeMusicDir, runtimeAtmosDir, runtimeVideoDir]) {
+  for (const dir of [runtimeConfigDir, runtimeDownloadDir, runtimeMusicDir, runtimeSpatialDir, runtimeVideoDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -36,7 +36,7 @@ if (shouldManageServer) {
       '',
       '[path]',
       `music_path = ${JSON.stringify(runtimeMusicDir)}`,
-      `atmos_path = ${JSON.stringify(runtimeAtmosDir)}`,
+      `spatial_path = ${JSON.stringify(runtimeSpatialDir)}`,
       `video_path = ${JSON.stringify(runtimeVideoDir)}`,
       '',
     ].join('\n'),

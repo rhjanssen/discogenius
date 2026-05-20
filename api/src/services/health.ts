@@ -136,7 +136,9 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     process.platform === "win32" ? "python" : "python3",
     "Python",
   );
-  const ffmpegCheck = checkCommandAvailability("tools.ffmpeg", "ffmpeg", "FFmpeg");
+  const ffmpegCheck = downloadsDisabled
+    ? disabledDownloadCheck("tools.ffmpeg", "FFmpeg", { command: "ffmpeg" })
+    : checkCommandAvailability("tools.ffmpeg", "ffmpeg", "FFmpeg");
   const tidalDlNgCommandCheck = downloadsDisabled
     ? disabledDownloadCheck("tools.tidalDlNg", "tidal-dl-ng", { command: getTidalDlNgCommand().command })
     : checkCommandAvailability(

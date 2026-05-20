@@ -260,6 +260,18 @@ async function downloadProviderArtwork(
     console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
 }
 
+function loadResolvedArtistArtwork(artistId: string): string | null {
+    const row = db.prepare(`
+        SELECT cover_image_url, picture
+        FROM artists
+        WHERE id = ? OR mbid = ?
+        LIMIT 1
+    `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
+
+    const resolved = row?.cover_image_url || row?.picture || null;
+    return typeof resolved === "string" && /^https?:\/\//i.test(resolved) ? resolved : null;
+}
+
 /**
  * Download album cover at specified resolution
  * @param albumId - Tidal album ID
@@ -319,12 +331,22 @@ export async function downloadArtistPicture(
     resolution: 160 | 320 | 480 | 750,
     outputPath: string
 ): Promise<void> {
-    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-        entityType: "artist",
-        providerId: artistId,
-        size: resolution,
-    });
-    await downloadProviderArtwork(url, outputPath, `artist picture for ${artistId}`);
+    const resolvedArtworkUrl = loadResolvedArtistArtwork(artistId);
+    if (resolvedArtworkUrl) {
+        await downloadProviderArtwork(resolvedArtworkUrl, outputPath, `artist picture for ${artistId}`);
+        return;
+    }
+
+    try {
+        const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+            entityType: "artist",
+            providerId: artistId,
+            size: resolution,
+        });
+        await downloadProviderArtwork(url, outputPath, `artist picture for ${artistId}`);
+    } catch (error) {
+        console.warn(`⚠️ [METADATA] Failed to resolve provider artist picture for ${artistId}: ${(error as Error).message}`);
+    }
 }
 
 /**

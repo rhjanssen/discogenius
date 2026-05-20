@@ -32,7 +32,7 @@ function seedMusicBrainzMetadata() {
     dbModule.db.prepare(`
         INSERT INTO artists(id, name, mbid, bio_text)
         VALUES(?, ?, ?, ?)
-    `).run(100, "The Example Artist", "artist-mbid-100", "Artist bio & history");
+    `).run("100", "The Example Artist", "artist-mbid-100", "Artist bio & history");
 
     dbModule.db.prepare(`
         INSERT INTO albums(
@@ -42,8 +42,8 @@ function seedMusicBrainzMetadata() {
         )
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        200,
-        100,
+        "200",
+        "100",
         "Example Album",
         "2024-02-03",
         "ALBUM",
@@ -66,9 +66,9 @@ function seedMusicBrainzMetadata() {
         )
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        300,
-        100,
-        200,
+        "300",
+        "100",
+        "200",
         "Example Track",
         "2024-02-03",
         "TRACK",
@@ -87,9 +87,9 @@ function seedMusicBrainzMetadata() {
         )
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-        400,
-        100,
-        200,
+        "400",
+        "100",
+        "200",
         "Example Video",
         "2024-02-03",
         "Music Video",

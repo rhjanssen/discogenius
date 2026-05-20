@@ -713,7 +713,7 @@ const ArtistPage = () => {
       const result: any = await api.scanArtist(artistId, { forceUpdate: true });
       toast({
         title: "Refresh & scan queued",
-        description: result?.message || "Refreshing TIDAL metadata and scanning local files.",
+        description: result?.message || "Refreshing MusicBrainz metadata, provider availability, and local files.",
       });
       dispatchLibraryUpdated();
       refetchPage();

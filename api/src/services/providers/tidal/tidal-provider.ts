@@ -35,9 +35,6 @@ export class TidalProvider implements StreamingProvider {
     artwork: true,
     editorialMetadata: true,
     providerIds: true,
-    hasVideo: true,
-    hasLossless: true,
-    hasSpatialAudio: true,
     spatialFormats: ["DOLBY_ATMOS"],
   };
 

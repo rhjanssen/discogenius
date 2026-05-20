@@ -34,19 +34,19 @@ function seedImportedTrack(fileName = "track-one.flac") {
   dbModule.db.prepare(`
     INSERT INTO artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
-  `).run(1, "Artist One", "Artist One", 1);
+  `).run("1", "Artist One", "Artist One", 1);
 
   dbModule.db.prepare(`
     INSERT INTO albums (
       id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(10, 1, "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
+  `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO media (
       id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(100, 1, 10, "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
+  `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",

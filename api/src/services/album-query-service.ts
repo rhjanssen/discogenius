@@ -10,6 +10,13 @@ import type { AlbumPageContract } from "../contracts/pages.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
+const releaseGroupWantedExpression = `
+        CASE
+          WHEN stereo.id IS NOT NULL OR spatial.id IS NOT NULL THEN
+            CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
+          ELSE COALESCE(a.monitor, 0)
+        END
+`;
 
 function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string {
     if (libraryFilter === "spatial") return "spatial.selected_provider_id";
@@ -72,7 +79,7 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
         a.monitor AS artist_monitor,
-        COALESCE(stereo.wanted, spatial.wanted, a.monitor, 0) AS wanted,
+        ${releaseGroupWantedExpression} AS wanted,
         ${selectedProviderAlbumExpression} AS selected_provider_id,
         ${selectedProviderAlbumExpression === "spatial.selected_provider_id"
             ? "spatial.quality"
@@ -155,7 +162,7 @@ export class AlbumQueryService {
         }
 
         if (monitoredFilter !== undefined) {
-            where.push("COALESCE(stereo.wanted, spatial.wanted, a.monitor, 0) = ?");
+            where.push(`${releaseGroupWantedExpression} = ?`);
             params.push(monitoredFilter ? 1 : 0);
             countParams.push(monitoredFilter ? 1 : 0);
         }

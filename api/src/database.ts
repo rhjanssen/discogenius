@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import Database from "better-sqlite3";
 import { DB_PATH } from "./services/config.js";
 import { getCurrentAppReleaseInfo } from "./services/app-release.js";
@@ -279,10 +277,10 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
       db.exec(`
         CREATE TABLE IF NOT EXISTS history_events (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          artist_id INT,
-          album_id INT,
-          media_id INT,
-          library_file_id INT,
+          artist_id TEXT,
+          album_id TEXT,
+          media_id TEXT,
+          library_file_id TEXT,
           event_type TEXT NOT NULL,
           quality TEXT,
           source_title TEXT,
@@ -883,63 +881,6 @@ function ensureProviderNeutralIdentitySchema(): void {
     );
   `);
 
-  db.exec(`
-    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
-    SELECT 'artist:' || CAST(id AS TEXT), 'artist', CAST(id AS TEXT), mbid, name
-    FROM artists;
-
-    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
-    SELECT 'album:' || CAST(id AS TEXT), 'album', CAST(id AS TEXT), COALESCE(mb_release_group_id, mbid), title
-    FROM albums;
-
-    INSERT OR IGNORE INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name)
-    SELECT
-      CASE WHEN type = 'Music Video' THEN 'video:' ELSE 'track:' END || CAST(id AS TEXT),
-      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
-      CAST(id AS TEXT),
-      mbid,
-      title
-    FROM media;
-
-    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
-    SELECT 'artist:' || CAST(id AS TEXT), 'artist', 'tidal', CAST(id AS TEXT), 'artist', 'verified', 1, 'legacy-primary-id'
-    FROM artists;
-
-    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
-    SELECT 'album:' || CAST(id AS TEXT), 'album', 'tidal', CAST(id AS TEXT), 'album', COALESCE(musicbrainz_status, 'verified'), 1, 'legacy-primary-id'
-    FROM albums;
-
-    INSERT OR IGNORE INTO provider_entity_ids (local_id, entity_type, provider, external_id, provider_entity_type, match_status, match_confidence, match_method)
-    SELECT
-      CASE WHEN type = 'Music Video' THEN 'video:' ELSE 'track:' END || CAST(id AS TEXT),
-      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
-      'tidal',
-      CAST(id AS TEXT),
-      CASE WHEN type = 'Music Video' THEN 'video' ELSE 'track' END,
-      COALESCE(musicbrainz_status, 'verified'),
-      1,
-      'legacy-primary-id'
-    FROM media;
-
-    INSERT OR IGNORE INTO artist_metadata (
-      local_artist_id, musicbrainz_artist_id, name, sort_name, overview,
-      disambiguation, type, status, images, source
-    )
-    SELECT
-      'artist:' || CAST(a.id AS TEXT),
-      COALESCE(mba.mbid, a.mbid),
-      a.name,
-      mba.sort_name,
-      COALESCE(a.bio_text, json_extract(mba.data, '$.overview')),
-      mba.disambiguation,
-      COALESCE(mba.type, json_extract(mba.data, '$.type')),
-      COALESCE(a.musicbrainz_status, 'unknown'),
-      json_extract(mba.data, '$.images'),
-      CASE WHEN mba.mbid IS NOT NULL THEN 'lidarr' ELSE a.bio_source END
-    FROM artists a
-    LEFT JOIN mb_artists mba ON mba.mbid = a.mbid;
-  `);
-
   db.exec("CREATE INDEX IF NOT EXISTS idx_local_entities_type_mbid ON local_entities(entity_type, musicbrainz_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_local ON provider_entity_ids(local_id, entity_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_provider_type ON provider_entity_ids(provider, provider_entity_type, external_id)");
@@ -1172,15 +1113,15 @@ export function initDatabase() {
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS artists (
-      id INT PRIMARY KEY,              -- TIDAL artist id
+      id TEXT PRIMARY KEY,             -- Local managed artist id; MusicBrainz MBID for canonical artists
       name TEXT NOT NULL,              -- Artist name
-      picture TEXT,                    -- Artist picture UUID
+      picture TEXT,                    -- Resolved or provider-native artist image reference
       cover_image_url TEXT,            -- Resolved artist image URL used by UI pages
-      popularity INT,                  -- TIDAL popularity score
+      popularity INT,                  -- Optional provider popularity score
       artist_types TEXT,               -- JSON array: ["ARTIST", "CONTRIBUTOR", ...ETC]
       artist_roles TEXT,               -- JSON array: [{"categoryId": -1, "category": "Artist"}, {"categoryId": 2, "category": "Songwriter"}, ...ETC]
-      user_date_added DATETIME,        -- When added to TIDAL favorites
-      mbid TEXT,                       -- MusicBrainz ID
+      user_date_added DATETIME,        -- When imported from a provider's followed/favorite artists
+      mbid TEXT,                       -- MusicBrainz artist ID
       path TEXT,                       -- Resolved library folder path (set at add/import time)
       musicbrainz_status TEXT,         -- pending/verified/ambiguous/unmatched/error
       musicbrainz_last_checked DATETIME,
@@ -1204,18 +1145,18 @@ export function initDatabase() {
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS albums (
-      id INT PRIMARY KEY,                -- provider-native album id
-      artist_id INT NOT NULL,            -- Main artist id
+      id TEXT PRIMARY KEY,               -- Temporary provider offer id until albums move fully to MB release groups
+      artist_id TEXT NOT NULL,           -- Managed artist id
       title TEXT NOT NULL,               -- Album title
       version TEXT,                      -- Album version (Deluxe, Remastered, etc)
       release_date DATETIME,             -- Original release date
       type TEXT NOT NULL,                -- Main release type: ALBUM/EP/SINGLE
       explicit BOOLEAN NOT NULL,         -- Whether album is explicit or clean
-      quality TEXT NOT NULL,             -- retrieved from media_metadata_tag, e.g. "LOSSLESS", "HIRES_LOSSLESS", or "DOLBY_ATMOS"
-      user_date_added DATETIME,          -- When added to TIDAL favorites
+      quality TEXT NOT NULL,             -- Provider quality label, e.g. LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
+      user_date_added DATETIME,          -- When imported from provider favorites
 
       -- Media
-      cover TEXT,                        -- Album cover UUID
+      cover TEXT,                        -- Resolved or provider-native album cover reference
       vibrant_color TEXT,                -- Hex color code of dominant cover color
       video_cover TEXT,                  -- animated cover UUID
       
@@ -1224,7 +1165,7 @@ export function initDatabase() {
       num_volumes INT NOT NULL,          -- Number of volumes
       num_videos INT NOT NULL,           -- Number of videos
       duration INT NOT NULL,             -- Total duration in seconds
-      popularity INT,                    -- TIDAL popularity score
+      popularity INT,                    -- Optional provider popularity score
       
       -- Review
       review_text TEXT,                  -- Full review text
@@ -1265,16 +1206,16 @@ export function initDatabase() {
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS media (
-      id INT PRIMARY KEY,               -- TIDAL track or video id
-      artist_id INT NOT NULL,           -- Main artist id
-      album_id INT,                     -- Album id (if applicable)
+      id TEXT PRIMARY KEY,              -- Temporary provider media id until tracks/videos move fully to canonical identities
+      artist_id TEXT NOT NULL,          -- Managed artist id
+      album_id TEXT,                    -- Provider offer id for album tracks while compatibility table remains
       title TEXT NOT NULL,              -- Track or video title
       version TEXT,                     -- version specifier (Remastered, etc)
       release_date DATETIME,            -- Original release date
       type TEXT NOT NULL,               -- Main release type: ALBUM/EP/SINGLE/Music Video
       explicit BOOLEAN NOT NULL,        -- Whether track is explicit or clean
-      quality TEXT NOT NULL,            -- retrieved from media_metadata_tag, e.g. "LOSSLESS", "HIRES_LOSSLESS", or "DOLBY_ATMOS"
-      user_date_added DATETIME,         -- When added to TIDAL favorites
+      quality TEXT NOT NULL,            -- Provider quality label, e.g. LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
+      user_date_added DATETIME,         -- When imported from provider favorites
 
       -- Media
       cover TEXT,                       -- Cover UUID (video thumbnail; optional for tracks)
@@ -1283,7 +1224,7 @@ export function initDatabase() {
       track_number INT,                 -- Track number on album
       volume_number INT,                -- Volume number on album
       duration INT,                     -- Duration in seconds
-      popularity INT,                   -- TIDAL popularity score
+      popularity INT,                   -- Optional provider popularity score
       
       -- Music Theory
       bpm INT,                          -- Beats per minute
@@ -1333,8 +1274,8 @@ export function initDatabase() {
   // Album artists relationship
   db.exec(`
     CREATE TABLE IF NOT EXISTS album_artists (
-      album_id INT NOT NULL,             -- provider-native album id
-      artist_id INT NOT NULL,            -- TIDAL artist id
+      album_id TEXT NOT NULL,            -- Provider offer id while compatibility table remains
+      artist_id TEXT NOT NULL,           -- Managed artist id
       artist_name TEXT,                  -- Cached artist name (for fast UI rendering)
       ord INT,                           -- Ordering of artists on the release
       type TEXT NOT NULL,                -- contribution type
@@ -1351,8 +1292,8 @@ export function initDatabase() {
   // Media artist relationship
   db.exec(`
     CREATE TABLE IF NOT EXISTS media_artists (
-      media_id INT NOT NULL,             -- provider-native track or video id
-      artist_id INT NOT NULL,            -- provider-native artist id
+      media_id TEXT NOT NULL,            -- Provider media id while compatibility table remains
+      artist_id TEXT NOT NULL,           -- Managed artist id
       type TEXT NOT NULL,                -- contribution type
       PRIMARY KEY (media_id, artist_id),
       FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
@@ -1396,9 +1337,9 @@ export function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
       -- Linkage (at least artist_id required, then either media_id for tracks/videos)
-      artist_id INT NOT NULL,            -- provider-native compatibility artist id
-      album_id INT,                      -- provider-native album id (for tracks)
-      media_id INT,                      -- provider-native track or video id (links to media table)
+      artist_id TEXT NOT NULL,           -- Managed artist id
+      album_id TEXT,                     -- Provider offer id while compatibility table remains
+      media_id TEXT,                     -- Provider media id while compatibility table remains
 
       -- Canonical identity (MusicBrainz/Lidarr-style managed graph)
       canonical_artist_mbid TEXT,
@@ -1416,7 +1357,7 @@ export function initDatabase() {
       -- File Location
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file in library
       relative_path TEXT NOT NULL,       -- Path relative to library root (for portability)
-      library_root TEXT NOT NULL,        -- Which library: music, spatial, videos
+      library_root TEXT NOT NULL,        -- Which library root: stereo, spatial, video
       
       -- File Metadata
       filename TEXT NOT NULL,            -- Just the filename with extension
@@ -1468,7 +1409,7 @@ export function initDatabase() {
   ensureLibraryFileCanonicalIdentitySchema();
 
   // ====================================================================
-  // UNMAPPED FILES TABLE (Local Files not mapped to TIDAL)
+  // UNMAPPED FILES TABLE (local files not mapped to canonical metadata/provider evidence)
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS unmapped_files (
@@ -1493,7 +1434,7 @@ export function initDatabase() {
       detected_album TEXT,               -- Guessed album name from folder structure
       detected_track TEXT,               -- Guessed track title or ID3 tag
       audio_quality TEXT,                -- Audio quality (e.g. 24-BIT 44.1KHZ FLAC)
-      reason TEXT,                       -- "No matching TIDAL track", "Ignored by user", etc.
+      reason TEXT,                       -- "No matching provider track", "Ignored by user", etc.
       
       ignored BOOLEAN DEFAULT 0,         -- If 1, hide from UI and don't try to map
       
@@ -1602,10 +1543,10 @@ export function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS history_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      artist_id INT,
-      album_id INT,
-      media_id INT,
-      library_file_id INT,
+      artist_id TEXT,
+      album_id TEXT,
+      media_id TEXT,
+      library_file_id TEXT,
       event_type TEXT NOT NULL,
       quality TEXT,
       source_title TEXT,
@@ -1628,9 +1569,9 @@ export function initDatabase() {
 
   // ====================================================================
   // PROVIDER IDS TABLE
-  // Maps TIDAL-primary entities to IDs from other providers/sources.
+  // Maps managed compatibility entities to IDs from providers/sources.
   // entity_type: 'artist' | 'album' | 'media'
-  // entity_id: references artists.id / albums.id / media.id (TIDAL IDs for now)
+  // entity_id: references artists.id / albums.id / media.id while compatibility tables remain
   // provider: 'tidal' | 'spotify' | 'apple' | 'musicbrainz' | 'discogs' | 'deezer'
   // external_id: the provider's own identifier for this entity
   //
@@ -1653,7 +1594,7 @@ export function initDatabase() {
   // INDEXES
   // ====================================================================
   // PLAYLISTS TABLE
-  // Stores TIDAL playlists that have been added for monitoring/download.
+  // Stores provider playlists that have been added for monitoring/download.
   // ====================================================================
   db.exec(`
       CREATE TABLE IF NOT EXISTS playlists (
@@ -1700,20 +1641,6 @@ export function initDatabase() {
   if (integrityResult !== "ok") {
     console.error(`🚨 Database integrity check failed: ${integrityResult}`);
     console.error("   The database may be corrupted. Consider restoring from a backup.");
-  }
-
-  // Pre-migration backup for safety
-  const currentVersion = db.pragma("user_version", { simple: true }) as number;
-  if (currentVersion > 0 && fs.existsSync(DB_PATH)) {
-    const backupPath = `${DB_PATH}.pre-migration-v${currentVersion}.bak`;
-    if (!fs.existsSync(backupPath)) {
-      try {
-        fs.copyFileSync(DB_PATH, backupPath);
-        console.log(`📦 Database backup created: ${path.basename(backupPath)}`);
-      } catch (err) {
-        console.warn(`⚠️  Could not create pre-migration backup: ${(err as Error).message}`);
-      }
-    }
   }
 
   const migrationSummary = runMigrations();

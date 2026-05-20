@@ -1631,8 +1631,22 @@ const QueueTab = () => {
                                 <>
                                     <div ref={activeSentinelRef} aria-hidden="true" />
                                     <div className={styles.loadMoreRow}>
-                                        <Button appearance="subtle" onClick={() => setVisibleActiveLimit(prev => prev + ACTIVE_PAGE_SIZE)}>
-                                            Load more ({groupedDownloads.length - visibleActiveLimit} remaining)
+                                        <Button
+                                            appearance="subtle"
+                                            disabled={isLoadingMoreQueueItems}
+                                            onClick={() => {
+                                                if (hasMoreLocalActiveGroups) {
+                                                    setVisibleActiveLimit(prev => prev + ACTIVE_PAGE_SIZE);
+                                                } else if (hasMoreQueueItems) {
+                                                    void loadMoreQueueItems();
+                                                }
+                                            }}
+                                        >
+                                            {isLoadingMoreQueueItems
+                                                ? "Loading..."
+                                                : hasMoreLocalActiveGroups
+                                                    ? `Load more (${Math.max(0, groupedDownloads.length - visibleActiveLimit)} remaining)`
+                                                    : "Load more"}
                                         </Button>
                                     </div>
                                 </>

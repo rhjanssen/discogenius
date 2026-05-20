@@ -42,6 +42,10 @@ type NormalizedQueueDetailsFilters = {
 const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => "?").join(",");
+}
+
 function getOptionalString(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return String(value);
@@ -258,6 +262,36 @@ function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<
   return queuePositionById;
 }
 
+function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
+  const typeSql = placeholders(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+  const statusSql = placeholders(QUEUE_HISTORY_STATUSES);
+  const downloadTypeSql = placeholders(DOWNLOAD_JOB_TYPES);
+
+  return {
+    whereSql: `
+      jq.type IN (${typeSql})
+      AND jq.status IN (${statusSql})
+      AND NOT (
+        jq.type IN (${downloadTypeSql})
+        AND EXISTS (
+          SELECT 1
+          FROM job_queue import_job
+          WHERE import_job.type = ?
+            AND import_job.status IN (${statusSql})
+            AND CAST(json_extract(import_job.payload, '$.originalJobId') AS INTEGER) = jq.id
+        )
+      )
+    `,
+    params: [
+      ...DOWNLOAD_OR_IMPORT_JOB_TYPES,
+      ...QUEUE_HISTORY_STATUSES,
+      ...DOWNLOAD_JOB_TYPES,
+      JobTypes.ImportDownload,
+      ...QUEUE_HISTORY_STATUSES,
+    ],
+  };
+}
+
 function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressContract | null {
   const derivedState = item.state
     ?? (item.status === "failed"
@@ -354,14 +388,29 @@ export class DownloadQueueQueryService {
   }
 
   static getQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
-    const total = TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_OR_IMPORT_JOB_TYPES, QUEUE_HISTORY_STATUSES);
-    const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_JOB_TYPES,
-      QUEUE_HISTORY_STATUSES,
-      params.limit,
-      params.offset,
-      { orderBy: "history" },
-    ) as unknown as QueueJobRow[];
+    const logicalHistory = buildLogicalHistoryQuery();
+    const totalRow = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM job_queue jq
+      WHERE ${logicalHistory.whereSql}
+    `).get(...logicalHistory.params) as { count?: number } | undefined;
+    const total = Number(totalRow?.count || 0);
+
+    const rows = db.prepare(`
+      SELECT jq.id
+      FROM job_queue jq
+      WHERE ${logicalHistory.whereSql}
+      ORDER BY
+        jq.completed_at DESC,
+        jq.updated_at DESC,
+        jq.started_at DESC,
+        jq.created_at DESC,
+        jq.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...logicalHistory.params, params.limit, params.offset) as Array<{ id: number }>;
+    const jobs = rows
+      .map((row) => TaskQueueService.getById(row.id))
+      .filter((job) => job !== null) as unknown as QueueJobRow[];
 
     return {
       items: jobs.map((job) => this.mapDownloadQueueJob(job)),

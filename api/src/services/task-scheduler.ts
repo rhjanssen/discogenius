@@ -692,8 +692,8 @@ export async function queueCheckNow(): Promise<{ success: boolean; jobId?: numbe
     const jobId = TaskQueueService.addJob(
         "RefreshMetadata",
         {
-            title: "Refreshing TIDAL metadata",
-            description: "Scanning TIDAL for new releases",
+            title: "Refreshing provider metadata",
+            description: "Refreshing MusicBrainz metadata and provider availability",
         },
         "refresh_metadata_manual",
         1,
@@ -704,7 +704,7 @@ export async function queueCheckNow(): Promise<{ success: boolean; jobId?: numbe
 }
 
 export async function checkNowStreaming(sendEvent: (event: string, data: any) => void): Promise<{ newAlbums: number; artists: number }> {
-    sendEvent("status", { message: "Refreshing TIDAL metadata..." });
+    sendEvent("status", { message: "Refreshing MusicBrainz metadata and provider availability..." });
 
     const artists = getManagedArtists({ orderByLastScanned: true }) as any[];
 
@@ -903,5 +903,4 @@ export function queueConfigPrune(options: { trigger?: number } = {}) {
         options.trigger ?? 1,
     );
 }
-
 

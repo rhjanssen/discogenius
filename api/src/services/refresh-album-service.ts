@@ -1,7 +1,6 @@
 import { db } from "../database.js";
 import { getConfigSection } from "./config.js";
 import { createCooperativeBatcher } from "../utils/concurrent.js";
-import { resolveArtistFolderForPersistence } from "./artist-paths.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
@@ -9,11 +8,18 @@ import type { ProviderReleaseGroupMatch } from "./metadata/provider-release-grou
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderAlbum, ProviderTrack } from "./providers/streaming-provider.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "./provider-artist-identity-service.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
     artistId: string;
 };
+
+const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
+    return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
+}
 
 function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
     const raw = providerAlbum.raw;
@@ -92,6 +98,105 @@ function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null
 }
 
 export class RefreshAlbumService {
+    private static getArtistMbidForReleaseGroup(releaseGroupMbid?: string | null): string | null {
+        if (!releaseGroupMbid) {
+            return null;
+        }
+
+        const row = db.prepare("SELECT artist_mbid FROM mb_release_groups WHERE mbid = ?")
+            .get(releaseGroupMbid) as { artist_mbid?: string | null } | undefined;
+        return row?.artist_mbid ? String(row.artist_mbid) : null;
+    }
+
+    private static async ensureMusicBrainzArtist(artistMbid: string, monitorArtist = false): Promise<string> {
+        const { RefreshArtistService } = await import("./refresh-artist-service.js");
+        return RefreshArtistService.upsertMusicBrainzArtist(artistMbid, {
+            monitorArtist,
+            includeSimilarArtists: false,
+            seedSimilarArtists: false,
+        });
+    }
+
+    private static async resolveCanonicalArtistForProviderAlbum(
+        providerId: string,
+        albumId: string,
+        albumData: any,
+        requestedArtistId?: string | null,
+    ): Promise<string | null> {
+        if (requestedArtistId && isMusicBrainzMbid(requestedArtistId)) {
+            return this.ensureMusicBrainzArtist(requestedArtistId, false);
+        }
+
+        const existing = db.prepare(`
+            SELECT artists.id, artists.mbid, albums.mb_release_group_id
+            FROM albums
+            JOIN artists ON artists.id = albums.artist_id
+            WHERE albums.id = ?
+            LIMIT 1
+        `).get(albumId) as { id?: string | number | null; mbid?: string | null; mb_release_group_id?: string | null } | undefined;
+        if (existing?.mbid) {
+            return String(existing.id || existing.mbid);
+        }
+
+        const existingReleaseGroupArtistMbid = this.getArtistMbidForReleaseGroup(existing?.mb_release_group_id);
+        if (existingReleaseGroupArtistMbid) {
+            return this.ensureMusicBrainzArtist(existingReleaseGroupArtistMbid, false);
+        }
+
+        const providerItem = db.prepare(`
+            SELECT artist_mbid, release_group_mbid
+            FROM provider_items
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND provider_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(providerId, albumId) as { artist_mbid?: string | null; release_group_mbid?: string | null } | undefined;
+
+        const providerItemArtistMbid = providerItem?.artist_mbid || this.getArtistMbidForReleaseGroup(providerItem?.release_group_mbid);
+        if (providerItemArtistMbid) {
+            return this.ensureMusicBrainzArtist(providerItemArtistMbid, false);
+        }
+
+        const providerArtistId = albumData?.artist_id != null ? String(albumData.artist_id) : "";
+        const providerArtistName = String(albumData?.artist_name || "").trim();
+        if (!providerArtistId || !providerArtistName) {
+            return null;
+        }
+
+        const cachedProviderArtist = db.prepare(`
+            SELECT artist_mbid
+            FROM provider_items
+            WHERE provider = ?
+              AND entity_type = 'artist'
+              AND provider_id = ?
+              AND artist_mbid IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(providerId, providerArtistId) as { artist_mbid?: string | null } | undefined;
+        if (cachedProviderArtist?.artist_mbid) {
+            return this.ensureMusicBrainzArtist(cachedProviderArtist.artist_mbid, false);
+        }
+
+        const artistIdentity: ProviderArtistIdentityInput = {
+            providerId: providerArtistId,
+            name: providerArtistName,
+            raw: {
+                id: providerArtistId,
+                name: providerArtistName,
+            },
+        };
+        const resolution = await ProviderArtistIdentityService.resolve(providerId, artistIdentity);
+        if (!resolution.mbid) {
+            ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, null);
+            return null;
+        }
+
+        const localArtistId = await this.ensureMusicBrainzArtist(resolution.mbid, false);
+        ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, localArtistId);
+        return localArtistId;
+    }
+
     static getScanLevel(albumId: string): ScanLevel {
         const album = db.prepare(`
             SELECT
@@ -152,20 +257,13 @@ export class RefreshAlbumService {
             return;
         }
 
-        const albumData = providerAlbumToAlbumMetadataRow(await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId));
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        const albumData = providerAlbumToAlbumMetadataRow(await provider.getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
 
-        const primaryArtistId = albumData.artist_id || artistId;
-        if (primaryArtistId) {
-            const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
-            if (!artistExists) {
-                const primaryArtistName = albumData.artist_name || "Unknown Artist";
-                db.prepare(`INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)`)
-                    .run(primaryArtistId, primaryArtistName, resolveArtistFolderForPersistence({
-                        artistId: primaryArtistId,
-                        artistName: primaryArtistName,
-                    }));
-            }
+        const primaryArtistId = await this.resolveCanonicalArtistForProviderAlbum(provider.id, albumId, albumData, artistId);
+        if (!primaryArtistId) {
+            throw new Error(`Provider album ${albumId} could not be linked to a MusicBrainz artist. Refresh/curate the artist before hydrating provider tracks.`);
         }
 
         const existing = db.prepare("SELECT id, monitor, monitor_lock FROM albums WHERE id = ?").get(albumId) as any;
@@ -415,8 +513,6 @@ export class RefreshAlbumService {
             WHERE id=? AND album_id=?
         `);
 
-        const selectArtist = db.prepare("SELECT id FROM artists WHERE id = ?");
-        const insertArtist = db.prepare("INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)");
         const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND album_id = ?");
 
         const cooperateTrackStore = createCooperativeBatcher(25);
@@ -429,25 +525,7 @@ export class RefreshAlbumService {
             if (trackBatch.length >= 25 || track === tracks[tracks.length - 1]) {
                 db.transaction(() => {
                     for (const currentTrack of trackBatch) {
-                        const currentTrackArtistId = currentTrack.artist_id;
-
-                        if (currentTrackArtistId && currentTrackArtistId !== album.artist_id) {
-                            const artistExists = selectArtist.get(currentTrackArtistId);
-                            if (!artistExists) {
-                                let artistName = "Unknown Artist";
-                                if (currentTrack.artists && Array.isArray(currentTrack.artists)) {
-                                    const found = currentTrack.artists.find((artist: any) => String(artist.id) === String(currentTrackArtistId));
-                                    if (found) {
-                                        artistName = found.name;
-                                    }
-                                }
-
-                                insertArtist.run(currentTrackArtistId, artistName, resolveArtistFolderForPersistence({
-                                    artistId: currentTrackArtistId,
-                                    artistName,
-                                }));
-                            }
-                        }
+                        const currentTrackArtistId = String(album.artist_id);
 
                         const exists = selectMedia.get(currentTrack.tidal_id, albumId) as any;
 
@@ -505,7 +583,7 @@ export class RefreshAlbumService {
                             );
                         }
 
-                        this.storeTrackArtists(currentTrack);
+                        this.storeTrackArtists(currentTrack, currentTrackArtistId);
                     }
                 })();
                 trackBatch.length = 0;
@@ -525,19 +603,19 @@ export class RefreshAlbumService {
         options: ScanOptions,
     ): Promise<boolean> {
         const forceUpdate = options.forceUpdate === true;
-        const primaryArtistId = album.artist_id;
+        const primaryProviderArtistId = album.artist_id;
         const releaseGroupMatch = (album as { _mb_release_group_match?: ProviderReleaseGroupMatch })._mb_release_group_match || null;
         const matchedReleaseGroup = releaseGroupMatch?.status !== "unmatched" ? releaseGroupMatch?.releaseGroup : null;
         const matchedArtistMbid = (album as { _mb_artist_mbid?: string | null })._mb_artist_mbid || null;
+        const primaryArtistId = matchedArtistMbid
+            || (isMusicBrainzMbid(scanningArtistId) ? scanningArtistId : primaryProviderArtistId);
 
         const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
-        if (!artistExists && primaryArtistId !== scanningArtistId) {
-            const primaryArtistName = album.artist_name || "Unknown Artist";
-            db.prepare("INSERT INTO artists (id, name, monitor, path) VALUES (?, ?, 0, ?)")
-                .run(primaryArtistId, primaryArtistName, resolveArtistFolderForPersistence({
-                    artistId: primaryArtistId,
-                    artistName: primaryArtistName,
-                }));
+        if (!artistExists) {
+            if (!isMusicBrainzMbid(primaryArtistId)) {
+                throw new Error(`Provider album ${album.tidal_id} did not resolve to a canonical MusicBrainz artist.`);
+            }
+            await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
         const exists = db.prepare("SELECT id, monitor, monitor_lock FROM albums WHERE id = ?").get(album.tidal_id) as any;
@@ -663,15 +741,6 @@ export class RefreshAlbumService {
         setParticipant(scanningArtistId, scanningArtistId === primaryArtistId ? album.artist_name || null : null, 0);
         setParticipant(primaryArtistId, album.artist_name || null, 0);
 
-        if (album.artists && Array.isArray(album.artists)) {
-            for (let index = 0; index < album.artists.length; index += 1) {
-                const artist = album.artists[index];
-                const otherArtistId = artist?.id?.toString?.() ?? String(artist?.id ?? "");
-                if (!otherArtistId || otherArtistId === "undefined" || otherArtistId === "null") continue;
-                setParticipant(otherArtistId, artist?.name || null, index);
-            }
-        }
-
         const scanningType = primaryArtistId === scanningArtistId ? "MAIN" : "APPEARS_ON";
         const scanningParticipant = participants.get(String(scanningArtistId));
         upsertScannedRelation.run(
@@ -695,34 +764,6 @@ export class RefreshAlbumService {
                 null,
                 null,
             );
-        }
-
-        if (album.artists && Array.isArray(album.artists)) {
-            for (const artist of album.artists) {
-                const otherArtistId = artist?.id?.toString?.() ?? String(artist?.id ?? "");
-                if (!otherArtistId || otherArtistId === "undefined" || otherArtistId === "null") continue;
-                if (otherArtistId !== scanningArtistId && otherArtistId !== primaryArtistId) {
-                    const otherArtistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(otherArtistId);
-                    if (!otherArtistExists) {
-                        const otherArtistName = artist.name || "Unknown Artist";
-                        db.prepare("INSERT INTO artists(id, name, monitor, path) VALUES(?, ?, 0, ?)")
-                            .run(otherArtistId, otherArtistName, resolveArtistFolderForPersistence({
-                                artistId: otherArtistId,
-                                artistName: otherArtistName,
-                            }));
-                    }
-                    const participant = participants.get(otherArtistId);
-                    upsertRelatedRelation.run(
-                        album.tidal_id,
-                        otherArtistId,
-                        participant?.name || artist.name || null,
-                        participant?.ord ?? null,
-                        "MAIN",
-                        null,
-                        null,
-                    );
-                }
-            }
         }
 
         if (matchedReleaseGroup) {
@@ -816,201 +857,22 @@ export class RefreshAlbumService {
         albumId: string,
         forceUpdate: boolean = false,
     ): Promise<SimilarAlbumSeed[]> {
-        try {
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
-            const similarAlbums = provider.getSimilarAlbums
-                ? await provider.getSimilarAlbums(albumId)
-                : [];
-            const ids = new Set<string>();
-            const pairs: SimilarAlbumSeed[] = [];
-
-            const upsertArtist = db.prepare(`
-                INSERT INTO artists (id, name, monitor, path)
-                VALUES (?, ?, 0, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    ${forceUpdate
-                        ? `
-                    name = excluded.name,
-                    path = COALESCE(artists.path, excluded.path)
-                    `
-                        : `
-                    name = COALESCE(excluded.name, name),
-                    path = COALESCE(artists.path, excluded.path)
-                    `}
-            `);
-
-            const upsertAlbum = db.prepare(`
-                INSERT INTO albums (
-                    id, artist_id, title, version, release_date, type, explicit, quality,
-                    cover, vibrant_color, video_cover,
-                    num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
-                    mb_primary, mb_secondary, monitor
-                ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, 0, 1, 0, 0, ?, NULL, NULL, NULL, NULL, 0)
-                ON CONFLICT(id) DO UPDATE SET
-                    ${forceUpdate
-                        ? `
-                    artist_id = excluded.artist_id,
-                    title = excluded.title,
-                    release_date = excluded.release_date,
-                    cover = excluded.cover,
-                    type = excluded.type,
-                    explicit = excluded.explicit,
-                    quality = excluded.quality,
-                    popularity = excluded.popularity
-                    `
-                        : `
-                    artist_id = COALESCE(excluded.artist_id, artist_id),
-                    title = COALESCE(excluded.title, title),
-                    release_date = COALESCE(excluded.release_date, release_date),
-                    cover = COALESCE(excluded.cover, cover),
-                    type = COALESCE(excluded.type, type),
-                    explicit = COALESCE(excluded.explicit, explicit),
-                    quality = COALESCE(excluded.quality, quality),
-                    popularity = COALESCE(excluded.popularity, popularity)
-                    `}
-            `);
-
-            const deleteRelations = db.prepare("DELETE FROM similar_albums WHERE album_id = ?");
-            const insertRelation = db.prepare(`
-                INSERT OR IGNORE INTO similar_albums (album_id, similar_album_id)
-                VALUES (?, ?)
-            `);
-
-            const transaction = db.transaction((items: any[]) => {
-                deleteRelations.run(albumId);
-                for (const similarAlbum of items) {
-                    const albumRow = providerAlbumToAlbumMetadataRow(similarAlbum);
-                    const similarAlbumId = albumRow?.tidal_id?.toString?.() ?? String(albumRow?.tidal_id ?? "");
-                    const similarArtistId = albumRow?.artist_id?.toString?.() ?? String(albumRow?.artist_id ?? "");
-                    if (!similarAlbumId || !similarArtistId) continue;
-                    if (similarAlbumId === String(albumId)) continue;
-                    if (ids.has(similarAlbumId)) continue;
-                    ids.add(similarAlbumId);
-                    pairs.push({ albumId: similarAlbumId, artistId: similarArtistId });
-                    upsertArtist.run(
-                        similarArtistId,
-                        albumRow?.artist_name || "Unknown Artist",
-                        resolveArtistFolderForPersistence({
-                            artistId: similarArtistId,
-                            artistName: albumRow?.artist_name || "Unknown Artist",
-                        }),
-                    );
-                    upsertAlbum.run(
-                        similarAlbumId,
-                        similarArtistId,
-                        albumRow?.title || "Unknown Album",
-                        albumRow?.release_date || null,
-                        albumRow?.type || "ALBUM",
-                        albumRow?.explicit ? 1 : 0,
-                        albumRow?.quality || null,
-                        albumRow?.cover || null,
-                        albumRow?.popularity || null,
-                    );
-                    insertRelation.run(albumId, similarAlbumId);
-                }
-            });
-
-            transaction(similarAlbums || []);
-            return pairs;
-        } catch (error) {
-            console.warn(`[RefreshAlbumService] Failed to fetch/store similar albums for ${albumId}:`, error);
-        }
-
+        void albumId;
+        void forceUpdate;
         return [];
     }
 
-    private static storeTrackArtists(track: any): void {
+    private static storeTrackArtists(track: any, canonicalArtistId: string): void {
         const mediaId = track?.tidal_id?.toString?.() ?? String(track?.tidal_id ?? "");
         if (!mediaId) return;
 
         db.prepare("DELETE FROM media_artists WHERE media_id = ?").run(mediaId);
 
-        let trackArtists = [];
-        try {
-            trackArtists = typeof track.artists === "string"
-                ? JSON.parse(track.artists)
-                : (track.artists || []);
-        } catch {
-            trackArtists = [];
-        }
-
-        if (!Array.isArray(trackArtists)) trackArtists = [];
-
-        const primaryArtistId = track?.artist_id?.toString?.() ?? String(track?.artist_id ?? "");
-        const primaryArtistName = track?.artist_name || null;
-
-        const upsertArtist = db.prepare(`
-            INSERT INTO artists (id, name, picture, popularity, monitor, path)
-            VALUES (?, ?, ?, 0, 0, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = CASE
-                    WHEN artists.name = 'Unknown Artist' AND excluded.name <> 'Unknown Artist' THEN excluded.name
-                    ELSE artists.name
-                END,
-                picture = COALESCE(artists.picture, excluded.picture),
-                path = COALESCE(artists.path, excluded.path)
-        `);
-
         const insertMediaArtist = db.prepare(`
             INSERT INTO media_artists (media_id, artist_id, type) VALUES (?, ?, ?)
         `);
 
-        const normalizeRole = (value: unknown): "MAIN" | "FEATURED" | null => {
-            if (value === null || value === undefined) return null;
-            const normalized = String(value).trim().toUpperCase();
-            if (!normalized) return null;
-            if (normalized === "MAIN" || normalized === "PRIMARY") return "MAIN";
-            if (normalized === "FEATURED" || normalized === "FEATURE") return "FEATURED";
-            return null;
-        };
-
-        const byArtistId = new Map<string, { name: string; picture: string | null; type: "MAIN" | "FEATURED" }>();
-
-        for (const artist of trackArtists) {
-            const artistId = artist?.id?.toString?.() ?? String(artist?.id ?? "");
-            if (!artistId || artistId === "undefined" || artistId === "null") continue;
-
-            const roleFromApi = normalizeRole(artist?.type);
-            const inferredRole: "MAIN" | "FEATURED" =
-                roleFromApi ?? (primaryArtistId && artistId === primaryArtistId ? "MAIN" : "FEATURED");
-
-            const name = artist?.name || (artistId === primaryArtistId ? (primaryArtistName || "Unknown Artist") : "Unknown Artist");
-            const picture = artist?.picture || null;
-
-            const existing = byArtistId.get(artistId);
-            if (!existing) {
-                byArtistId.set(artistId, { name, picture, type: inferredRole });
-                continue;
-            }
-
-            const mergedType: "MAIN" | "FEATURED" = (existing.type === "MAIN" || inferredRole === "MAIN") ? "MAIN" : "FEATURED";
-            byArtistId.set(artistId, {
-                name: existing.name !== "Unknown Artist" ? existing.name : name,
-                picture: existing.picture ?? picture,
-                type: mergedType,
-            });
-        }
-
-        if (primaryArtistId && !byArtistId.has(primaryArtistId)) {
-            byArtistId.set(primaryArtistId, {
-                name: primaryArtistName || "Unknown Artist",
-                picture: null,
-                type: "MAIN",
-            });
-        }
-
-        const transaction = db.transaction(() => {
-            for (const [artistId, info] of byArtistId) {
-                const artistName = info.name || "Unknown Artist";
-                upsertArtist.run(artistId, artistName, info.picture, resolveArtistFolderForPersistence({
-                    artistId,
-                    artistName,
-                }));
-                insertMediaArtist.run(mediaId, artistId, info.type);
-            }
-        });
-
-        transaction();
+        insertMediaArtist.run(mediaId, canonicalArtistId, "MAIN");
     }
 
     private static getMusicBrainzPrimary(tidalType: string | undefined, module: string | undefined, title: string = ""): string {

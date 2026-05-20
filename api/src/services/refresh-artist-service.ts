@@ -2,7 +2,7 @@ import { db } from "../database.js";
 import { getConfigSection } from "./config.js";
 import { shouldHydrateArtistCatalog } from "./scan-policy.js";
 import {
-    resolveArtistFolderForPersistence,
+    resolveArtistFolderForIdentityUpdate,
     resolveArtistFolderFromTemplate,
     shouldReapplyArtistPathTemplate,
 } from "./artist-paths.js";
@@ -15,6 +15,7 @@ import {
     matchProviderAlbumsToReleaseGroups,
     type ProviderReleaseGroupMatch,
 } from "./metadata/provider-release-group-matcher.js";
+import { ProviderArtistIdentityService, normalizeProviderArtist } from "./provider-artist-identity-service.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderVideo } from "./providers/streaming-provider.js";
 import { ReleaseGroupSlotService } from "./release-group-slot-service.js";
@@ -127,7 +128,7 @@ export class RefreshArtistService {
         const artistName = artistData.artistname || "Unknown Artist";
         const posterUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Poster");
         const fanartUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Fanart") || posterUrl;
-        const resolvedArtistFolder = resolveArtistFolderForPersistence({
+        const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
             artistId: localArtistId,
             artistName,
             artistMbId: artistMbid,
@@ -163,7 +164,7 @@ export class RefreshArtistService {
                 shouldMonitorInt,
                 shouldMonitorInt,
                 null,
-                resolvedArtistFolder,
+                resolvedArtistFolder.path,
             );
         } else {
             db.prepare(`
@@ -183,7 +184,7 @@ export class RefreshArtistService {
                     monitor = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
                     last_scanned = CURRENT_TIMESTAMP,
-                    path = COALESCE(path, ?)
+                    path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END
                 WHERE id = ?
             `).run(
                 artistName,
@@ -196,7 +197,9 @@ export class RefreshArtistService {
                 artistData.overview || null,
                 shouldMonitorInt,
                 shouldMonitorInt,
-                resolvedArtistFolder,
+                resolvedArtistFolder.shouldReplaceExistingPath ? 1 : 0,
+                resolvedArtistFolder.path,
+                resolvedArtistFolder.path,
                 localArtistId,
             );
         }
@@ -416,29 +419,16 @@ export class RefreshArtistService {
     private static async storeSimilarArtists(artistId: string, forceUpdate = false): Promise<string[]> {
         try {
             const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const artistMbid = this.getArtistMusicBrainzId(artistId);
+            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+            if (!providerArtistId) {
+                return [];
+            }
+
             const similarArtists = provider.getSimilarArtists
-                ? await provider.getSimilarArtists(artistId)
+                ? await provider.getSimilarArtists(providerArtistId)
                 : [];
             const ids = new Set<string>();
-
-            const upsertArtist = db.prepare(`
-                INSERT INTO artists (id, name, picture, popularity, monitor, path)
-                VALUES (?, ?, ?, ?, 0, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    ${forceUpdate
-                        ? `
-                    name = excluded.name,
-                    picture = excluded.picture,
-                    popularity = excluded.popularity,
-                    path = COALESCE(artists.path, excluded.path)
-                    `
-                        : `
-                    name = COALESCE(excluded.name, name),
-                    picture = COALESCE(excluded.picture, picture),
-                    popularity = COALESCE(excluded.popularity, popularity),
-                    path = COALESCE(artists.path, excluded.path)
-                    `}
-            `);
 
             const deleteRelations = db.prepare("DELETE FROM similar_artists WHERE artist_id = ?");
             const insertRelation = db.prepare(`
@@ -446,33 +436,32 @@ export class RefreshArtistService {
                 VALUES (?, ?)
             `);
 
-            const tx = db.transaction((items: any[]) => {
-                deleteRelations.run(artistId);
-                for (const similarArtist of items) {
-                    const similarArtistId = similarArtist?.providerId?.toString?.()
-                        ?? similarArtist?.tidal_id?.toString?.()
-                        ?? String(similarArtist?.providerId ?? similarArtist?.tidal_id ?? "");
+            deleteRelations.run(artistId);
+            for (const similarArtist of similarArtists || []) {
+                const providerIdentity = normalizeProviderArtist(similarArtist);
+                if (!providerIdentity.providerId || providerIdentity.providerId === providerArtistId) {
+                    continue;
+                }
 
-                    if (!similarArtistId || similarArtistId === String(artistId)) {
-                        continue;
-                    }
+                const musicBrainzIdentity = await ProviderArtistIdentityService.resolve(provider.id, providerIdentity);
+                if (!musicBrainzIdentity.mbid) {
+                    ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, null);
+                    continue;
+                }
 
+                const similarArtistId = await this.upsertMusicBrainzArtist(musicBrainzIdentity.mbid, {
+                    monitorArtist: false,
+                    includeSimilarArtists: false,
+                    seedSimilarArtists: false,
+                    forceUpdate,
+                });
+                ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, similarArtistId);
+                if (similarArtistId && similarArtistId !== String(artistId)) {
                     ids.add(similarArtistId);
-                    upsertArtist.run(
-                        similarArtistId,
-                        similarArtist?.name || "Unknown Artist",
-                        similarArtist?.picture || similarArtist?.raw?.picture || null,
-                        similarArtist?.popularity ?? null,
-                        resolveArtistFolderForPersistence({
-                            artistId: similarArtistId,
-                            artistName: similarArtist?.name || "Unknown Artist",
-                        }),
-                    );
                     insertRelation.run(artistId, similarArtistId);
                 }
-            });
+            }
 
-            tx(similarArtists || []);
             return Array.from(ids);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch/store similar artists for ${artistId}:`, error);
@@ -597,87 +586,28 @@ export class RefreshArtistService {
         }
 
         const artistData = await provider.getArtist(artistId);
-        const resolvedArtistFolder = resolveArtistFolderForPersistence({
-            artistId,
-            artistName: artistData.name,
-            existingPath: existing?.path ?? null,
-        });
-
-        if (artistData.name === "Various Artists" || artistId === "0") {
-            console.warn(`[RefreshArtistService] Cannot monitor 'Various Artists' (ID: ${artistId}). Skipping.`);
-            throw new Error("Cannot monitor 'Various Artists'. Please monitor specific compilations instead.");
-        }
-
-        if (!existing) {
-            db.prepare(`
-                INSERT INTO artists (
-                    id, name, picture, popularity, artist_types, artist_roles,
-                    monitor, monitored_at, user_date_added, last_scanned, path
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
-            `).run(
-                artistId,
-                artistData.name,
-                artistData.picture,
-                artistData.popularity ?? null,
-                JSON.stringify(artistData.types || ["ARTIST"]),
-                JSON.stringify(artistData.roles || []),
-                shouldMonitorInt,
-                shouldMonitorInt,
-                null,
-                resolvedArtistFolder,
-            );
-        } else {
-            const monitorValue = options.monitorArtist === true ? shouldMonitorInt : existing.monitor;
-            db.prepare(`
-                UPDATE artists SET
-                    name = ?,
-                    picture = ?,
-                    popularity = ?,
-                    artist_types = ?,
-                    artist_roles = ?,
-                    monitor = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
-                    last_scanned = CURRENT_TIMESTAMP,
-                    path = COALESCE(path, ?)
-                WHERE id = ?
-            `).run(
-                artistData.name,
-                artistData.picture,
-                artistData.popularity ?? null,
-                JSON.stringify(artistData.types || ["ARTIST"]),
-                JSON.stringify(artistData.roles || []),
-                monitorValue,
-                monitorValue,
-                resolvedArtistFolder,
-                artistId,
-            );
-        }
-
-        await MetadataIdentityService.resolveArtist(artistId, { force: options.forceUpdate === true });
-        this.reapplyArtistPathAfterIdentity(artistId);
-        await this.syncArtistMusicBrainzCatalog(artistId, options.forceUpdate === true);
-
-        const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
-        const similarArtistIds = includeSimilar
-            ? await this.storeSimilarArtists(artistId, options.forceUpdate === true)
-            : [];
-
-        if (options.seedSimilarArtists) {
-            for (const similarArtistId of similarArtistIds) {
-                try {
-                    await this.scanShallow(similarArtistId, {
-                        monitorArtist: false,
-                        includeSimilarArtists: false,
-                        seedSimilarArtists: false,
-                    });
-                } catch (error) {
-                    console.warn(`[RefreshArtistService] Failed to seed similar artist ${similarArtistId}:`, error);
-                }
+        const providerArtistIdentity = normalizeProviderArtist(artistData);
+        const musicBrainzIdentity = await ProviderArtistIdentityService.resolve(provider.id, providerArtistIdentity);
+        if (musicBrainzIdentity.mbid) {
+            const localArtistId = await this.upsertMusicBrainzArtist(musicBrainzIdentity.mbid, {
+                ...options,
+                monitorArtist: shouldMonitor,
+            });
+            ProviderArtistIdentityService.store(provider.id, providerArtistIdentity, musicBrainzIdentity, localArtistId);
+            if (localArtistId !== artistId) {
+                await this.scanBasic(localArtistId, {
+                    ...options,
+                    monitorArtist: shouldMonitor,
+                });
             }
+            return;
         }
 
-        console.log(`[RefreshArtistService] scanBasic complete for ${artistId}`);
+        ProviderArtistIdentityService.store(provider.id, providerArtistIdentity, musicBrainzIdentity, null);
+        throw new Error(
+            `Could not match ${provider.name} artist "${artistData.name}" (${artistId}) to MusicBrainz. ` +
+            "Discogenius v2 requires a canonical MusicBrainz artist before scanning provider availability.",
+        );
     }
 
     static async scanShallow(artistId: string, options: ScanOptions = {}): Promise<void> {

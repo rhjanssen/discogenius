@@ -16,9 +16,6 @@ export interface ProviderCapabilities {
   artwork: boolean;
   editorialMetadata: boolean;
   providerIds: boolean;
-  hasVideo: boolean;
-  hasLossless?: boolean;
-  hasSpatialAudio?: boolean;
   spatialFormats?: string[];
 }
 
