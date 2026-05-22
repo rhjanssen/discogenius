@@ -30,7 +30,7 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
         ? "AND lf.library_slot = 'spatial'"
         : libraryFilter === "stereo"
             ? "AND lf.library_slot = 'stereo'"
-            : "AND COALESCE(lf.library_slot, 'stereo') IN ('stereo', 'spatial')";
+            : "AND lf.library_slot IN ('stereo', 'spatial')";
 
     return `
   ${selectedReleaseExpression} IS NOT NULL
@@ -76,18 +76,23 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         a.cover_image_url AS artist_cover_image_url,
         a.monitor AS artist_monitor,
         ${releaseGroupWantedExpression} AS wanted,
+        COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         ${selectedProviderAlbumExpression} AS selected_provider_id,
         ${selectedProviderAlbumExpression === "spatial.selected_provider_id"
             ? "spatial.quality"
             : selectedProviderAlbumExpression === "stereo.selected_provider_id"
                 ? "stereo.quality"
                 : "COALESCE(stereo.quality, spatial.quality)"} AS selected_quality,
+        stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
+        stereo.provider_data AS stereo_provider_data,
+        spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.quality AS spatial_quality,
-        spatial.match_status AS spatial_match_status
+        spatial.match_status AS spatial_match_status,
+        spatial.provider_data AS spatial_provider_data
       FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
       LEFT JOIN ReleaseGroupSlots stereo

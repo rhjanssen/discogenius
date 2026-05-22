@@ -20,6 +20,11 @@ import { streamingProviderManager } from "./providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderVideo } from "./providers/streaming-provider.js";
 import { ReleaseGroupSlotService } from "./release-group-slot-service.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import {
+    getSkyHookArtistImageUrl,
+    resolveArtistArtwork,
+    type ProviderArtworkCandidate,
+} from "./metadata/skyhook-artwork-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -86,6 +91,14 @@ function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArt
     };
 }
 
+function providerArtistArtworkSnapshot(artist: ProviderArtist): string {
+    return JSON.stringify({
+        picture: artist.picture || null,
+        popularity: artist.popularity ?? null,
+        url: artist.url || null,
+    });
+}
+
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
         const row = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
@@ -126,8 +139,24 @@ export class RefreshArtistService {
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
         const artistData = await lidarrMetadataService.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
-        const posterUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Poster");
-        const fanartUrl = lidarrMetadataService.getArtistImageUrl(artistData, "Fanart") || posterUrl;
+        const providerArtworkRows = db.prepare(`
+            SELECT provider, provider_id, data
+            FROM ProviderItems
+            WHERE entity_type = 'artist'
+              AND artist_mbid = ?
+            ORDER BY updated_at DESC
+        `).all(artistMbid) as Array<{ provider: string; provider_id: string; data?: string | null }>;
+        const providerCandidates: ProviderArtworkCandidate[] = providerArtworkRows.map((row) => ({
+            provider: row.provider,
+            entityId: row.provider_id,
+            data: row.data,
+        }));
+        const posterUrl = await resolveArtistArtwork({
+            skyHookData: artistData,
+            providerCandidates,
+            preferredCoverTypes: ["Poster", "Headshot"],
+        });
+        const fanartUrl = getSkyHookArtistImageUrl(artistData, "Fanart") || posterUrl;
         const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
             artistId: localArtistId,
             artistName,
@@ -294,7 +323,11 @@ export class RefreshArtistService {
                     match?.confidence ?? null,
                     match?.method || null,
                     match ? JSON.stringify(match.evidence) : null,
-                    null,
+                    JSON.stringify({
+                        cover: album.cover || null,
+                        explicit: album.explicit == null ? null : Boolean(album.explicit),
+                        quality: album.quality || null,
+                    }),
                 );
             }
         })();
@@ -331,8 +364,17 @@ export class RefreshArtistService {
             artist.name || null,
             status,
             status === "verified" ? 1 : 0.75,
-            null,
+            providerArtistArtworkSnapshot(artist),
         );
+
+        if (artist.picture) {
+            db.prepare(`
+                UPDATE Artists
+                SET picture = COALESCE(picture, ?),
+                    cover_image_url = COALESCE(cover_image_url, ?)
+                WHERE mbid = ?
+            `).run(artist.picture, artist.picture, artistMbid);
+        }
     }
 
     private static async resolveProviderArtistId(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string | null> {

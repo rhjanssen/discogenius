@@ -1,5 +1,9 @@
 import { db } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
+import {
+  getSkyHookAlbumImageUrl,
+  getSkyHookArtistImageUrl,
+} from "./skyhook-artwork-service.js";
 
 export interface LidarrArtist {
   id: string;
@@ -128,21 +132,11 @@ export class LidarrMetadataService {
   }
 
   getArtistImageUrl(artist: LidarrArtist, preferredCoverType = "Poster"): string | null {
-    const images = Array.isArray(artist.images) ? artist.images : [];
-    const preferred = images.find((image) =>
-      String(image.CoverType || image.coverType || "").toLowerCase() === preferredCoverType.toLowerCase()
-    ) || images.find((image) => image.Url || image.url || image.remoteUrl);
-
-    return preferred?.Url || preferred?.url || preferred?.remoteUrl || null;
+    return getSkyHookArtistImageUrl(artist, preferredCoverType);
   }
 
   getAlbumImageUrl(album: LidarrAlbum, preferredCoverType = "Cover"): string | null {
-    const images = Array.isArray(album.Images) ? album.Images : (Array.isArray(album.images) ? album.images : []);
-    const preferred = images.find((image) =>
-      String(image.CoverType || image.coverType || "").toLowerCase() === preferredCoverType.toLowerCase()
-    ) || images.find((image) => image.Url || image.url || image.remoteUrl);
-
-    return preferred?.Url || preferred?.url || preferred?.remoteUrl || null;
+    return getSkyHookAlbumImageUrl(album, preferredCoverType);
   }
 
   getCachedReleaseGroupsForArtist(artistMbid: string): MusicBrainzReleaseGroupForMatching[] {

@@ -43,8 +43,8 @@ export class LibraryStatsQueryService {
                 downloaded: countDownloadedAlbums(),
             },
             tracks: {
-                total: (db.prepare("SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IS NOT NULL").get() as { count: number }).count,
-                monitored: (db.prepare("SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IS NOT NULL AND monitor = 1").get() as { count: number }).count,
+                total: (db.prepare("SELECT COUNT(*) as count FROM Tracks WHERE release_mbid IN (SELECT selected_release_mbid FROM ReleaseGroupSlots WHERE selected_release_mbid IS NOT NULL)").get() as { count: number }).count,
+                monitored: (db.prepare("SELECT COUNT(*) as count FROM Tracks WHERE release_mbid IN (SELECT selected_release_mbid FROM ReleaseGroupSlots WHERE selected_release_mbid IS NOT NULL AND wanted = 1)").get() as { count: number }).count,
                 downloaded: countDownloadedTracks(),
             },
             videos: {

@@ -1196,7 +1196,7 @@ function ensureMusicBrainzProviderSchema(): void {
       duration INT,
       release_date TEXT,
       availability TEXT,
-      library_slot TEXT,
+      library_slot TEXT NOT NULL DEFAULT 'stereo',
       match_status TEXT,
       match_confidence REAL,
       match_method TEXT,
@@ -1233,7 +1233,7 @@ function ensureMusicBrainzProviderSchema(): void {
   backfillCanonicalMusicBrainzTablesFromLegacy();
   ensureProviderIdentityTablesUseCurrentNames();
 
-  addColumnIfMissing("ProviderItems", "library_slot", "TEXT");
+  addColumnIfMissing("ProviderItems", "library_slot", "TEXT NOT NULL DEFAULT 'stereo'");
   addColumnIfMissing("ProviderItems", "match_status", "TEXT");
   addColumnIfMissing("ProviderItems", "match_confidence", "REAL");
   addColumnIfMissing("ProviderItems", "match_method", "TEXT");
@@ -1279,7 +1279,7 @@ function ensureTrackFileCanonicalIdentitySchema(): void {
   addColumnIfMissing("TrackFiles", "provider", "TEXT");
   addColumnIfMissing("TrackFiles", "provider_entity_type", "TEXT");
   addColumnIfMissing("TrackFiles", "provider_id", "TEXT");
-  addColumnIfMissing("TrackFiles", "library_slot", "TEXT");
+  addColumnIfMissing("TrackFiles", "library_slot", "TEXT NOT NULL DEFAULT 'stereo'");
 
   db.exec(`
     UPDATE TrackFiles
@@ -1387,7 +1387,7 @@ function ensureTrackFileCanonicalIdentitySchema(): void {
           OR LOWER(COALESCE(library_root, '')) LIKE '%spatial%'
           OR LOWER(COALESCE(library_root, '')) LIKE '%atmos%' THEN 'spatial'
         WHEN file_type IN ('track', 'cover', 'nfo', 'lyrics', 'bio', 'review') THEN 'stereo'
-        ELSE NULL
+        ELSE 'stereo'
       END)
   `);
 
@@ -1730,7 +1730,7 @@ export function initDatabase() {
       provider TEXT,
       provider_entity_type TEXT,
       provider_id TEXT,
-      library_slot TEXT,                 -- stereo, spatial, video
+      library_slot TEXT NOT NULL DEFAULT 'stereo',                 -- stereo, spatial, video
       
       -- File Location
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file in library

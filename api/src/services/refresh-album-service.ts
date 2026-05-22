@@ -832,7 +832,11 @@ export class RefreshAlbumService {
             releaseGroupMatch?.confidence ?? null,
             releaseGroupMatch?.method || null,
             releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
-            null,
+            JSON.stringify({
+                cover: album.cover || album.image_id || album.imageId || null,
+                explicit: album.explicit == null ? null : Boolean(album.explicit),
+                quality: album.quality || null,
+            }),
         );
 
         if (options.resolveMusicBrainz === false) {

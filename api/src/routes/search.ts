@@ -3,6 +3,11 @@ import { db } from "../database.js";
 import { getProviderAuthMode } from "../services/provider-auth-mode.js";
 import { lidarrMetadataService, type LidarrArtist } from "../services/metadata/lidarr-metadata-service.js";
 import { streamingProviderManager } from "../services/providers/index.js";
+import {
+    albumProviderArtworkCandidatesFromRow,
+    chooseCachedAlbumArtwork,
+    parseJsonObject,
+} from "../services/metadata/skyhook-artwork-service.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -50,31 +55,6 @@ function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor
         { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
 }
 
-function coverArtArchiveReleaseGroupUrl(mbid: string | null | undefined): string | null {
-    const trimmed = String(mbid || "").trim();
-    return trimmed ? `https://coverartarchive.org/release-group/${trimmed}/front-500` : null;
-}
-
-function parseProviderArtworkFromSlotData(value: unknown): string | null {
-    if (!value) return null;
-    try {
-        const parsed = typeof value === "string" ? JSON.parse(value) : value;
-        return typeof parsed?.cover === "string" && parsed.cover.trim() ? parsed.cover : null;
-    } catch {
-        return null;
-    }
-}
-
-function parseLidarrAlbumArtworkFromData(value: unknown): string | null {
-    if (!value) return null;
-    try {
-        const parsed = typeof value === "string" ? JSON.parse(value) : value;
-        return lidarrMetadataService.getAlbumImageUrl(parsed);
-    } catch {
-        return null;
-    }
-}
-
 function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContract {
     const localArtist = loadArtistByMusicBrainzId(artist.id);
     const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
@@ -89,7 +69,7 @@ function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContr
         name: artist.artistname,
         type: "artist",
         subtitle: details || null,
-        imageId: localArtist?.cover_image_url || localArtist?.picture || lidarrMetadataService.getArtistImageUrl(artist),
+        imageId: localArtist?.picture || localArtist?.cover_image_url || lidarrMetadataService.getArtistImageUrl(artist),
         monitored: Boolean(localArtist?.monitor),
         in_library: Boolean(localArtist),
         quality: null,
@@ -181,7 +161,7 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        `SELECT id, name, COALESCE(cover_image_url, picture) AS picture, monitor
+                        `SELECT id, name, COALESCE(picture, cover_image_url) AS picture, monitor
                          FROM Artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
@@ -215,29 +195,40 @@ router.get("/", async (req, res) => {
              rg.title,
              rg.first_release_date AS release_date,
              rg.primary_type,
-             a.name AS artist_name,
-             rg.data,
-             slot.id AS slot_id,
-             slot.provider_data,
-             slot.quality AS quality,
-	             COALESCE(slot.wanted, 0) AS monitored
-	           FROM Albums rg
-	           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-	           LEFT JOIN ReleaseGroupSlots slot
-             ON slot.release_group_mbid = rg.mbid
-            AND slot.slot = 'stereo'
-	           WHERE rg.title LIKE ? ESCAPE '\\'
+	             a.name AS artist_name,
+	             rg.data,
+	             COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
+	             COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+	             stereo.selected_provider AS stereo_provider,
+	             stereo.selected_provider_id AS stereo_provider_id,
+	             stereo.provider_data AS stereo_provider_data,
+	             spatial.selected_provider AS spatial_provider,
+	             spatial.selected_provider_id AS spatial_provider_id,
+	             spatial.provider_data AS spatial_provider_data,
+	             COALESCE(stereo.quality, spatial.quality) AS quality,
+		             CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END AS monitored
+		           FROM Albums rg
+		           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+		           LEFT JOIN ReleaseGroupSlots stereo
+	             ON stereo.release_group_mbid = rg.mbid
+	            AND stereo.slot = 'stereo'
+		           LEFT JOIN ReleaseGroupSlots spatial
+	             ON spatial.release_group_mbid = rg.mbid
+	            AND spatial.slot = 'spatial'
+		           WHERE rg.title LIKE ? ESCAPE '\\'
 	           ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
 	           LIMIT ?`
                     )
                     .all(like, limit) as any[];
 
                 results.albums.push(...localReleaseGroups.map((row: any) => formatSearchResult({
-                    id: row.id,
-                    name: row.title,
-                    cover_id: parseLidarrAlbumArtworkFromData(row.data)
-                        || coverArtArchiveReleaseGroupUrl(row.id)
-                        || parseProviderArtworkFromSlotData(row.provider_data),
+	                    id: row.id,
+	                    name: row.title,
+	                    cover_id: chooseCachedAlbumArtwork({
+                            releaseGroupMbid: row.id,
+                            skyHookData: parseJsonObject(row.data),
+                            providerCandidates: albumProviderArtworkCandidatesFromRow(row),
+                        }),
                     artist_name: row.artist_name,
                     release_date: row.release_date,
                     quality: row.quality,

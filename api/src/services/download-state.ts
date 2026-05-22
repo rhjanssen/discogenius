@@ -252,7 +252,7 @@ export function getReleaseGroupDownloadStatsMap(
     const normalizedSlot = slot === "spatial" ? "spatial" : slot === "video" ? "video" : slot === "stereo" ? "stereo" : null;
     const slotFilter = normalizedSlot
       ? `AND lf.library_slot = '${normalizedSlot}'`
-      : "AND COALESCE(lf.library_slot, 'stereo') IN ('stereo', 'spatial')";
+      : "AND lf.library_slot IN ('stereo', 'spatial')";
     const rows = db.prepare(`
       WITH target_release_groups(release_group_mbid) AS (
         VALUES ${values}
@@ -459,16 +459,20 @@ export function countDownloadedAlbums(): number {
 
 export function countDownloadedTracks(): number {
   const row = db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM ProviderMedia m
-    WHERE m.album_id IS NOT NULL
-      AND (m.monitor = 1 OR COALESCE(m.monitor_lock, 0) = 1)
-      AND EXISTS (
-        SELECT 1
-        FROM TrackFiles lf
-        WHERE lf.media_id = m.id
-          AND lf.file_type = 'track'
-      )
+    SELECT COUNT(DISTINCT COALESCE(
+      canonical_track_mbid,
+      CASE
+        WHEN provider IS NOT NULL AND provider_id IS NOT NULL THEN provider || ':track:' || provider_id
+        ELSE NULL
+      END,
+      CASE
+        WHEN media_id IS NOT NULL THEN 'media:' || CAST(media_id AS TEXT)
+        ELSE NULL
+      END,
+      file_path
+    )) AS count
+    FROM TrackFiles
+    WHERE file_type = 'track'
   `).get() as { count: number } | undefined;
 
   return Number(row?.count || 0);
@@ -477,15 +481,8 @@ export function countDownloadedTracks(): number {
 export function countDownloadedVideos(): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM ProviderMedia m
-    WHERE m.type = 'Music Video'
-      AND (m.monitor = 1 OR COALESCE(m.monitor_lock, 0) = 1)
-      AND EXISTS (
-        SELECT 1
-        FROM TrackFiles lf
-        WHERE lf.media_id = m.id
-          AND lf.file_type = 'video'
-      )
+    FROM TrackFiles
+    WHERE file_type = 'video'
   `).get() as { count: number } | undefined;
 
   return Number(row?.count || 0);

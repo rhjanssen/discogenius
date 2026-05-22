@@ -2,6 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../database.js';
 import { streamingProviderManager } from "./providers/index.js";
+import {
+    albumProviderArtworkCandidatesFromRow,
+    normalizeArtworkUrl,
+    parseJsonObject,
+    resolveAlbumArtwork,
+    resolveArtistArtwork,
+    type ProviderArtworkCandidate,
+} from "./metadata/skyhook-artwork-service.js";
 
 /**
  * Clean provider text by removing TIDAL-style [wimpLink] tags and normalizing line breaks.
@@ -268,8 +276,121 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
         LIMIT 1
     `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
 
-    const resolved = row?.cover_image_url || row?.picture || null;
+    const resolved = row?.picture || row?.cover_image_url || null;
     return typeof resolved === "string" && /^https?:\/\//i.test(resolved) ? resolved : null;
+}
+
+function loadAlbumArtworkContext(albumId: string): {
+    releaseGroupMbid: string | null;
+    skyHookData: Record<string, any> | null;
+    providerCandidates: ProviderArtworkCandidate[];
+} | null {
+    const row = db.prepare(`
+        SELECT
+            pa.id AS provider_album_id,
+            pa.cover AS provider_cover,
+            pa.mb_release_group_id AS provider_release_group_mbid,
+            pi.provider AS selected_provider,
+            pi.provider_id AS selected_provider_id,
+            pi.release_group_mbid AS provider_item_release_group_mbid,
+            pi.data AS provider_data,
+            rg.mbid AS release_group_mbid,
+            rg.data AS release_group_data,
+            stereo.selected_provider AS stereo_provider,
+            stereo.selected_provider_id AS stereo_provider_id,
+            stereo.provider_data AS stereo_provider_data,
+            spatial.selected_provider AS spatial_provider,
+            spatial.selected_provider_id AS spatial_provider_id,
+            spatial.provider_data AS spatial_provider_data
+        FROM ProviderAlbums pa
+        LEFT JOIN ProviderItems pi
+          ON pi.entity_type = 'album'
+         AND CAST(pi.provider_id AS TEXT) = CAST(pa.id AS TEXT)
+        LEFT JOIN Albums rg
+          ON rg.mbid = COALESCE(pi.release_group_mbid, pa.mb_release_group_id)
+        LEFT JOIN ReleaseGroupSlots stereo
+          ON stereo.release_group_mbid = rg.mbid
+         AND stereo.slot = 'stereo'
+        LEFT JOIN ReleaseGroupSlots spatial
+          ON spatial.release_group_mbid = rg.mbid
+         AND spatial.slot = 'spatial'
+        WHERE CAST(pa.id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY CASE WHEN pi.release_group_mbid IS NOT NULL THEN 0 ELSE 1 END
+        LIMIT 1
+    `).get(albumId) as Record<string, any> | undefined;
+
+    if (!row) {
+        return null;
+    }
+
+    const releaseGroupMbid = String(row.release_group_mbid || row.provider_item_release_group_mbid || row.provider_release_group_mbid || "").trim() || null;
+    const providerCandidates = [
+        ...albumProviderArtworkCandidatesFromRow(row),
+        {
+            provider: String(row.selected_provider || "tidal"),
+            entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),
+            imageId: row.provider_cover == null ? null : String(row.provider_cover),
+            data: row.provider_data,
+        },
+    ];
+
+    return {
+        releaseGroupMbid,
+        skyHookData: parseJsonObject(row.release_group_data),
+        providerCandidates,
+    };
+}
+
+function loadArtistArtworkContext(artistId: string): {
+    skyHookData: Record<string, any> | null;
+    providerCandidates: ProviderArtworkCandidate[];
+} | null {
+    const row = db.prepare(`
+        SELECT
+            a.id,
+            a.mbid,
+            a.picture,
+            a.cover_image_url,
+            am.data AS artist_metadata_data,
+            pi.provider,
+            pi.provider_id,
+            pi.data AS provider_data
+        FROM Artists a
+        LEFT JOIN ArtistMetadata am
+          ON am.mbid = a.mbid
+        LEFT JOIN ProviderItems pi
+          ON pi.entity_type = 'artist'
+         AND (
+            (a.mbid IS NOT NULL AND pi.artist_mbid = a.mbid)
+            OR CAST(pi.provider_id AS TEXT) = CAST(a.id AS TEXT)
+         )
+        WHERE CAST(a.id AS TEXT) = CAST(? AS TEXT)
+           OR CAST(a.mbid AS TEXT) = CAST(? AS TEXT)
+        ORDER BY CASE WHEN pi.artist_mbid IS NOT NULL THEN 0 ELSE 1 END
+        LIMIT 1
+    `).get(artistId, artistId) as Record<string, any> | undefined;
+
+    if (!row) {
+        return null;
+    }
+
+    return {
+        skyHookData: parseJsonObject(row.artist_metadata_data),
+        providerCandidates: [
+            {
+                provider: row.provider ? String(row.provider) : "tidal",
+                entityId: row.provider_id == null ? artistId : String(row.provider_id),
+                imageId: normalizeArtworkUrl(row.picture) ? String(row.picture) : (row.picture == null ? null : String(row.picture)),
+                data: row.provider_data,
+            },
+            {
+                provider: row.provider ? String(row.provider) : "tidal",
+                entityId: row.provider_id == null ? artistId : String(row.provider_id),
+                imageId: normalizeArtworkUrl(row.cover_image_url) ? String(row.cover_image_url) : null,
+                data: row.provider_data,
+            },
+        ],
+    };
 }
 
 /**
@@ -283,11 +404,23 @@ export async function downloadAlbumCover(
     resolution: 80 | 160 | 320 | 640 | 1280 | 'origin',
     outputPath: string
 ): Promise<void> {
-    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-        entityType: "album",
-        providerId: albumId,
-        size: resolution,
-    });
+    const context = loadAlbumArtworkContext(albumId);
+    let url = context
+        ? await resolveAlbumArtwork({
+            releaseGroupMbid: context.releaseGroupMbid,
+            skyHookData: context.skyHookData,
+            providerCandidates: context.providerCandidates,
+            size: resolution,
+        })
+        : null;
+
+    if (!url) {
+        url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+            entityType: "album",
+            providerId: albumId,
+            size: resolution,
+        }) ?? null;
+    }
     await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`);
 }
 
@@ -331,7 +464,15 @@ export async function downloadArtistPicture(
     resolution: 160 | 320 | 480 | 750,
     outputPath: string
 ): Promise<void> {
-    const resolvedArtworkUrl = loadResolvedArtistArtwork(artistId);
+    const context = loadArtistArtworkContext(artistId);
+    const resolvedArtworkUrl = context
+        ? await resolveArtistArtwork({
+            skyHookData: context.skyHookData,
+            providerCandidates: context.providerCandidates,
+            preferredCoverTypes: ["Poster", "Headshot", "Fanart"],
+            size: resolution,
+        })
+        : loadResolvedArtistArtwork(artistId);
     if (resolvedArtworkUrl) {
         await downloadProviderArtwork(resolvedArtworkUrl, outputPath, `artist picture for ${artistId}`);
         return;

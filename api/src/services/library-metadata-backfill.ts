@@ -276,16 +276,18 @@ class LibraryMetadataBackfillService {
         if (!metadataConfig.save_lyrics) return;
 
         const tracks = db.prepare(`
-      SELECT lf.file_path, lf.media_id, lf.library_root
+      SELECT lf.file_path, lf.media_id, lf.library_root, lf.library_slot
       FROM TrackFiles lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.media_id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM TrackFiles lf2
-          WHERE lf2.media_id = lf.media_id AND lf2.file_type = 'lyrics'
+          WHERE lf2.media_id = lf.media_id
+            AND lf2.file_type = 'lyrics'
+            AND lf2.library_slot IS lf.library_slot
         )
-    `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null }>;
+    `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null; library_slot: string | null }>;
 
         for (const track of tracks) {
             const ext = path.extname(track.file_path);
@@ -307,6 +309,7 @@ class LibraryMetadataBackfillService {
                         libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                         fileType: "lyrics",
                         expectedPath: lrcPath,
+                        librarySlot: track.library_slot,
                     });
                     result.downloaded++;
                 } else {
@@ -543,6 +546,7 @@ class LibraryMetadataBackfillService {
         fileType: string;
         quality?: string | null;
         expectedPath?: string | null;
+        librarySlot?: string | null;
     }) {
         LibraryFilesService.upsertLibraryFile({
             ...params,

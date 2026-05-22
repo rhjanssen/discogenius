@@ -16,6 +16,7 @@ import { getDownloadWorkspacePath } from "./download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 
 
 type OrganizeType = "album" | "track" | "video" | "playlist";
@@ -367,6 +368,7 @@ export class OrganizerService {
     const remainingTracks = [...trackRows];
     const matches = new Map<string, string>();
 
+    // 1. Match by provider ID if filename matches ID exactly
     for (const filePath of files) {
       const baseName = path.basename(filePath, path.extname(filePath));
       if (!/^\d+$/.test(baseName)) {
@@ -382,6 +384,24 @@ export class OrganizerService {
       matches.set(filePath, String(matchedTrack.id));
     }
 
+    // 2. Match by reading actual audio metadata from the files (ISRC, track/volume number, title)
+    for (const filePath of files) {
+      if (matches.has(filePath)) {
+        continue;
+      }
+
+      const metadata = await this.readStagedAudioMetadata(filePath);
+      const matchedTrack = this.findTrackMatchByMetadata(metadata, remainingTracks);
+      if (matchedTrack) {
+        const index = remainingTracks.findIndex((track) => track.id === matchedTrack.id);
+        if (index >= 0) {
+          remainingTracks.splice(index, 1);
+        }
+        matches.set(filePath, String(matchedTrack.id));
+      }
+    }
+
+    // 3. Fallback: Match by filename track position/number
     for (const filePath of files) {
       if (matches.has(filePath)) {
         continue;
@@ -395,20 +415,7 @@ export class OrganizerService {
           remainingTracks.splice(index, 1);
         }
         matches.set(filePath, String(numericTrackMatch.id));
-        continue;
       }
-
-      const metadata = await this.readStagedAudioMetadata(filePath);
-      const matchedTrack = this.findTrackMatchByMetadata(metadata, remainingTracks);
-      if (!matchedTrack) {
-        continue;
-      }
-
-      const index = remainingTracks.findIndex((track) => track.id === matchedTrack.id);
-      if (index >= 0) {
-        remainingTracks.splice(index, 1);
-      }
-      matches.set(filePath, String(matchedTrack.id));
     }
 
     return matches;
@@ -662,12 +669,22 @@ export class OrganizerService {
   }): string {
     const expectedPath = this.getExpectedLinkedSidecarPath(params.mediaPath, params.fileType);
     const normalizedExpectedPath = this.normalizeResolvedPath(expectedPath);
+    const canonicalIdentity = resolveLibraryFileIdentity({
+      artistId: params.artistId,
+      albumId: params.albumId || null,
+      mediaId: params.mediaId,
+      libraryRoot: params.libraryRoot,
+      fileType: params.fileType,
+      quality: params.quality || null,
+    });
+    const librarySlot = canonicalIdentity.librarySlot;
+
     const sidecars = db.prepare(`
       SELECT id, file_path, library_root
       FROM TrackFiles
-      WHERE media_id = ? AND file_type = ?
+      WHERE media_id = ? AND file_type = ? AND library_slot IS ?
       ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
-    `).all(params.mediaId, params.fileType, expectedPath) as Array<{
+    `).all(params.mediaId, params.fileType, librarySlot, expectedPath) as Array<{
       id: number;
       file_path: string;
       library_root: string;
@@ -729,8 +746,8 @@ export class OrganizerService {
 
       db.prepare(`
         DELETE FROM TrackFiles
-        WHERE media_id = ? AND file_type = ? AND file_path != ?
-      `).run(params.mediaId, params.fileType, expectedPath);
+        WHERE media_id = ? AND file_type = ? AND library_slot IS ? AND file_path != ?
+      `).run(params.mediaId, params.fileType, librarySlot, expectedPath);
     }
 
     return expectedPath;

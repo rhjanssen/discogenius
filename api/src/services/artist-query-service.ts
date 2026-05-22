@@ -1,5 +1,4 @@
 import { db } from "../database.js";
-import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import {
     getAlbumDownloadStats,
     getAlbumDownloadStatsMap,
@@ -15,6 +14,11 @@ import { RefreshArtistService } from "./refresh-artist-service.js";
 import { ScanLevel } from "./scan-types.js";
 import { shouldRefreshArtist } from "./refresh-policy.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../contracts/catalog.js";
+import {
+    albumProviderArtworkCandidatesFromRow,
+    chooseCachedAlbumArtwork,
+    parseJsonObject,
+} from "./metadata/skyhook-artwork-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
@@ -44,7 +48,7 @@ type ArtistCountRow = {
 };
 
 function buildArtistCountMap(
-    table: "albums" | "media",
+    table: "ProviderAlbums" | "ProviderMedia",
     artistIds: string[],
     options: { excludeMusicVideos?: boolean } = {},
 ): Map<string, ArtistCountRow> {
@@ -55,7 +59,7 @@ function buildArtistCountMap(
     const placeholders = artistIds.map(() => "?").join(",");
     const whereClauses = [`artist_id IN (${placeholders})`];
 
-    if (table === "media" && options.excludeMusicVideos) {
+    if (table === "ProviderMedia" && options.excludeMusicVideos) {
         whereClauses.push(`type != 'Music Video'`);
     }
 
@@ -229,14 +233,14 @@ export class ArtistQueryService {
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
         const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
         const artistMbids = artists.map((artist) => String(artist.mbid || "")).filter(Boolean);
-        const albumCountsByArtistId = buildArtistCountMap("albums", artistIds);
-        const trackCountsByArtistId = buildArtistCountMap("media", artistIds, { excludeMusicVideos: true });
+        const albumCountsByArtistId = buildArtistCountMap("ProviderAlbums", artistIds);
+        const trackCountsByArtistId = buildArtistCountMap("ProviderMedia", artistIds, { excludeMusicVideos: true });
         const releaseGroupCountsByMbid = new Map<string, number>();
         if (artistMbids.length > 0) {
             const placeholders = artistMbids.map(() => "?").join(",");
             const rows = db.prepare(`
                 SELECT artist_mbid, COUNT(*) AS cnt
-                FROM ProviderAlbums
+                FROM Albums
                 WHERE artist_mbid IN (${placeholders})
                 GROUP BY artist_mbid
             `).all(...artistMbids) as Array<{ artist_mbid: string; cnt: number }>;
@@ -253,7 +257,7 @@ export class ArtistQueryService {
                 const artistId = String(artist.id);
                 const albumCounts = albumCountsByArtistId.get(artistId);
                 const trackCounts = trackCountsByArtistId.get(artistId);
-                const resolvedArtistPicture = artist.cover_image_url || artist.picture || null;
+                const resolvedArtistPicture = artist.picture || artist.cover_image_url || null;
 
                 return {
                     ...artist,
@@ -306,9 +310,9 @@ export class ArtistQueryService {
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
-            picture: artist.cover_image_url == null
-                ? (artist.picture == null ? null : String(artist.picture))
-                : String(artist.cover_image_url),
+            picture: artist.picture != null
+                ? String(artist.picture)
+                : (artist.cover_image_url == null ? null : String(artist.cover_image_url)),
             cover_image_url: artist.cover_image_url == null ? null : String(artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
             bio: biography,
@@ -502,16 +506,19 @@ export class ArtistQueryService {
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
         SELECT
-          rg.*,
-          COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-          COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-          stereo.selected_provider_id AS stereo_provider_id,
-          stereo.selected_release_mbid AS stereo_release_mbid,
+	          rg.*,
+	          COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
+	          COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+	          COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+	          stereo.selected_provider AS stereo_provider,
+	          stereo.selected_provider_id AS stereo_provider_id,
+	          stereo.selected_release_mbid AS stereo_release_mbid,
           stereo.quality AS stereo_quality,
           stereo.match_status AS stereo_match_status,
-          stereo.match_method AS stereo_match_method,
-          stereo.provider_data AS stereo_provider_data,
-          spatial.selected_provider_id AS spatial_provider_id,
+	          stereo.match_method AS stereo_match_method,
+	          stereo.provider_data AS stereo_provider_data,
+	          spatial.selected_provider AS spatial_provider,
+	          spatial.selected_provider_id AS spatial_provider_id,
           spatial.selected_release_mbid AS spatial_release_mbid,
           spatial.quality AS spatial_quality,
           spatial.match_status AS spatial_match_status,
@@ -673,16 +680,6 @@ export class ArtistQueryService {
             const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
             const monitored = Boolean(row.wanted);
             
-            let lidarrCover: string | null = null;
-            try {
-                if (row.data) {
-                    const albumData = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
-                    lidarrCover = lidarrMetadataService.getAlbumImageUrl(albumData);
-                }
-            } catch {
-                // ignore
-            }
-
             const selectedProviderData = (() => {
                 const raw = row.stereo_provider_data || row.spatial_provider_data;
                 if (!raw) return null;
@@ -693,8 +690,11 @@ export class ArtistQueryService {
                 }
             })() as { cover?: string | null; explicit?: boolean | number | null } | null;
             const providerCover = selectedProviderData?.cover || null;
-            const coverArtArchiveUrl = row.mbid ? `https://coverartarchive.org/release-group/${row.mbid}/front-500` : null;
-            const coverUrl = lidarrCover || coverArtArchiveUrl || providerCover;
+            const coverUrl = chooseCachedAlbumArtwork({
+                releaseGroupMbid: row.mbid,
+                skyHookData: parseJsonObject(row.data),
+                providerCandidates: albumProviderArtworkCandidatesFromRow(row),
+            });
 
             return {
                 id: String(row.mbid),
@@ -820,9 +820,9 @@ export class ArtistQueryService {
         return {
             artist: {
                 ...artist,
-                picture: artist.cover_image_url == null
-                    ? (artist.picture == null ? null : String(artist.picture))
-                    : String(artist.cover_image_url),
+                picture: artist.picture != null
+                    ? String(artist.picture)
+                    : (artist.cover_image_url == null ? null : String(artist.cover_image_url)),
                 bio,
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,

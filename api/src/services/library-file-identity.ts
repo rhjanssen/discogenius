@@ -30,7 +30,7 @@ export type LibraryFileIdentity = {
   provider: string | null;
   providerEntityType: string | null;
   providerId: string | null;
-  librarySlot: LibrarySlot | null;
+  librarySlot: LibrarySlot;
 };
 
 type ArtistRow = { mbid: string | null };
@@ -74,7 +74,7 @@ function getRow<T>(sql: string, value: unknown): T | null {
   return (db.prepare(sql).get(key) as T | undefined) ?? null;
 }
 
-function inferLibrarySlot(input: LibraryFileIdentityInput): LibrarySlot | null {
+function inferLibrarySlot(input: LibraryFileIdentityInput): LibrarySlot {
   const explicit = nullableText(input.librarySlot)?.toLowerCase();
   if (explicit === "stereo" || explicit === "spatial" || explicit === "video") {
     return explicit;
@@ -96,7 +96,7 @@ function inferLibrarySlot(input: LibraryFileIdentityInput): LibrarySlot | null {
     return "stereo";
   }
 
-  return null;
+  return "stereo";
 }
 
 function inferProviderEntityType(input: LibraryFileIdentityInput, media: MediaRow | null): string | null {

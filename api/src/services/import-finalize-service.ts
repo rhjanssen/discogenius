@@ -227,6 +227,7 @@ export async function finalizeImportedDirectories(params: {
                         albumId: linkedMedia?.album_id || mapping.albumId,
                         mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
                         fileType,
+                        librarySlot: sidecarIdentity.librarySlot,
                     });
                 }
 

@@ -20,6 +20,7 @@ type LibraryFileRow = {
   library_root: string | null;
   file_type: string;
   extension: string;
+  library_slot?: string | null;
   // Quality metadata
   quality?: string | null;
   codec?: string | null;
@@ -685,6 +686,11 @@ export class LibraryFilesService {
       if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
       const trackFile = db.prepare(`
         SELECT extension FROM TrackFiles
+        WHERE media_id = ? AND file_type = 'track' AND library_slot = ?
+        ORDER BY id ASC
+        LIMIT 1
+      `).get(row.media_id, row.library_slot || "stereo") as any || db.prepare(`
+        SELECT extension FROM TrackFiles
         WHERE media_id = ? AND file_type = 'track'
         ORDER BY id ASC
         LIMIT 1
@@ -733,29 +739,34 @@ export class LibraryFilesService {
     albumId?: string | null;
     mediaId?: string | null;
     fileType: string;
+    librarySlot?: string | null;
   }):
     | { sql: string; values: Array<string | null> }
     | null {
-    const { artistId, albumId, mediaId, fileType } = params;
+    const { artistId, albumId, mediaId, fileType, librarySlot } = params;
+
+    const hasSlot = librarySlot !== undefined;
+    const slotClause = "AND library_slot = ?";
+    const slotValue = librarySlot || "stereo";
 
     if (mediaId && (fileType === "lyrics" || fileType === "video_thumbnail" || fileType === "nfo")) {
       return {
-        sql: "media_id = ? AND file_type = ?",
-        values: [mediaId, fileType],
+        sql: `media_id = ? AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
+        values: [mediaId, fileType, ...(hasSlot ? [slotValue] : [])],
       };
     }
 
     if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "nfo")) {
       return {
-        sql: "album_id = ? AND media_id IS NULL AND file_type = ?",
-        values: [albumId, fileType],
+        sql: `album_id = ? AND media_id IS NULL AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
+        values: [albumId, fileType, ...(hasSlot ? [slotValue] : [])],
       };
     }
 
     if (!albumId && !mediaId && (fileType === "cover" || fileType === "nfo")) {
       return {
-        sql: "artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ?",
-        values: [artistId, fileType],
+        sql: `artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
+        values: [artistId, fileType, ...(hasSlot ? [slotValue] : [])],
       };
     }
 
@@ -768,6 +779,7 @@ export class LibraryFilesService {
     mediaId?: string | null;
     fileType: string;
     preferredPath?: string | null;
+    librarySlot?: string | null;
   }): number | null {
     const identity = this.getTrackedAssetIdentity(params);
     if (!identity) {
@@ -814,10 +826,10 @@ export class LibraryFilesService {
       const existingRow = db.prepare(`
         SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
         FROM TrackFiles
-        WHERE media_id = ? AND file_type = ?
+        WHERE media_id = ? AND file_type = ? AND library_slot = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
         LIMIT 1
-      `).get(params.mediaId, params.fileType, params.filePath) as ExistingLibraryFileIdentity | undefined;
+      `).get(params.mediaId, params.fileType, canonicalIdentity.librarySlot, params.filePath) as ExistingLibraryFileIdentity | undefined;
 
       if (existingRow) {
         const rowToUpdate = existingPathRow && existingPathRow.id !== existingRow.id
@@ -900,8 +912,8 @@ export class LibraryFilesService {
 
         db.prepare(`
           DELETE FROM TrackFiles
-          WHERE media_id = ? AND file_type = ? AND id != ?
-        `).run(params.mediaId, params.fileType, rowToUpdate.id);
+          WHERE media_id = ? AND file_type = ? AND library_slot = ? AND id != ?
+        `).run(params.mediaId, params.fileType, canonicalIdentity.librarySlot, rowToUpdate.id);
 
         if (params.removeFromUnmapped !== false) {
           db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
@@ -942,6 +954,7 @@ export class LibraryFilesService {
         mediaId: params.mediaId || null,
         fileType: params.fileType,
         preferredPath: params.filePath,
+        librarySlot: canonicalIdentity.librarySlot,
       });
 
       if (existingTrackedAssetId !== null) {
@@ -1042,6 +1055,7 @@ export class LibraryFilesService {
           albumId: params.albumId || null,
           mediaId: params.mediaId || null,
           fileType: params.fileType,
+          librarySlot: canonicalIdentity.librarySlot,
         });
 
         if (
@@ -1175,6 +1189,7 @@ export class LibraryFilesService {
         albumId: params.albumId || null,
         mediaId: params.mediaId || null,
         fileType: params.fileType,
+        librarySlot: canonicalIdentity.librarySlot,
       });
     }
 
@@ -1261,6 +1276,7 @@ export class LibraryFilesService {
     albumId?: string | null;
     mediaId?: string | null;
     fileType: string;
+    librarySlot?: string | null;
   }): { removed: number } {
     const identity = this.getTrackedAssetIdentity(params);
     if (!identity) {
@@ -1347,17 +1363,18 @@ export class LibraryFilesService {
 
   static pruneDuplicateTrackedAssets(artistId?: string): { removed: number } {
     const groups = db.prepare(`
-      SELECT artist_id, album_id, media_id, file_type, COUNT(*) AS count
+      SELECT artist_id, album_id, media_id, file_type, library_slot, COUNT(*) AS count
       FROM TrackFiles
       WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
-      GROUP BY artist_id, album_id, media_id, file_type
+      GROUP BY artist_id, album_id, media_id, file_type, library_slot
       HAVING COUNT(*) > 1
     `).all(...(artistId ? [artistId] : [])) as Array<{
       artist_id: number;
       album_id: number | null;
       media_id: number | null;
       file_type: string;
+      library_slot: string;
       count: number;
     }>;
 
@@ -1368,6 +1385,7 @@ export class LibraryFilesService {
         albumId: group.album_id !== null ? String(group.album_id) : null,
         mediaId: group.media_id !== null ? String(group.media_id) : null,
         fileType: group.file_type,
+        librarySlot: group.library_slot,
       }).removed;
     }
 

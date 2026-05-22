@@ -178,7 +178,10 @@ export class ProviderArtistIdentityService {
       resolution.status,
       resolution.confidence,
       resolution.method,
-      null,
+      JSON.stringify({
+        picture: artist.picture || null,
+        popularity: artist.popularity ?? null,
+      }),
     );
   }
 }

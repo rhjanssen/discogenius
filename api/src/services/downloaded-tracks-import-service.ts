@@ -190,7 +190,7 @@ export class DownloadedTracksImportService {
             };
 
             options.updateState({
-                progress: 85,
+                progress: 70,
                 description: "ImportDownload: recovering existing library files",
                 currentFileNum: recoveredMediaIds.length,
                 totalFiles: expectedTracks,
@@ -211,9 +211,9 @@ export class DownloadedTracksImportService {
                 downloadPath,
                 onProgress: (progress) => {
                     const normalizedProgress = progress.phase === "finalizing"
-                        ? 90
+                        ? 72
                         : progress.totalFiles && progress.currentFileNum !== undefined
-                            ? Math.max(15, Math.min(85, 15 + Math.round((progress.currentFileNum / Math.max(progress.totalFiles, 1)) * 70)))
+                            ? Math.max(15, Math.min(70, 15 + Math.round((progress.currentFileNum / Math.max(progress.totalFiles, 1)) * 55)))
                             : 35;
 
                     options.updateState({
@@ -232,7 +232,7 @@ export class DownloadedTracksImportService {
         }
 
         options.updateState({
-            progress: 92,
+            progress: 78,
             description: "ImportDownload: reconciling library state",
             currentFileNum: organizeResult.processedTrackIds.length,
             totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
@@ -246,7 +246,7 @@ export class DownloadedTracksImportService {
         const affectedArtistId = resolveAffectedArtistId(type, tidalId);
         if (affectedArtistId) {
             options.updateState({
-                progress: 97,
+                progress: 82,
                 description: "ImportDownload: verifying library file records",
                 currentFileNum: organizeResult.processedTrackIds.length,
                 totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
@@ -268,7 +268,7 @@ export class DownloadedTracksImportService {
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
             options.updateState({
-                progress: 98,
+                progress: 86,
                 description: "ImportDownload: resolving MusicBrainz and AcoustID identity",
                 currentFileNum: organizeResult.processedTrackIds.length,
                 totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
@@ -287,7 +287,7 @@ export class DownloadedTracksImportService {
             }
 
             options.updateState({
-                progress: 99,
+                progress: 94,
                 description: "ImportDownload: applying audio tag rules",
                 currentFileNum: organizeResult.processedTrackIds.length,
                 totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,

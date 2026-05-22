@@ -509,6 +509,67 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
   assert.equal(rows[0]?.file_path, targetPath);
 });
 
+test("upsertLibraryFile keeps stereo and spatial track rows separate for the same provider media", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, path, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("1", "Queen", "Queen", 1);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1);
+
+  const stereoRoot = configModule.Config.getMusicPath();
+  const spatialRoot = configModule.Config.getSpatialPath();
+  const stereoPath = path.join(stereoRoot, "Queen", "A Night at the Opera", "01 - Bohemian Rhapsody.flac");
+  const spatialPath = path.join(spatialRoot, "Queen", "A Night at the Opera", "01 - Bohemian Rhapsody.flac");
+  fs.mkdirSync(path.dirname(stereoPath), { recursive: true });
+  fs.mkdirSync(path.dirname(spatialPath), { recursive: true });
+  fs.writeFileSync(stereoPath, "stereo-audio");
+  fs.writeFileSync(spatialPath, "spatial-audio");
+
+  const stereoId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: stereoPath,
+    libraryRoot: stereoRoot,
+    fileType: "track",
+    quality: "LOSSLESS",
+    librarySlot: "stereo",
+  });
+  const spatialId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: spatialPath,
+    libraryRoot: spatialRoot,
+    fileType: "track",
+    quality: "DOLBY_ATMOS",
+    librarySlot: "spatial",
+  });
+
+  const rows = dbModule.db.prepare(`
+    SELECT id, media_id, library_slot, file_path
+    FROM TrackFiles
+    WHERE media_id = ?
+    ORDER BY library_slot
+  `).all("100") as Array<{ id: number; media_id: string; library_slot: string; file_path: string }>;
+
+  assert.notEqual(stereoId, spatialId);
+  assert.deepEqual(rows.map((row) => row.library_slot), ["spatial", "stereo"]);
+  assert.deepEqual(new Set(rows.map((row) => row.file_path)).size, 2);
+  assert.equal(downloadStateModule.countDownloadedTracks(), 1);
+});
+
 test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, path, monitor)

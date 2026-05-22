@@ -6,6 +6,13 @@ import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderTrack } from "./providers/streaming-provider.js";
+import {
+    albumProviderArtworkCandidatesFromRow,
+    chooseCachedAlbumArtwork,
+    coverArtArchiveReleaseGroupUrl,
+    parseJsonObject,
+    resolveAlbumArtwork,
+} from "./metadata/skyhook-artwork-service.js";
 
 function queryReleaseGroup(releaseGroupMbid: string): any | null {
     return db.prepare(`
@@ -20,9 +27,11 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+        stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
+        spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
@@ -64,10 +73,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
     `).get(releaseGroupMbid) as any | null;
 }
 
-function coverArtArchiveReleaseGroupUrl(mbid: string | null | undefined): string | null {
-    const trimmed = String(mbid || "").trim();
-    return trimmed ? `https://coverartarchive.org/release-group/${trimmed}/front-500` : null;
-}
+export { coverArtArchiveReleaseGroupUrl };
 
 function parseProviderData(value: unknown): any | null {
     if (!value) {
@@ -149,7 +155,7 @@ function listMusicBrainzReleaseVersions(
         r.mbid ASC
     `).all(releaseGroup.mbid) as any[];
 
-    const imageUrl = coverUrl ?? coverArtArchiveReleaseGroupUrl(releaseGroup.mbid);
+    const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
 
     return releases.map((release) => ({
@@ -166,43 +172,20 @@ function listMusicBrainzReleaseVersions(
     }));
 }
 
-async function resolveProviderCoverUrl(releaseGroup: any): Promise<string | null> {
-    const candidates = [
-        {
-            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.stereo_provider_id || releaseGroup.selected_provider_id || "").trim(),
-            data: parseProviderData(releaseGroup.stereo_provider_data),
-        },
-        {
-            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.spatial_provider_id || releaseGroup.selected_provider_id || "").trim(),
-            data: parseProviderData(releaseGroup.spatial_provider_data),
-        },
-    ];
+function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
+    return chooseCachedAlbumArtwork({
+        releaseGroupMbid: releaseGroup.mbid,
+        skyHookData: parseJsonObject(releaseGroup.data),
+        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
+    });
+}
 
-    for (const candidate of candidates) {
-        const imageId = String(candidate.data?.cover || "").trim();
-        if (!candidate.providerId || !imageId) {
-            continue;
-        }
-
-        try {
-            const provider = streamingProviderManager.getStreamingProvider(candidate.providerId);
-            const resolved = await provider.getArtworkUrl?.({
-                entityType: "album",
-                providerId: candidate.providerAlbumId,
-                imageId,
-                size: 640,
-            });
-            if (resolved) {
-                return String(resolved);
-            }
-        } catch {
-            // Fall through to MusicBrainz/Cover Art Archive sources.
-        }
-    }
-
-    return null;
+async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {
+    return resolveAlbumArtwork({
+        releaseGroupMbid: releaseGroup.mbid,
+        skyHookData: parseJsonObject(releaseGroup.data),
+        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
+    });
 }
 
 async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
@@ -251,27 +234,14 @@ async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
 export function normalizeMusicBrainzReleaseGroupAlbum(
     releaseGroup: any,
     release: any | null,
-    providerCoverUrl?: string | null,
+    resolvedCoverUrl?: string | null,
 ): AlbumContract {
     const primaryType = String(releaseGroup.primary_type || "Album").trim().toUpperCase();
     const artistId = releaseGroup.local_artist_id == null
         ? String(releaseGroup.artist_mbid)
         : String(releaseGroup.local_artist_id);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
-    let coverUrl: string | null = null;
-
-    try {
-        if (releaseGroup.data) {
-            const albumData = typeof releaseGroup.data === "string" ? JSON.parse(releaseGroup.data) : releaseGroup.data;
-            coverUrl = lidarrMetadataService.getAlbumImageUrl(albumData);
-        }
-    } catch {
-        // Ignore malformed cached metadata and continue through the normal artwork chain.
-    }
-
-    if (!coverUrl) {
-        coverUrl = providerCoverUrl ?? coverArtArchiveReleaseGroupUrl(releaseGroup.mbid);
-    }
+    const coverUrl = resolvedCoverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
 
     return {
         id: String(releaseGroup.mbid),
@@ -696,7 +666,7 @@ export class MusicBrainzReleaseGroupReadService {
         return normalizeMusicBrainzReleaseGroupAlbum(
             releaseGroup,
             selectPreferredRelease(releaseGroupMbid),
-            await resolveProviderCoverUrl(releaseGroup),
+            await resolveReleaseGroupArtwork(releaseGroup),
         );
     }
 
@@ -707,7 +677,7 @@ export class MusicBrainzReleaseGroupReadService {
             return [];
         }
 
-        const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, await resolveProviderCoverUrl(releaseGroup));
+        const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, await resolveReleaseGroupArtwork(releaseGroup));
         return buildReleaseGroupTrackContracts(releaseGroup, release, album);
     }
 
@@ -718,7 +688,7 @@ export class MusicBrainzReleaseGroupReadService {
         }
 
         const release = selectPreferredRelease(releaseGroupMbid);
-        const coverUrl = await resolveProviderCoverUrl(releaseGroup);
+        const coverUrl = await resolveReleaseGroupArtwork(releaseGroup);
         const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, coverUrl);
         const providerReview = await resolveProviderAlbumReview(releaseGroup);
         if (providerReview) {
@@ -746,6 +716,6 @@ export class MusicBrainzReleaseGroupReadService {
             return [];
         }
 
-        return listMusicBrainzReleaseVersions(releaseGroup, await resolveProviderCoverUrl(releaseGroup));
+        return listMusicBrainzReleaseVersions(releaseGroup, await resolveReleaseGroupArtwork(releaseGroup));
     }
 }
