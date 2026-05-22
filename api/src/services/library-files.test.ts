@@ -13,6 +13,7 @@ let configModule: typeof import("./config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let artistPathsModule: typeof import("./artist-paths.js");
 let downloadStateModule: typeof import("./download-state.js");
+let libraryStatsModule: typeof import("./library-stats-query-service.js");
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -47,6 +48,7 @@ before(async () => {
   libraryFilesModule = await import("./library-files.js");
   artistPathsModule = await import("./artist-paths.js");
   downloadStateModule = await import("./download-state.js");
+  libraryStatsModule = await import("./library-stats-query-service.js");
 
   writeTestConfig();
 });
@@ -56,9 +58,19 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderMediaArtists").run();
   db.prepare("DELETE FROM ProviderAlbumArtists").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ProviderMedia").run();
   db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM Tracks").run();
+  db.prepare("DELETE FROM Recordings").run();
+  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
+
+  downloadStateModule?.invalidateAllDownloadState();
+  libraryStatsModule?.LibraryStatsQueryService.clearCache();
 
   writeTestConfig();
 });
@@ -288,6 +300,12 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider,
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
 
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitor)
@@ -509,23 +527,53 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
   assert.equal(rows[0]?.file_path, targetPath);
 });
 
-test("upsertLibraryFile keeps stereo and spatial track rows separate for the same provider media", () => {
+test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", () => {
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitor)
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
-  `).run("1", "Queen", "Queen", 1);
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1);
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `).run("recording-mbid-1", "Bohemian Rhapsody");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider,
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "10", "release-mbid-1", "LOSSLESS", "verified",
+    "artist-mbid-1", "rg-mbid-1", "spatial", 1, "tidal", "10", "release-mbid-1", "DOLBY_ATMOS", "verified",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitor
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1);
+      num_tracks, num_volumes, num_videos, duration, monitor, mbid, mb_release_group_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, "release-mbid-1", "rg-mbid-1");
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitor
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1);
+      explicit, type, quality, duration, monitor, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, "track-mbid-1");
 
   const stereoRoot = configModule.Config.getMusicPath();
   const spatialRoot = configModule.Config.getSpatialPath();
@@ -567,7 +615,16 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   assert.notEqual(stereoId, spatialId);
   assert.deepEqual(rows.map((row) => row.library_slot), ["spatial", "stereo"]);
   assert.deepEqual(new Set(rows.map((row) => row.file_path)).size, 2);
-  assert.equal(downloadStateModule.countDownloadedTracks(), 1);
+  assert.equal(downloadStateModule.countDownloadedTracks(), 2);
+  assert.equal(downloadStateModule.countDownloadedAlbums(), 2);
+
+  const snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
+  assert.equal(snapshot.albums.total, 2);
+  assert.equal(snapshot.albums.monitored, 2);
+  assert.equal(snapshot.albums.downloaded, 2);
+  assert.equal(snapshot.tracks.total, 2);
+  assert.equal(snapshot.tracks.monitored, 2);
+  assert.equal(snapshot.tracks.downloaded, 2);
 });
 
 test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {

@@ -225,7 +225,6 @@ router.get("/", async (req, res) => {
 	                    id: row.id,
 	                    name: row.title,
 	                    cover_id: chooseCachedAlbumArtwork({
-                            releaseGroupMbid: row.id,
                             skyHookData: parseJsonObject(row.data),
                             providerCandidates: albumProviderArtworkCandidatesFromRow(row),
                         }),

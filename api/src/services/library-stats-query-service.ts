@@ -12,6 +12,10 @@ export class LibraryStatsQueryService {
     private static readonly SNAPSHOT_TTL_MS = 10_000;
     private static cachedSnapshot: { value: LibraryStatsContract; createdAtMs: number } | null = null;
 
+    static clearCache(): void {
+        this.cachedSnapshot = null;
+    }
+
     static getSnapshot(): LibraryStatsContract {
         const cached = this.cachedSnapshot;
         if (cached && Date.now() - cached.createdAtMs < this.SNAPSHOT_TTL_MS) {
@@ -26,25 +30,36 @@ export class LibraryStatsQueryService {
             },
             albums: {
                 total: (db.prepare(`
-                    SELECT (SELECT COUNT(*) FROM ProviderAlbums) +
-                           (SELECT COUNT(*) FROM ProviderAlbums WHERE mbid NOT IN (SELECT mb_release_group_id FROM ProviderAlbums WHERE mb_release_group_id IS NOT NULL)) as count
+                    SELECT COUNT(*) AS count
+                    FROM ReleaseGroupSlots
+                    WHERE slot IN ('stereo', 'spatial')
+                      AND selected_release_mbid IS NOT NULL
                 `).get() as { count: number }).count,
                 monitored: (db.prepare(`
-                    SELECT
-                      (SELECT COUNT(*) FROM ProviderAlbums WHERE monitor = 1) +
-                      (
-                        SELECT COUNT(DISTINCT rg.mbid)
-                        FROM Albums rg
-                        LEFT JOIN ReleaseGroupSlots rgs ON rgs.release_group_mbid = rg.mbid
-                        WHERE COALESCE(rgs.wanted, 0) = 1
-                          AND rg.mbid NOT IN (SELECT mb_release_group_id FROM ProviderAlbums WHERE mb_release_group_id IS NOT NULL)
-                      ) as count
+                    SELECT COUNT(*) AS count
+                    FROM ReleaseGroupSlots
+                    WHERE slot IN ('stereo', 'spatial')
+                      AND selected_release_mbid IS NOT NULL
+                      AND wanted = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedAlbums(),
             },
             tracks: {
-                total: (db.prepare("SELECT COUNT(*) as count FROM Tracks WHERE release_mbid IN (SELECT selected_release_mbid FROM ReleaseGroupSlots WHERE selected_release_mbid IS NOT NULL)").get() as { count: number }).count,
-                monitored: (db.prepare("SELECT COUNT(*) as count FROM Tracks WHERE release_mbid IN (SELECT selected_release_mbid FROM ReleaseGroupSlots WHERE selected_release_mbid IS NOT NULL AND wanted = 1)").get() as { count: number }).count,
+                total: (db.prepare(`
+                    SELECT COUNT(*) AS count
+                    FROM ReleaseGroupSlots rgs
+                    JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
+                    WHERE rgs.slot IN ('stereo', 'spatial')
+                      AND rgs.selected_release_mbid IS NOT NULL
+                `).get() as { count: number }).count,
+                monitored: (db.prepare(`
+                    SELECT COUNT(*) AS count
+                    FROM ReleaseGroupSlots rgs
+                    JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
+                    WHERE rgs.slot IN ('stereo', 'spatial')
+                      AND rgs.selected_release_mbid IS NOT NULL
+                      AND rgs.wanted = 1
+                `).get() as { count: number }).count,
                 downloaded: countDownloadedTracks(),
             },
             videos: {

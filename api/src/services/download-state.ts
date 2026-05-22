@@ -250,46 +250,35 @@ export function getReleaseGroupDownloadStatsMap(
   if (missing.length > 0) {
     const values = missing.map(() => "(?)").join(", ");
     const normalizedSlot = slot === "spatial" ? "spatial" : slot === "video" ? "video" : slot === "stereo" ? "stereo" : null;
-    const slotFilter = normalizedSlot
-      ? `AND lf.library_slot = '${normalizedSlot}'`
-      : "AND lf.library_slot IN ('stereo', 'spatial')";
+    const slotPredicate = normalizedSlot
+      ? `AND rgs.slot = '${normalizedSlot}'`
+      : "AND rgs.slot IN ('stereo', 'spatial')";
     const rows = db.prepare(`
       WITH target_release_groups(release_group_mbid) AS (
         VALUES ${values}
       ),
       selected_releases AS (
         SELECT
-          trg.release_group_mbid,
-          COALESCE(
-            ${normalizedSlot === "spatial" ? "spatial.selected_release_mbid" : "stereo.selected_release_mbid"},
-            ${normalizedSlot === "spatial" ? "stereo.selected_release_mbid" : "spatial.selected_release_mbid"},
-            (
-              SELECT r.mbid
-              FROM AlbumReleases r
-              WHERE r.release_group_mbid = trg.release_group_mbid
-              ORDER BY COALESCE(r.track_count, 0) DESC, COALESCE(r.date, '') DESC, r.mbid ASC
-              LIMIT 1
-            )
-          ) AS release_mbid
+          rgs.release_group_mbid,
+          rgs.slot,
+          rgs.selected_release_mbid AS release_mbid
         FROM target_release_groups trg
-        LEFT JOIN ReleaseGroupSlots stereo
-          ON stereo.release_group_mbid = trg.release_group_mbid
-         AND stereo.slot = 'stereo'
-        LEFT JOIN ReleaseGroupSlots spatial
-          ON spatial.release_group_mbid = trg.release_group_mbid
-         AND spatial.slot = 'spatial'
+        JOIN ReleaseGroupSlots rgs
+          ON rgs.release_group_mbid = trg.release_group_mbid
+         ${slotPredicate}
+         AND rgs.selected_release_mbid IS NOT NULL
       )
       SELECT
         sr.release_group_mbid,
-        COUNT(DISTINCT t.mbid) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
+        COUNT(DISTINCT sr.slot || ':' || t.mbid) AS total_tracks,
+        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN sr.slot || ':' || t.mbid END) AS downloaded_tracks
       FROM selected_releases sr
       LEFT JOIN Tracks t
         ON t.release_mbid = sr.release_mbid
       LEFT JOIN TrackFiles lf
         ON lf.canonical_track_mbid = t.mbid
        AND lf.file_type = 'track'
-       ${slotFilter}
+       AND lf.library_slot = sr.slot
       GROUP BY sr.release_group_mbid
     `).all(...missing) as Array<{
       release_group_mbid: string;
@@ -432,26 +421,25 @@ export function getArtistDownloadStats(artistId: string | number): ArtistDownloa
 export function countDownloadedAlbums(): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM ProviderAlbums a
-    WHERE (a.monitor = 1 OR COALESCE(a.monitor_lock, 0) = 1)
-      AND EXISTS (
-        SELECT 1
-        FROM ProviderMedia m
-        WHERE m.album_id = a.id
-          AND m.type != 'Music Video'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM ProviderMedia m
-        WHERE m.album_id = a.id
-          AND m.type != 'Music Video'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM TrackFiles lf
-            WHERE lf.media_id = m.id
-              AND lf.file_type = 'track'
-          )
-      )
+    FROM (
+      SELECT
+        rgs.release_group_mbid,
+        rgs.slot,
+        COUNT(DISTINCT t.mbid) AS total_tracks,
+        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
+      FROM ReleaseGroupSlots rgs
+      JOIN Tracks t
+        ON t.release_mbid = rgs.selected_release_mbid
+      LEFT JOIN TrackFiles lf
+        ON lf.canonical_track_mbid = t.mbid
+       AND lf.file_type = 'track'
+       AND lf.library_slot = rgs.slot
+      WHERE rgs.slot IN ('stereo', 'spatial')
+        AND rgs.selected_release_mbid IS NOT NULL
+      GROUP BY rgs.release_group_mbid, rgs.slot
+    ) slot_stats
+    WHERE total_tracks > 0
+      AND downloaded_tracks >= total_tracks
   `).get() as { count: number } | undefined;
 
   return Number(row?.count || 0);
@@ -459,20 +447,16 @@ export function countDownloadedAlbums(): number {
 
 export function countDownloadedTracks(): number {
   const row = db.prepare(`
-    SELECT COUNT(DISTINCT COALESCE(
-      canonical_track_mbid,
-      CASE
-        WHEN provider IS NOT NULL AND provider_id IS NOT NULL THEN provider || ':track:' || provider_id
-        ELSE NULL
-      END,
-      CASE
-        WHEN media_id IS NOT NULL THEN 'media:' || CAST(media_id AS TEXT)
-        ELSE NULL
-      END,
-      file_path
-    )) AS count
-    FROM TrackFiles
-    WHERE file_type = 'track'
+    SELECT COUNT(DISTINCT rgs.release_group_mbid || ':' || rgs.slot || ':' || t.mbid) AS count
+    FROM ReleaseGroupSlots rgs
+    JOIN Tracks t
+      ON t.release_mbid = rgs.selected_release_mbid
+    JOIN TrackFiles lf
+      ON lf.canonical_track_mbid = t.mbid
+     AND lf.file_type = 'track'
+     AND lf.library_slot = rgs.slot
+    WHERE rgs.slot IN ('stereo', 'spatial')
+      AND rgs.selected_release_mbid IS NOT NULL
   `).get() as { count: number } | undefined;
 
   return Number(row?.count || 0);

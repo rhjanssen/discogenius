@@ -9,7 +9,6 @@ import type { ProviderTrack } from "./providers/streaming-provider.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
-    coverArtArchiveReleaseGroupUrl,
     parseJsonObject,
     resolveAlbumArtwork,
 } from "./metadata/skyhook-artwork-service.js";
@@ -72,8 +71,6 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
       LIMIT 1
     `).get(releaseGroupMbid) as any | null;
 }
-
-export { coverArtArchiveReleaseGroupUrl };
 
 function parseProviderData(value: unknown): any | null {
     if (!value) {
@@ -174,7 +171,6 @@ function listMusicBrainzReleaseVersions(
 
 function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
     return chooseCachedAlbumArtwork({
-        releaseGroupMbid: releaseGroup.mbid,
         skyHookData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
@@ -182,7 +178,6 @@ function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
 
 async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {
     return resolveAlbumArtwork({
-        releaseGroupMbid: releaseGroup.mbid,
         skyHookData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });

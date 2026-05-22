@@ -606,7 +606,7 @@ export class ArtistQueryService {
 
             return {
                 ...album,
-                cover_id: album.cover || (album.mb_release_group_id ? `https://coverartarchive.org/release-group/${album.mb_release_group_id}/front-500` : null),
+                cover_id: album.cover || null,
                 monitor_locked: Boolean(album.monitor_lock),
                 redundant_of: album.redundant || null,
                 type: album.relationship_type === "APPEARS_ON" ? "APPEARS_ON" : album.type,
@@ -691,7 +691,6 @@ export class ArtistQueryService {
             })() as { cover?: string | null; explicit?: boolean | number | null } | null;
             const providerCover = selectedProviderData?.cover || null;
             const coverUrl = chooseCachedAlbumArtwork({
-                releaseGroupMbid: row.mbid,
                 skyHookData: parseJsonObject(row.data),
                 providerCandidates: albumProviderArtworkCandidatesFromRow(row),
             });

@@ -144,29 +144,6 @@ function configuredAlbumCoverResolution(): "origin" | number {
   }
 }
 
-export function coverArtArchiveReleaseGroupUrl(
-  mbid: string | null | undefined,
-  resolution: "origin" | number = configuredAlbumCoverResolution(),
-): string | null {
-  const trimmed = String(mbid || "").trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (resolution === "origin") {
-    return `https://coverartarchive.org/release-group/${trimmed}/front`;
-  }
-
-  const numericResolution = Number(resolution);
-  const suffix = numericResolution >= 1200
-    ? "front-1200"
-    : numericResolution >= 500
-      ? "front-500"
-      : "front-250";
-
-  return `https://coverartarchive.org/release-group/${trimmed}/${suffix}`;
-}
-
 function nestedRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" ? value as Record<string, any> : {};
 }
@@ -229,14 +206,11 @@ export function chooseCachedProviderArtwork(
 }
 
 export function chooseCachedAlbumArtwork(options: {
-  releaseGroupMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
-  includeCoverArtArchiveFallback?: boolean;
 }): string | null {
   return getSkyHookAlbumImageUrl(options.skyHookData)
-    || chooseCachedProviderArtwork(options.providerCandidates || [], "album")
-    || (options.includeCoverArtArchiveFallback === false ? null : coverArtArchiveReleaseGroupUrl(options.releaseGroupMbid));
+    || chooseCachedProviderArtwork(options.providerCandidates || [], "album");
 }
 
 export function chooseCachedArtistArtwork(options: {
@@ -296,11 +270,9 @@ export async function resolveProviderArtworkUrl(
 }
 
 export async function resolveAlbumArtwork(options: {
-  releaseGroupMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   size?: string | number | null;
-  includeCoverArtArchiveFallback?: boolean;
 }): Promise<string | null> {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
   if (skyHookUrl) {
@@ -316,9 +288,7 @@ export async function resolveAlbumArtwork(options: {
     return providerUrl;
   }
 
-  return options.includeCoverArtArchiveFallback === false
-    ? null
-    : coverArtArchiveReleaseGroupUrl(options.releaseGroupMbid);
+  return null;
 }
 
 export async function resolveArtistArtwork(options: {

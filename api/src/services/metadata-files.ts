@@ -281,7 +281,6 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
 }
 
 function loadAlbumArtworkContext(albumId: string): {
-    releaseGroupMbid: string | null;
     skyHookData: Record<string, any> | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
@@ -289,12 +288,9 @@ function loadAlbumArtworkContext(albumId: string): {
         SELECT
             pa.id AS provider_album_id,
             pa.cover AS provider_cover,
-            pa.mb_release_group_id AS provider_release_group_mbid,
             pi.provider AS selected_provider,
             pi.provider_id AS selected_provider_id,
-            pi.release_group_mbid AS provider_item_release_group_mbid,
             pi.data AS provider_data,
-            rg.mbid AS release_group_mbid,
             rg.data AS release_group_data,
             stereo.selected_provider AS stereo_provider,
             stereo.selected_provider_id AS stereo_provider_id,
@@ -323,7 +319,6 @@ function loadAlbumArtworkContext(albumId: string): {
         return null;
     }
 
-    const releaseGroupMbid = String(row.release_group_mbid || row.provider_item_release_group_mbid || row.provider_release_group_mbid || "").trim() || null;
     const providerCandidates = [
         ...albumProviderArtworkCandidatesFromRow(row),
         {
@@ -335,7 +330,6 @@ function loadAlbumArtworkContext(albumId: string): {
     ];
 
     return {
-        releaseGroupMbid,
         skyHookData: parseJsonObject(row.release_group_data),
         providerCandidates,
     };
@@ -407,7 +401,6 @@ export async function downloadAlbumCover(
     const context = loadAlbumArtworkContext(albumId);
     let url = context
         ? await resolveAlbumArtwork({
-            releaseGroupMbid: context.releaseGroupMbid,
             skyHookData: context.skyHookData,
             providerCandidates: context.providerCandidates,
             size: resolution,
