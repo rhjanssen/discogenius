@@ -1041,16 +1041,12 @@ export async function getArtist(artistId: string) {
   };
 }
 
-export async function getArtistAlbums(artistId: string, options: { includeAppearsOn?: boolean } = {}) {
+export async function getArtistAlbums(artistId: string) {
   const cc = getCountryCode();
-  // Fetch own catalog first. The COMPILATIONS endpoint is mostly "appears on"
-  // rows and can dwarf the artist's own discography, so keep it opt-in.
   // NOTE: Tidal API only supports EPSANDSINGLES as combined filter - we use album's type field to distinguish
   const albums = await tidalApiRequestPaginatedSafe(`/artists/${artistId}/albums?countryCode=${cc}`, "albums");
   const epsSingles = await tidalApiRequestPaginatedSafe(`/artists/${artistId}/albums?countryCode=${cc}&filter=EPSANDSINGLES`, "eps_singles");
-  const compilations = options.includeAppearsOn === true
-    ? await tidalApiRequestPaginatedSafe(`/artists/${artistId}/albums?countryCode=${cc}&filter=COMPILATIONS`, "compilations")
-    : [];
+  const compilations: any[] = [];
 
   // Tag each album with group_type (which API endpoint) and derive initial module category
   // group_type: ALBUMS, EPSANDSINGLES, COMPILATIONS (matches Tidal API filters)

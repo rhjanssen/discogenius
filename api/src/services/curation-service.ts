@@ -1,9 +1,10 @@
 import { db } from "../database.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
-import { getConfigSection } from "./config.js";
+import { getConfigSection, type FilteringConfig } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
 import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
+import { isMusicBrainzReleaseGroupIncluded } from "./musicbrainz-release-group-filter.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -52,32 +53,11 @@ export class CurationService {
         };
     }
 
-    private static parseSecondaryTypes(value: unknown): string[] {
-        try {
-            const parsed = JSON.parse(String(value || "[]"));
-            return Array.isArray(parsed)
-                ? parsed.map((type) => String(type).trim().toLowerCase()).filter(Boolean)
-                : [];
-        } catch {
-            return [];
-        }
-    }
-
     private static isReleaseGroupIncluded(
         releaseGroup: ReleaseGroupForCuration,
-        curationConfig: Record<string, any>,
+        curationConfig: FilteringConfig,
     ): boolean {
-        const secondaryTypes = this.parseSecondaryTypes(releaseGroup.secondary_types);
-        if (secondaryTypes.includes("compilation")) return curationConfig.include_compilation !== false;
-        if (secondaryTypes.includes("soundtrack")) return curationConfig.include_soundtrack !== false;
-        if (secondaryTypes.includes("live")) return curationConfig.include_live !== false;
-        if (secondaryTypes.includes("remix") || secondaryTypes.includes("dj-mix")) return curationConfig.include_remix !== false;
-        if (secondaryTypes.includes("demo")) return false;
-
-        const primary = String(releaseGroup.primary_type || "album").trim().toLowerCase();
-        if (primary === "single") return curationConfig.include_single !== false;
-        if (primary === "ep") return curationConfig.include_ep !== false;
-        return curationConfig.include_album !== false;
+        return isMusicBrainzReleaseGroupIncluded(releaseGroup, curationConfig);
     }
 
     private static primaryType(releaseGroup: Pick<ReleaseGroupForCuration, "primary_type">): string {
@@ -479,29 +459,7 @@ export class CurationService {
             primary_type?: string | null;
             secondary_types?: string | null;
             album_type?: string | null;
-        }): boolean => {
-            if (String(row.slot || "").toLowerCase() === "spatial" && filteringConfig.include_spatial !== true) {
-                return false;
-            }
-
-            let secondaryTypes: string[] = [];
-            try {
-                const parsed = JSON.parse(String(row.secondary_types || "[]"));
-                secondaryTypes = Array.isArray(parsed) ? parsed.map((type) => String(type).toLowerCase()) : [];
-            } catch {
-                secondaryTypes = [];
-            }
-
-            if (secondaryTypes.includes("compilation")) return filteringConfig.include_compilation !== false;
-            if (secondaryTypes.includes("soundtrack")) return filteringConfig.include_soundtrack !== false;
-            if (secondaryTypes.includes("live")) return filteringConfig.include_live !== false;
-            if (secondaryTypes.includes("remix") || secondaryTypes.includes("dj-mix")) return filteringConfig.include_remix !== false;
-
-            const primary = String(row.primary_type || row.album_type || "album").trim().toLowerCase();
-            if (primary === "single") return filteringConfig.include_single !== false;
-            if (primary === "ep") return filteringConfig.include_ep !== false;
-            return filteringConfig.include_album !== false;
-        };
+        }): boolean => isMusicBrainzReleaseGroupIncluded(row, filteringConfig);
 
         let albumJobs = 0;
         const trackJobs = 0;

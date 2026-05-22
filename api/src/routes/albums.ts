@@ -128,10 +128,10 @@ router.get("/:albumId/similar", (req, res) => {
 });
 
 
-// Get other versions of an album (same version_group)
-router.get("/:albumId/versions", (req, res) => {
+// Get MusicBrainz releases belonging to the release group.
+router.get("/:albumId/versions", async (req, res) => {
   try {
-    res.json(AlbumQueryService.getAlbumVersions(req.params.albumId));
+    res.json(await AlbumQueryService.getAlbumVersions(req.params.albumId));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

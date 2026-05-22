@@ -220,7 +220,7 @@ router.get("/", async (req, res) => {
              slot.id AS slot_id,
              slot.provider_data,
              slot.quality AS quality,
-	             CASE WHEN slot.id IS NOT NULL THEN COALESCE(slot.wanted, 0) ELSE COALESCE(a.monitor, 0) END AS monitored
+	             COALESCE(slot.wanted, 0) AS monitored
 	           FROM Albums rg
 	           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
 	           LEFT JOIN ReleaseGroupSlots slot

@@ -11,11 +11,7 @@ import { buildManagedArtistPredicate } from "./managed-artists.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 const releaseGroupWantedExpression = `
-        CASE
-          WHEN stereo.id IS NOT NULL OR spatial.id IS NOT NULL THEN
-            CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
-          ELSE COALESCE(a.monitor, 0)
-        END
+        CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
 `;
 
 function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string {
@@ -245,7 +241,7 @@ export class AlbumQueryService {
         return [];
     }
 
-    static getAlbumVersions(_albumId: string): AlbumVersionContract[] {
-        return [];
+    static async getAlbumVersions(albumId: string): Promise<AlbumVersionContract[]> {
+        return MusicBrainzReleaseGroupReadService.getVersions(albumId);
     }
 }

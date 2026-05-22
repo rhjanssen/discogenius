@@ -288,6 +288,13 @@ const useStyles = makeStyles({
         overflow: 'hidden',
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
+    subsectionHeader: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXXS,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalS}`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
     // Standard row: horizontal layout with title/description left, control right
     row: {
         ...rowBase,
@@ -1031,15 +1038,24 @@ const SettingsPage = () => {
             setMonitoringStatus({ running: false, checking: false });
             setCurationConfig({
                 include_album: true,
-                include_single: true,
+                include_single: false,
                 include_ep: true,
-                include_compilation: true,
-                include_soundtrack: true,
-                include_live: true,
+                include_broadcast: false,
+                include_other: false,
+                include_compilation: false,
+                include_soundtrack: false,
+                include_spokenword: false,
+                include_interview: false,
+                include_audiobook: false,
+                include_audio_drama: false,
+                include_live: false,
                 include_remix: false,
-                include_appears_on: false,
+                include_dj_mix: false,
+                include_mixtape_street: false,
+                include_demo: false,
+                include_field_recording: false,
                 include_spatial: false,
-                include_videos: true,
+                include_videos: false,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
                 require_provider_availability: false,
@@ -1343,14 +1359,27 @@ const SettingsPage = () => {
         </div>
     );
 
-    const curationTypeRows = [
-        { key: "include_album", title: "Albums", description: "Standard studio albums" },
-        { key: "include_single", title: "Singles", description: "Single track releases" },
-        { key: "include_ep", title: "EPs", description: "Extended play releases" },
-        { key: "include_compilation", title: "Compilations", description: "Greatest hits, best of, anthologies" },
-        { key: "include_soundtrack", title: "Soundtracks", description: "Movie, TV, and game soundtracks" },
-        { key: "include_live", title: "Live Albums", description: "Live concert recordings" },
-        { key: "include_remix", title: "Remixes", description: "Remix albums and collections" },
+    const primaryReleaseTypeRows = [
+        { key: "include_album", title: "Albums", description: "MusicBrainz primary type: Album" },
+        { key: "include_ep", title: "EPs", description: "MusicBrainz primary type: EP" },
+        { key: "include_single", title: "Singles", description: "MusicBrainz primary type: Single" },
+        { key: "include_broadcast", title: "Broadcasts", description: "MusicBrainz primary type: Broadcast" },
+        { key: "include_other", title: "Other primary types", description: "MusicBrainz primary type: Other or unknown" },
+    ] as const;
+
+    const secondaryReleaseTypeRows = [
+        { key: "include_compilation", title: "Compilations", description: "MusicBrainz secondary type: Compilation" },
+        { key: "include_soundtrack", title: "Soundtracks", description: "MusicBrainz secondary type: Soundtrack" },
+        { key: "include_live", title: "Live", description: "MusicBrainz secondary type: Live" },
+        { key: "include_remix", title: "Remix", description: "MusicBrainz secondary type: Remix" },
+        { key: "include_dj_mix", title: "DJ-mix", description: "MusicBrainz secondary type: DJ-mix" },
+        { key: "include_mixtape_street", title: "Mixtape/Street", description: "MusicBrainz secondary type: Mixtape/Street" },
+        { key: "include_demo", title: "Demo", description: "MusicBrainz secondary type: Demo" },
+        { key: "include_spokenword", title: "Spokenword", description: "MusicBrainz secondary type: Spokenword" },
+        { key: "include_interview", title: "Interview", description: "MusicBrainz secondary type: Interview" },
+        { key: "include_audiobook", title: "Audiobook", description: "MusicBrainz secondary type: Audiobook" },
+        { key: "include_audio_drama", title: "Audio drama", description: "MusicBrainz secondary type: Audio drama" },
+        { key: "include_field_recording", title: "Field recording", description: "MusicBrainz secondary type: Field recording" },
     ] as const;
 
     const getProviderCapabilities = (provider: StreamingProviderStatus) => [
@@ -1601,19 +1630,30 @@ const SettingsPage = () => {
                     className={styles.section}
                 >
                     <div className={styles.card}>
-                        {curationTypeRows.map((row) => renderCheckboxRow({
+                        <div className={styles.subsectionHeader}>
+                            <Text weight="semibold">MusicBrainz primary types</Text>
+                            <Text size={200} className={styles.mutedText}>Release-group primary categories.</Text>
+                        </div>
+                        {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
                             title: row.title,
                             description: row.description,
                             checked: curationConfig?.[row.key] !== false,
                             onChange: (checked) => updateCuration({ [row.key]: checked }),
                             noDivider: true,
                         }))}
-                        {renderCheckboxRow({
-                            title: "Appears On",
-                            description: "Albums where artist is featured",
-                            checked: curationConfig?.include_appears_on === true,
-                            onChange: (checked) => updateCuration({ include_appears_on: checked }),
-                        })}
+                        <Divider className={styles.divider} />
+                        <div className={styles.subsectionHeader}>
+                            <Text weight="semibold">MusicBrainz secondary types</Text>
+                            <Text size={200} className={styles.mutedText}>Additional release-group tags applied by MusicBrainz.</Text>
+                        </div>
+                        {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                            title: row.title,
+                            description: row.description,
+                            checked: curationConfig?.[row.key] === true,
+                            onChange: (checked) => updateCuration({ [row.key]: checked }),
+                            noDivider: true,
+                        }))}
+                        <Divider className={styles.divider} />
                         {renderToggleRow({
                             title: "Prefer Explicit",
                             description: "Prefer explicit versions over clean ones",

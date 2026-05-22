@@ -83,8 +83,8 @@ export class TidalProvider implements StreamingProvider {
     return (await tidal.getFollowedArtists()).map(this.mapArtist);
   }
 
-  async listArtistReleaseOffers(id: string | number, options: { includeAppearsOn?: boolean } = {}): Promise<ProviderAlbum[]> {
-    return (await tidal.getArtistAlbums(String(id), options)).map(this.mapAlbum);
+  async listArtistReleaseOffers(id: string | number): Promise<ProviderAlbum[]> {
+    return (await tidal.getArtistAlbums(String(id))).map(this.mapAlbum);
   }
 
   async searchReleaseGroup(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]> {

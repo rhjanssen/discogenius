@@ -85,16 +85,28 @@ export interface MonitoringConfig {
 }
 
 export interface FilteringConfig {
-  // MusicBrainz-style release type filters
-  include_album: boolean;              // Primary type: album (no secondary)
-  include_single: boolean;             // Primary type: single
-  include_ep: boolean;                 // Primary type: ep
-  include_compilation: boolean;        // album + compilation secondary
-  include_soundtrack: boolean;         // album + soundtrack secondary
-  include_live: boolean;               // album + live secondary
-  include_remix: boolean;              // album + remix secondary
-  include_appears_on: boolean;         // Appears on other artists' releases
-  include_spatial: boolean;            // Include spatial/surround releases
+  // MusicBrainz release-group primary types
+  include_album: boolean;              // Primary type: Album
+  include_single: boolean;             // Primary type: Single
+  include_ep: boolean;                 // Primary type: EP
+  include_broadcast: boolean;          // Primary type: Broadcast
+  include_other: boolean;              // Primary type: Other or unknown
+
+  // MusicBrainz release-group secondary types
+  include_compilation: boolean;        // Secondary type: Compilation
+  include_soundtrack: boolean;         // Secondary type: Soundtrack
+  include_spokenword: boolean;         // Secondary type: Spokenword
+  include_interview: boolean;          // Secondary type: Interview
+  include_audiobook: boolean;          // Secondary type: Audiobook
+  include_audio_drama: boolean;        // Secondary type: Audio drama
+  include_live: boolean;               // Secondary type: Live
+  include_remix: boolean;              // Secondary type: Remix
+  include_dj_mix: boolean;             // Secondary type: DJ-mix
+  include_mixtape_street: boolean;     // Secondary type: Mixtape/Street
+  include_demo: boolean;               // Secondary type: Demo
+  include_field_recording: boolean;    // Secondary type: Field recording
+
+  include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
@@ -214,12 +226,21 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     prefer_explicit: true,
     include_album: true,
     include_ep: true,
-    include_single: true,
-    include_compilation: true,        // Enable by default (was false)
-    include_soundtrack: true,
-    include_live: true,               // Enable by default (was false)
-    include_remix: true,              // Enable by default (was false)
-    include_appears_on: false,        // Only this is disabled by default
+    include_single: false,
+    include_broadcast: false,
+    include_other: false,
+    include_compilation: false,
+    include_soundtrack: false,
+    include_spokenword: false,
+    include_interview: false,
+    include_audiobook: false,
+    include_audio_drama: false,
+    include_live: false,
+    include_remix: false,
+    include_dj_mix: false,
+    include_mixtape_street: false,
+    include_demo: false,
+    include_field_recording: false,
     include_spatial: false,
     include_videos: false,
     require_provider_availability: false,
@@ -262,10 +283,43 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   account: {}
 };
 
+const MUSICBRAINZ_FILTER_KEYS: Array<keyof FilteringConfig> = [
+  "include_broadcast",
+  "include_other",
+  "include_spokenword",
+  "include_interview",
+  "include_audiobook",
+  "include_audio_drama",
+  "include_dj_mix",
+  "include_mixtape_street",
+  "include_demo",
+  "include_field_recording",
+];
+
+function isLegacyFilteringConfig(raw?: Partial<FilteringConfig>): boolean {
+  if (!raw) {
+    return false;
+  }
+
+  return MUSICBRAINZ_FILTER_KEYS.every((key) => !(key in raw));
+}
+
 function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConfig {
+  if (isLegacyFilteringConfig(raw)) {
+    return {
+      ...DEFAULT_CONFIG.filtering,
+      include_spatial: raw?.include_spatial ?? DEFAULT_CONFIG.filtering.include_spatial,
+      include_videos: raw?.include_videos ?? DEFAULT_CONFIG.filtering.include_videos,
+      prefer_explicit: raw?.prefer_explicit ?? DEFAULT_CONFIG.filtering.prefer_explicit,
+      enable_redundancy_filter: raw?.enable_redundancy_filter ?? DEFAULT_CONFIG.filtering.enable_redundancy_filter,
+      require_provider_availability: false,
+    };
+  }
+
   return {
     ...DEFAULT_CONFIG.filtering,
     ...(raw || {}),
+    require_provider_availability: raw?.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
   };
 }
 

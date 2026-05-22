@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import type { FilteringConfig } from "./config.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-curation-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -11,12 +12,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../database.js");
 let configModule: typeof import("./config.js");
 let curationServiceModule: typeof import("./curation-service.js");
+let albumQueryServiceModule: typeof import("./album-query-service.js");
 
 function writeTestConfig(overrides?: {
   includeCompilation?: boolean;
   includeSingle?: boolean;
   includeEp?: boolean;
   includeAlbum?: boolean;
+  filtering?: Partial<FilteringConfig>;
 }) {
   const config = configModule.readConfig();
   config.filtering = {
@@ -28,6 +31,7 @@ function writeTestConfig(overrides?: {
     include_spatial: false,
     require_provider_availability: true,
     include_videos: false,
+    ...(overrides?.filtering || {}),
   };
   configModule.writeConfig(config);
 }
@@ -38,6 +42,7 @@ before(async () => {
 
   configModule = await import("./config.js");
   curationServiceModule = await import("./curation-service.js");
+  albumQueryServiceModule = await import("./album-query-service.js");
 
   writeTestConfig();
 });
@@ -288,4 +293,196 @@ test("CurationService marks MusicBrainz release-group slots wanted without provi
   assert.equal(slot.wanted, 1);
   assert.equal(slot.selected_provider, null);
   assert.equal(slot.selected_provider_id, null);
+});
+
+test("CurationService applies MusicBrainz primary and secondary release-group filters", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: false,
+      include_broadcast: false,
+      include_live: false,
+      include_spokenword: false,
+      include_other: false,
+      include_demo: false,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-album", "artist-mbid-1", "A Night at the Opera", "Album", "[]");
+  insertReleaseGroup.run("rg-ep", "artist-mbid-1", "Queen's First EP", "EP", "[]");
+  insertReleaseGroup.run("rg-live", "artist-mbid-1", "Live Killers", "Album", JSON.stringify(["Live"]));
+  insertReleaseGroup.run("rg-broadcast", "artist-mbid-1", "BBC Session", "Broadcast", "[]");
+  insertReleaseGroup.run("rg-spokenword", "artist-mbid-1", "Interview", "Album", JSON.stringify(["Spokenword"]));
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const wantedByReleaseGroup = new Map(
+    (db.prepare(`
+      SELECT release_group_mbid, wanted
+      FROM ReleaseGroupSlots
+      ORDER BY release_group_mbid
+    `).all() as Array<{ release_group_mbid: string; wanted: number }>)
+      .map((row) => [row.release_group_mbid, row.wanted])
+  );
+
+  assert.equal(wantedByReleaseGroup.get("rg-album"), 1);
+  assert.equal(wantedByReleaseGroup.get("rg-ep"), 1);
+  assert.equal(wantedByReleaseGroup.get("rg-live"), 0);
+  assert.equal(wantedByReleaseGroup.get("rg-broadcast"), 0);
+  assert.equal(wantedByReleaseGroup.get("rg-spokenword"), 0);
+
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_live: true,
+      include_broadcast: true,
+      include_spokenword: false,
+    },
+  });
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const updatedWantedByReleaseGroup = new Map(
+    (db.prepare(`
+      SELECT release_group_mbid, wanted
+      FROM ReleaseGroupSlots
+      ORDER BY release_group_mbid
+    `).all() as Array<{ release_group_mbid: string; wanted: number }>)
+      .map((row) => [row.release_group_mbid, row.wanted])
+  );
+
+  assert.equal(updatedWantedByReleaseGroup.get("rg-live"), 1);
+  assert.equal(updatedWantedByReleaseGroup.get("rg-broadcast"), 1);
+  assert.equal(updatedWantedByReleaseGroup.get("rg-spokenword"), 0);
+});
+
+test("Album read model does not inherit release-group wanted state from artist monitoring", () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+
+  const result = albumQueryServiceModule.AlbumQueryService.listAlbums({
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].is_monitored, false);
+  assert.equal(result.items[0].monitor, 0);
+});
+
+test("Album track read model follows release-group wanted state", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 1, 1);
+
+  db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `).run("recording-mbid-1", "Bohemian Rhapsody");
+
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody", 354000);
+
+  const unmonitoredTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
+  assert.equal(unmonitoredTracks[0].is_monitored, false);
+  assert.equal(unmonitoredTracks[0].monitor, 0);
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, match_status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "unmatched");
+
+  const monitoredTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
+  assert.equal(monitoredTracks[0].is_monitored, true);
+  assert.equal(monitoredTracks[0].monitor, 1);
+});
+
+test("Album versions are MusicBrainz releases from the release group", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album", "1975-11-21");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Official", "GB", "1975-11-21", 1, 12);
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-2", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Official", JSON.stringify(["[Worldwide]"]), "1975-12-02", 1, 12);
+
+  const versions = await albumQueryServiceModule.AlbumQueryService.getAlbumVersions("rg-mbid-1");
+
+  assert.deepEqual(versions.map((version) => version.id), ["release-mbid-2", "release-mbid-1"]);
+  assert.equal(versions[0].title, "A Night at the Opera");
+  assert.match(versions[0].version || "", /Official/);
+  assert.match(versions[0].version || "", /Worldwide/);
 });

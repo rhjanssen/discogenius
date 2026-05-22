@@ -31,7 +31,7 @@ export interface StreamingProvider {
   getArtistVideos?(id: string | number): Promise<ProviderVideo[]>;
   getArtistCatalogPage?(id: string | number): Promise<any>;
   getFollowedArtists?(): Promise<ProviderArtist[]>;
-  listArtistReleaseOffers?(id: string | number, options?: { includeAppearsOn?: boolean }): Promise<ProviderAlbum[]>;
+  listArtistReleaseOffers?(id: string | number): Promise<ProviderAlbum[]>;
   searchReleaseGroup?(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]>;
   getAlbum(id: string | number): Promise<ProviderAlbum>;
   getAlbumTracks(id: string | number): Promise<ProviderTrack[]>;

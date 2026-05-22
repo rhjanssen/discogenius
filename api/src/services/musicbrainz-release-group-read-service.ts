@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import type { AlbumContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
-import type { AlbumTrackContract } from "../contracts/media.js";
+import type { AlbumTrackContract, AlbumVersionContract } from "../contracts/media.js";
 import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
@@ -16,11 +16,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
         a.monitor AS artist_monitor,
-        CASE
-          WHEN stereo.id IS NOT NULL OR spatial.id IS NOT NULL THEN
-            CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
-          ELSE COALESCE(a.monitor, 0)
-        END AS wanted,
+        CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END AS wanted,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
@@ -82,6 +78,92 @@ function parseProviderData(value: unknown): any | null {
     } catch {
         return null;
     }
+}
+
+function formatReleaseVersionLabel(release: any): string | null {
+    const country = formatReleaseCountry(release.country);
+    const parts = [
+        release.status ? String(release.status) : null,
+        country,
+        Number(release.media_count || 0) > 1 ? `${Number(release.media_count)} media` : null,
+        Number(release.track_count || 0) > 0 ? `${Number(release.track_count)} tracks` : null,
+    ].filter((part): part is string => Boolean(part));
+
+    return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function formatReleaseCountry(value: unknown): string | null {
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+            const countries = parsed.map(formatReleaseCountry).filter((country): country is string => Boolean(country));
+            return countries.length > 0 ? countries.join(", ") : null;
+        }
+    } catch {
+        // Continue with scalar normalization below.
+    }
+
+    const withoutBrackets = raw.replace(/^\[+|\]+$/g, "").trim();
+    if (!withoutBrackets) {
+        return null;
+    }
+
+    return withoutBrackets.toLowerCase() === "worldwide" ? "Worldwide" : withoutBrackets;
+}
+
+function listMusicBrainzReleaseVersions(
+    releaseGroup: any,
+    coverUrl?: string | null,
+): AlbumVersionContract[] {
+    const releases = db.prepare(`
+      SELECT
+        r.mbid,
+        r.title,
+        r.status,
+        r.country,
+        r.date,
+        r.media_count,
+        r.track_count,
+        r.barcode,
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM AlbumReleaseMedia m
+            WHERE m.release_mbid = r.mbid
+              AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
+          ) THEN 1 ELSE 0
+        END AS digital_score
+      FROM AlbumReleases r
+      WHERE r.release_group_mbid = ?
+      ORDER BY
+        digital_score DESC,
+        CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
+        COALESCE(r.track_count, 0) DESC,
+        (r.date IS NULL) ASC,
+        r.date DESC,
+        r.country ASC,
+        r.mbid ASC
+    `).all(releaseGroup.mbid) as any[];
+
+    const imageUrl = coverUrl ?? coverArtArchiveReleaseGroupUrl(releaseGroup.mbid);
+    const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
+
+    return releases.map((release) => ({
+        id: String(release.mbid),
+        title: String(release.title || releaseGroup.title || "Unknown Release"),
+        cover_id: imageUrl,
+        artist_name: artistName,
+        release_date: release.date || releaseGroup.first_release_date || null,
+        popularity: undefined,
+        quality: null,
+        explicit: false,
+        is_monitored: Boolean(releaseGroup.wanted),
+        version: formatReleaseVersionLabel(release),
+    }));
 }
 
 async function resolveProviderCoverUrl(releaseGroup: any): Promise<string | null> {
@@ -210,7 +292,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         spatial_match_status: releaseGroup.spatial_match_status || null,
         selected_provider_id: releaseGroup.selected_provider_id || null,
         source: "musicbrainz",
-        is_monitored: Boolean(releaseGroup.wanted ?? releaseGroup.artist_monitor),
+        is_monitored: Boolean(releaseGroup.wanted),
         is_downloaded: false,
         downloaded: 0,
         artist_id: artistId,
@@ -221,7 +303,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         filtered_reason: null,
         redundant_of: null,
         redundant: null,
-        monitor: (releaseGroup.wanted ?? releaseGroup.artist_monitor) ? 1 : 0,
+        monitor: releaseGroup.wanted ? 1 : 0,
         monitor_lock: 0,
         monitor_locked: false,
         module: primaryType,
@@ -234,6 +316,7 @@ function getReleaseTrackContracts(
     releaseGroupMbid: string,
     albumTitle: string,
     artistName: string,
+    isMonitored: boolean,
 ): AlbumTrackContract[] {
     const rows = db.prepare(`
       SELECT
@@ -267,8 +350,8 @@ function getReleaseTrackContracts(
         musicbrainz_release_id: track.release_mbid == null ? null : String(track.release_mbid),
         downloaded: false,
         is_downloaded: false,
-        is_monitored: true,
-        monitor: 1,
+        is_monitored: isMonitored,
+        monitor: isMonitored ? 1 : 0,
         monitor_lock: 0,
         monitor_locked: false,
         explicit: false,
@@ -567,7 +650,13 @@ async function buildReleaseGroupTrackContracts(
         releaseGroup.selected_provider_id,
     ].map((value) => String(value || "").trim()).filter(Boolean);
     const providerId = String(releaseGroup.selected_provider || "").trim() || null;
-    const canonicalTracks = getReleaseTrackContracts(release.mbid, releaseGroup.mbid, album.title, album.artist_name);
+    const canonicalTracks = getReleaseTrackContracts(
+        release.mbid,
+        releaseGroup.mbid,
+        album.title,
+        album.artist_name,
+        Boolean(releaseGroup.wanted),
+    );
     const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks);
     const withLocalFiles = attachLocalFilesToTracks(withCanonicalFiles, providerAlbumIds, providerId);
     return attachProviderPreviewTracks(withLocalFiles, releaseGroup);
@@ -629,7 +718,8 @@ export class MusicBrainzReleaseGroupReadService {
         }
 
         const release = selectPreferredRelease(releaseGroupMbid);
-        const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, await resolveProviderCoverUrl(releaseGroup));
+        const coverUrl = await resolveProviderCoverUrl(releaseGroup);
+        const album = normalizeMusicBrainzReleaseGroupAlbum(releaseGroup, release, coverUrl);
         const providerReview = await resolveProviderAlbumReview(releaseGroup);
         if (providerReview) {
             album.review = providerReview.review;
@@ -644,9 +734,18 @@ export class MusicBrainzReleaseGroupReadService {
                 ? await buildReleaseGroupTrackContracts(releaseGroup, release, album)
                 : [],
             similarAlbums: [],
-            otherVersions: [],
+            otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
             artistPicture: releaseGroup.artist_picture != null ? String(releaseGroup.artist_picture) : null,
             artistCoverImageUrl: releaseGroup.artist_cover_image_url ?? null,
         };
+    }
+
+    static async getVersions(releaseGroupMbid: string): Promise<AlbumVersionContract[]> {
+        const releaseGroup = await this.loadReleaseGroup(releaseGroupMbid);
+        if (!releaseGroup) {
+            return [];
+        }
+
+        return listMusicBrainzReleaseVersions(releaseGroup, await resolveProviderCoverUrl(releaseGroup));
     }
 }

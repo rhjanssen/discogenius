@@ -1,4 +1,5 @@
 import type { FilteringConfig } from "./config.js";
+import { getMusicBrainzReleaseGroupIncludeDecision } from "./musicbrainz-release-group-filter.js";
 
 export type MonitoringPassWorkflow = "full-cycle" | "curation-cycle" | "root-scan-cycle";
 
@@ -35,7 +36,6 @@ export function getMbSecondary(module: string | undefined, title: string = ""): 
 
     if (mod.includes("COMPILATION")) return "compilation";
     if (mod.includes("LIVE")) return "live";
-    if (mod.includes("APPEARS_ON")) return "compilation";
 
     const lowerTitle = (title || "").toLowerCase();
 
@@ -56,31 +56,15 @@ export function getIncludeDecision(
     module?: string,
     title?: string,
 ): { include: boolean; reason: string | null } {
-    const type = (albumType || "ALBUM").toUpperCase();
+    if ((module || "").toUpperCase().includes("APPEARS_ON")) {
+        return { include: false, reason: "provider_appears_on_excluded" };
+    }
+
     const mbSecondary = getMbSecondary(module, title || "");
-
-    if (mbSecondary) {
-        switch (mbSecondary) {
-            case "compilation":
-                return { include: filteringConfig.include_compilation !== false, reason: filteringConfig.include_compilation !== false ? null : "compilation_excluded" };
-            case "soundtrack":
-                return { include: filteringConfig.include_soundtrack !== false, reason: filteringConfig.include_soundtrack !== false ? null : "soundtrack_excluded" };
-            case "live":
-                return { include: filteringConfig.include_live !== false, reason: filteringConfig.include_live !== false ? null : "live_excluded" };
-            case "remix":
-                return { include: filteringConfig.include_remix !== false, reason: filteringConfig.include_remix !== false ? null : "remix_excluded" };
-        }
-    }
-
-    switch (type) {
-        case "SINGLE":
-            return { include: filteringConfig.include_single !== false, reason: filteringConfig.include_single !== false ? null : "single_excluded" };
-        case "EP":
-            return { include: filteringConfig.include_ep !== false, reason: filteringConfig.include_ep !== false ? null : "ep_excluded" };
-        case "ALBUM":
-        default:
-            return { include: filteringConfig.include_album !== false, reason: filteringConfig.include_album !== false ? null : "album_excluded" };
-    }
+    return getMusicBrainzReleaseGroupIncludeDecision({
+        primary_type: albumType || "album",
+        secondary_types: mbSecondary ? [mbSecondary] : [],
+    }, filteringConfig);
 }
 
 export function parseScheduledTaskTime(raw?: string | null): number | null {

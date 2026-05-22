@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { countManagedArtists, buildManagedArtistPredicate } from "./managed-artists.js";
+import { countManagedArtists } from "./managed-artists.js";
 import {
     countDownloadedAlbums,
     countDownloadedManagedArtists,
@@ -30,19 +30,13 @@ export class LibraryStatsQueryService {
                            (SELECT COUNT(*) FROM ProviderAlbums WHERE mbid NOT IN (SELECT mb_release_group_id FROM ProviderAlbums WHERE mb_release_group_id IS NOT NULL)) as count
                 `).get() as { count: number }).count,
                 monitored: (db.prepare(`
-                    WITH artist_monitors AS (
-                      SELECT a.mbid, CASE WHEN (${buildManagedArtistPredicate("a")}) THEN 1 ELSE 0 END as effective_monitor
-                      FROM Artists a
-                      WHERE a.mbid IS NOT NULL
-                    )
                     SELECT
                       (SELECT COUNT(*) FROM ProviderAlbums WHERE monitor = 1) +
                       (
                         SELECT COUNT(DISTINCT rg.mbid)
                         FROM Albums rg
                         LEFT JOIN ReleaseGroupSlots rgs ON rgs.release_group_mbid = rg.mbid
-                        LEFT JOIN artist_monitors am ON am.mbid = rg.artist_mbid
-                        WHERE COALESCE(rgs.wanted, am.effective_monitor, 0) = 1
+                        WHERE COALESCE(rgs.wanted, 0) = 1
                           AND rg.mbid NOT IN (SELECT mb_release_group_id FROM ProviderAlbums WHERE mb_release_group_id IS NOT NULL)
                       ) as count
                 `).get() as { count: number }).count,

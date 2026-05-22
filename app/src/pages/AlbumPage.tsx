@@ -667,15 +667,17 @@ const AlbumPage = () => {
   const renderMiniAlbumCard = (
     item: { id: string; title: string; cover_id?: string | null; cover?: string | null; quality?: string | null; explicit?: boolean; },
     subtitle: string,
-    itemProgress?: any
+    itemProgress?: any,
+    options?: { to?: string | null }
   ) => {
     const isCurrent = item.id === album?.id;
+    const target = options?.to === undefined ? getAlbumPath(item.id) : options.to ?? undefined;
 
     return (
       <MediaCard
         key={item.id}
         className={mergeClasses(styles.albumCard, isCurrent && styles.albumCard)}
-        to={getAlbumPath(item.id)}
+        to={target}
         imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
         alt={item.title}
         title={item.title}
@@ -905,20 +907,18 @@ const AlbumPage = () => {
           );
         })()}
 
-        {/* Other Versions Section */}
+        {/* Release Group Releases Section */}
         {
           otherVersions.length > 0 && (
             <div className={styles.sectionSpacing}>
               <div className={styles.sectionHeader}>
-                <Title2>Other Versions</Title2>
+                <Title2>Releases</Title2>
               </div>
               <div className={styles.carousel}>
                 {otherVersions.map((version) => {
                   const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
-                  const versionLabel = version.version || (version.explicit ? 'Explicit' : 'Clean');
-                  const subtitle = [versionLabel, year].filter(Boolean).join(' · ');
-                  const vProgress = getProgressByTidalId(String(version.id));
-                  return renderMiniAlbumCard(version, subtitle, vProgress);
+                  const subtitle = [version.version, year].filter(Boolean).join(' · ');
+                  return renderMiniAlbumCard(version, subtitle, undefined, { to: null });
                 })}
               </div>
             </div>

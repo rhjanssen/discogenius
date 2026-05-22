@@ -80,6 +80,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const showExplicitBadge = explicit === true || explicit === 1 || explicit === "1" || explicit === "true";
     const [imageFailed, setImageFailed] = React.useState(false);
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
+    const isClickable = Boolean(onClick || to);
     React.useEffect(() => {
         setImageFailed(false);
         setFallbackFailed(false);
@@ -120,8 +121,8 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 mini ? styles.cardMini : styles.card,
                 className
             )}
-            onClick={handleClick}
-            role="link"
+            onClick={isClickable ? handleClick : undefined}
+            role={isClickable ? "link" : undefined}
             aria-label={title}
         >
             <div className={previewClass}>

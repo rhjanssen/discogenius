@@ -99,11 +99,20 @@ export interface FilteringConfigContract {
   include_album: boolean;
   include_single: boolean;
   include_ep: boolean;
+  include_broadcast: boolean;
+  include_other: boolean;
   include_compilation: boolean;
   include_soundtrack: boolean;
+  include_spokenword: boolean;
+  include_interview: boolean;
+  include_audiobook: boolean;
+  include_audio_drama: boolean;
   include_live: boolean;
   include_remix: boolean;
-  include_appears_on: boolean;
+  include_dj_mix: boolean;
+  include_mixtape_street: boolean;
+  include_demo: boolean;
+  include_field_recording: boolean;
   include_spatial: boolean;
   include_videos: boolean;
   prefer_explicit: boolean;
@@ -246,11 +255,20 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_album: expectBoolean(record.include_album, "curation.include_album"),
     include_single: expectBoolean(record.include_single, "curation.include_single"),
     include_ep: expectBoolean(record.include_ep, "curation.include_ep"),
+    include_broadcast: expectBoolean(record.include_broadcast, "curation.include_broadcast"),
+    include_other: expectBoolean(record.include_other, "curation.include_other"),
     include_compilation: expectBoolean(record.include_compilation, "curation.include_compilation"),
     include_soundtrack: expectBoolean(record.include_soundtrack, "curation.include_soundtrack"),
+    include_spokenword: expectBoolean(record.include_spokenword, "curation.include_spokenword"),
+    include_interview: expectBoolean(record.include_interview, "curation.include_interview"),
+    include_audiobook: expectBoolean(record.include_audiobook, "curation.include_audiobook"),
+    include_audio_drama: expectBoolean(record.include_audio_drama, "curation.include_audio_drama"),
     include_live: expectBoolean(record.include_live, "curation.include_live"),
     include_remix: expectBoolean(record.include_remix, "curation.include_remix"),
-    include_appears_on: expectBoolean(record.include_appears_on, "curation.include_appears_on"),
+    include_dj_mix: expectBoolean(record.include_dj_mix, "curation.include_dj_mix"),
+    include_mixtape_street: expectBoolean(record.include_mixtape_street, "curation.include_mixtape_street"),
+    include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
+    include_field_recording: expectBoolean(record.include_field_recording, "curation.include_field_recording"),
     include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),

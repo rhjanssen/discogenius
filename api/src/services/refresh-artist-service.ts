@@ -739,11 +739,8 @@ export class RefreshArtistService {
                 console.log(`[RefreshArtistService] Skipping video refresh for ${artistId} (fresh)`);
             }
 
-            const filteringConfig = getConfigSection("filtering");
             const providerAlbums = provider.listArtistReleaseOffers
-                ? await provider.listArtistReleaseOffers(providerArtistId, {
-                    includeAppearsOn: filteringConfig.include_appears_on === true,
-                })
+                ? await provider.listArtistReleaseOffers(providerArtistId)
                 : await provider.getArtistAlbums(providerArtistId);
             const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
             const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
