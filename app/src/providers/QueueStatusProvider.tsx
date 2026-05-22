@@ -205,6 +205,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     if (shouldRefreshQueueStatusForGlobalEvent(lastGlobalEvent)) {
       scheduleStatusRefresh(0);
       invalidateQueueQueries();
+      dispatchActivityRefresh();
     }
   }, [invalidateQueueQueries, lastGlobalEvent, scheduleStatusRefresh]);
 

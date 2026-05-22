@@ -283,6 +283,62 @@ test("download queue history collapses completed download and import jobs into o
     assert.equal(history.items[0]?.type, "album");
 });
 
+test("download queue history keeps completed album visible during import handoff", () => {
+    const downloadJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-handoff",
+            tidalId: "provider-album-handoff",
+            releaseGroupMbid: "release-group-handoff",
+            slot: "stereo",
+            title: "Handoff Album",
+            artist: "Queue Artist",
+            cover: "album-cover",
+            quality: "LOSSLESS",
+        },
+        "release-group-handoff:stereo",
+    );
+    queueModule.TaskQueueService.complete(downloadJobId);
+
+    const importJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.ImportDownload,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "provider-album-handoff",
+            tidalId: "provider-album-handoff",
+            releaseGroupMbid: "release-group-handoff",
+            slot: "stereo",
+            title: "Handoff Album",
+            artist: "Queue Artist",
+            cover: "album-cover",
+            quality: "LOSSLESS",
+            path: path.join(tempDir, "download-provider-album-handoff"),
+            originalJobId: downloadJobId,
+        },
+        "provider-album-handoff",
+    );
+    queueModule.TaskQueueService.markProcessing(importJobId);
+
+    const historyDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+
+    assert.equal(historyDuringImport.total, 1);
+    assert.equal(historyDuringImport.items[0]?.id, downloadJobId);
+    assert.equal(historyDuringImport.items[0]?.stage, "download");
+    assert.equal(historyDuringImport.items[0]?.title, "Handoff Album");
+
+    queueModule.TaskQueueService.complete(importJobId);
+
+    const historyAfterImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+
+    assert.equal(historyAfterImport.total, 1);
+    assert.equal(historyAfterImport.items[0]?.id, importJobId);
+    assert.equal(historyAfterImport.items[0]?.stage, "import");
+    assert.equal(historyAfterImport.items[0]?.title, "Handoff Album");
+});
+
 test("terminal queue jobs ignore late progress, state, complete, and fail updates", () => {
     const jobId = queuePendingDownload("track", "99");
     queueModule.TaskQueueService.markProcessing(jobId);

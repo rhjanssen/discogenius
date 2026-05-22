@@ -315,6 +315,8 @@ test("status contract parsers validate queue and status overview payloads", () =
         updated_at: "2026-03-19 12:01:00",
         title: "Give Me The Future",
         artist: "Bastille",
+        trackStatus: null,
+        state: null,
         tracks: [
           { title: "Track One", trackNum: 1, status: "downloading" },
         ],
@@ -326,6 +328,8 @@ test("status contract parsers validate queue and status overview payloads", () =
     hasMore: false,
   });
   assert.equal(queue.items[0].tracks?.[0].status, "downloading");
+  assert.equal(queue.items[0].trackStatus, undefined);
+  assert.equal(queue.items[0].state, undefined);
 
   const overview = parseStatusOverviewContract({
     activity: {

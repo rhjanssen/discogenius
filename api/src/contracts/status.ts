@@ -226,8 +226,8 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
   const type = expectString(record.type, `${label}.type`);
   const status = expectString(record.status, `${label}.status`);
   const stage = record.stage === undefined ? undefined : expectString(record.stage, `${label}.stage`);
-  const trackStatus = record.trackStatus === undefined ? undefined : expectString(record.trackStatus, `${label}.trackStatus`);
-  const state = record.state === undefined ? undefined : expectString(record.state, `${label}.state`);
+  const trackStatus = expectOptionalString(record.trackStatus, `${label}.trackStatus`);
+  const state = expectOptionalString(record.state, `${label}.state`);
 
   return {
     id: expectNumber(record.id, `${label}.id`),
@@ -388,8 +388,8 @@ export function parseActivityListResponseContract(value: unknown): ActivityListR
 export function parseDownloadProgressContract(value: unknown): DownloadProgressContract {
   const record = expectRecord(value, "downloadProgress");
   const type = expectString(record.type, "downloadProgress.type");
-  const trackStatus = record.trackStatus === undefined ? undefined : expectString(record.trackStatus, "downloadProgress.trackStatus");
-  const state = record.state === undefined ? undefined : expectString(record.state, "downloadProgress.state");
+  const trackStatus = expectOptionalString(record.trackStatus, "downloadProgress.trackStatus");
+  const state = expectOptionalString(record.state, "downloadProgress.state");
 
   return {
     jobId: expectNumber(record.jobId, "downloadProgress.jobId"),

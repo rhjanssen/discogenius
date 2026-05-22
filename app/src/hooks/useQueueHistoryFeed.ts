@@ -20,6 +20,7 @@ export function useQueueHistoryFeed({ enabled = true }: UseQueueHistoryFeedOptio
         fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({ limit, offset, timeoutMs }),
         getItemId: (item) => item.id,
         refetchIntervalMs: 5_000,
+        refetchOnMount: "always",
         enabled,
     });
 
