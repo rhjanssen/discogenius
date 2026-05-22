@@ -256,6 +256,24 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     return buildAlbumNavPath(firstItem.album_id);
 }
 
+function getQueueItemSlotKey(item: QueueItem): string | null {
+    const slot = item.slot?.trim().toLowerCase();
+    if (slot) {
+        return slot;
+    }
+
+    if (item.type !== 'album') {
+        return null;
+    }
+
+    const quality = item.quality?.toUpperCase() ?? '';
+    if (quality.includes('ATMOS') || quality.includes('SPATIAL') || quality.includes('SURROUND')) {
+        return 'spatial';
+    }
+
+    return 'stereo';
+}
+
 function getQueueHistoryNavPath(item: QueueItem): string | null {
     if (item.type === 'video') {
         return buildVideoNavPath(item.tidalId);
@@ -710,11 +728,12 @@ const QueueTab = () => {
         filteredQueue.forEach((item, index) => {
             const isAlbum = item.type === 'album';
             const isVideo = item.type === 'video';
+            const albumSlotKey = isAlbum ? getQueueItemSlotKey(item) : null;
             const shouldGroupTrackAsAlbum = item.type === 'track'
                 && Boolean(item.album_id)
                 && (albumTrackCounts.get(item.album_id as string) ?? 0) > 1;
             const groupId = isAlbum
-                ? `album-${item.album_id ?? item.tidalId}`
+                ? `album-${item.album_id ?? item.tidalId}-${albumSlotKey ?? 'default'}`
                 : isVideo
                     ? `video-${item.tidalId}`
                     : shouldGroupTrackAsAlbum
@@ -1222,6 +1241,7 @@ const QueueTab = () => {
                                 const coverUrl = group.cover ? (isVideo ? getTidalImage(group.cover, 'video', 'small') : getAlbumCover(group.cover, 'small')) : null;
                                 const isDownloading = group.status === 'downloading';
                                 const isFailed = group.status === 'failed';
+                                const groupedTrackItems = group.items.filter((item) => item.type === 'track');
 
                                 const activeItem = group.items.find(i => i.status === 'downloading' || i.status === 'processing');
                                 const firstItem = group.items[0];
@@ -1233,8 +1253,7 @@ const QueueTab = () => {
                                 const activeStage = activeItem?.stage || firstItem?.stage;
                                 const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing');
                                 const isImportPending = !isDownloading && !isFailed && activeStage === 'import';
-                                const shouldRenderGroupedTrackRows = (group.items.length > 1)
-                                    || (group.items.length === 1 && group.items[0].type === 'track' && group.type === 'album');
+                                const shouldRenderGroupedTrackRows = groupedTrackItems.length > 0;
                                 const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                                 const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
                                 const isPendingReorderable = isPendingReorderableGroup(group);
@@ -1483,7 +1502,7 @@ const QueueTab = () => {
                                             </div>
                                         </div>
 
-                                        {shouldRenderGroupedTrackRows && group.items.map(item => {
+                                        {shouldRenderGroupedTrackRows && groupedTrackItems.map(item => {
                                             const itemProg = getProgress(item.id) ?? getEmbeddedQueueItemProgress(item);
                                             const matchedTrack = group.type === 'album' ? findProgressTrackState(item.title, prog?.tracks) : undefined;
                                             const albumTrackIndex = group.type === 'album'
@@ -1569,7 +1588,7 @@ const QueueTab = () => {
                                             );
                                         })}
 
-                                        {group.type === 'album' && group.items.length === 1 && prog && prog.tracks && prog.tracks.length > 0 && (
+                                        {group.type === 'album' && groupedTrackItems.length === 0 && prog && prog.tracks && prog.tracks.length > 0 && (
                                             <div>
                                                 {prog.tracks.map((t, idx) => {
                                                     const tracks = prog.tracks || [];

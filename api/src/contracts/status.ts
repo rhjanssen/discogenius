@@ -36,6 +36,7 @@ export interface QueueItemContract {
   type: DownloadContentTypeContract;
   queuePosition?: number;
   quality?: string | null;
+  slot?: string | null;
   stage?: QueueStageContract;
   tidalId: string | null;
   path: string | null;
@@ -235,6 +236,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     type: type as DownloadContentTypeContract,
     queuePosition: expectOptionalNumber(record.queuePosition, `${label}.queuePosition`),
     quality: expectNullableString(record.quality, `${label}.quality`),
+    slot: expectNullableString(record.slot, `${label}.slot`) ?? null,
     stage: stage as QueueStageContract | undefined,
     tidalId: expectNullableString(record.tidalId, `${label}.tidalId`) ?? null,
     path: expectNullableString(record.path, `${label}.path`) ?? null,

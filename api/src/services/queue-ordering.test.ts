@@ -222,8 +222,10 @@ test("download queue query surfaces pending, processing, and history items with 
     assert.equal(live.items[0]?.progress, 42);
     assert.equal(live.items[0]?.currentFileNum, 2);
     assert.equal(live.items[0]?.totalFiles, 5);
+    assert.equal(live.items[0]?.slot, "stereo");
     assert.equal(live.items[1]?.queuePosition, 1);
     assert.equal(live.items[1]?.quality, "DOLBY_ATMOS");
+    assert.equal(live.items[1]?.slot, "spatial");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({});
     assert.deepEqual(details.map((item) => item.id), [processingAlbumId, pendingAlbumId]);

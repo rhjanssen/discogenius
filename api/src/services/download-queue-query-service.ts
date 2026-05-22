@@ -479,6 +479,9 @@ export class DownloadQueueQueryService {
       ?? (job.payload?.resolved as Record<string, unknown> | undefined)?.albumTitle,
     );
     let quality = getOptionalString(job.payload?.quality);
+    const slot = getOptionalString(job.payload?.slot)
+      ?? getOptionalString(job.payload?.librarySlot)
+      ?? null;
 
     if (tidalId && (!title || !artist || cover === null || albumId === null || albumTitle === null || quality === null)) {
       try {
@@ -610,6 +613,7 @@ export class DownloadQueueQueryService {
         ? downloadState.tracks as QueueItemContract["tracks"]
         : undefined,
       queuePosition,
+      slot,
     };
   }
 }
