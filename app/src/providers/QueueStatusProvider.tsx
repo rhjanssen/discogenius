@@ -204,8 +204,9 @@ function useQueueStatusContextValue(): QueueStatusContextType {
 
     if (shouldRefreshQueueStatusForGlobalEvent(lastGlobalEvent)) {
       scheduleStatusRefresh(0);
+      invalidateQueueQueries();
     }
-  }, [lastGlobalEvent, scheduleStatusRefresh]);
+  }, [invalidateQueueQueries, lastGlobalEvent, scheduleStatusRefresh]);
 
   useEffect(() => {
     let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;

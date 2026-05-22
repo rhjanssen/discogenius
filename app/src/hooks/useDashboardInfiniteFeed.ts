@@ -18,6 +18,7 @@ type UseDashboardInfiniteFeedOptions<TItem> = {
     getItemId: (item: TItem) => string | number;
     enabled?: boolean;
     refetchIntervalMs?: number | false;
+    refetchOnMount?: boolean | "always";
 };
 
 const DASHBOARD_FEED_GLOBAL_EVENTS = [
@@ -41,6 +42,7 @@ export function useDashboardInfiniteFeed<TItem>({
     getItemId,
     enabled = true,
     refetchIntervalMs = false,
+    refetchOnMount,
 }: UseDashboardInfiniteFeedOptions<TItem>) {
     useDebouncedQueryInvalidation({
         queryKeys: [queryKey],
@@ -64,6 +66,7 @@ export function useDashboardInfiniteFeed<TItem>({
                 : undefined
         ),
         staleTime: 5_000,
+        refetchOnMount,
         refetchOnWindowFocus: false,
         refetchInterval: refetchIntervalMs,
         retry: 1,

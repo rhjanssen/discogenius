@@ -20,6 +20,7 @@ export function useQueue({ enabled = true }: UseQueueOptions = {}) {
     fetchPage: ({ limit, offset }) => api.getQueue({ limit, offset }),
     getItemId: (item) => item.id,
     refetchIntervalMs: 2_000,
+    refetchOnMount: "always",
     enabled,
   });
 
