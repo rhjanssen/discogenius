@@ -272,7 +272,7 @@ export class RefreshPlaylistService {
             }
         }
 
-        const mediaExists = db.prepare("SELECT 1 FROM media WHERE id = ? LIMIT 1");
+        const mediaExists = db.prepare("SELECT 1 FROM ProviderMedia WHERE id = ? LIMIT 1");
         const missingLocalTrackIds = new Set<number>();
 
         for (const track of tracks) {

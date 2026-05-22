@@ -103,7 +103,7 @@ export class RefreshAlbumService {
             return null;
         }
 
-        const row = db.prepare("SELECT artist_mbid FROM mb_release_groups WHERE mbid = ?")
+        const row = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
             .get(releaseGroupMbid) as { artist_mbid?: string | null } | undefined;
         return row?.artist_mbid ? String(row.artist_mbid) : null;
     }
@@ -128,10 +128,10 @@ export class RefreshAlbumService {
         }
 
         const existing = db.prepare(`
-            SELECT artists.id, artists.mbid, albums.mb_release_group_id
-            FROM albums
-            JOIN artists ON artists.id = albums.artist_id
-            WHERE albums.id = ?
+            SELECT Artists.id, Artists.mbid, ProviderAlbums.mb_release_group_id
+            FROM ProviderAlbums
+            JOIN Artists ON Artists.id = ProviderAlbums.artist_id
+            WHERE ProviderAlbums.id = ?
             LIMIT 1
         `).get(albumId) as { id?: string | number | null; mbid?: string | null; mb_release_group_id?: string | null } | undefined;
         if (existing?.mbid) {
@@ -145,7 +145,7 @@ export class RefreshAlbumService {
 
         const providerItem = db.prepare(`
             SELECT artist_mbid, release_group_mbid
-            FROM provider_items
+            FROM ProviderItems
             WHERE provider = ?
               AND entity_type = 'album'
               AND provider_id = ?
@@ -166,7 +166,7 @@ export class RefreshAlbumService {
 
         const cachedProviderArtist = db.prepare(`
             SELECT artist_mbid
-            FROM provider_items
+            FROM ProviderItems
             WHERE provider = ?
               AND entity_type = 'artist'
               AND provider_id = ?
@@ -204,8 +204,8 @@ export class RefreshAlbumService {
                 a.review_text,
                 a.credits,
                 COUNT(m.id) as track_count
-            FROM albums a
-            LEFT JOIN media m ON a.id = m.album_id AND m.type != 'Music Video'
+            FROM ProviderAlbums a
+            LEFT JOIN ProviderMedia m ON a.id = m.album_id AND m.type != 'Music Video'
             WHERE a.id = ?
             GROUP BY a.id
         `).get(albumId) as {
@@ -243,7 +243,7 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanBasic for ${albumId}`);
 
         const monitoringConfig = getConfigSection("monitoring");
-        const existingRow = db.prepare("SELECT id, mbid, mb_release_group_id, last_scanned FROM albums WHERE id = ?").get(albumId) as any;
+        const existingRow = db.prepare("SELECT id, mbid, mb_release_group_id, last_scanned FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
         const shouldRefreshAlbum =
             !existingRow ||
             options.forceUpdate === true ||
@@ -266,15 +266,15 @@ export class RefreshAlbumService {
             throw new Error(`Provider album ${albumId} could not be linked to a MusicBrainz artist. Refresh/curate the artist before hydrating provider tracks.`);
         }
 
-        const existing = db.prepare("SELECT id, monitor, monitor_lock FROM albums WHERE id = ?").get(albumId) as any;
+        const existing = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
         const existingModuleRow = artistId
-            ? (db.prepare("SELECT module FROM album_artists WHERE album_id = ? AND artist_id = ?").get(albumId, artistId) as any)
+            ? (db.prepare("SELECT module FROM ProviderAlbumArtists WHERE album_id = ? AND artist_id = ?").get(albumId, artistId) as any)
             : null;
         const module = moduleOverride ?? existingModuleRow?.module ?? null;
 
         if (!existing) {
             db.prepare(`
-                INSERT INTO albums (
+                INSERT INTO ProviderAlbums (
                     id, artist_id, title, version, release_date, type, explicit, quality,
                     cover, vibrant_color, video_cover,
                     num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
@@ -306,7 +306,7 @@ export class RefreshAlbumService {
         } else {
             const updateSql = forceUpdate
                 ? `
-                UPDATE albums SET
+                UPDATE ProviderAlbums SET
                     artist_id=?,
                     title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
                     cover=?, vibrant_color=?, video_cover=?,
@@ -315,7 +315,7 @@ export class RefreshAlbumService {
                 WHERE id=?
             `
                 : `
-                UPDATE albums SET
+                UPDATE ProviderAlbums SET
                     artist_id=COALESCE(?, artist_id),
                     title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
                     cover=?, vibrant_color=COALESCE(?, vibrant_color), video_cover=COALESCE(?, video_cover),
@@ -382,7 +382,7 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanShallow for ${albumId}`);
 
         const monitoringConfig = getConfigSection("monitoring");
-        const existing = db.prepare(`SELECT review_text, last_scanned FROM albums WHERE id = ?`).get(albumId) as any;
+        const existing = db.prepare(`SELECT review_text, last_scanned FROM ProviderAlbums WHERE id = ?`).get(albumId) as any;
         const shouldRefreshAlbumMeta =
             options.forceUpdate === true ||
             !existing ||
@@ -415,13 +415,13 @@ export class RefreshAlbumService {
 
                 if (reviewText !== null && reviewText !== undefined) {
                     db.prepare(`
-                        UPDATE albums
+                        UPDATE ProviderAlbums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
                     `).run(reviewText ?? "", provider.id, new Date().toISOString(), albumId);
                 } else if (options.forceUpdate === true || existing?.review_text == null) {
                     db.prepare(`
-                        UPDATE albums
+                        UPDATE ProviderAlbums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
                     `).run("", provider.id, new Date().toISOString(), albumId);
@@ -451,7 +451,7 @@ export class RefreshAlbumService {
                 ? await provider.getAlbumCredits(albumId)
                 : [];
             if (credits && credits.length > 0) {
-                db.prepare("UPDATE albums SET credits = ? WHERE id = ?")
+                db.prepare("UPDATE ProviderAlbums SET credits = ? WHERE id = ?")
                     .run(JSON.stringify(credits), albumId);
             }
         } catch (error) {
@@ -464,7 +464,7 @@ export class RefreshAlbumService {
                 ? await provider.getAlbumTrackCredits(albumId)
                 : new Map<string, any[]>();
             if (trackCreditsMap.size > 0) {
-                const updateTrackCredits = db.prepare("UPDATE media SET credits = ? WHERE id = ? AND album_id = ?");
+                const updateTrackCredits = db.prepare("UPDATE ProviderMedia SET credits = ? WHERE id = ? AND album_id = ?");
                 db.transaction(() => {
                     for (const [trackId, credits] of trackCreditsMap) {
                         updateTrackCredits.run(JSON.stringify(credits), trackId, albumId);
@@ -475,7 +475,7 @@ export class RefreshAlbumService {
             console.warn(`[RefreshAlbumService] Failed to fetch per-track credits for album ${albumId}:`, error);
         }
 
-        db.prepare("UPDATE albums SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(albumId);
+        db.prepare("UPDATE ProviderAlbums SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(albumId);
 
         console.log(`[RefreshAlbumService] scanDeep complete for ${albumId}`);
     }
@@ -488,14 +488,14 @@ export class RefreshAlbumService {
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
-        const album = db.prepare("SELECT id, artist_id, type, monitor FROM albums WHERE id = ?").get(albumId) as any;
+        const album = db.prepare("SELECT id, artist_id, type, monitor FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
         if (!album) {
             console.warn(`[RefreshAlbumService] Album ${albumId} not found, skipping tracks`);
             return;
         }
 
         const trackInsert = db.prepare(`
-            INSERT INTO media (
+            INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date, type, explicit, quality,
                 track_number, volume_number, duration, popularity,
                 bpm, key, key_scale, peak, replay_gain,
@@ -504,7 +504,7 @@ export class RefreshAlbumService {
         `);
 
         const trackUpdate = db.prepare(`
-            UPDATE media SET
+            UPDATE ProviderMedia SET
                 artist_id=?,
                 title=?, version=?, release_date=?, explicit=?, quality=?,
                 track_number=?, volume_number=?, duration=?, popularity=?,
@@ -513,7 +513,7 @@ export class RefreshAlbumService {
             WHERE id=? AND album_id=?
         `);
 
-        const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM media WHERE id = ? AND album_id = ?");
+        const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderMedia WHERE id = ? AND album_id = ?");
 
         const cooperateTrackStore = createCooperativeBatcher(25);
         const trackBatch: any[] = [];
@@ -610,7 +610,7 @@ export class RefreshAlbumService {
         const primaryArtistId = matchedArtistMbid
             || (isMusicBrainzMbid(scanningArtistId) ? scanningArtistId : primaryProviderArtistId);
 
-        const artistExists = db.prepare("SELECT id FROM artists WHERE id = ?").get(primaryArtistId);
+        const artistExists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(primaryArtistId);
         if (!artistExists) {
             if (!isMusicBrainzMbid(primaryArtistId)) {
                 throw new Error(`Provider album ${album.tidal_id} did not resolve to a canonical MusicBrainz artist.`);
@@ -618,13 +618,13 @@ export class RefreshAlbumService {
             await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
-        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM albums WHERE id = ?").get(album.tidal_id) as any;
+        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(album.tidal_id) as any;
         const shouldMonitor = exists?.monitor || 0;
         const moduleFromPage = albumModuleMap.get(album.tidal_id) || album._module || null;
 
         if (!exists) {
             db.prepare(`
-                INSERT INTO albums (
+                INSERT INTO ProviderAlbums (
                     id, artist_id, title, version, release_date, type, explicit, quality,
                     cover, vibrant_color, video_cover,
                     num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
@@ -656,7 +656,7 @@ export class RefreshAlbumService {
         } else {
             const updateSql = forceUpdate
                 ? `
-                UPDATE albums SET
+                UPDATE ProviderAlbums SET
                     artist_id=?,
                     title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
                     cover=?, vibrant_color=?, video_cover=?,
@@ -665,7 +665,7 @@ export class RefreshAlbumService {
                 WHERE id=?
             `
                 : `
-                UPDATE albums SET
+                UPDATE ProviderAlbums SET
                     artist_id=COALESCE(?, artist_id),
                     title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
                     cover=?, vibrant_color=COALESCE(?, vibrant_color), video_cover=COALESCE(?, video_cover),
@@ -701,25 +701,25 @@ export class RefreshAlbumService {
         const albumGroup = album._group_type || album._group || "ALBUMS";
 
         const upsertScannedRelation = db.prepare(`
-            INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
+            INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(artist_id, album_id) DO UPDATE SET
-                artist_name = COALESCE(excluded.artist_name, album_artists.artist_name),
-                ord = COALESCE(excluded.ord, album_artists.ord),
+                artist_name = COALESCE(excluded.artist_name, ProviderAlbumArtists.artist_name),
+                ord = COALESCE(excluded.ord, ProviderAlbumArtists.ord),
                 type = excluded.type,
                 group_type = excluded.group_type,
                 module = excluded.module
         `);
 
         const upsertRelatedRelation = db.prepare(`
-            INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
+            INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(artist_id, album_id) DO UPDATE SET
-                artist_name = COALESCE(excluded.artist_name, album_artists.artist_name),
-                ord = COALESCE(excluded.ord, album_artists.ord),
+                artist_name = COALESCE(excluded.artist_name, ProviderAlbumArtists.artist_name),
+                ord = COALESCE(excluded.ord, ProviderAlbumArtists.ord),
                 type = excluded.type,
-                group_type = COALESCE(album_artists.group_type, excluded.group_type),
-                module = COALESCE(album_artists.module, excluded.module)
+                group_type = COALESCE(ProviderAlbumArtists.group_type, excluded.group_type),
+                module = COALESCE(ProviderAlbumArtists.module, excluded.module)
         `);
 
         const participants = new Map<string, { name: string | null; ord: number | null }>();
@@ -768,7 +768,7 @@ export class RefreshAlbumService {
 
         if (matchedReleaseGroup) {
             db.prepare(`
-                UPDATE albums SET
+                UPDATE ProviderAlbums SET
                     mbid = COALESCE(?, mbid),
                     mb_release_group_id = ?,
                     mb_primary = COALESCE(?, mb_primary),
@@ -792,7 +792,7 @@ export class RefreshAlbumService {
         }
 
         db.prepare(`
-            INSERT INTO provider_items (
+            INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality,
                 upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
                 match_status, match_confidence, match_method, match_evidence, data, updated_at
@@ -832,12 +832,12 @@ export class RefreshAlbumService {
             releaseGroupMatch?.confidence ?? null,
             releaseGroupMatch?.method || null,
             releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
-            JSON.stringify(album),
+            null,
         );
 
         if (options.resolveMusicBrainz === false) {
             db.prepare(`
-                UPDATE albums
+                UPDATE ProviderAlbums
                 SET musicbrainz_status = COALESCE(musicbrainz_status, 'pending')
                 WHERE id = ?
                   AND mbid IS NULL
@@ -866,10 +866,10 @@ export class RefreshAlbumService {
         const mediaId = track?.tidal_id?.toString?.() ?? String(track?.tidal_id ?? "");
         if (!mediaId) return;
 
-        db.prepare("DELETE FROM media_artists WHERE media_id = ?").run(mediaId);
+        db.prepare("DELETE FROM ProviderMediaArtists WHERE media_id = ?").run(mediaId);
 
         const insertMediaArtist = db.prepare(`
-            INSERT INTO media_artists (media_id, artist_id, type) VALUES (?, ?, ?)
+            INSERT INTO ProviderMediaArtists (media_id, artist_id, type) VALUES (?, ?, ?)
         `);
 
         insertMediaArtist.run(mediaId, canonicalArtistId, "MAIN");

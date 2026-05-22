@@ -6,10 +6,6 @@ export type TidalImageSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge' | nu
 // Invalid sizes return HTTP 403 Forbidden
 const VALID_ARTIST_SIZES = [160, 320, 480, 750]; // max 750x750
 const VALID_ALBUM_SIZES = [80, 160, 320, 640, 1280, 3000]; // 3000 = "origin" resolution
-const VALID_SQUARE_SIZES = [80, 160, 320, 480, 640, 750, 1080, 1280]; // union for backwards compat
-
-// Valid video aspect ratio sizes (3:2 ratio) for music video thumbnails/images
-const VALID_VIDEO_SIZES: [number, number][] = [[160, 107], [480, 320], [750, 500], [1080, 720]];
 
 // Valid video cover sizes (square, MP4 format) - for animated album covers
 // These are looping MP4 videos used as album art on some releases

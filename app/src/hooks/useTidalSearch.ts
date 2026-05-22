@@ -76,9 +76,6 @@ export const useTidalSearch = () => {
     try {
       
       let totalArtists = 0;
-      let addedCount = 0;
-      let skippedCount = 0;
-      let albumsCount = 0;
 
       return new Promise((resolve, reject) => {
         const eventSource = api.createImportFollowedStream(
@@ -106,7 +103,6 @@ export const useTidalSearch = () => {
                 break;
                 
               case 'artist-added':
-                addedCount = data.added;
                 toast({
                   title: "Artist Added",
                   description: `${data.name} (${data.progress}/${data.total})`,
@@ -114,11 +110,9 @@ export const useTidalSearch = () => {
                 break;
                 
               case 'artist-skipped':
-                skippedCount = data.skipped;
                 break;
                 
               case 'albums-added':
-                albumsCount = data.total;
                 toast({
                   title: "Albums Synced",
                   description: `${data.count} albums added for ${data.artist}`,

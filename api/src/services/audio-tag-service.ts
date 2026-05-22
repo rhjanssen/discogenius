@@ -480,7 +480,7 @@ function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, str
 
 export class AudioTagService {
   private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
-    const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+    const artist = db.prepare("SELECT id, name, mbid, path FROM Artists WHERE id = ?").get(artistId) as {
       id: number | string;
       name: string | null;
       mbid: string | null;
@@ -526,7 +526,7 @@ export class AudioTagService {
 
     const row = db.prepare(`
       SELECT COUNT(*) AS count
-      FROM library_files lf
+      FROM TrackFiles lf
       WHERE ${where.join(" AND ")}
     `).get(...params) as { count?: number } | undefined;
 
@@ -590,10 +590,10 @@ export class AudioTagService {
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
         artist.mbid AS artist_mbid
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
-      LEFT JOIN albums a ON a.id = lf.album_id
-      JOIN artists artist ON artist.id = lf.artist_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
+      LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
+      JOIN Artists artist ON artist.id = lf.artist_id
       WHERE ${where.join(" AND ")}
       ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
@@ -654,10 +654,10 @@ export class AudioTagService {
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
         artist.mbid AS artist_mbid
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
-      LEFT JOIN albums a ON a.id = lf.album_id
-      JOIN artists artist ON artist.id = lf.artist_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
+      LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
+      JOIN Artists artist ON artist.id = lf.artist_id
       WHERE lf.id IN (${placeholders})
       ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
     `).all(...ids) as RetagTrackRow[];
@@ -666,8 +666,8 @@ export class AudioTagService {
   private static getTrackArtistNames(mediaId: number, fallbackArtistName: string): string[] {
     const rows = db.prepare(`
       SELECT DISTINCT artist.name
-      FROM media_artists ma
-      JOIN artists artist ON artist.id = ma.artist_id
+      FROM ProviderMediaArtists ma
+      JOIN Artists artist ON artist.id = ma.artist_id
       WHERE ma.media_id = ?
       ORDER BY CASE ma.type WHEN 'MAIN' THEN 0 WHEN 'ARTIST' THEN 0 WHEN 'FEATURED' THEN 1 ELSE 2 END, artist.name
     `).all(mediaId) as Array<{ name?: string }>;
@@ -683,8 +683,8 @@ export class AudioTagService {
 
     const rows = db.prepare(`
       SELECT DISTINCT artist.name
-      FROM album_artists aa
-      JOIN artists artist ON artist.id = aa.artist_id
+      FROM ProviderAlbumArtists aa
+      JOIN Artists artist ON artist.id = aa.artist_id
       WHERE aa.album_id = ?
       ORDER BY COALESCE(aa.ord, 9999), artist.name
     `).all(albumId) as Array<{ name?: string }>;
@@ -700,7 +700,7 @@ export class AudioTagService {
 
     const row = db.prepare(`
       SELECT COUNT(*) AS count
-      FROM media
+      FROM ProviderMedia
       WHERE album_id = ?
         AND type != 'Music Video'
         AND COALESCE(volume_number, 1) = ?
@@ -731,7 +731,7 @@ export class AudioTagService {
       if (bestReleaseMatch) {
         const primaryArtistCredit = bestReleaseMatch.release.artistCredits[0];
         db.prepare(`
-          UPDATE albums
+          UPDATE ProviderAlbums
           SET mbid = COALESCE(mbid, ?),
               mb_release_group_id = COALESCE(mb_release_group_id, ?)
           WHERE id = ?
@@ -739,7 +739,7 @@ export class AudioTagService {
 
         if (primaryArtistCredit?.id) {
           db.prepare(`
-            UPDATE artists
+            UPDATE Artists
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
@@ -773,14 +773,14 @@ export class AudioTagService {
       if (bestIsrcMatch) {
         const primaryArtistCredit = bestIsrcMatch.recording.artistCredits?.[0];
         db.prepare(`
-          UPDATE media
+          UPDATE ProviderMedia
           SET mbid = COALESCE(mbid, ?)
           WHERE id = ?
         `).run(bestIsrcMatch.recording.id, nextRow.media_id);
 
         if (primaryArtistCredit?.id) {
           db.prepare(`
-            UPDATE artists
+            UPDATE Artists
             SET mbid = COALESCE(mbid, ?)
             WHERE id = ?
           `).run(primaryArtistCredit.id, nextRow.artist_id);
@@ -819,7 +819,7 @@ export class AudioTagService {
         fingerprintDuration = fingerprintResult.duration || fingerprintDuration;
 
         db.prepare(`
-          UPDATE library_files
+          UPDATE TrackFiles
           SET fingerprint = ?, fingerprint_duration = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(fingerprint, fingerprintDuration, nextRow.id);
@@ -869,7 +869,7 @@ export class AudioTagService {
     const primaryArtistCredit = bestFingerprintMatch.recording.artistCredits?.[0];
 
     db.prepare(`
-      UPDATE media
+      UPDATE ProviderMedia
       SET mbid = COALESCE(mbid, ?),
           isrc = COALESCE(isrc, ?),
           acoustid_fingerprint = COALESCE(acoustid_fingerprint, ?),
@@ -882,7 +882,7 @@ export class AudioTagService {
 
     if (primaryArtistCredit?.id) {
       db.prepare(`
-        UPDATE artists
+        UPDATE Artists
         SET mbid = COALESCE(mbid, ?)
         WHERE id = ?
       `).run(primaryArtistCredit.id, nextRow.artist_id);
@@ -1295,7 +1295,7 @@ export class AudioTagService {
 
     const rowsById = new Map(this.getTrackRowsByIds(ids).map((row) => [row.id, row]));
     const updateFileRecord = db.prepare(`
-      UPDATE library_files
+      UPDATE TrackFiles
       SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
@@ -1384,7 +1384,7 @@ export class AudioTagService {
     const placeholders = uniqueMediaIds.map(() => "?").join(",");
     const libraryFileIds = db.prepare(`
       SELECT id
-      FROM library_files
+      FROM TrackFiles
       WHERE file_type = 'track'
         AND media_id IN (${placeholders})
     `).all(...uniqueMediaIds) as Array<{ id: number }>;

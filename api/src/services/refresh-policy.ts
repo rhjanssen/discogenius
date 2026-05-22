@@ -29,7 +29,7 @@ function isNewerThanHours(timestamp: number, hours: number): boolean {
 export function getLatestArtistReleaseTimestamp(artistId: string | number): number | null {
   const row = db.prepare(`
     SELECT MAX(release_date) AS latest_release
-    FROM albums
+    FROM ProviderAlbums
     WHERE artist_id = ?
   `).get(String(artistId)) as { latest_release?: string | null } | undefined;
 
@@ -95,8 +95,8 @@ export function shouldRefreshTrackSet(options: {
       SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) AS missing_scans,
       MIN(last_scanned) AS oldest_scan,
       MAX(a.release_date) AS album_release_date
-    FROM media m
-    LEFT JOIN albums a ON a.id = m.album_id
+    FROM ProviderMedia m
+    LEFT JOIN ProviderAlbums a ON a.id = m.album_id
     WHERE m.album_id = ? AND m.type != 'Music Video'
   `).get(String(options.albumId)) as {
     total_tracks?: number;
@@ -126,7 +126,7 @@ export function shouldRefreshVideos(options: {
       COUNT(*) AS total_videos,
       SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) AS missing_scans,
       MIN(last_scanned) AS oldest_scan
-    FROM media
+    FROM ProviderMedia
     WHERE artist_id = ? AND type = 'Music Video'
   `).get(String(options.artistId)) as {
     total_videos?: number;

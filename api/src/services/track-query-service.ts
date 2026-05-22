@@ -6,7 +6,7 @@ import { spatialAudioQualitySql } from "../utils/spatial-audio.js";
 const trackDownloadedPredicate = `
   EXISTS (
     SELECT 1
-    FROM library_files lf
+    FROM TrackFiles lf
     WHERE lf.media_id = media.id
       AND lf.file_type = 'track'
   )
@@ -157,9 +157,9 @@ function getTrackSelectSql(whereClause: string): string {
       albums.title as album_title,
       albums.cover as album_cover,
       artists.name as artist_name
-    FROM media
-    LEFT JOIN albums ON media.album_id = albums.id
-    LEFT JOIN artists ON media.artist_id = artists.id
+    FROM ProviderMedia media
+    LEFT JOIN ProviderAlbums albums ON media.album_id = albums.id
+    LEFT JOIN Artists artists ON media.artist_id = artists.id
     ${whereClause}
   `;
 }
@@ -177,7 +177,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
              canonical_track_mbid, canonical_recording_mbid,
              provider, provider_entity_type, provider_id, library_slot,
              quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
-      FROM library_files
+      FROM TrackFiles
       WHERE media_id IN (${placeholders})
         AND file_type IN ('track', 'lyrics')
       ORDER BY file_type ASC, id ASC
@@ -258,8 +258,8 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
 
   const totalResult = db.prepare(`
     SELECT COUNT(*) as total
-    FROM media
-    LEFT JOIN artists ON media.artist_id = artists.id
+    FROM ProviderMedia media
+    LEFT JOIN Artists artists ON media.artist_id = artists.id
     ${whereClause}
   `).get(...countParams) as { total: number };
 
@@ -315,7 +315,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       library_slot,
       created_at,
       modified_at
-    FROM library_files
+    FROM TrackFiles
     WHERE media_id = ?
     ORDER BY
       CASE file_type

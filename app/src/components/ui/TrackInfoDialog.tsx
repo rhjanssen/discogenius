@@ -23,7 +23,7 @@ export interface TrackFileInfo {
     relative_path?: string;
     filename?: string;
     extension?: string;
-    quality?: string;
+    quality?: string | null;
     library_root?: string;
     file_size?: number;
     bitrate?: number;
@@ -41,7 +41,7 @@ interface TrackInfoDialogProps {
     albumTitle?: string;
     trackNumber?: number;
     duration?: number;
-    audioQuality?: string;
+    audioQuality?: string | null;
     files?: TrackFileInfo[];
     dialogTitle?: string;
     detailsTitle?: string;
@@ -280,7 +280,7 @@ function renderBasicFileRows(
             {file.quality && (
                 <div className={styles.row}>
                     <Text className={styles.label}>Quality</Text>
-                    <QualityBadge quality={file.quality} size="small" />
+                    <QualityBadge quality={file.quality as string} size="small" />
                 </div>
             )}
         </>
@@ -423,7 +423,7 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
                             {audioQuality && (
                                 <div className={styles.row}>
                                     <Text className={styles.label}>Quality</Text>
-                                    <QualityBadge quality={audioQuality} size="small" />
+                                    <QualityBadge quality={audioQuality as string} size="small" />
                                 </div>
                             )}
                         </div>

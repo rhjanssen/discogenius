@@ -293,7 +293,7 @@ export class ImportService {
         const namingConfig = getNamingConfig();
 
         const upsertArtist = db.prepare(`
-            INSERT INTO artists (id, name, picture, popularity, monitor, path)
+            INSERT INTO Artists (id, name, picture, popularity, monitor, path)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = COALESCE(excluded.name, name),
@@ -307,7 +307,7 @@ export class ImportService {
         `);
 
         const upsertVideo = db.prepare(`
-            INSERT INTO media (
+            INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date,
                 type, explicit, quality, duration, popularity, cover, monitor
             ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, ?)
@@ -329,7 +329,7 @@ export class ImportService {
         const monitorValue = monitorImported ? 1 : 0;
 
         const insertLibraryFile = db.prepare(`
-            INSERT INTO library_files (
+            INSERT INTO TrackFiles (
                 artist_id, album_id, media_id,
                 file_path, relative_path, library_root,
                 filename, extension, file_size, duration,
@@ -376,13 +376,13 @@ export class ImportService {
         `);
         const findExistingMediaLibraryFile = db.prepare(`
             SELECT id
-            FROM library_files
+            FROM TrackFiles
             WHERE media_id = ? AND file_type = ?
             ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
             LIMIT 1
         `);
         const updateExistingLibraryFile = db.prepare(`
-            UPDATE library_files
+            UPDATE TrackFiles
             SET artist_id = @artistId,
                 album_id = @albumId,
                 media_id = @mediaId,
@@ -411,7 +411,7 @@ export class ImportService {
             WHERE id = @id
         `);
         const deleteDuplicateMediaLibraryFiles = db.prepare(`
-            DELETE FROM library_files
+            DELETE FROM TrackFiles
             WHERE media_id = ? AND file_type = ? AND id != ?
         `);
         const upsertImportedLibraryFile = (params: Record<string, unknown>) => {
@@ -488,7 +488,7 @@ export class ImportService {
                     console.error(`Failed to upsert artist ${artistId}`, e);
                 }
 
-                const artistRow = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+                const artistRow = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
                 const artistFolder = resolveArtistFolderFromRecord({
                     name: artistRow?.name || artistName,
                     mbid: artistRow?.mbid || null,
@@ -579,7 +579,7 @@ export class ImportService {
                     }
 
                     db.prepare(`
-                        UPDATE media
+                        UPDATE ProviderMedia
                         SET monitor = CASE WHEN monitor_lock = 0 THEN 1 ELSE monitor END,
                             monitored_at = CASE WHEN monitor_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                         WHERE id = ?
@@ -618,7 +618,7 @@ export class ImportService {
 
             const albumRow = db.prepare(`
                 SELECT id, artist_id, title, version, release_date, num_volumes, explicit
-                FROM albums
+                FROM ProviderAlbums
                 WHERE id = ?
             `).get(albumId) as any;
 
@@ -644,7 +644,7 @@ export class ImportService {
                 console.error(`Failed to upsert artist ${artistId}`, e);
             }
 
-            const artistRow = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+            const artistRow = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
             const artistFolder = resolveArtistFolderFromRecord({
                 name: artistRow?.name || artistName,
                 mbid: artistRow?.mbid || null,
@@ -652,31 +652,31 @@ export class ImportService {
             });
 
             db.prepare(`
-                UPDATE artists
+                UPDATE Artists
                 SET monitor = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE id = ?
             `).run(monitorValue, monitorValue, artistId);
             db.prepare(`
-                UPDATE albums
+                UPDATE ProviderAlbums
                 SET monitor = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE id = ? AND monitor_lock = 0
             `).run(monitorValue, monitorValue, albumId);
             db.prepare(`
-                UPDATE media
+                UPDATE ProviderMedia
                 SET monitor = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE album_id = ? AND monitor_lock = 0
             `).run(monitorValue, monitorValue, albumId);
             db.prepare(`
-                INSERT OR IGNORE INTO album_artists (album_id, artist_id, type, group_type, module)
+                INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
                 VALUES (?, ?, 'MAIN', 'ALBUMS', NULL)
             `).run(albumId, artistId);
 
             const trackRows = db.prepare(`
                 SELECT id, title, track_number, volume_number
-                FROM media
+                FROM ProviderMedia
                 WHERE album_id = ? AND type != 'Music Video'
             `).all(albumId) as any[];
 
@@ -769,7 +769,7 @@ export class ImportService {
 
                     if (matchedTrack?.id) {
                         db.prepare(`
-                            UPDATE media
+                            UPDATE ProviderMedia
                             SET monitor = CASE WHEN monitor_lock = 0 THEN 1 ELSE monitor END,
                                 monitored_at = CASE WHEN monitor_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                             WHERE id = ?

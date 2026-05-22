@@ -325,7 +325,7 @@ const TrackList = <T extends TrackListItem>({
           open={Boolean(infoTrack)}
           onClose={() => setInfoTrack(null)}
           trackTitle={getDisplayTitle(infoTrack)}
-          artistName={infoTrack.artist_name || contextArtistName}
+          artistName={infoTrack.artist_name || contextArtistName || undefined}
           albumTitle={getAlbumTitle(infoTrack, contextAlbumTitle) || undefined}
           trackNumber={infoTrack.track_number || undefined}
           duration={infoTrack.duration}

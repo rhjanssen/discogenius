@@ -32,8 +32,7 @@ export interface MediaCardProps {
     quality?: string | null;
     /** Is this item monitored? */
     monitored?: boolean;
-    /** Is monitoring state loading? */
-    monitorLoading?: boolean;
+
     /** Called when monitor indicator is clicked */
     onMonitorToggle?: (e: React.MouseEvent) => void;
     /** Use mini variant (less visual weight) */
@@ -64,7 +63,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     explicit,
     quality,
     monitored,
-    monitorLoading,
+
     onMonitorToggle,
     mini,
     placeholder,

@@ -22,7 +22,7 @@ type AlbumSlotSelection = {
 
 export class AlbumCommandService {
     private static releaseGroupExists(releaseGroupMbid: string): { mbid: string; artist_mbid: string } | null {
-        return db.prepare("SELECT mbid, artist_mbid FROM mb_release_groups WHERE mbid = ?")
+        return db.prepare("SELECT mbid, artist_mbid FROM Albums WHERE mbid = ?")
             .get(releaseGroupMbid) as { mbid: string; artist_mbid: string } | null;
     }
 
@@ -36,7 +36,7 @@ export class AlbumCommandService {
         const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
         const wantedInt = wanted ? 1 : 0;
         const upsert = db.prepare(`
-            INSERT INTO release_group_slots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
+            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
               artist_mbid = excluded.artist_mbid,
@@ -72,10 +72,10 @@ export class AlbumCommandService {
               rgs.provider_data,
               rg.title,
               a.name AS artist_name
-            FROM release_group_slots
+            FROM ReleaseGroupSlots
             rgs
-            JOIN mb_release_groups rg ON rg.mbid = rgs.release_group_mbid
-            LEFT JOIN artists a ON a.mbid = rg.artist_mbid
+            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
+            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
             WHERE rgs.release_group_mbid = ?
               AND rgs.wanted = 1
               AND rgs.selected_provider IS NOT NULL
@@ -127,14 +127,14 @@ export class AlbumCommandService {
             return { success: false, message: 'Track missing album info', status: 404 };
         }
 
-        const trackInDb = db.prepare("SELECT id FROM media WHERE id = ?").get(trackId) as any;
+        const trackInDb = db.prepare("SELECT id FROM ProviderMedia WHERE id = ?").get(trackId) as any;
         if (!trackInDb) {
             TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
             return { success: true, trackId, albumId, message: 'Track not yet in library; album scan queued', status: 202 };
         }
 
         const result = db.prepare(`
-      UPDATE media
+      UPDATE ProviderMedia
       SET monitor = 1,
           monitor_lock = 1,
           monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
@@ -150,9 +150,9 @@ export class AlbumCommandService {
 
         const track = db.prepare(`
       SELECT m.id, m.title, m.quality, m.album_id, ar.name as artist_name, a.cover as album_cover
-      FROM media m
-      LEFT JOIN artists ar ON ar.id = m.artist_id
-      LEFT JOIN albums a ON a.id = m.album_id
+      FROM ProviderMedia m
+      LEFT JOIN Artists ar ON ar.id = m.artist_id
+      LEFT JOIN ProviderAlbums a ON a.id = m.album_id
       WHERE m.id = ?
     `).get(trackId) as any;
 

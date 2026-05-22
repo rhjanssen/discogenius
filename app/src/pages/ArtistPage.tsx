@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
-  Text,
   Title1,
   Title2,
   Spinner,
@@ -19,7 +18,6 @@ import {
   ArrowSync24Regular,
   Eye24Regular,
   EyeOff24Regular,
-  Filter24Regular,
   ArrowDownload24Regular,
   LockClosed24Regular,
   Grid24Regular,
@@ -545,7 +543,6 @@ const ArtistPage = () => {
   // State
   const [syncing, setSyncing] = useState(false);
   const [curating, setCurating] = useState(false);
-  const [rescanning, setRescanning] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
@@ -577,8 +574,6 @@ const ArtistPage = () => {
   // Combined busy states: local action flags OR server-side activity
   const isScanBusy = syncing || Boolean(activity?.scanning);
   const isCurateBusy = curating || Boolean(activity?.curating);
-  const isRescanning = rescanning || Boolean(activity?.libraryScan);
-  const hasActiveWork = isScanBusy || isCurateBusy || isRescanning;
   const [viewMode, setViewMode] = useState<'carousel' | 'grid'>(() => {
     const saved = localStorage.getItem('discogenius_artist_view_mode');
     return (saved === 'grid' || saved === 'carousel') ? saved : 'carousel';
@@ -768,30 +763,6 @@ const ArtistPage = () => {
     }
   };
 
-  const rescanFiles = async () => {
-    if (!artistId) return;
-    setRescanning(true);
-    try {
-      await api.libraryScan(artistId, {
-        skipDownloadQueue: true,
-        skipCuration: true,
-        skipMetadataBackfill: true,
-      });
-      toast({
-        title: "Library scan queued",
-        description: "Scanning local files and importing changes. Curation and downloads stay unchanged.",
-      });
-      dispatchActivityRefresh();
-    } catch (error) {
-      console.error("Error queuing library scan:", error);
-      toast({
-        title: "Library scan failed",
-        description: String(error),
-      });
-    } finally {
-      setRescanning(false);
-    }
-  };
 
   const toggleAlbumMonitored = async (e: React.MouseEvent, albumId: string, nextMonitored: boolean) => {
     e.stopPropagation();
@@ -1021,7 +992,7 @@ const ArtistPage = () => {
               if (progress && progress.state !== 'completed') {
                 return (
                   <DownloadOverlay
-                    status={progress.state}
+                    status={progress.state || 'queued'}
                     progress={progress.progress}
                     error={progress.statusMessage}
                   />
@@ -1106,7 +1077,7 @@ const ArtistPage = () => {
     return true;
   };
 
-  const renderModule = (module: any, index: number) => {
+  const renderModule = (module: any, _index: number) => {
     const items = module.pagedList?.items || module.items || [];
     if (!items || items.length === 0) return null;
 

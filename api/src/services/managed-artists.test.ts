@@ -19,10 +19,10 @@ before(async () => {
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM album_artists").run();
-    dbModule.db.prepare("DELETE FROM albums").run();
-    dbModule.db.prepare("DELETE FROM library_files").run();
-    dbModule.db.prepare("DELETE FROM artists").run();
+    dbModule.db.prepare("DELETE FROM ProviderAlbumArtists").run();
+    dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
+    dbModule.db.prepare("DELETE FROM TrackFiles").run();
+    dbModule.db.prepare("DELETE FROM Artists").run();
 });
 
 after(() => {
@@ -32,7 +32,7 @@ after(() => {
 
 test("getManagedArtistsDueForRefresh respects configured refresh days and keeps stalest artists first", () => {
     dbModule.db.prepare(`
-        INSERT INTO artists (id, name, monitor, path, last_scanned)
+        INSERT INTO Artists (id, name, monitor, path, last_scanned)
         VALUES
             ('1', 'Never Scanned', 1, 'Never Scanned', NULL),
             ('2', 'Recently Scanned', 1, 'Recently Scanned', datetime('now', '-5 days')),

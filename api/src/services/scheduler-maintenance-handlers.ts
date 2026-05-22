@@ -60,7 +60,7 @@ export async function runLowCouplingMaintenanceJob(
             if (job.payload.skipFlags === true) {
                 const canResetSkipFlags = hasColumns('media', ['skip_download', 'skip_upgrade', 'monitor']);
                 if (canResetSkipFlags) {
-                    db.prepare(`UPDATE media SET skip_download = 0, skip_upgrade = 0 WHERE monitor = 1;`).run();
+                    db.prepare(`UPDATE ProviderMedia SET skip_download = 0, skip_upgrade = 0 WHERE monitor = 1;`).run();
                 } else {
                     console.warn('[Scheduler] DownloadMissingForce skip flag reset skipped: media.skip_download/skip_upgrade not available');
                 }

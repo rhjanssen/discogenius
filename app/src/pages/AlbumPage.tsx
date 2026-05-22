@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useLayoutEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useLayoutEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
@@ -7,7 +7,6 @@ import {
   Text,
   Title1,
   Title2,
-  Spinner,
   Avatar,
   Tooltip,
   Menu,
@@ -38,15 +37,13 @@ import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
-import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
+import { TrackInfoDialog, type TrackFileInfo } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
 import {
   albumPageQueryKey,
   useAlbumPage,
   type AlbumPageData,
   type AlbumTrack,
-  type SimilarAlbum,
-  type AlbumVersion,
 } from "@/hooks/useAlbumPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -668,7 +665,7 @@ const AlbumPage = () => {
 
 
   const renderMiniAlbumCard = (
-    item: { id: string; title: string; cover_id?: string; cover?: string; quality?: string; explicit?: boolean; },
+    item: { id: string; title: string; cover_id?: string | null; cover?: string | null; quality?: string | null; explicit?: boolean; },
     subtitle: string,
     itemProgress?: any
   ) => {
@@ -751,7 +748,7 @@ const AlbumPage = () => {
                     <div className={styles.metadataSeparator} />
                   </>
                 ) : null}
-                <Text>{new Date(album.release_date).getFullYear()}</Text>
+                <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
                 <div className={styles.metadataSeparator} />
                 <Text>{tracks.length} Tracks</Text>
                 <div className={styles.metadataSeparator} />
@@ -903,7 +900,7 @@ const AlbumPage = () => {
               detailsTitle="Artwork Details"
               artistName={album.artist_name}
               albumTitle={album.title}
-              files={coverFiles}
+              files={coverFiles as TrackFileInfo[]}
             />
           );
         })()}

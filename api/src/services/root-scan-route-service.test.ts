@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRootScanRouteService, type RootScanSsePayload } from "./root-scan-route-service.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-root-scan-route-service-"));
+process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
+process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+
+const dbModule = await import("../database.js");
+dbModule.initDatabase();
+
+import type { RootScanSsePayload } from "./root-scan-route-service.js";
+const { createRootScanRouteService } = await import("./root-scan-route-service.js");
 import type { ScanOptions, ScanResult } from "./library-scan.js";
 
 function createDeferred<T>() {

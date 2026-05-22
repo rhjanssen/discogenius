@@ -8,6 +8,7 @@ import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js"
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
 import { resolveLibraryFileIdentity, type LibrarySlot } from "./library-file-identity.js";
+import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 
 type LibraryFileRow = {
   id: number;
@@ -47,6 +48,19 @@ type ExistingLibraryFileIdentity = {
   library_root: string | null;
   file_type: string;
   quality: string | null;
+};
+
+type VideoMediaLookupRow = {
+  type: string;
+  mbid: string | null;
+};
+
+type AudioMediaLookupRow = {
+  id: number;
+  artist_id: number;
+  album_id: number | null;
+  track_quality: string | null;
+  album_quality: string | null;
 };
 
 const TRACKED_ASSET_FILE_TYPES = new Set([
@@ -238,6 +252,13 @@ export function removeEmptyParents(startDir: string, stopDir: string) {
   }
 }
 
+function getAudioRoot(quality: string | null | undefined): "music" | "spatial" {
+  if (quality && isSpatialAudioQuality(quality)) {
+    return "spatial";
+  }
+  return "music";
+}
+
 export class LibraryFilesService {
   private static buildFileEventPayload(input: LibraryFileEventInput) {
     return {
@@ -311,14 +332,14 @@ export class LibraryFilesService {
   }): { updated: number } {
     const rows = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-      FROM library_files
+      FROM TrackFiles
       WHERE artist_id = ?
     `).all(options.artistId) as RebaseLibraryFileRow[];
 
     let updated = 0;
 
     const update = db.prepare(`
-      UPDATE library_files
+      UPDATE TrackFiles
       SET file_path = ?,
           relative_path = ?,
           expected_path = ?,
@@ -385,6 +406,86 @@ export class LibraryFilesService {
   }
 
   static computeExpectedPath(row: LibraryFileRow): { expectedPath: string | null; reason?: string } {
+    const pathConfig = getConfigSection("path");
+    const videoFolderLayout = pathConfig?.video_folder_layout || "separated";
+
+    if (videoFolderLayout === "inline" && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
+      const mediaRow = db.prepare("SELECT type, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as VideoMediaLookupRow | undefined;
+      if (mediaRow && mediaRow.type === "Music Video") {
+        const recordingMbid = mediaRow.mbid || null;
+        if (recordingMbid) {
+          const audioTrack = db.prepare(`
+            SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+            FROM TrackFiles
+            WHERE canonical_recording_mbid = ? AND file_type = 'track'
+            LIMIT 1
+          `).get(recordingMbid) as LibraryFileRow | undefined;
+
+          let audioExpectedPath: string | null = null;
+          if (audioTrack) {
+            const result = LibraryFilesService.computeExpectedPath(audioTrack);
+            audioExpectedPath = result.expectedPath;
+          } else {
+            let mediaAudioTrack = db.prepare(`
+              SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
+              FROM ProviderMedia m
+              LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+              WHERE m.mbid = ? AND m.type = 'Track' AND m.monitor = 1
+              LIMIT 1
+            `).get(recordingMbid) as AudioMediaLookupRow | undefined;
+
+            if (!mediaAudioTrack) {
+              mediaAudioTrack = db.prepare(`
+                SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
+                FROM ProviderMedia m
+                JOIN Tracks t ON t.mbid = m.mbid
+                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+                WHERE t.recording_mbid = ? AND m.type = 'Track' AND m.monitor = 1
+                LIMIT 1
+              `).get(recordingMbid) as AudioMediaLookupRow | undefined;
+            }
+
+            if (mediaAudioTrack) {
+              const trackQuality = mediaAudioTrack.track_quality || mediaAudioTrack.album_quality || null;
+              const rootKey = getAudioRoot(trackQuality);
+              const mockAudioRow: LibraryFileRow = {
+                id: -1,
+                artist_id: mediaAudioTrack.artist_id,
+                album_id: mediaAudioTrack.album_id,
+                media_id: mediaAudioTrack.id,
+                file_path: "",
+                relative_path: null,
+                library_root: rootKey,
+                file_type: "track",
+                extension: "flac",
+                quality: trackQuality,
+              };
+              const result = LibraryFilesService.computeExpectedPath(mockAudioRow);
+              audioExpectedPath = result.expectedPath;
+            }
+          }
+
+          if (audioExpectedPath) {
+            const audioExpectedDir = path.dirname(audioExpectedPath);
+            const audioExpectedStem = path.parse(audioExpectedPath).name;
+            let ext = row.extension || "";
+            if (!ext) {
+              if (row.file_type === "video") {
+                ext = (row.file_path ? path.extname(row.file_path).replace(".", "") : "") || "mp4";
+              } else if (row.file_type === "video_thumbnail") {
+                ext = "jpg";
+              } else if (row.file_type === "nfo") {
+                ext = "nfo";
+              }
+            }
+            return {
+              expectedPath: path.join(audioExpectedDir, `${audioExpectedStem}-video.${ext}`),
+            };
+          }
+        }
+      }
+    }
+
     const libraryRootKey = resolveLibraryRootKey(row.library_root, row.file_path);
     if (!libraryRootKey) return { expectedPath: null, reason: `unsupported_library_root:${row.library_root}` };
 
@@ -393,7 +494,7 @@ export class LibraryFilesService {
     const naming = getNamingConfig();
     const metadataConfig = getConfigSection("metadata");
 
-    const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(row.artist_id) as any;
+    const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(row.artist_id) as any;
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
     const artistFolder = resolveArtistFolderFromRecord({
@@ -411,7 +512,7 @@ export class LibraryFilesService {
     // Videos (do not use album folder)
     if (row.file_type === "video") {
       const video = row.media_id
-        ? (db.prepare("SELECT id, title, explicit FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
+        ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
       const context: NamingContext = {
@@ -438,7 +539,7 @@ export class LibraryFilesService {
 
     if (row.file_type === "video_thumbnail") {
       const video = row.media_id
-        ? (db.prepare("SELECT id, title, explicit FROM media WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
+        ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
       const ext = row.extension || "jpg";
       const context: NamingContext = {
@@ -457,7 +558,7 @@ export class LibraryFilesService {
     }
 
     if (row.file_type === "nfo" && row.media_id) {
-      const video = db.prepare("SELECT id, title, explicit, type FROM media WHERE id = ?").get(row.media_id) as any;
+      const video = db.prepare("SELECT id, title, explicit, type FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
       if (video?.type === "Music Video") {
         const context: NamingContext = {
           ...contextBase,
@@ -485,7 +586,7 @@ export class LibraryFilesService {
       return { expectedPath: null, reason: "missing_album_id" };
     }
 
-    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, version, explicit, release_date, num_volumes FROM albums WHERE id = ?").get(row.album_id) as any;
+    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, version, explicit, release_date, num_volumes FROM ProviderAlbums WHERE id = ?").get(row.album_id) as any;
     if (!album) return { expectedPath: null, reason: "album_not_found" };
 
     const releaseYear = getReleaseYear(album.release_date);
@@ -543,11 +644,11 @@ export class LibraryFilesService {
 
     if (row.file_type === "track") {
       if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
 
       const trackArtist = track.artist_id != null
-        ? (db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(track.artist_id) as any)
+        ? (db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(track.artist_id) as any)
         : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
@@ -562,7 +663,7 @@ export class LibraryFilesService {
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
         trackNumber: track.track_number,
         volumeNumber: track.volume_number,
-        // Quality metadata from library_files
+        // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,
         bitrate: row.bitrate || null,
@@ -583,17 +684,17 @@ export class LibraryFilesService {
     if (row.file_type === "lyrics") {
       if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
       const trackFile = db.prepare(`
-        SELECT extension FROM library_files
+        SELECT extension FROM TrackFiles
         WHERE media_id = ? AND file_type = 'track'
         ORDER BY id ASC
         LIMIT 1
       `).get(row.media_id) as any;
 
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM media WHERE id = ?").get(row.media_id) as any;
+      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
       if (!track) return { expectedPath: null, reason: "track_not_found" };
 
       const trackArtist = track.artist_id != null
-        ? (db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(track.artist_id) as any)
+        ? (db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(track.artist_id) as any)
         : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
@@ -608,7 +709,7 @@ export class LibraryFilesService {
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
         trackNumber: track.track_number,
         volumeNumber: track.volume_number,
-        // Quality metadata from library_files
+        // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,
         bitrate: row.bitrate || null,
@@ -675,7 +776,7 @@ export class LibraryFilesService {
 
     const row = db.prepare(`
       SELECT id
-      FROM library_files
+      FROM TrackFiles
       WHERE ${identity.sql}
       ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
       LIMIT 1
@@ -690,7 +791,7 @@ export class LibraryFilesService {
     const extension = path.extname(params.filePath).replace(".", "");
     const existingPathRow = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-      FROM library_files
+      FROM TrackFiles
       WHERE file_path = ?
       LIMIT 1
     `).get(params.filePath) as ExistingLibraryFileIdentity | undefined;
@@ -712,7 +813,7 @@ export class LibraryFilesService {
     if (params.mediaId && (params.fileType === "track" || params.fileType === "video")) {
       const existingRow = db.prepare(`
         SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-        FROM library_files
+        FROM TrackFiles
         WHERE media_id = ? AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
         LIMIT 1
@@ -724,11 +825,11 @@ export class LibraryFilesService {
           : existingRow;
 
         if (rowToUpdate.id !== existingRow.id) {
-          db.prepare("DELETE FROM library_files WHERE id = ?").run(existingRow.id);
+          db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(existingRow.id);
         }
 
         db.prepare(`
-          UPDATE library_files
+          UPDATE TrackFiles
           SET artist_id = ?,
               album_id = ?,
               media_id = ?,
@@ -798,12 +899,12 @@ export class LibraryFilesService {
         );
 
         db.prepare(`
-          DELETE FROM library_files
+          DELETE FROM TrackFiles
           WHERE media_id = ? AND file_type = ? AND id != ?
         `).run(params.mediaId, params.fileType, rowToUpdate.id);
 
         if (params.removeFromUnmapped !== false) {
-          db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(params.filePath);
+          db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
         }
 
         if (hasMeaningfulLibraryFileChange(rowToUpdate, {
@@ -846,7 +947,7 @@ export class LibraryFilesService {
       if (existingTrackedAssetId !== null) {
         const existingTrackedAsset = db.prepare(`
           SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-          FROM library_files
+          FROM TrackFiles
           WHERE id = ?
           LIMIT 1
         `).get(existingTrackedAssetId) as ExistingLibraryFileIdentity | undefined;
@@ -859,11 +960,11 @@ export class LibraryFilesService {
         }
 
         if (rowToUpdate.id !== existingTrackedAssetId) {
-          db.prepare("DELETE FROM library_files WHERE id = ?").run(existingTrackedAssetId);
+          db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(existingTrackedAssetId);
         }
 
         db.prepare(`
-          UPDATE library_files
+          UPDATE TrackFiles
           SET artist_id = ?,
               album_id = ?,
               media_id = ?,
@@ -933,7 +1034,7 @@ export class LibraryFilesService {
         );
 
         if (params.removeFromUnmapped !== false) {
-          db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(params.filePath);
+          db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
         }
 
         this.enforceTrackedAssetIdentity({
@@ -975,7 +1076,7 @@ export class LibraryFilesService {
     }
 
     const insert = db.prepare(`
-      INSERT INTO library_files (
+      INSERT INTO TrackFiles (
         artist_id, album_id, media_id,
         canonical_artist_mbid, canonical_release_group_mbid,
         canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
@@ -1003,15 +1104,15 @@ export class LibraryFilesService {
         artist_id = excluded.artist_id,
         album_id = excluded.album_id,
         media_id = excluded.media_id,
-        canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, library_files.canonical_artist_mbid),
-        canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, library_files.canonical_release_group_mbid),
-        canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, library_files.canonical_release_mbid),
-        canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, library_files.canonical_track_mbid),
-        canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, library_files.canonical_recording_mbid),
-        provider = COALESCE(excluded.provider, library_files.provider),
-        provider_entity_type = COALESCE(excluded.provider_entity_type, library_files.provider_entity_type),
-        provider_id = COALESCE(excluded.provider_id, library_files.provider_id),
-        library_slot = COALESCE(excluded.library_slot, library_files.library_slot),
+        canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, TrackFiles.canonical_artist_mbid),
+        canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, TrackFiles.canonical_release_group_mbid),
+        canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, TrackFiles.canonical_release_mbid),
+        canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, TrackFiles.canonical_track_mbid),
+        canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, TrackFiles.canonical_recording_mbid),
+        provider = COALESCE(excluded.provider, TrackFiles.provider),
+        provider_entity_type = COALESCE(excluded.provider_entity_type, TrackFiles.provider_entity_type),
+        provider_id = COALESCE(excluded.provider_id, TrackFiles.provider_id),
+        library_slot = COALESCE(excluded.library_slot, TrackFiles.library_slot),
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         filename = excluded.filename,
@@ -1019,17 +1120,17 @@ export class LibraryFilesService {
         file_size = excluded.file_size,
         file_type = excluded.file_type,
         quality = excluded.quality,
-        naming_template = COALESCE(excluded.naming_template, library_files.naming_template),
+        naming_template = COALESCE(excluded.naming_template, TrackFiles.naming_template),
         expected_path = excluded.expected_path,
         needs_rename = CASE WHEN excluded.expected_path IS NOT NULL AND excluded.expected_path != excluded.file_path THEN 1 ELSE 0 END,
         modified_at = excluded.modified_at,
         verified_at = CURRENT_TIMESTAMP,
-        bit_depth = COALESCE(excluded.bit_depth, library_files.bit_depth),
-        sample_rate = COALESCE(excluded.sample_rate, library_files.sample_rate),
-        bitrate = COALESCE(excluded.bitrate, library_files.bitrate),
-        codec = COALESCE(excluded.codec, library_files.codec),
-        channels = COALESCE(excluded.channels, library_files.channels),
-        fingerprint = COALESCE(excluded.fingerprint, library_files.fingerprint)
+        bit_depth = COALESCE(excluded.bit_depth, TrackFiles.bit_depth),
+        sample_rate = COALESCE(excluded.sample_rate, TrackFiles.sample_rate),
+        bitrate = COALESCE(excluded.bitrate, TrackFiles.bitrate),
+        codec = COALESCE(excluded.codec, TrackFiles.codec),
+        channels = COALESCE(excluded.channels, TrackFiles.channels),
+        fingerprint = COALESCE(excluded.fingerprint, TrackFiles.fingerprint)
     `);
 
     const info = insert.run(
@@ -1065,7 +1166,7 @@ export class LibraryFilesService {
     );
 
     if (params.removeFromUnmapped !== false) {
-      db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(params.filePath);
+      db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
     }
 
     if (this.isTrackedAssetFileType(params.fileType)) {
@@ -1181,7 +1282,7 @@ export class LibraryFilesService {
         verified_at,
         modified_at,
         created_at
-      FROM library_files
+      FROM TrackFiles
       WHERE ${identity.sql}
       ORDER BY id DESC
     `).all(...identity.values) as TrackedAssetRow[];
@@ -1215,7 +1316,7 @@ export class LibraryFilesService {
           }
         }
       } catch (error) {
-        console.warn(`[LibraryFiles] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
+        console.warn(`[TrackFiles] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
       }
 
       idsToDelete.push(row.id);
@@ -1234,11 +1335,11 @@ export class LibraryFilesService {
     }
 
     if (idsToDelete.length > 0) {
-      batchDelete("library_files", idsToDelete);
+      batchDelete("TrackFiles", idsToDelete);
     }
 
     if (removed > 0) {
-      console.log(`[LibraryFiles] Removed ${removed} duplicate tracked ${keep.file_type} file(s) for artist ${params.artistId}.`);
+      console.log(`[TrackFiles] Removed ${removed} duplicate tracked ${keep.file_type} file(s) for artist ${params.artistId}.`);
     }
 
     return { removed };
@@ -1247,7 +1348,7 @@ export class LibraryFilesService {
   static pruneDuplicateTrackedAssets(artistId?: string): { removed: number } {
     const groups = db.prepare(`
       SELECT artist_id, album_id, media_id, file_type, COUNT(*) AS count
-      FROM library_files
+      FROM TrackFiles
       WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
       GROUP BY artist_id, album_id, media_id, file_type
@@ -1276,7 +1377,7 @@ export class LibraryFilesService {
   static pruneStaleTrackedAssets(artistId?: string): { removed: number } {
     const rows = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-      FROM library_files
+      FROM TrackFiles
       WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
         ${artistId ? "AND artist_id = ?" : ""}
       ORDER BY id ASC
@@ -1321,15 +1422,15 @@ export class LibraryFilesService {
     }
 
     if (idsToDelete.length > 0) {
-      batchDelete("library_files", idsToDelete);
-      console.log(`[LibraryFiles] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
+      batchDelete("TrackFiles", idsToDelete);
+      console.log(`[TrackFiles] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
     }
 
     return { removed: idsToDelete.length };
   }
 
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
-    const artist = db.prepare(`SELECT monitor FROM artists WHERE id = ?`).get(artistId) as any;
+    const artist = db.prepare(`SELECT monitor FROM Artists WHERE id = ?`).get(artistId) as any;
     const artistMonitored = Boolean(artist?.monitor);
 
     // Unmonitoring an artist does not implicitly wipe the artist folder.
@@ -1341,8 +1442,8 @@ export class LibraryFilesService {
     const rows = [
       ...db.prepare(`
         SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
-        FROM library_files lf
-        LEFT JOIN media m ON m.id = lf.media_id
+        FROM TrackFiles lf
+        LEFT JOIN ProviderMedia m ON m.id = lf.media_id
         WHERE lf.artist_id = ?
           AND lf.media_id IS NOT NULL
           AND (m.monitor = 0 OR m.monitor IS NULL)
@@ -1350,15 +1451,15 @@ export class LibraryFilesService {
       `).all(artistId),
       ...db.prepare(`
         SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
-        FROM library_files lf
-        LEFT JOIN albums a ON a.id = lf.album_id
+        FROM TrackFiles lf
+        LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
         WHERE lf.artist_id = ?
           AND lf.media_id IS NULL
           AND lf.album_id IS NOT NULL
           AND (a.monitor = 0 OR a.monitor IS NULL)
           AND (a.monitor_lock = 0 OR a.monitor_lock IS NULL)
           AND NOT EXISTS (
-            SELECT 1 FROM media m2
+            SELECT 1 FROM ProviderMedia m2
             WHERE m2.album_id = a.id AND m2.monitor = 1
           )
       `).all(artistId),
@@ -1392,7 +1493,7 @@ export class LibraryFilesService {
         try {
           fs.rmSync(resolvedFilePath, { force: true });
         } catch (error) {
-          console.warn(`[LibraryFiles] Failed to delete ${resolvedFilePath}:`, error);
+          console.warn(`[TrackFiles] Failed to delete ${resolvedFilePath}:`, error);
           canRemove = false;
           errors += 1;
         }
@@ -1402,7 +1503,7 @@ export class LibraryFilesService {
 
       if (!canRemove) continue;
 
-      db.prepare("DELETE FROM library_files WHERE id = ?").run(row.id);
+      db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
 
       try {
         recordHistoryEvent({
@@ -1419,7 +1520,7 @@ export class LibraryFilesService {
           },
         });
       } catch (historyError) {
-        console.warn(`[LibraryFiles] Failed to record prune history for row ${row.id}:`, historyError);
+        console.warn(`[TrackFiles] Failed to record prune history for row ${row.id}:`, historyError);
       }
 
       this.emitFileDeleted({
@@ -1488,7 +1589,7 @@ export class LibraryFilesService {
     const rows = selectors.flatMap(({ sql, params }) =>
       db.prepare(`
         SELECT id, artist_id, album_id, media_id, file_type, quality, file_path, library_root
-        FROM library_files
+        FROM TrackFiles
         WHERE ${sql}
       `).all(...params) as Array<{
         id: number;
@@ -1521,7 +1622,7 @@ export class LibraryFilesService {
           fs.rmSync(resolvedFilePath, { force: true });
           deleted++;
         } catch (error) {
-          console.warn(`[LibraryFiles] Failed to delete disabled metadata file ${resolvedFilePath}:`, error);
+          console.warn(`[TrackFiles] Failed to delete disabled metadata file ${resolvedFilePath}:`, error);
           errors++;
           continue;
         }
@@ -1529,7 +1630,7 @@ export class LibraryFilesService {
         missing++;
       }
 
-      db.prepare("DELETE FROM library_files WHERE id = ?").run(row.id);
+      db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
 
       try {
         recordHistoryEvent({
@@ -1546,7 +1647,7 @@ export class LibraryFilesService {
           },
         });
       } catch (historyError) {
-        console.warn(`[LibraryFiles] Failed to record disabled metadata prune history for row ${row.id}:`, historyError);
+        console.warn(`[TrackFiles] Failed to record disabled metadata prune history for row ${row.id}:`, historyError);
       }
 
       this.emitFileDeleted({
@@ -1570,7 +1671,7 @@ export class LibraryFilesService {
     }
 
     if (deleted > 0 || missing > 0) {
-      console.log(`[LibraryFiles] Disabled metadata cleanup for artist ${artistId}: ${deleted} deleted, ${missing} already missing`);
+      console.log(`[TrackFiles] Disabled metadata cleanup for artist ${artistId}: ${deleted} deleted, ${missing} already missing`);
     }
 
     return { deleted, missing, errors };

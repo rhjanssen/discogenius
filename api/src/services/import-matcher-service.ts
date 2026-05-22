@@ -414,8 +414,8 @@ export class ImportMatcherService {
         const placeholders = fingerprints.map(() => "?").join(", ");
         const rows = db.prepare(`
             SELECT COALESCE(m.album_id, lf.album_id) AS album_id, COUNT(*) AS matched_files
-            FROM library_files lf
-            LEFT JOIN media m ON m.id = lf.media_id
+            FROM TrackFiles lf
+            LEFT JOIN ProviderMedia m ON m.id = lf.media_id
             WHERE lf.file_type = 'track'
               AND lf.fingerprint IN (${placeholders})
               AND COALESCE(m.album_id, lf.album_id) IS NOT NULL
@@ -1019,7 +1019,7 @@ export class ImportMatcherService {
 
     private resolveArtistIdByName(artistName: string | undefined): string | null {
         if (!artistName) return null;
-        const row = db.prepare("SELECT id FROM artists WHERE LOWER(name) = LOWER(?) LIMIT 1")
+        const row = db.prepare("SELECT id FROM Artists WHERE LOWER(name) = LOWER(?) LIMIT 1")
             .get(artistName) as { id: number } | undefined;
         return row ? String(row.id) : null;
     }

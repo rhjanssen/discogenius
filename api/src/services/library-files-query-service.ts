@@ -103,9 +103,9 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       m.type AS media_type,
       m.quality AS source_quality,
       a.quality AS album_quality
-    FROM library_files lf
-    LEFT JOIN media m ON m.id = lf.media_id
-    LEFT JOIN albums a ON a.id = lf.album_id
+    FROM TrackFiles lf
+    LEFT JOIN ProviderMedia m ON m.id = lf.media_id
+    LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY lf.created_at DESC
     LIMIT ? OFFSET ?

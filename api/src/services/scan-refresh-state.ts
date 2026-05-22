@@ -17,7 +17,7 @@ export function shouldRefreshTracks(albumId: string, refreshDays: number | undef
             COUNT(*) as total_tracks,
             SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) as missing_scans,
             MIN(last_scanned) as oldest_scan
-        FROM media
+        FROM ProviderMedia
         WHERE album_id = ? AND type != 'Music Video'
     `).get(albumId) as {
         total_tracks?: number;
@@ -40,7 +40,7 @@ export function shouldRefreshVideos(artistId: string, refreshDays: number | unde
             COUNT(*) as total_videos,
             SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) as missing_scans,
             MIN(last_scanned) as oldest_scan
-        FROM media
+        FROM ProviderMedia
         WHERE artist_id = ? AND type = 'Music Video'
     `).get(artistId) as {
         total_videos?: number;
@@ -73,7 +73,7 @@ export function getTrackRefreshState(albumId: string, refreshDays: number | unde
             COUNT(*) as total_tracks,
             SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) as missing_scans,
             MIN(last_scanned) as oldest_scan
-        FROM media
+        FROM ProviderMedia
         WHERE album_id = ? AND type != 'Music Video'
     `).get(albumId) as {
         total_tracks?: number;

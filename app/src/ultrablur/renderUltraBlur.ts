@@ -17,10 +17,6 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
 function srgb8ToLinear01(c8: number): number {
   const c = clamp01(c8 / 255);
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);

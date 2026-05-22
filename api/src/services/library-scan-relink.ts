@@ -33,7 +33,7 @@ export interface RelinkUnresolvedLibraryFilesParams {
 export function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFilesParams): { relinked: number } {
     const rows = db.prepare(`
         SELECT id, file_path, relative_path, library_root, extension, file_type
-        FROM library_files
+        FROM TrackFiles
         WHERE artist_id = ?
           AND media_id IS NULL
           AND (

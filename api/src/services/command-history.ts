@@ -104,7 +104,7 @@ function loadMissingArtistNames(ids: readonly string[], context: DescriptionLook
 
     for (const chunk of chunkValues(missingIds, 200)) {
         const placeholders = chunk.map(() => "?").join(",");
-        const rows = db.prepare(`SELECT id, name FROM artists WHERE id IN (${placeholders})`).all(...chunk) as Array<{
+        const rows = db.prepare(`SELECT id, name FROM Artists WHERE id IN (${placeholders})`).all(...chunk) as Array<{
             id: string;
             name: string | null;
         }>;
@@ -134,8 +134,8 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(`
             SELECT a.id, a.title, a.version, ar.name as artist_name
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
@@ -179,9 +179,9 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
                 a.title as album_title,
                 a.version as album_version,
                 ar.name as artist_name
-            FROM media m
-            LEFT JOIN albums a ON a.id = m.album_id
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderMedia m
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE m.id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
@@ -223,8 +223,8 @@ function loadMissingVideos(ids: readonly string[], context: DescriptionLookupCon
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(`
             SELECT m.id, m.title, ar.name as artist_name
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
             WHERE m.id IN (${placeholders}) AND m.type = 'Music Video'
         `).all(...chunk) as Array<{
             id: string;
@@ -362,7 +362,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             }
 
             try {
-                const row = db.prepare(`SELECT name FROM artists WHERE id = ?`).get(tidalId) as any;
+                const row = db.prepare(`SELECT name FROM Artists WHERE id = ?`).get(tidalId) as any;
                 const resolved = String(row?.name || "").trim();
                 context?.artistNameById.set(tidalId, resolved || null);
                 if (resolved && resolved.toLowerCase() !== "unknown artist") {
@@ -397,8 +397,8 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             try {
                 const row = db.prepare(`
                     SELECT a.title, a.version, ar.name as artist_name
-                    FROM albums a
-                    LEFT JOIN artists ar ON ar.id = a.artist_id
+                    FROM ProviderAlbums a
+                    LEFT JOIN Artists ar ON ar.id = a.artist_id
                     WHERE a.id = ?
                 `).get(tidalId) as any;
                 context?.albumById.set(tidalId, row?.title ? {
@@ -533,8 +533,8 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
 
             const row = db.prepare(`
                 SELECT a.title, a.version, ar.name as artist_name
-                FROM albums a
-                LEFT JOIN artists ar ON ar.id = a.artist_id
+                FROM ProviderAlbums a
+                LEFT JOIN Artists ar ON ar.id = a.artist_id
                 WHERE a.id = ?
             `).get(tidalId) as any;
             if (tidalId) {
@@ -569,9 +569,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
                     a.title as album_title,
                     a.version as album_version,
                     ar.name as artist_name
-                FROM media m
-                LEFT JOIN albums a ON a.id = m.album_id
-                LEFT JOIN artists ar ON ar.id = a.artist_id
+                FROM ProviderMedia m
+                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+                LEFT JOIN Artists ar ON ar.id = a.artist_id
                 WHERE m.id = ?
             `).get(tidalId) as any;
             if (tidalId) {
@@ -603,8 +603,8 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
 
             const row = db.prepare(`
                 SELECT m.title, ar.name as artist_name
-                FROM media m
-                LEFT JOIN artists ar ON ar.id = m.artist_id
+                FROM ProviderMedia m
+                LEFT JOIN Artists ar ON ar.id = m.artist_id
                 WHERE m.id = ? AND m.type = 'Music Video'
             `).get(tidalId) as any;
             if (tidalId) {

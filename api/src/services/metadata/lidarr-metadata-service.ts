@@ -148,7 +148,7 @@ export class LidarrMetadataService {
   getCachedReleaseGroupsForArtist(artistMbid: string): MusicBrainzReleaseGroupForMatching[] {
     const rows = db.prepare(`
       SELECT mbid, title, primary_type, secondary_types, first_release_date, disambiguation
-      FROM mb_release_groups
+      FROM Albums
       WHERE artist_mbid = ?
     `).all(artistMbid) as Array<{
       mbid: string;
@@ -170,9 +170,9 @@ export class LidarrMetadataService {
           r.track_count,
           r.media_count,
           rec.isrcs AS recording_isrcs
-        FROM mb_releases r
-        LEFT JOIN mb_tracks t ON t.release_mbid = r.mbid
-        LEFT JOIN mb_recordings rec ON rec.mbid = t.recording_mbid
+        FROM AlbumReleases r
+        LEFT JOIN Tracks t ON t.release_mbid = r.mbid
+        LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
         WHERE r.release_group_mbid IN (${rows.map(() => "?").join(",")})
       `).all(...rows.map((row) => row.mbid)) as Array<{
         mbid: string;
@@ -261,7 +261,7 @@ export class LidarrMetadataService {
 
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO mb_artists (mbid, name, sort_name, disambiguation, type, data, updated_at)
+        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, data, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           name = excluded.name,
@@ -280,7 +280,7 @@ export class LidarrMetadataService {
       );
 
       const insertRg = db.prepare(`
-        INSERT INTO mb_release_groups (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at)
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
@@ -314,7 +314,7 @@ export class LidarrMetadataService {
 
     db.transaction(() => {
       const insertRelease = db.prepare(`
-        INSERT INTO mb_releases (
+        INSERT INTO AlbumReleases (
           mbid, release_group_mbid, artist_mbid, title, status, country,
           date, barcode, disambiguation, media_count, track_count, data, updated_at
         )
@@ -333,7 +333,7 @@ export class LidarrMetadataService {
       `);
 
       const insertMedium = db.prepare(`
-        INSERT INTO mb_mediums (release_mbid, position, format, title, track_count, data, updated_at)
+        INSERT INTO AlbumReleaseMedia (release_mbid, position, format, title, track_count, data, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(release_mbid, position) DO UPDATE SET
           format = excluded.format,
@@ -344,7 +344,7 @@ export class LidarrMetadataService {
       `);
 
       const insertRecording = db.prepare(`
-        INSERT INTO mb_recordings (mbid, title, length_ms, updated_at)
+        INSERT INTO Recordings (mbid, title, length_ms, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
@@ -353,7 +353,7 @@ export class LidarrMetadataService {
       `);
 
       const insertTrack = db.prepare(`
-        INSERT INTO mb_tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, data, updated_at)
+        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, data, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
           mbid = excluded.mbid,

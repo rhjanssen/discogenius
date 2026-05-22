@@ -585,7 +585,7 @@ this.transaction(() => {
 - **organizer.ts**: Stage → library placement
   - Exports: `organize()` returns OrganizeResult (success/failure per file)
 - **library-files.ts**: Canonical inventory
-  - Exports: Insert/update library_files with sidecar tracking
+  - Exports: Insert/update track_files with sidecar tracking
 - **library-scan-*.ts**: Root folder scanning and repair
 
 #### Monitoring & Curation
@@ -908,7 +908,7 @@ app/src/
 | Frontend hook | `use + PascalCase` | `useLibrary`, `useInfiniteScroll`, `useGlobalEvents` |
 | Frontend utility | `camelCase` | `getTidalImage()`, `formatDuration()`, `isMonitored()` |
 | Frontend event | `SCREAMING_SNAKE_CASE` | `LIBRARY_UPDATED_EVENT`, `MONITOR_STATE_CHANGED_EVENT` |
-| Database table | `snake_case` | `library_files`, `unmapped_files` |
+| Database table | `snake_case` | `track_files`, `unmapped_files` |
 | Database column | `snake_case` | `monitor_locked`, `is_monitored` |
 
 ---

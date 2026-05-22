@@ -23,15 +23,15 @@ before(async () => {
 beforeEach(() => {
     const { db } = dbModule;
     db.prepare("DELETE FROM job_queue").run();
-    db.prepare("DELETE FROM release_group_slots").run();
-    db.prepare("DELETE FROM mb_release_groups").run();
-    db.prepare("DELETE FROM mb_artists").run();
-    db.prepare("DELETE FROM media_artists").run();
-    db.prepare("DELETE FROM album_artists").run();
-    db.prepare("DELETE FROM media").run();
-    db.prepare("DELETE FROM albums").run();
-    db.prepare("DELETE FROM artists").run();
-    db.prepare("DELETE FROM library_files").run();
+    db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    db.prepare("DELETE FROM ProviderAlbums").run();
+    db.prepare("DELETE FROM ArtistMetadata").run();
+    db.prepare("DELETE FROM ProviderMediaArtists").run();
+    db.prepare("DELETE FROM ProviderAlbumArtists").run();
+    db.prepare("DELETE FROM ProviderMedia").run();
+    db.prepare("DELETE FROM ProviderAlbums").run();
+    db.prepare("DELETE FROM Artists").run();
+    db.prepare("DELETE FROM TrackFiles").run();
 });
 
 after(() => {
@@ -41,47 +41,47 @@ after(() => {
 
 function seedLibrary() {
     dbModule.db.prepare(`
-        INSERT INTO mb_artists (mbid, name, sort_name)
+        INSERT INTO ArtistMetadata (mbid, name, sort_name)
         VALUES (?, ?, ?)
     `).run("artist-mbid-1", "Artist One", "Artist One");
 
     dbModule.db.prepare(`
-        INSERT INTO artists (id, mbid, name, monitor)
+        INSERT INTO Artists (id, mbid, name, monitor)
         VALUES (?, ?, ?, ?)
     `).run("1", "artist-mbid-1", "Artist One", 0);
 
     dbModule.db.prepare(`
-        INSERT INTO albums (
+        INSERT INTO ProviderAlbums (
             id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration,
             monitor, monitor_lock
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 2, 1, 0, 360, 0, 0);
 
     dbModule.db.prepare(`
-        INSERT INTO media (
+        INSERT INTO ProviderMedia (
             id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration,
             monitor, monitor_lock
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run("100", "1", "10", "Track One", "ALBUM", 0, "LOSSLESS", 1, 1, 180, 0, 0);
 
     dbModule.db.prepare(`
-        INSERT INTO media (
+        INSERT INTO ProviderMedia (
             id, artist_id, album_id, title, type, explicit, quality, duration, monitor, monitor_lock
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run("200", "1", null, "Video One", "Music Video", 0, "DOLBY_ATMOS", 200, 0, 0);
 
     dbModule.db.prepare(`
-        INSERT INTO album_artists (album_id, artist_id, artist_name, ord, type, group_type, module)
+        INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run("10", "1", "Artist One", 0, "main", "ALBUMS", "ALBUM");
 
     dbModule.db.prepare(`
-        INSERT INTO mb_release_groups (mbid, artist_mbid, title, primary_type, first_release_date)
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
         VALUES (?, ?, ?, ?, ?)
     `).run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album", "2024-01-01");
 
     dbModule.db.prepare(`
-        INSERT INTO release_group_slots (
+        INSERT INTO ReleaseGroupSlots (
             artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id,
             quality, match_status, match_confidence, match_method, provider_data
         )
@@ -115,10 +115,10 @@ test("artist monitor bulk updates related rows and queues intake", async () => {
     assert.equal(result.updated, 1);
     assert.equal(result.items[0]?.status, "queued");
 
-    const artist = dbModule.db.prepare("SELECT monitor FROM artists WHERE id = ?").get("1") as { monitor: number };
-    const album = dbModule.db.prepare("SELECT monitor FROM albums WHERE id = ?").get("10") as { monitor: number };
-    const track = dbModule.db.prepare("SELECT monitor FROM media WHERE id = ?").get("100") as { monitor: number };
-    const video = dbModule.db.prepare("SELECT monitor FROM media WHERE id = ?").get("200") as { monitor: number };
+    const artist = dbModule.db.prepare("SELECT monitor FROM Artists WHERE id = ?").get("1") as { monitor: number };
+    const album = dbModule.db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("10") as { monitor: number };
+    const track = dbModule.db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("100") as { monitor: number };
+    const video = dbModule.db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("200") as { monitor: number };
 
     assert.equal(artist.monitor, 1);
     assert.equal(album.monitor, 1);
@@ -148,9 +148,9 @@ test("album and track bulk actions update lock state without changing route code
     assert.equal(trackLock.matched, 1);
     assert.equal(videoLock.matched, 1);
 
-    const album = dbModule.db.prepare("SELECT monitor_lock FROM albums WHERE id = ?").get("10") as { monitor_lock: number };
-    const track = dbModule.db.prepare("SELECT monitor_lock FROM media WHERE id = ?").get("100") as { monitor_lock: number };
-    const video = dbModule.db.prepare("SELECT monitor_lock FROM media WHERE id = ?").get("200") as { monitor_lock: number };
+    const album = dbModule.db.prepare("SELECT monitor_lock FROM ProviderAlbums WHERE id = ?").get("10") as { monitor_lock: number };
+    const track = dbModule.db.prepare("SELECT monitor_lock FROM ProviderMedia WHERE id = ?").get("100") as { monitor_lock: number };
+    const video = dbModule.db.prepare("SELECT monitor_lock FROM ProviderMedia WHERE id = ?").get("200") as { monitor_lock: number };
 
     assert.equal(album.monitor_lock, 1);
     assert.equal(track.monitor_lock, 1);
@@ -160,9 +160,9 @@ test("album and track bulk actions update lock state without changing route code
     await serviceModule.LibraryBulkActionService.apply("track", "unlock", ["100"]);
     await serviceModule.LibraryBulkActionService.apply("video", "unlock", ["200"]);
 
-    const unlockedAlbum = dbModule.db.prepare("SELECT monitor_lock FROM albums WHERE id = ?").get("10") as { monitor_lock: number };
-    const unlockedTrack = dbModule.db.prepare("SELECT monitor_lock FROM media WHERE id = ?").get("100") as { monitor_lock: number };
-    const unlockedVideo = dbModule.db.prepare("SELECT monitor_lock FROM media WHERE id = ?").get("200") as { monitor_lock: number };
+    const unlockedAlbum = dbModule.db.prepare("SELECT monitor_lock FROM ProviderAlbums WHERE id = ?").get("10") as { monitor_lock: number };
+    const unlockedTrack = dbModule.db.prepare("SELECT monitor_lock FROM ProviderMedia WHERE id = ?").get("100") as { monitor_lock: number };
+    const unlockedVideo = dbModule.db.prepare("SELECT monitor_lock FROM ProviderMedia WHERE id = ?").get("200") as { monitor_lock: number };
 
     assert.equal(unlockedAlbum.monitor_lock, 0);
     assert.equal(unlockedTrack.monitor_lock, 0);

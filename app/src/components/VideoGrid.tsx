@@ -12,7 +12,6 @@ import {
   EyeOff24Regular,
   ArrowDownload24Regular,
 } from "@fluentui/react-icons";
-import { useNavigate } from "react-router-dom";
 import { getTidalImage } from "@/utils/tidalImages";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -238,19 +237,19 @@ export interface Video {
   id: string;
   title: string;
   duration: number;
-  release_date?: string;
-  version?: string;
+  release_date?: string | null;
+  version?: string | null;
 
   explicit?: boolean;
-  quality?: string;
-  cover_id?: string;
-  url?: string;
-  path?: string;
+  quality?: string | null;
+  cover_id?: string | null;
+  url?: string | null;
+  path?: string | null;
   artist_id: string;
-  artist_name?: string;
+  artist_name?: string | null;
   is_monitored: boolean;
   is_downloaded: boolean;
-  created_at?: string;
+  created_at?: string | null;
 }
 
 interface VideoGridProps {
@@ -263,11 +262,9 @@ interface VideoGridProps {
 
 const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }: VideoGridProps) => {
   const styles = useStyles();
-  const navigate = useNavigate();
 
   const formatDuration = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
     if (minutes < 60) {
       return `${minutes} MIN`;
     }
@@ -286,10 +283,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
     }
   };
 
-  const handleArtistClick = (e: React.MouseEvent, artistId: string) => {
-    e.stopPropagation();
-    navigate(`/artist/${artistId}`);
-  };
+
 
   if (loading) {
     return (

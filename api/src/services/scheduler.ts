@@ -486,7 +486,7 @@ export class Scheduler {
                         // Per-artist scan (existing behavior)
                         const baseLabel = this.formatWorkflowJobLabel(job, "Rescan folders");
 
-                        // Step 1: Disk scan — reconcile library_files with disk reality
+                        // Step 1: Disk scan — reconcile track_files with disk reality
                         await DiskScanService.scan({
                             artistIds: [artistId],
                             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,

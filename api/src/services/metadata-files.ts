@@ -55,7 +55,7 @@ async function getArtistForNfo(artistId: string) {
         warnNfoFallback("artist", artistId, error);
         const row = db.prepare(`
             SELECT id, name, picture, popularity
-            FROM artists
+            FROM Artists
             WHERE id = ?
         `).get(artistId) as { id: number | string; name: string; picture?: string | null; popularity?: number | null } | undefined;
 
@@ -79,7 +79,7 @@ async function getArtistBioTextForNfo(artistId: string): Promise<string> {
         warnNfoFallback("artist biography", artistId, error);
     }
 
-    const row = db.prepare("SELECT bio_text FROM artists WHERE id = ?").get(artistId) as { bio_text?: string | null } | undefined;
+    const row = db.prepare("SELECT bio_text FROM Artists WHERE id = ?").get(artistId) as { bio_text?: string | null } | undefined;
     return row?.bio_text ? cleanProviderText(row.bio_text) : "";
 }
 
@@ -90,8 +90,8 @@ async function getAlbumForNfo(albumId: string) {
         warnNfoFallback("album", albumId, error);
         const row = db.prepare(`
             SELECT a.*, ar.name AS artist_name
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id = ?
         `).get(albumId) as {
             id: number | string;
@@ -160,7 +160,7 @@ async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
         warnNfoFallback("album review", albumId, error);
     }
 
-    const row = db.prepare("SELECT review_text FROM albums WHERE id = ?").get(albumId) as { review_text?: string | null } | undefined;
+    const row = db.prepare("SELECT review_text FROM ProviderAlbums WHERE id = ?").get(albumId) as { review_text?: string | null } | undefined;
     return row?.review_text ? cleanProviderText(row.review_text) : "";
 }
 
@@ -176,8 +176,8 @@ async function getVideoForNfo(videoId: string) {
         const row = db.prepare(`
             SELECT m.id, m.title, m.artist_id, ar.name AS artist_name, m.album_id,
                    m.duration, m.release_date, m.cover, m.quality, m.explicit, m.popularity
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
             WHERE m.id = ?
         `).get(videoId) as {
             id: number | string;
@@ -263,7 +263,7 @@ async function downloadProviderArtwork(
 function loadResolvedArtistArtwork(artistId: string): string | null {
     const row = db.prepare(`
         SELECT cover_image_url, picture
-        FROM artists
+        FROM Artists
         WHERE id = ? OR mbid = ?
         LIMIT 1
     `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
@@ -421,13 +421,13 @@ export async function saveArtistNfoFile(
     const bioText = await getArtistBioTextForNfo(artistId);
     const localArtist = db.prepare(`
         SELECT mbid
-        FROM artists
+        FROM Artists
         WHERE id = ?
     `).get(artistId) as { mbid?: string | null } | undefined;
 
     const albums = db.prepare(`
         SELECT title, release_date
-        FROM albums
+        FROM ProviderAlbums
         WHERE artist_id = ?
         ORDER BY release_date, title
         LIMIT 250
@@ -468,13 +468,13 @@ export async function saveAlbumNfoFile(
     const reviewText = await getAlbumReviewTextForNfo(albumId);
     const localAlbum = db.prepare(`
         SELECT a.mbid, a.mb_release_group_id, ar.mbid AS artist_mbid
-        FROM albums a
-        LEFT JOIN artists ar ON ar.id = a.artist_id
+        FROM ProviderAlbums a
+        LEFT JOIN Artists ar ON ar.id = a.artist_id
         WHERE a.id = ?
     `).get(albumId) as { mbid?: string | null; mb_release_group_id?: string | null; artist_mbid?: string | null } | undefined;
     const tracks = db.prepare(`
         SELECT title, duration, track_number, volume_number, mbid
-        FROM media
+        FROM ProviderMedia
         WHERE album_id = ? AND type != 'Music Video'
         ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0), id
     `).all(albumId) as Array<{
@@ -537,10 +537,10 @@ export async function saveVideoNfoFile(
     const videoAlbumId = videoRecord.album_id || null;
     const videoReleaseDate = videoRecord.release_date || videoRecord.releaseDate || null;
     const artistRow = videoArtistId
-        ? db.prepare("SELECT mbid FROM artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
+        ? db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
     const albumRow = videoAlbumId
-        ? db.prepare("SELECT title, mbid, mb_release_group_id FROM albums WHERE id = ?").get(videoAlbumId) as {
+        ? db.prepare("SELECT title, mbid, mb_release_group_id FROM ProviderAlbums WHERE id = ?").get(videoAlbumId) as {
             title?: string | null;
             mbid?: string | null;
             mb_release_group_id?: string | null;

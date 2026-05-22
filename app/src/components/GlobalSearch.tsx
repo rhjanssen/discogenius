@@ -546,7 +546,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 onClick={() => handleItemClick(item)}
             >
                 <Avatar
-                    image={{ src: getTidalImage(item.imageId, 'artist', 'small') }}
+                    image={{ src: getTidalImage(item.imageId, 'artist', 'small') ?? undefined }}
                     name={item.name}
                     size={96}
                     shape="circular"

@@ -14,7 +14,7 @@ export type ImportedDirectoryMapping = {
 };
 
 export function resolveImportedLibraryFileId(filePath: string): number | null {
-    const row = db.prepare("SELECT id FROM library_files WHERE file_path = ?").get(filePath) as { id: number } | undefined;
+    const row = db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?").get(filePath) as { id: number } | undefined;
     return row?.id ?? null;
 }
 
@@ -61,7 +61,7 @@ export async function finalizeImportedDirectories(params: {
     }
 
     const upsertMovedSidecar = db.prepare(`
-        INSERT INTO library_files (
+        INSERT INTO TrackFiles (
             artist_id, album_id, media_id,
             canonical_artist_mbid, canonical_release_group_mbid,
             canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
@@ -86,15 +86,15 @@ export async function finalizeImportedDirectories(params: {
             artist_id = excluded.artist_id,
             album_id = excluded.album_id,
             media_id = excluded.media_id,
-            canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, library_files.canonical_artist_mbid),
-            canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, library_files.canonical_release_group_mbid),
-            canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, library_files.canonical_release_mbid),
-            canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, library_files.canonical_track_mbid),
-            canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, library_files.canonical_recording_mbid),
-            provider = COALESCE(excluded.provider, library_files.provider),
-            provider_entity_type = COALESCE(excluded.provider_entity_type, library_files.provider_entity_type),
-            provider_id = COALESCE(excluded.provider_id, library_files.provider_id),
-            library_slot = COALESCE(excluded.library_slot, library_files.library_slot),
+            canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, TrackFiles.canonical_artist_mbid),
+            canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, TrackFiles.canonical_release_group_mbid),
+            canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, TrackFiles.canonical_release_mbid),
+            canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, TrackFiles.canonical_track_mbid),
+            canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, TrackFiles.canonical_recording_mbid),
+            provider = COALESCE(excluded.provider, TrackFiles.provider),
+            provider_entity_type = COALESCE(excluded.provider_entity_type, TrackFiles.provider_entity_type),
+            provider_id = COALESCE(excluded.provider_id, TrackFiles.provider_id),
+            library_slot = COALESCE(excluded.library_slot, TrackFiles.library_slot),
             relative_path = excluded.relative_path,
             library_root = excluded.library_root,
             filename = excluded.filename,
@@ -153,7 +153,7 @@ export async function finalizeImportedDirectories(params: {
                         }
                     }
 
-                    db.prepare("DELETE FROM library_files WHERE file_path = ?").run(fullPath);
+                    db.prepare("DELETE FROM TrackFiles WHERE file_path = ?").run(fullPath);
                 }
 
                 let fileType = "other";
@@ -171,7 +171,7 @@ export async function finalizeImportedDirectories(params: {
 
                 const siblingMediaFiles = db.prepare(`
                     SELECT album_id, media_id, quality, file_path
-                    FROM library_files
+                    FROM TrackFiles
                     WHERE artist_id = ?
                       AND file_type IN ('track', 'video')
                       AND file_path LIKE ?

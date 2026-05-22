@@ -111,7 +111,7 @@ export class OrganizerService {
   }
 
   private static refreshArtistPathFromTemplateIfNeeded(artistId: string) {
-    const artist = db.prepare("SELECT id, name, mbid, path FROM artists WHERE id = ?").get(artistId) as {
+    const artist = db.prepare("SELECT id, name, mbid, path FROM Artists WHERE id = ?").get(artistId) as {
       id: string | number;
       name: string | null;
       mbid: string | null;
@@ -154,9 +154,9 @@ export class OrganizerService {
             a.mbid,
             a.path,
             mba.disambiguation
-          FROM mb_release_groups rg
-          JOIN artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+          FROM Albums rg
+          JOIN Artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
           WHERE rg.mbid = ?
           ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
           LIMIT 1
@@ -171,8 +171,8 @@ export class OrganizerService {
           a.mbid,
           a.path,
           mba.disambiguation
-        FROM artists a
-        LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+        FROM Artists a
+        LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
         WHERE a.id = ?
         LIMIT 1
       `).get(fallbackArtistId) as any;
@@ -185,8 +185,8 @@ export class OrganizerService {
             a.mbid,
             a.path,
             mba.disambiguation
-          FROM artists a
-          LEFT JOIN mb_artists mba ON mba.mbid = a.mbid
+          FROM Artists a
+          LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
           WHERE a.mbid = ?
           ORDER BY CASE WHEN CAST(a.id AS TEXT) = CAST(a.mbid AS TEXT) THEN 0 ELSE 1 END
           LIMIT 1
@@ -218,14 +218,14 @@ export class OrganizerService {
       });
       artistPath = resolved.path;
       if (resolved.shouldReplaceExistingPath) {
-        db.prepare("UPDATE artists SET path = ? WHERE id = ?").run(artistPath, artistId);
+        db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(artistPath, artistId);
       }
     } else if (!artistPath) {
       artistPath = resolveArtistFolderForPersistence({
         artistId,
         artistName: artist.name,
       });
-      db.prepare("UPDATE artists SET path = ? WHERE id = ? AND (path IS NULL OR TRIM(path) = '')").run(artistPath, artistId);
+      db.prepare("UPDATE Artists SET path = ? WHERE id = ? AND (path IS NULL OR TRIM(path) = '')").run(artistPath, artistId);
     }
 
     return {
@@ -359,7 +359,7 @@ export class OrganizerService {
   ): Promise<Map<string, string>> {
     const trackRows = db.prepare(`
       SELECT id, title, version, track_number, volume_number, isrc
-      FROM media
+      FROM ProviderMedia
       WHERE album_id = ? AND type != 'Music Video'
       ORDER BY volume_number, track_number, id
     `).all(albumId) as AlbumTrackRow[];
@@ -443,7 +443,7 @@ export class OrganizerService {
 
     const filesToPrune = db.prepare(`
       SELECT id, file_path, file_type, library_root
-      FROM library_files 
+      FROM TrackFiles 
       WHERE ${selectors.join(" OR ")}
     `).all() as { id: number; file_path: string; file_type: string; library_root: string }[];
 
@@ -453,7 +453,7 @@ export class OrganizerService {
     }
 
     // Process deletions
-    const deleteStmt = db.prepare(`DELETE FROM library_files WHERE id = ?`);
+    const deleteStmt = db.prepare(`DELETE FROM TrackFiles WHERE id = ?`);
 
     db.transaction(() => {
       for (const file of filesToPrune) {
@@ -578,7 +578,7 @@ export class OrganizerService {
   private static cleanupOldMediaFiles(mediaId: string, newFilePath: string, fileType: "track" | "video") {
     const oldFiles = db.prepare(
       `SELECT id, artist_id, album_id, media_id, file_path, library_root, quality
-       FROM library_files
+       FROM TrackFiles
        WHERE media_id = ? AND file_type = ? AND file_path != ?`
     ).all(mediaId, fileType, newFilePath) as Array<{
       id: number;
@@ -627,7 +627,7 @@ export class OrganizerService {
             removeEmptyParents(path.dirname(resolvedFilePath), libraryRoot);
           }
         }
-        db.prepare("DELETE FROM library_files WHERE id = ?").run(old.id);
+        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(old.id);
       } catch (e) {
         console.warn(`[Organizer] Failed to delete old ${fileType} file: ${old.file_path}`, e);
       }
@@ -664,7 +664,7 @@ export class OrganizerService {
     const normalizedExpectedPath = this.normalizeResolvedPath(expectedPath);
     const sidecars = db.prepare(`
       SELECT id, file_path, library_root
-      FROM library_files
+      FROM TrackFiles
       WHERE media_id = ? AND file_type = ?
       ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
     `).all(params.mediaId, params.fileType, expectedPath) as Array<{
@@ -683,7 +683,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare("DELETE FROM library_files WHERE id = ?").run(sidecar.id);
+        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(sidecar.id);
         continue;
       }
 
@@ -728,7 +728,7 @@ export class OrganizerService {
       });
 
       db.prepare(`
-        DELETE FROM library_files
+        DELETE FROM TrackFiles
         WHERE media_id = ? AND file_type = ? AND file_path != ?
       `).run(params.mediaId, params.fileType, expectedPath);
     }
@@ -749,7 +749,7 @@ export class OrganizerService {
     const scopedRows = params.albumId
       ? db.prepare(`
         SELECT id, file_path, library_root
-        FROM library_files
+        FROM TrackFiles
         WHERE artist_id = ?
           AND album_id = ?
           AND media_id IS NULL
@@ -759,7 +759,7 @@ export class OrganizerService {
       `).all(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath)
       : db.prepare(`
         SELECT id, file_path, library_root
-        FROM library_files
+        FROM TrackFiles
         WHERE artist_id = ?
           AND album_id IS NULL
           AND media_id IS NULL
@@ -778,7 +778,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare("DELETE FROM library_files WHERE id = ?").run(sidecar.id);
+        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(sidecar.id);
         continue;
       }
 
@@ -819,7 +819,7 @@ export class OrganizerService {
 
       if (params.albumId) {
         db.prepare(`
-          DELETE FROM library_files
+          DELETE FROM TrackFiles
           WHERE artist_id = ?
             AND album_id = ?
             AND media_id IS NULL
@@ -829,7 +829,7 @@ export class OrganizerService {
         `).run(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath);
       } else {
         db.prepare(`
-          DELETE FROM library_files
+          DELETE FROM TrackFiles
           WHERE artist_id = ?
             AND album_id IS NULL
             AND media_id IS NULL
@@ -870,7 +870,7 @@ export class OrganizerService {
       try {
         const siblingLibraryFiles = db.prepare(
           `SELECT id, artist_id, album_id, media_id, quality
-           FROM library_files
+           FROM TrackFiles
            WHERE file_path = ? AND file_type = ?`
         ).all(siblingPath, fileType) as Array<{
           id: number;
@@ -901,7 +901,7 @@ export class OrganizerService {
         }
 
         fs.rmSync(siblingPath, { force: true });
-        db.prepare("DELETE FROM library_files WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
+        db.prepare("DELETE FROM TrackFiles WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
         console.log(`[Organizer] Deleted conflicting ${fileType} variant: ${siblingPath}`);
       } catch (error) {
         console.warn(`[Organizer] Failed to delete conflicting ${fileType} variant: ${siblingPath}`, error);
@@ -996,7 +996,7 @@ export class OrganizerService {
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
       await RefreshAlbumService.scanShallow(tidalId);
 
-      const album = db.prepare("SELECT * FROM albums WHERE id = ?").get(tidalId) as any;
+      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(tidalId) as any;
       if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -1040,7 +1040,7 @@ export class OrganizerService {
         const idFromName = /^\d+$/.test(base) ? base : null;
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
-        const trackRow = db.prepare("SELECT id FROM media WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any;
+        const trackRow = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any;
         return !trackRow;
       });
 
@@ -1087,7 +1087,7 @@ export class OrganizerService {
 
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         const trackRow = trackId
-          ? (db.prepare("SELECT * FROM media WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any)
+          ? (db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any)
           : null;
 
         if (!trackId || !trackRow) {
@@ -1098,7 +1098,7 @@ export class OrganizerService {
         const trackNumber = Number(trackRow.track_number || 0);
         const volumeNumber = Number(trackRow.volume_number || 1);
         const trackArtistId = String(trackRow.artist_id || artistId);
-        const trackArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(trackArtistId) as any;
+        const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
         const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
         const metrics = await parseAudioFile(srcFile);
@@ -1407,10 +1407,10 @@ export class OrganizerService {
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
       await RefreshAlbumService.scanShallow(albumId);
 
-      const album = db.prepare("SELECT * FROM albums WHERE id = ?").get(albumId) as any;
+      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
       if (!album) throw new Error(`Album ${albumId} not found in DB after scan`);
 
-      const trackRow = db.prepare("SELECT * FROM media WHERE id = ?").get(tidalId) as any;
+      const trackRow = db.prepare("SELECT * FROM ProviderMedia WHERE id = ?").get(tidalId) as any;
       if (!trackRow) throw new Error(`Track ${tidalId} not found in DB after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -1433,7 +1433,7 @@ export class OrganizerService {
       const trackNumber = Number(trackRow.track_number || trackData.track_number || 0);
       const volumeNumber = Number(trackRow.volume_number || trackData.volume_number || 1);
       const trackArtistId = String(trackRow.artist_id || artistId);
-      const trackArtist = db.prepare("SELECT name, mbid FROM artists WHERE id = ?").get(trackArtistId) as any;
+      const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
       const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
       const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
 
@@ -1711,7 +1711,7 @@ export class OrganizerService {
 
       // Ensure video exists in DB
       let fetchedVideoData: any | null = null;
-      let video = db.prepare("SELECT * FROM media WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
+      let video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
       if (!video) {
         fetchedVideoData = await this.fetchProviderVideo(tidalId);
         const videoData = fetchedVideoData;
@@ -1723,7 +1723,7 @@ export class OrganizerService {
           throw new Error(`[Organizer] Video ${tidalId} missing valid artist_id`);
         }
 
-        const exists = db.prepare("SELECT id FROM artists WHERE id = ?").get(videoArtistId) as any;
+        const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
         if (!exists) {
           try {
             const a = await this.fetchProviderArtist(videoArtistId);
@@ -1739,7 +1739,7 @@ export class OrganizerService {
 
         // Upsert video
         db.prepare(`
-          INSERT INTO media (
+          INSERT INTO ProviderMedia (
             id, artist_id, album_id, title, version, release_date, type,
             explicit, quality, duration, popularity, cover,
             monitor, downloaded
@@ -1769,7 +1769,7 @@ export class OrganizerService {
           videoCoverId,
         );
 
-        video = db.prepare("SELECT * FROM media WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
+        video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
       }
       if (!video) throw new Error(`Video ${tidalId} not found in DB after fetch`);
 
@@ -1782,7 +1782,7 @@ export class OrganizerService {
       });
 
       const artistId = String(video.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+      const existingArtist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
@@ -1799,7 +1799,7 @@ export class OrganizerService {
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
       this.refreshArtistPathFromTemplateIfNeeded(artistId);
-      artistPath = String((db.prepare("SELECT path FROM artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
+      artistPath = String((db.prepare("SELECT path FROM Artists WHERE id = ?").get(artistId) as { path?: string | null } | undefined)?.path || "").trim();
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
@@ -1902,7 +1902,7 @@ export class OrganizerService {
             fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(tidalId);
             coverId = fetchedVideoData?.image_id || null;
             if (coverId) {
-              db.prepare("UPDATE media SET cover = COALESCE(?, cover) WHERE id = ? AND type = 'Music Video'")
+              db.prepare("UPDATE ProviderMedia SET cover = COALESCE(?, cover) WHERE id = ? AND type = 'Music Video'")
                 .run(coverId, tidalId);
               video.cover = coverId;
             }

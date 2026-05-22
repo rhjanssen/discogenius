@@ -29,7 +29,7 @@ const GROUP_MIN_FILES = 2;
 const GROUP_MIN_RATIO = 0.6;
 const UNMAPPED_PAGE_SIZE = 100;
 
-type UnmappedFile = {
+export type UnmappedFile = {
     id: number;
     file_path: string;
     relative_path: string;
@@ -315,10 +315,6 @@ function formatBitrate(bitrate: number | null | undefined) {
     return `${Math.round(bitrate / 1000)} kbps`;
 }
 
-function formatSampleRate(sampleRate: number | null | undefined) {
-    if (!sampleRate || sampleRate <= 0) return null;
-    return `${(sampleRate / 1000).toFixed(1)} kHz`;
-}
 
 function formatSampleRateCompact(sampleRate: number | null | undefined) {
     if (!sampleRate || sampleRate <= 0) return null;

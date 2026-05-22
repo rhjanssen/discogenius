@@ -38,14 +38,14 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
     }
 
     findById(id: number): UnmappedFile | undefined {
-        const row = this.prepare("SELECT * FROM unmapped_files WHERE id = ?").get(id) as any;
+        const row = this.prepare("SELECT * FROM UnmappedFiles WHERE id = ?").get(id) as any;
         return row ? mapRow(row) : undefined;
     }
 
     findAll(limit?: number, offset?: number): UnmappedFile[] {
         const sql = limit !== undefined
-            ? `SELECT * FROM unmapped_files ORDER BY detected_artist ASC, detected_album ASC, filename ASC LIMIT ? OFFSET ?`
-            : `SELECT * FROM unmapped_files ORDER BY detected_artist ASC, detected_album ASC, filename ASC`;
+            ? `SELECT * FROM UnmappedFiles ORDER BY detected_artist ASC, detected_album ASC, filename ASC LIMIT ? OFFSET ?`
+            : `SELECT * FROM UnmappedFiles ORDER BY detected_artist ASC, detected_album ASC, filename ASC`;
         const rows = (limit !== undefined
             ? this.prepare(sql).all(limit, offset || 0)
             : this.prepare(sql).all()) as any[];
@@ -55,7 +55,7 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
     findByIds(ids: number[]): UnmappedFile[] {
         if (ids.length === 0) return [];
         const placeholders = ids.map(() => "?").join(",");
-        const rows = this.prepare(`SELECT * FROM unmapped_files WHERE id IN (${placeholders})`).all(...ids) as any[];
+        const rows = this.prepare(`SELECT * FROM UnmappedFiles WHERE id IN (${placeholders})`).all(...ids) as any[];
         return rows.map(mapRow);
     }
 
@@ -63,13 +63,13 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
         const normalizedPrefix = relativeDirectory.replace(/\\/g, "/");
         const sql = libraryRoot
             ? `
-                SELECT * FROM unmapped_files
+                SELECT * FROM UnmappedFiles
                 WHERE relative_path LIKE ? || '%'
                   AND library_root = ?
                 ORDER BY filename ASC
               `
             : `
-                SELECT * FROM unmapped_files
+                SELECT * FROM UnmappedFiles
                 WHERE relative_path LIKE ? || '%'
                 ORDER BY filename ASC
               `;
@@ -80,13 +80,13 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
     }
 
     count(): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM unmapped_files").get() as { count: number };
+        const result = this.prepare("SELECT COUNT(*) as count FROM UnmappedFiles").get() as { count: number };
         return result.count;
     }
 
     setIgnored(id: number, ignored: boolean): void {
         this.prepare(`
-            UPDATE unmapped_files
+            UPDATE UnmappedFiles
             SET ignored = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `).run(ignored ? 1 : 0, id);
@@ -96,19 +96,19 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
         if (ids.length === 0) return;
         const placeholders = ids.map(() => "?").join(",");
         this.prepare(`
-            UPDATE unmapped_files
+            UPDATE UnmappedFiles
             SET ignored = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id IN (${placeholders})
         `).run(ignored ? 1 : 0, ...ids);
     }
 
     delete(id: number): void {
-        this.prepare("DELETE FROM unmapped_files WHERE id = ?").run(id);
+        this.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(id);
     }
 
     deleteByIds(ids: number[]): void {
         if (ids.length === 0) return;
         const placeholders = ids.map(() => "?").join(",");
-        this.prepare(`DELETE FROM unmapped_files WHERE id IN (${placeholders})`).run(...ids);
+        this.prepare(`DELETE FROM UnmappedFiles WHERE id IN (${placeholders})`).run(...ids);
     }
 }

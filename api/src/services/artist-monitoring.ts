@@ -21,7 +21,7 @@ export type ArtistMonitorRow = Record<string, unknown> & {
 export function loadArtistWithEffectiveMonitor(artistId: string): ArtistMonitorRow | undefined {
     return db.prepare(`
         SELECT a.*, CASE WHEN ${managedArtistPredicate} THEN 1 ELSE 0 END AS effective_monitor
-        FROM artists a
+        FROM Artists a
         WHERE a.id = ?
     `).get(artistId) as ArtistMonitorRow | undefined;
 }
@@ -40,8 +40,8 @@ export function requireArtistName(artistId: string): string {
 function refreshArtistProgress(artistId: string) {
     const albumIds = db.prepare(`
         SELECT DISTINCT al.id
-        FROM albums al
-        LEFT JOIN album_artists aa ON aa.album_id = al.id
+        FROM ProviderAlbums al
+        LEFT JOIN ProviderAlbumArtists aa ON aa.album_id = al.id
         WHERE al.artist_id = ? OR aa.artist_id = ?
     `).all(artistId, artistId) as Array<{ id: number }>;
 
@@ -56,7 +56,7 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
     const nextStatus = monitored ? 1 : 0;
     const applyChanges = db.transaction(() => {
         const artistResult = db.prepare(`
-            UPDATE artists
+            UPDATE Artists
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id = ?
@@ -67,7 +67,7 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         }
 
         db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE artist_id = ?
@@ -75,27 +75,27 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         `).run(nextStatus, nextStatus, artistId);
 
         db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (
-                SELECT album_id FROM album_artists WHERE artist_id = ?
+                SELECT album_id FROM ProviderAlbumArtists WHERE artist_id = ?
             )
               AND (monitor_lock = 0 OR monitor_lock IS NULL)
         `).run(nextStatus, nextStatus, artistId);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE album_id IN (
-                SELECT id FROM albums WHERE artist_id = ?
+                SELECT id FROM ProviderAlbums WHERE artist_id = ?
             )
               AND (monitor_lock = 0 OR monitor_lock IS NULL)
         `).run(nextStatus, nextStatus, artistId);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE type = 'Music Video'
@@ -135,7 +135,7 @@ export async function monitorArtistAndQueueIntake(options: {
     trigger?: number;
 }) {
     const existingByMbid = isMusicBrainzMbid(options.artistId)
-        ? db.prepare("SELECT id FROM artists WHERE mbid = ? LIMIT 1").get(options.artistId) as { id: string | number } | undefined
+        ? db.prepare("SELECT id FROM Artists WHERE mbid = ? LIMIT 1").get(options.artistId) as { id: string | number } | undefined
         : undefined;
     const artistId = existingByMbid?.id != null ? String(existingByMbid.id) : options.artistId;
 

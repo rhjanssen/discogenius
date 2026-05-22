@@ -88,7 +88,7 @@ const FilterMenu = ({
     const hasViewMode = viewMode !== undefined && onViewModeChange;
 
     // Track checked items for MenuItemCheckbox
-    const checkedValues = statusFilters ? {
+    const checkedValues: Record<string, string[]> | undefined = statusFilters ? {
         monitoring: [
             ...(statusFilters.onlyMonitored ? ['monitored'] : []),
             ...(statusFilters.onlyUnmonitored ? ['unmonitored'] : []),
@@ -101,7 +101,7 @@ const FilterMenu = ({
             ...(statusFilters.onlyDownloaded ? ['downloaded'] : []),
             ...(statusFilters.onlyNotDownloaded ? ['notDownloaded'] : []),
         ],
-    } : {};
+    } : undefined;
 
     const handleCheckedChange: MenuProps['onCheckedValueChange'] = (_, data) => {
         if (!onStatusFiltersChange || !statusFilters) return;

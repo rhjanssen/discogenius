@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import {
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-module-fixer-"));
+process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
+process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+
+const dbModule = await import("../database.js");
+dbModule.initDatabase();
+
+const {
   normalizeMusicBrainzSecondaryType,
   normalizeStoredModuleToCanonical,
   resolveAlbumModuleClassification,
   resolveVersionGroupModule,
-} from "./module-fixer.js";
+} = await import("./module-fixer.js");
 
 test("version-group propagation spreads secondary module buckets", () => {
   assert.equal(resolveVersionGroupModule(["LIVE"]), "LIVE");

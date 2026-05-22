@@ -151,7 +151,7 @@ function getProviderItem(provider: string | null, entityType: string, providerId
   return (db.prepare(`
     SELECT provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
            track_mbid, recording_mbid, library_slot
-    FROM provider_items
+    FROM ProviderItems
     WHERE ${providerClause} entity_type = ? AND provider_id = ?
     ORDER BY updated_at DESC
     LIMIT 1
@@ -160,34 +160,34 @@ function getProviderItem(provider: string | null, entityType: string, providerId
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
   const media = getRow<MediaRow>(
-    "SELECT artist_id, album_id, mbid, type, quality FROM media WHERE CAST(id AS TEXT) = ? LIMIT 1",
+    "SELECT artist_id, album_id, mbid, type, quality FROM ProviderMedia WHERE CAST(id AS TEXT) = ? LIMIT 1",
     input.mediaId
   );
   const albumId = nullableText(input.albumId) ?? nullableText(media?.album_id);
   const album = getRow<AlbumRow>(
-    "SELECT artist_id, mbid, mb_release_group_id, quality FROM albums WHERE CAST(id AS TEXT) = ? LIMIT 1",
+    "SELECT artist_id, mbid, mb_release_group_id, quality FROM ProviderAlbums WHERE CAST(id AS TEXT) = ? LIMIT 1",
     albumId
   );
   const artistId = nullableText(input.artistId) ?? nullableText(album?.artist_id) ?? nullableText(media?.artist_id);
   const artist = getRow<ArtistRow>(
-    "SELECT mbid FROM artists WHERE CAST(id AS TEXT) = ? LIMIT 1",
+    "SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = ? LIMIT 1",
     artistId
   );
 
   const albumRelease = getRow<MbReleaseRow>(
-    "SELECT mbid, release_group_mbid FROM mb_releases WHERE mbid = ? LIMIT 1",
+    "SELECT mbid, release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
     album?.mbid
   );
   const mediaTrack = getRow<MbTrackRow>(
-    "SELECT mbid, release_mbid, recording_mbid FROM mb_tracks WHERE mbid = ? LIMIT 1",
+    "SELECT mbid, release_mbid, recording_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
     media?.mbid
   );
   const mediaRecording = getRow<{ mbid: string }>(
-    "SELECT mbid FROM mb_recordings WHERE mbid = ? LIMIT 1",
+    "SELECT mbid FROM Recordings WHERE mbid = ? LIMIT 1",
     media?.mbid
   );
   const trackRelease = getRow<MbReleaseRow>(
-    "SELECT mbid, release_group_mbid FROM mb_releases WHERE mbid = ? LIMIT 1",
+    "SELECT mbid, release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
     mediaTrack?.release_mbid
   );
 

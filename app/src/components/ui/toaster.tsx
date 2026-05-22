@@ -1,7 +1,5 @@
 import {
   Toaster as FluentToaster,
-  useToastController,
-  useId,
 } from "@fluentui/react-components";
 
 // Single global toaster ID

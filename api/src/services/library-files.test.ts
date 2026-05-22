@@ -53,12 +53,12 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM media_artists").run();
-  db.prepare("DELETE FROM album_artists").run();
-  db.prepare("DELETE FROM library_files").run();
-  db.prepare("DELETE FROM media").run();
-  db.prepare("DELETE FROM albums").run();
-  db.prepare("DELETE FROM artists").run();
+  db.prepare("DELETE FROM ProviderMediaArtists").run();
+  db.prepare("DELETE FROM ProviderAlbumArtists").run();
+  db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM ProviderMedia").run();
+  db.prepare("DELETE FROM ProviderAlbums").run();
+  db.prepare("DELETE FROM Artists").run();
 
   writeTestConfig();
 });
@@ -75,19 +75,19 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   });
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitor)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen (legacy-folder)", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1);
 
   dbModule.db.prepare(`
-    INSERT INTO media (
+    INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
       explicit, type, quality, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -113,7 +113,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
 
 test("resolveArtistFolderForPersistence disambiguates same-name artists with numeric suffixes outside the repository layer", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Phoenix", "Phoenix", 1);
 
@@ -127,7 +127,7 @@ test("resolveArtistFolderForPersistence disambiguates same-name artists with num
 
 test("resolveArtistFolderForPersistence prefers MusicBrainz disambiguation for same-name artist collisions", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Phoenix", "Phoenix", 1);
 
@@ -155,7 +155,7 @@ test("resolveArtistFolderForPersistence reuses the canonical folder for provider
   writeTestConfig({ artistFolder: "{artistName} {mbid-{artistMbId}}" });
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitor)
     VALUES (?, ?, ?, ?, ?)
   `).run(
     "artist-mbid-1",
@@ -178,7 +178,7 @@ test("resolveArtistFolderForPersistence avoids nested folder collisions for gene
   writeTestConfig({ artistFolder: "Artists/{artistName}" });
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Air", "Artists", 1);
 
@@ -248,14 +248,14 @@ test("backfillArtistPaths assigns numeric folders when multiple legacy artists a
   writeTestConfig({ artistFolder: "{artistName}" });
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, monitor, path)
+    INSERT INTO Artists (id, name, monitor, path)
     VALUES (?, ?, ?, NULL), (?, ?, ?, NULL)
   `).run("1", "Air", 1, "2", "Air", 1);
 
   const updated = dbModule.backfillArtistPaths();
   const rows = dbModule.db.prepare(`
     SELECT id, path
-    FROM artists
+    FROM Artists
     ORDER BY id ASC
   `).all() as Array<{ id: string; path: string }>;
 
@@ -268,39 +268,39 @@ test("backfillArtistPaths assigns numeric folders when multiple legacy artists a
 
 test("upsertLibraryFile stores canonical MusicBrainz and provider identity for imported tracks", () => {
   dbModule.db.prepare(`
-    INSERT INTO mb_artists (mbid, name)
+    INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
   `).run("artist-mbid-1", "Queen");
   dbModule.db.prepare(`
-    INSERT INTO mb_release_groups (mbid, artist_mbid, title, primary_type)
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
   `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
   dbModule.db.prepare(`
-    INSERT INTO mb_releases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1);
   dbModule.db.prepare(`
-    INSERT INTO mb_recordings (mbid, title)
+    INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `).run("recording-mbid-1", "Bohemian Rhapsody");
   dbModule.db.prepare(`
-    INSERT INTO mb_tracks (
+    INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitor)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, monitor, mbid, mb_release_group_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, "release-mbid-1", "rg-mbid-1");
   dbModule.db.prepare(`
-    INSERT INTO media (
+    INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
       explicit, type, quality, duration, monitor, mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -328,7 +328,7 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
       provider_entity_type,
       provider_id,
       library_slot
-    FROM library_files
+    FROM TrackFiles
     WHERE id = ?
   `).get(id) as Record<string, string | null>;
 
@@ -352,23 +352,23 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
 
 test("upsertLibraryFile resolves canonical release group from provider item mapping", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitor)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, monitor, mbid, mb_release_group_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-album-1", "artist-local", "Provider Album", "2025-01-01", "SINGLE", 0, "HIRES_LOSSLESS", 1, 1, 0, 180, 1, null, null);
   dbModule.db.prepare(`
-    INSERT INTO media (
+    INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
       explicit, type, quality, duration, monitor, mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-track-1", "artist-local", "provider-album-1", "Provider Track", 1, 1, 0, "Track", "HIRES_LOSSLESS", 180, 1, null);
   dbModule.db.prepare(`
-    INSERT INTO provider_items (
+    INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
       release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -402,7 +402,7 @@ test("upsertLibraryFile resolves canonical release group from provider item mapp
   const row = dbModule.db.prepare(`
     SELECT canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
            provider, provider_entity_type, provider_id, library_slot
-    FROM library_files
+    FROM TrackFiles
     WHERE id = ?
   `).get(id) as Record<string, string | null>;
 
@@ -419,7 +419,7 @@ test("upsertLibraryFile resolves canonical release group from provider item mapp
 
 test("upsertLibraryFile does not invent provider ids for canonical artist assets", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitor)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
 
@@ -437,7 +437,7 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
 
   const row = dbModule.db.prepare(`
     SELECT canonical_artist_mbid, provider, provider_entity_type, provider_id
-    FROM library_files
+    FROM TrackFiles
     WHERE id = ?
   `).get(id) as Record<string, string | null>;
 
@@ -451,17 +451,17 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
 
 test("upsertLibraryFile merges duplicate path and media identity rows during rescan", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Queen", "Queen", 1);
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 2, 1, 0, 3551, 1);
   dbModule.db.prepare(`
-    INSERT INTO media (
+    INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
       explicit, type, quality, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -478,7 +478,7 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
   fs.writeFileSync(stalePath, "audio");
 
   dbModule.db.prepare(`
-    INSERT INTO library_files (
+    INSERT INTO TrackFiles (
       artist_id, album_id, media_id, file_path, relative_path, library_root,
       filename, extension, file_size, file_type, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -499,7 +499,7 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
 
   const rows = dbModule.db.prepare(`
     SELECT id, media_id, file_path
-    FROM library_files
+    FROM TrackFiles
     ORDER BY id
   `).all() as Array<{ id: number; media_id: string; file_path: string }>;
 
@@ -511,11 +511,11 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
 
 test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Queen", "Queen", 1);
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -532,7 +532,7 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
   fs.writeFileSync(stalePath, "cover");
 
   dbModule.db.prepare(`
-    INSERT INTO library_files (
+    INSERT INTO TrackFiles (
       artist_id, album_id, media_id, file_path, relative_path, library_root,
       filename, extension, file_size, file_type, quality
     ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL), (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)
@@ -553,7 +553,7 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
 
   const rows = dbModule.db.prepare(`
     SELECT id, album_id, file_type, file_path
-    FROM library_files
+    FROM TrackFiles
     ORDER BY id
   `).all() as Array<{ id: number; album_id: string; file_type: string; file_path: string }>;
 
@@ -562,4 +562,135 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
   assert.equal(rows[0]?.album_id, "10");
   assert.equal(rows[0]?.file_type, "cover");
   assert.equal(rows[0]?.file_path, targetPath);
+});
+
+test("computeExpectedPath inline vs separated layouts for video files", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-inline-test", "Bastille", "artist-mbid-bastille", "Bastille", 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("album-inline-test", "artist-inline-test", "Bad Blood", "2013-03-04", "ALBUM", 0, "LOSSLESS", 1, 1, 1, 200, 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("track-inline-test", "artist-inline-test", "album-inline-test", "Pompeii", 1, 1, 0, "Track", "LOSSLESS", 210, 1, "track-mbid-pompeii");
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("video-inline-test", "artist-inline-test", "album-inline-test", "Pompeii Video", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1, "recording-mbid-pompeii");
+
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille", "Bastille");
+
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", "Album");
+
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("release-mbid-pompeii", "rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `).run("recording-mbid-pompeii", "Pompeii");
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-pompeii", "release-mbid-pompeii", "recording-mbid-pompeii", 1, 1, "1", "Pompeii");
+
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "separated";
+  configModule.writeConfig(config);
+
+  const rowVideoSeparated: any = {
+    id: 1000,
+    artist_id: "artist-inline-test",
+    album_id: "album-inline-test",
+    media_id: "video-inline-test",
+    file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video.mp4"),
+    relative_path: null,
+    library_root: "videos",
+    file_type: "video",
+    extension: "mp4",
+  };
+
+  const expectedSeparated = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
+  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.mp4");
+  assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
+
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const expectedInlineMonitored = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
+  const expectedInlineMonitoredPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4");
+  assert.equal(expectedInlineMonitored.expectedPath, expectedInlineMonitoredPath);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      id, artist_id, album_id, media_id, file_path, relative_path, library_root,
+      filename, extension, file_size, file_type, quality, canonical_recording_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    2000, "artist-inline-test", "album-inline-test", "track-inline-test",
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii.flac"),
+    path.join("Bastille", "Bad Blood", "01 - Pompeii.flac"),
+    "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS", "recording-mbid-pompeii"
+  );
+
+  const expectedInlineImported = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
+  assert.equal(expectedInlineImported.expectedPath, expectedInlineMonitoredPath);
+
+  const rowThumbnail: any = {
+    id: 1001,
+    artist_id: "artist-inline-test",
+    album_id: "album-inline-test",
+    media_id: "video-inline-test",
+    file_path: "",
+    relative_path: null,
+    library_root: "videos",
+    file_type: "video_thumbnail",
+    extension: "jpg",
+  };
+  const expectedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowThumbnail);
+  const expectedThumbnailPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.jpg");
+  assert.equal(expectedThumbnail.expectedPath, expectedThumbnailPath);
+
+  const rowNfo: any = {
+    id: 1002,
+    artist_id: "artist-inline-test",
+    album_id: "album-inline-test",
+    media_id: "video-inline-test",
+    file_path: "",
+    relative_path: null,
+    library_root: "videos",
+    file_type: "nfo",
+    extension: "nfo",
+  };
+  const expectedNfo = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowNfo);
+  const expectedNfoPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.nfo");
+  assert.equal(expectedNfo.expectedPath, expectedNfoPath);
+
+  dbModule.db.prepare("UPDATE ProviderMedia SET mbid = 'non-existent-recording' WHERE id = 'video-inline-test'").run();
+
+  const expectedFallback = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
+  assert.equal(expectedFallback.expectedPath, expectedSeparatedPath);
 });

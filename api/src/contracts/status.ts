@@ -4,7 +4,6 @@ import {
   expectIdentifierString,
   expectNullableString,
   expectNumber,
-  expectOptionalBoolean,
   expectOptionalNumber,
   expectOptionalString,
   expectRecord,

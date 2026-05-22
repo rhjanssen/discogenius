@@ -73,6 +73,7 @@ const PATH_UPDATE_KEYS = [
   "spatial_path",
   "video_path",
   "create_empty_artist_folders",
+  "video_folder_layout",
 ] as const satisfies readonly (keyof PathConfigContract)[];
 
 const NAMING_UPDATE_KEYS = [

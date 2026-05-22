@@ -332,7 +332,7 @@ const ActivityTab = ({
             <CachedRefreshNotice
                 visible={showCachedNotice}
                 cachedLabel="activity"
-                errorMessage={activityRefreshErrorMessage}
+                errorMessage={activityRefreshErrorMessage || undefined}
             />
 
             {showUnavailableState ? (

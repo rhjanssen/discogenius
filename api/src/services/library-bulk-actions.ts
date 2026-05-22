@@ -110,21 +110,21 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE artists
+            UPDATE Artists
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (${artistPlaceholders})
         `).run(nextStatus, nextStatus, ...artistIds);
 
         db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE (
                 artist_id IN (${artistPlaceholders})
                 OR id IN (
                     SELECT album_id
-                    FROM album_artists
+                    FROM ProviderAlbumArtists
                     WHERE artist_id IN (${albumArtistPlaceholders})
                 )
             )
@@ -132,17 +132,17 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
         `).run(nextStatus, nextStatus, ...artistIds, ...artistIds);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE type != 'Music Video'
               AND album_id IN (
                   SELECT id
-                  FROM albums
+                  FROM ProviderAlbums
                   WHERE artist_id IN (${artistPlaceholders})
                      OR id IN (
                         SELECT album_id
-                        FROM album_artists
+                        FROM ProviderAlbumArtists
                         WHERE artist_id IN (${albumArtistPlaceholders})
                      )
               )
@@ -150,7 +150,7 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
         `).run(nextStatus, nextStatus, ...artistIds, ...artistIds);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE type = 'Music Video'
@@ -168,14 +168,14 @@ function applyAlbumMonitorState(albumIds: string[], monitored: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (${albumPlaceholders})
         `).run(nextStatus, nextStatus, ...albumIds);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE album_id IN (${albumPlaceholders})
@@ -193,7 +193,7 @@ function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (${trackPlaceholders})
@@ -211,7 +211,7 @@ function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (${videoPlaceholders})
@@ -228,14 +228,14 @@ function applyAlbumLockState(albumIds: string[], locked: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET monitor_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE id IN (${albumPlaceholders})
         `).run(nextStatus, nextStatus, ...albumIds);
 
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE album_id IN (${albumPlaceholders})
@@ -252,7 +252,7 @@ function applyTrackLockState(trackIds: string[], locked: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE id IN (${trackPlaceholders})
@@ -270,7 +270,7 @@ function applyVideoLockState(videoIds: string[], locked: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE media
+            UPDATE ProviderMedia
             SET monitor_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE id IN (${videoPlaceholders})
@@ -287,8 +287,8 @@ function queueAlbumDownloads(albumIds: string[]): number[] {
     for (const albumId of albumIds) {
         const album = db.prepare(`
             SELECT a.id, a.title, a.version, a.cover, a.quality, ar.name as artist_name
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id = ?
         `).get(albumId) as EntityRow | undefined;
 
@@ -298,8 +298,8 @@ function queueAlbumDownloads(albumIds: string[]): number[] {
 
         const albumArtists = db.prepare(`
             SELECT a.name
-            FROM album_artists aa
-            JOIN artists a ON a.id = aa.artist_id
+            FROM ProviderAlbumArtists aa
+            JOIN Artists a ON a.id = aa.artist_id
             WHERE aa.album_id = ?
         `).all(albumId) as Array<{ name?: string | null }>;
         const artistNames = albumArtists.map((row) => String(row.name || "").trim()).filter(Boolean);
@@ -347,9 +347,9 @@ function queueTrackDownloads(trackIds: string[]): number[] {
                 a.cover as album_cover,
                 a.quality as album_quality,
                 ar.name as artist_name
-            FROM media m
-            LEFT JOIN albums a ON a.id = m.album_id
-            LEFT JOIN artists ar ON ar.id = m.artist_id
+            FROM ProviderMedia m
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
             WHERE m.id = ? AND m.album_id IS NOT NULL AND m.type != 'Music Video'
         `).get(trackId) as EntityRow | undefined;
 
@@ -404,9 +404,9 @@ function queueVideoDownloads(videoIds: string[]): number[] {
                 m.quality,
                 ar.name as artist_name,
                 a.cover as album_cover
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
-            LEFT JOIN albums a ON a.id = m.album_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ? AND m.type = 'Music Video'
         `).get(videoId) as EntityRow | undefined;
 
@@ -477,7 +477,7 @@ export class LibraryBulkActionService {
 
     private static async applyArtistAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): Promise<LibraryBulkActionResult> {
         const rows = fetchRows(
-            `SELECT id, name FROM artists WHERE id IN (${buildPlaceholders(ids.length)})`,
+            `SELECT id, name FROM Artists WHERE id IN (${buildPlaceholders(ids.length)})`,
             ids,
         );
         const rowsById = new Map(rows.map((row) => [String(row.id), row]));
@@ -526,8 +526,8 @@ export class LibraryBulkActionService {
         const albumRows = fetchRows(
             `
                 SELECT DISTINCT CAST(a.id AS TEXT) AS id
-                FROM albums a
-                LEFT JOIN album_artists aa ON aa.album_id = a.id
+                FROM ProviderAlbums a
+                LEFT JOIN ProviderAlbumArtists aa ON aa.album_id = a.id
                 WHERE a.artist_id IN (${buildPlaceholders(foundIds.length)})
                    OR aa.artist_id IN (${buildPlaceholders(foundIds.length)})
             `,
@@ -573,7 +573,7 @@ export class LibraryBulkActionService {
 
     private static applyAlbumAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id FROM albums WHERE id IN (${buildPlaceholders(ids.length)})`,
+            `SELECT id FROM ProviderAlbums WHERE id IN (${buildPlaceholders(ids.length)})`,
             ids,
         );
         const foundIds = rows.map((row) => String(row.id));
@@ -639,7 +639,7 @@ export class LibraryBulkActionService {
 
     private static applyTrackAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id, album_id FROM media WHERE id IN (${buildPlaceholders(ids.length)}) AND album_id IS NOT NULL AND type != 'Music Video'`,
+            `SELECT id, album_id FROM ProviderMedia WHERE id IN (${buildPlaceholders(ids.length)}) AND album_id IS NOT NULL AND type != 'Music Video'`,
             ids,
         );
         const foundIds = rows.map((row) => String(row.id));
@@ -704,7 +704,7 @@ export class LibraryBulkActionService {
 
     private static applyVideoAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id, artist_id FROM media WHERE id IN (${buildPlaceholders(ids.length)}) AND type = 'Music Video'`,
+            `SELECT id, artist_id FROM ProviderMedia WHERE id IN (${buildPlaceholders(ids.length)}) AND type = 'Music Video'`,
             ids,
         );
         const foundIds = rows.map((row) => String(row.id));

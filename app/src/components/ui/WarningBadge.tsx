@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, BadgeProps, mergeClasses } from "@fluentui/react-components";
+import { Badge, BadgeProps } from "@fluentui/react-components";
 
 /**
  * Warning badge using Fluent UI's built-in "severe" color (dark orange palette).

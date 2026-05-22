@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
-import { Link, Text, Title1, Body1, makeStyles, tokens } from "@fluentui/react-components";
+import { Link, Title1, Body1, makeStyles, tokens } from "@fluentui/react-components";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 

@@ -30,7 +30,7 @@ class LibraryMetadataBackfillService {
         const naming = getNamingConfig();
         const result: MetadataFillResult = { downloaded: 0, failed: 0, skipped: 0 };
 
-        const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+        const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
         if (!artist) return result;
 
         const artistFolder = resolveArtistFolderFromRecord({
@@ -57,7 +57,7 @@ class LibraryMetadataBackfillService {
     async fillMissingMetadataFilesForLibrary(): Promise<MetadataFillResult> {
         const artistRows = db.prepare(`
       SELECT DISTINCT artist_id
-      FROM library_files
+      FROM TrackFiles
       WHERE artist_id IS NOT NULL
       ORDER BY artist_id ASC
     `).all() as Array<{ artist_id: number }>;
@@ -80,13 +80,13 @@ class LibraryMetadataBackfillService {
         metadataConfig: any,
         result: MetadataFillResult,
     ) {
-        const hasFiles = db.prepare("SELECT 1 FROM library_files WHERE artist_id = ? LIMIT 1").get(artistId);
+        const hasFiles = db.prepare("SELECT 1 FROM TrackFiles WHERE artist_id = ? LIMIT 1").get(artistId);
         if (!hasFiles) return;
 
         const libraryRoots = Array.from(new Set(
             (db.prepare(`
                 SELECT DISTINCT library_root
-                FROM library_files
+                FROM TrackFiles
                 WHERE artist_id = ?
                   AND file_type IN ('track', 'video')
                   AND library_root IS NOT NULL
@@ -157,13 +157,13 @@ class LibraryMetadataBackfillService {
     ) {
         const albums = db.prepare(`
       SELECT DISTINCT a.id, a.title, a.version, a.release_date, a.num_volumes, a.video_cover, a.quality
-      FROM albums a
-      JOIN album_artists aa ON a.id = aa.album_id
+      FROM ProviderAlbums a
+      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
       WHERE aa.artist_id = ?
         AND a.monitor = 1
         AND EXISTS (
-          SELECT 1 FROM library_files lf
-          JOIN media m ON m.id = lf.media_id
+          SELECT 1 FROM TrackFiles lf
+          JOIN ProviderMedia m ON m.id = lf.media_id
           WHERE m.album_id = a.id AND lf.file_type = 'track'
         )
     `).all(artistId) as any[];
@@ -171,8 +171,8 @@ class LibraryMetadataBackfillService {
         for (const album of albums) {
             const libraryRoots = (db.prepare(`
       SELECT DISTINCT lf.library_root
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
       WHERE m.album_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
@@ -277,12 +277,12 @@ class LibraryMetadataBackfillService {
 
         const tracks = db.prepare(`
       SELECT lf.file_path, lf.media_id, lf.library_root
-      FROM library_files lf
+      FROM TrackFiles lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.media_id IS NOT NULL
         AND NOT EXISTS (
-          SELECT 1 FROM library_files lf2
+          SELECT 1 FROM TrackFiles lf2
           WHERE lf2.media_id = lf.media_id AND lf2.file_type = 'lyrics'
         )
     `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null }>;
@@ -298,7 +298,7 @@ class LibraryMetadataBackfillService {
             try {
                 await saveLyricsFile(String(track.media_id), lrcPath);
                 if (fs.existsSync(lrcPath)) {
-                    const media = db.prepare("SELECT album_id FROM media WHERE id = ?").get(track.media_id) as any;
+                    const media = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(track.media_id) as any;
                     this.upsertLibraryFile({
                         artistId,
                         albumId: media?.album_id ? String(media.album_id) : null,
@@ -331,13 +331,13 @@ class LibraryMetadataBackfillService {
 
             const thumbnailVideos = db.prepare(`
       SELECT lf.file_path, lf.media_id, m.cover
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
         AND m.cover IS NOT NULL
         AND NOT EXISTS (
-          SELECT 1 FROM library_files lf2
+          SELECT 1 FROM TrackFiles lf2
           WHERE lf2.media_id = lf.media_id AND lf2.file_type = 'video_thumbnail'
         )
     `).all(artistId) as Array<{ file_path: string; media_id: number; cover: string }>;
@@ -355,7 +355,7 @@ class LibraryMetadataBackfillService {
                 try {
                     await downloadVideoThumbnail(video.cover, resolution as any, thumbPath);
                     if (fs.existsSync(thumbPath)) {
-                        const media = db.prepare("SELECT album_id FROM media WHERE id = ?").get(video.media_id) as any;
+                        const media = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(video.media_id) as any;
                         this.upsertLibraryFile({
                             artistId,
                             albumId: media?.album_id ? String(media.album_id) : null,
@@ -381,8 +381,8 @@ class LibraryMetadataBackfillService {
         if (metadataConfig.save_nfo) {
             const videos = db.prepare(`
       SELECT lf.file_path, lf.media_id, m.album_id
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
     `).all(artistId) as Array<{ file_path: string; media_id: number; album_id: number | null }>;
@@ -418,10 +418,10 @@ class LibraryMetadataBackfillService {
              ar.name AS artist_name,
              al.title AS album_title,
              al.copyright AS album_copyright
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
-      JOIN artists ar ON ar.id = lf.artist_id
-      LEFT JOIN albums al ON al.id = m.album_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
+      JOIN Artists ar ON ar.id = lf.artist_id
+      LEFT JOIN ProviderAlbums al ON al.id = m.album_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
     `).all(artistId) as Array<{

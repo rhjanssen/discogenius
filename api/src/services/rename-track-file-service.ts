@@ -97,7 +97,7 @@ export class RenameTrackFileService {
 
     const sql = `
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-      FROM library_files
+      FROM TrackFiles
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY created_at DESC
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
@@ -115,7 +115,7 @@ export class RenameTrackFileService {
     const relativePathUpdates: Array<{ id: number; relativePath: string }> = [];
     const findConflict = db.prepare(`
       SELECT id
-      FROM library_files
+      FROM TrackFiles
       WHERE id != ?
         AND (file_path = ? OR expected_path = ?)
       LIMIT 1
@@ -169,13 +169,13 @@ export class RenameTrackFileService {
     });
 
     db.transaction(() => {
-      const update = db.prepare("UPDATE library_files SET expected_path = ?, needs_rename = ? WHERE id = ?");
+      const update = db.prepare("UPDATE TrackFiles SET expected_path = ?, needs_rename = ? WHERE id = ?");
       for (const row of updates) {
         update.run(row.expectedPath, row.needsRename, row.id);
       }
 
       const relUpdate = db.prepare(`
-        UPDATE library_files
+        UPDATE TrackFiles
         SET relative_path = ?
         WHERE id = ?
       `);
@@ -221,14 +221,14 @@ export class RenameTrackFileService {
     const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-      FROM library_files
+      FROM TrackFiles
       WHERE id IN (${placeholders})
     `).all(...ids) as RenameLibraryFileRow[];
     const rowMap = new Map(rows.map((row) => [row.id, row]));
 
     const findConflict = db.prepare(`
       SELECT id
-      FROM library_files
+      FROM TrackFiles
       WHERE id != ?
         AND (file_path = ? OR expected_path = ?)
       LIMIT 1
@@ -266,7 +266,7 @@ export class RenameTrackFileService {
         const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
         if (samePath) {
           dbUpdates.push({
-            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+            sql: "UPDATE TrackFiles SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
             args: [expectedPath, id],
           });
           result.skipped++;
@@ -277,7 +277,7 @@ export class RenameTrackFileService {
         const fsConflict = fs.existsSync(expectedPath);
         if (dbConflict || fsConflict) {
           dbUpdates.push({
-            sql: "UPDATE library_files SET expected_path = ?, needs_rename = 1 WHERE id = ?",
+            sql: "UPDATE TrackFiles SET expected_path = ?, needs_rename = 1 WHERE id = ?",
             args: [expectedPath, id],
           });
           result.conflicts++;
@@ -294,7 +294,7 @@ export class RenameTrackFileService {
         const stats = fs.statSync(expectedPath);
 
         dbUpdates.push({
-          sql: `UPDATE library_files
+          sql: `UPDATE TrackFiles
             SET file_path = ?,
                 relative_path = ?,
                 library_root = ?,

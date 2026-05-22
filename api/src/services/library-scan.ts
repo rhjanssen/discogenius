@@ -62,7 +62,7 @@ function shouldSkipScanFile(name: string): boolean {
 export interface DiskScanResult {
     /** DB records removed because file no longer exists on disk */
     orphansRemoved: number;
-    /** New files found on disk and indexed into library_files */
+    /** New files found on disk and indexed into track_files */
     filesIndexed: number;
     /** Existing records updated (size/mtime changed) */
     filesUpdated: number;
@@ -152,7 +152,7 @@ type RootFileIndex = Map<string, Map<string, string[]>>; // rootPath → (folder
 function usesNestedArtistFolders(): boolean {
     const row = db.prepare(`
         SELECT 1
-        FROM artists
+        FROM Artists
         WHERE path IS NOT NULL
           AND TRIM(path) != ''
           AND (path LIKE '%/%' OR path LIKE '%\\%')
@@ -167,7 +167,7 @@ function usesNestedArtistFolders(): boolean {
 // ============================================================================
 
 /**
- * DiskScanService — Reconciles the library_files DB with actual disk state
+ * DiskScanService — Reconciles the track_files DB with actual disk state
  * and handles metadata file backfill.
  *
  * Disk scan service for library file reconciliation:
@@ -184,7 +184,7 @@ export class DiskScanService {
     /**
      * Unified disk scan entry point.
      *
-     * - No options or empty options → scan all managed artists (reconcile library_files with disk)
+     * - No options or empty options → scan all managed artists (reconcile track_files with disk)
      * - artistIds provided → scan only those artists' directories
      * - addNewArtists: true → also discover unknown folders and import new artists
      *
@@ -295,7 +295,7 @@ export class DiskScanService {
     }
 
     // ==========================================================================
-    // Disk Scan — Reconcile library_files with disk reality
+    // Disk Scan — Reconcile track_files with disk reality
     // ==========================================================================
 
     /**
@@ -303,10 +303,10 @@ export class DiskScanService {
      */
     static pruneUnmappedFiles(): number {
         let unmappedOrphans = 0;
-        const unmappedRows = db.prepare("SELECT id, file_path FROM unmapped_files").all() as Array<{ id: number; file_path: string }>;
+        const unmappedRows = db.prepare("SELECT id, file_path FROM UnmappedFiles").all() as Array<{ id: number; file_path: string }>;
         for (const row of unmappedRows) {
             if (!fs.existsSync(row.file_path)) {
-                db.prepare("DELETE FROM unmapped_files WHERE id = ?").run(row.id);
+                db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(row.id);
                 unmappedOrphans++;
             }
         }
@@ -314,10 +314,10 @@ export class DiskScanService {
     }
 
     /**
-     * Scan an artist's library directories and reconcile library_files with disk.
+     * Scan an artist's library directories and reconcile track_files with disk.
      *
      * Phase A: Remove DB records for files that no longer exist on disk.
-     * Phase B: Walk artist directories, index any files not yet in library_files.
+     * Phase B: Walk artist directories, index any files not yet in track_files.
      * Phase C: Update records where file size/mtime has changed.
      *
      * When called from `reconcileAllArtists`, a pre-built `fileIndex` is passed
@@ -401,7 +401,7 @@ export class DiskScanService {
     }
 
     /**
-     * Scan ALL managed artists' library directories and reconcile library_files
+     * Scan ALL managed artists' library directories and reconcile track_files
      * with disk. Walks each library root once and builds a file index so that
      * individual artist scans avoid redundant filesystem walks (single-pass
      * collection scan).
@@ -500,12 +500,12 @@ export class DiskScanService {
     }
 
     /**
-    * Phase A: Remove library_files records whose file no longer exists on disk.
+    * Phase A: Remove track_files records whose file no longer exists on disk.
      */
     private static cleanOrphanedRecords(artistId: string): { removed: number; flagsReset: number } {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root, media_id, album_id, file_type
-      FROM library_files
+      FROM TrackFiles
       WHERE artist_id = ?
     `).all(artistId) as Array<{
             id: number;
@@ -531,7 +531,7 @@ export class DiskScanService {
             if (fs.existsSync(resolvedPath)) continue;
 
             // File is gone — remove DB record
-            db.prepare("DELETE FROM library_files WHERE id = ?").run(row.id);
+            db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
             LibraryFilesService.emitFileDeleted({
                 libraryFileId: row.id,
                 artistId,
@@ -568,7 +568,7 @@ export class DiskScanService {
 
     /**
      * Phase B: Walk the artist's directories on disk and index any files not yet
-     * in library_files. Attempts to match files to known media by path patterns.
+     * in track_files. Attempts to match files to known media by path patterns.
      *
      * When a pre-built `fileIndex` is provided (from `reconcileAllArtists`), the
      * walk is skipped and the cached file list is used instead.
@@ -581,7 +581,7 @@ export class DiskScanService {
             trackUnmappedFiles?: boolean;
         },
     ): Promise<{ indexed: number }> {
-        const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+        const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
         if (!artist) return { indexed: 0 };
 
         const artistFolder = resolveArtistFolderFromRecord(artist);
@@ -589,7 +589,7 @@ export class DiskScanService {
 
         // Collect all existing file paths for this artist (for quick lookup)
         const existingPaths = new Set(
-            (db.prepare("SELECT file_path, relative_path, library_root FROM library_files WHERE artist_id = ?").all(artistId) as Array<{
+            (db.prepare("SELECT file_path, relative_path, library_root FROM TrackFiles WHERE artist_id = ?").all(artistId) as Array<{
                 file_path: string;
                 relative_path: string | null;
                 library_root: string;
@@ -720,7 +720,7 @@ export class DiskScanService {
                     if (match.mediaId && (match.fileType === "track" || match.fileType === "video")) {
                         shouldPromoteArtist = true;
                         db.prepare(`
-                            UPDATE media
+                            UPDATE ProviderMedia
                             SET monitor = CASE
                                     WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1
                                     ELSE monitor
@@ -733,7 +733,7 @@ export class DiskScanService {
                         `).run(match.mediaId);
                         if (match.albumId && match.fileType === "track") {
                             db.prepare(`
-                                UPDATE albums
+                                UPDATE ProviderAlbums
                                 SET monitor = CASE
                                         WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1
                                         ELSE monitor
@@ -745,7 +745,7 @@ export class DiskScanService {
                                 WHERE id = ?
                             `).run(match.albumId);
                             db.prepare(`
-                                UPDATE media
+                                UPDATE ProviderMedia
                                 SET monitor = 1,
                                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
                                 WHERE album_id = ?
@@ -761,7 +761,7 @@ export class DiskScanService {
                     existingPaths.add(resolved);
 
                     // Cleanup any existing unmapped_file record for this path
-                    db.prepare("DELETE FROM unmapped_files WHERE file_path = ?").run(resolved);
+                    db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
                 } else if (options?.trackUnmappedFiles !== false) {
                     // No match found in Tidal database. Track this as an unmapped file.
                     try {
@@ -782,7 +782,7 @@ export class DiskScanService {
                         // Routine rescans should stay lightweight and avoid deep media parsing.
                         // Explicit import discovery performs richer metadata extraction when needed.
                         db.prepare(`
-                            INSERT INTO unmapped_files (
+                            INSERT INTO UnmappedFiles (
                                 file_path, relative_path, library_root, filename, extension, file_size, duration,
                                 bitrate, sample_rate, bit_depth, channels, codec,
                                 detected_artist, detected_album, detected_track, audio_quality, reason
@@ -830,7 +830,7 @@ export class DiskScanService {
 
         if (shouldPromoteArtist) {
             db.prepare(`
-                UPDATE artists
+                UPDATE Artists
                 SET monitor = 1,
                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
                 WHERE id = ?
@@ -851,12 +851,12 @@ export class DiskScanService {
     }
 
     /**
-     * Phase C: Check existing library_files for size/mtime changes and update records.
+     * Phase C: Check existing track_files for size/mtime changes and update records.
      */
     private static updateChangedFiles(artistId: string): { updated: number } {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root, file_size, modified_at, file_type
-      FROM library_files
+      FROM TrackFiles
       WHERE artist_id = ?
     `).all(artistId) as Array<{
             id: number;
@@ -884,7 +884,7 @@ export class DiskScanService {
 
             if (sizeChanged || mtimeChanged) {
                 db.prepare(`
-          UPDATE library_files
+          UPDATE TrackFiles
           SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(stats.size, currentMtime, row.id);
@@ -899,7 +899,7 @@ export class DiskScanService {
                 updated++;
             } else {
                 // Just update verified_at timestamp
-                db.prepare("UPDATE library_files SET verified_at = CURRENT_TIMESTAMP WHERE id = ?").run(row.id);
+                db.prepare("UPDATE TrackFiles SET verified_at = CURRENT_TIMESTAMP WHERE id = ?").run(row.id);
             }
         }
 
@@ -963,7 +963,7 @@ export class DiskScanService {
         };
 
         // Build a lookup of expected folder names for all known DB artists
-        const allArtists = db.prepare("SELECT id, name, mbid, path FROM artists").all() as Array<{
+        const allArtists = db.prepare("SELECT id, name, mbid, path FROM Artists").all() as Array<{
             id: number;
             name: string;
             mbid?: string | null;
@@ -1199,7 +1199,7 @@ export class DiskScanService {
             // Could be artist picture or album cover — check depth
             // Artist picture is directly under artist folder, album cover is under album subfolder
             const parentDir = path.basename(path.dirname(filePath));
-            const artist = db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any;
+            const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
             if (artist) {
                 const artistDirName = path.basename(resolveArtistFolderFromRecord(artist));
                 if (parentDir === artistDirName || parentDir === artist.name) {
@@ -1227,7 +1227,7 @@ export class DiskScanService {
             // Try to match to a track by looking for an audio file with same stem
             const mediaId = this.findMediaIdByStem(stem, artistId);
             const albumId = mediaId
-                ? (db.prepare("SELECT album_id FROM media WHERE id = ?").get(mediaId) as any)?.album_id?.toString() || null
+                ? (db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(mediaId) as any)?.album_id?.toString() || null
                 : null;
             return { albumId, mediaId, fileType: "lyrics", quality: null };
         }
@@ -1238,7 +1238,7 @@ export class DiskScanService {
             // Try to match by TIDAL ID in filename
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
-                const media = db.prepare("SELECT album_id, quality FROM media WHERE id = ?").get(mediaId) as any;
+                const media = db.prepare("SELECT album_id, quality FROM ProviderMedia WHERE id = ?").get(mediaId) as any;
                 return {
                     albumId: media?.album_id?.toString() || null,
                     mediaId,
@@ -1266,7 +1266,7 @@ export class DiskScanService {
         if (videoExtensions.has(ext)) {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
-                const media = db.prepare("SELECT album_id, quality FROM media WHERE id = ? AND type = 'Music Video'").get(mediaId) as any;
+                const media = db.prepare("SELECT album_id, quality FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(mediaId) as any;
                 if (media) {
                     return {
                         albumId: media.album_id?.toString() || null,
@@ -1284,7 +1284,7 @@ export class DiskScanService {
         if (ext === ".jpg" || ext === ".png") {
             const videoMediaId = this.findVideoIdByStem(stem, artistId);
             if (videoMediaId) {
-                const media = db.prepare("SELECT album_id FROM media WHERE id = ?").get(videoMediaId) as any;
+                const media = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(videoMediaId) as any;
                 return {
                     albumId: media?.album_id?.toString() || null,
                     mediaId: videoMediaId,
@@ -1307,14 +1307,14 @@ export class DiskScanService {
     private static findMediaIdByStem(stem: string, artistId: string): string | null {
         // Check if stem is directly a TIDAL ID (numeric)
         if (/^\d+$/.test(stem)) {
-            const media = db.prepare("SELECT id FROM media WHERE id = ? AND artist_id = ?").get(stem, artistId) as any;
+            const media = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND artist_id = ?").get(stem, artistId) as any;
             if (media) return String(media.id);
         }
 
         // Check if stem contains a TIDAL ID (e.g. "01 - 12345678 - Song Title")
         const idMatch = stem.match(/\b(\d{6,})\b/);
         if (idMatch) {
-            const media = db.prepare("SELECT id FROM media WHERE id = ? AND artist_id = ?").get(idMatch[1], artistId) as any;
+            const media = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND artist_id = ?").get(idMatch[1], artistId) as any;
             if (media) return String(media.id);
         }
 
@@ -1327,7 +1327,7 @@ export class DiskScanService {
     private static findVideoIdByStem(stem: string, artistId: string): string | null {
         // Check videos whose title might match the stem
         const videos = db.prepare(`
-      SELECT id, title FROM media WHERE artist_id = ? AND type = 'Music Video'
+      SELECT id, title FROM ProviderMedia WHERE artist_id = ? AND type = 'Music Video'
     `).all(artistId) as Array<{ id: number; title: string }>;
 
         for (const video of videos) {
@@ -1347,8 +1347,8 @@ export class DiskScanService {
 
         // Try to match directory name against album titles
         const albums = db.prepare(`
-      SELECT a.id, a.title FROM albums a
-      JOIN album_artists aa ON a.id = aa.album_id
+      SELECT a.id, a.title FROM ProviderAlbums a
+      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
       WHERE aa.artist_id = ?
     `).all(artistId) as Array<{ id: number; title: string }>;
 
@@ -1370,8 +1370,8 @@ export class DiskScanService {
         // Check if any track's expected path matches this file
         const match = db.prepare(`
       SELECT lf.media_id, lf.album_id, m.quality
-      FROM library_files lf
-      JOIN media m ON m.id = lf.media_id
+      FROM TrackFiles lf
+      JOIN ProviderMedia m ON m.id = lf.media_id
       WHERE lf.artist_id = ? AND lf.expected_path = ?
       LIMIT 1
     `).get(artistId, resolved) as any;
@@ -1461,7 +1461,7 @@ export class DiskScanService {
     }
 
     /**
-     * Simple upsert into library_files (subset of OrganizerService.upsertLibraryFile).
+     * Simple upsert into track_files (subset of OrganizerService.upsertLibraryFile).
      */
     private static upsertLibraryFile(params: {
         artistId: string;

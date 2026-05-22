@@ -766,7 +766,6 @@ const SettingsPage = () => {
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importing, setImporting] = useState(false);
-    const [scanningRoots, setScanningRoots] = useState(false);
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
@@ -1043,7 +1042,7 @@ const SettingsPage = () => {
                 include_videos: true,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
-                require_provider_availability: true,
+                require_provider_availability: false,
             });
         }
     };
@@ -1082,132 +1081,6 @@ const SettingsPage = () => {
                 description: "Failed to update curation configuration.",
                 variant: "destructive"
             });
-        }
-    };
-
-    const handleCheckNow = async () => {
-        setCheckingNow(true);
-
-        try {
-            let totalArtists = 0;
-            const newAlbumsCount = 0;
-
-            await new Promise((resolve, reject) => {
-                const eventSource = api.createMonitoringCheckStream(
-                    (event, data) => {
-
-                        switch (event) {
-                            case 'status':
-                                toast({
-                                    title: "Scan Progress",
-                                    description: data.message,
-                                });
-                                break;
-
-                            case 'total':
-                                totalArtists = data.total;
-                                toast({
-                                    title: "Scanning Artists",
-                                    description: `Scanning ${totalArtists} artists for new releases...`,
-                                });
-                                break;
-
-                            case 'artist-progress':
-                                break;
-
-                            case 'artist-complete':
-                                if (data.newAlbums > 0) {
-                                    toast({
-                                        title: "New Releases Found",
-                                        description: `${data.name}: ${data.newAlbums} new album(s)`,
-                                    });
-                                }
-                                break;
-
-                            case 'complete':
-                                eventSource.close();
-                                toast({
-                                    title: "Scan Complete",
-                                    description: `Found ${data.newAlbums} new album(s) from ${data.artists} artists. Use "Download Missing" to start downloads.`,
-                                });
-                                resolve(data);
-                                break;
-
-                            case 'error':
-                                toast({
-                                    title: "Scan Error",
-                                    description: data.message,
-                                    variant: "destructive",
-                                });
-                                break;
-                        }
-                    },
-                    (error) => {
-                        eventSource.close();
-                        toast({
-                            title: "Scan failed",
-                            description: error.message || "Could not check for new releases",
-                            variant: "destructive",
-                        });
-                        reject(error);
-                    }
-                );
-            });
-
-            // Refresh status after check
-            const status = await api.getMonitoringStatus();
-            setMonitoringConfig(status.config);
-            setMonitoringStatus({
-                running: status.running,
-                checking: status.checking,
-            });
-        } catch (error) {
-            console.error('Error checking for new releases:', error);
-        } finally {
-            setCheckingNow(false);
-        }
-    };
-
-    const [downloadingMissing, setDownloadingMissing] = useState(false);
-
-    const handleScanRootFolders = async () => {
-        setScanningRoots(true);
-        try {
-            const result: any = await api.scanRootFolders({ monitorArtist: monitoringConfig?.monitorNewArtists ?? true });
-            toast({
-                title: "Rescan Folders Queued",
-                description: result?.message || "Scanning library roots for new artist folders...",
-            });
-        } catch (error) {
-            console.error("Error scanning root folders:", error);
-            toast({
-                title: "Rescan Folders Failed",
-                description: "Could not start folder rescan.",
-                variant: "destructive",
-            });
-        } finally {
-            setScanningRoots(false);
-        }
-    };
-
-    const handleDownloadMissing = async () => {
-        setDownloadingMissing(true);
-        try {
-            const result: any = await api.downloadMissing();
-            const total = (result?.albums || 0) + (result?.tracks || 0) + (result?.videos || 0);
-            toast({
-                title: "Downloads Queued",
-                description: result?.message || `Queued ${total} item(s) for download.`,
-            });
-        } catch (error) {
-            console.error("Error queueing downloads:", error);
-            toast({
-                title: "Download queue failed",
-                description: "Could not queue downloads.",
-                variant: "destructive",
-            });
-        } finally {
-            setDownloadingMissing(false);
         }
     };
 
@@ -1753,12 +1626,6 @@ const SettingsPage = () => {
                             checked: curationConfig?.enable_redundancy_filter !== false,
                             onChange: (checked) => updateCuration({ enable_redundancy_filter: checked }),
                         })}
-                        {renderToggleRow({
-                            title: "Require Provider Availability",
-                            description: "Only monitor releases with a matched provider offer. Disable this for Lidarr-style monitoring before availability is known.",
-                            checked: curationConfig?.require_provider_availability !== false,
-                            onChange: (checked) => updateCuration({ require_provider_availability: checked }),
-                        })}
                         <div className={styles.row}>
                             <Button
                                 appearance="outline"
@@ -1953,7 +1820,7 @@ const SettingsPage = () => {
                                         setCheckingNow(false);
                                     }
                                 }}
-                                disabled={isScanInProgress || downloadingMissing || scanningRoots}
+                                disabled={isScanInProgress}
                             >
                                 {isScanInProgress ? "Running Task..." : "Run Now"}
                             </Button>
@@ -2307,6 +2174,23 @@ const SettingsPage = () => {
                                 onChange={(_, data) => updatePathSettings({ video_path: data.value })}
                                 className={styles.pathInput}
                             />
+                        </div>
+                        <div className={styles.divider} />
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Video Folder Layout</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Choose where music videos, thumbnails, and NFO files are stored. &quot;Inline&quot; places them next to audio tracks in the Music/Spatial Library (Plex-compatible). &quot;Separated&quot; stores them under the Video Library Path.
+                                </Text>
+                            </div>
+                            <Select
+                                value={pathSettings?.video_folder_layout || 'separated'}
+                                onChange={(_, data) => updatePathSettings({ video_folder_layout: data.value as 'separated' | 'inline' })}
+                                className={styles.controlMedium}
+                            >
+                                <option value="separated">Separated Library</option>
+                                <option value="inline">Inline with Audio Tracks</option>
+                            </Select>
                         </div>
                         <div className={styles.divider} />
                         <div className={styles.row}>

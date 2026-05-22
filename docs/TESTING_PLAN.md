@@ -105,7 +105,7 @@ Use at least one monitored album (multi-track), one downloadable video if availa
 Expected:
 - Replacement flow is safe (new file lands before old variant removal).
 - Staging cleanup runs after success/failure.
-- library_files reflects final path/quality.
+- track_files reflects final path/quality.
 - Queue and album UI state update without hard refresh.
 
 ### C. Metadata Embedding and Sidecar Toggles
@@ -220,7 +220,7 @@ Database spot check:
 
 ```sql
 SELECT media_id, file_type, file_path, quality, extension
-FROM library_files
+FROM track_files
 ORDER BY media_id, file_type;
 ```
 

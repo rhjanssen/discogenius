@@ -32,18 +32,18 @@ function seedImportedTrack(fileName = "track-one.flac") {
   fs.writeFileSync(incomingPath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitor)
     VALUES (?, ?, ?, ?)
   `).run("1", "Artist One", "Artist One", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO albums (
+    INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
-    INSERT INTO media (
+    INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
@@ -85,12 +85,12 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM media_artists").run();
-  db.prepare("DELETE FROM album_artists").run();
-  db.prepare("DELETE FROM library_files").run();
-  db.prepare("DELETE FROM media").run();
-  db.prepare("DELETE FROM albums").run();
-  db.prepare("DELETE FROM artists").run();
+  db.prepare("DELETE FROM ProviderMediaArtists").run();
+  db.prepare("DELETE FROM ProviderAlbumArtists").run();
+  db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM ProviderMedia").run();
+  db.prepare("DELETE FROM ProviderAlbums").run();
+  db.prepare("DELETE FROM Artists").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
@@ -119,7 +119,7 @@ test("finalizeImportedDirectories applies queued renames through RenameTrackFile
 
   const row = dbModule.db.prepare(`
     SELECT file_path as filePath, expected_path as expectedPath, needs_rename as needsRename
-    FROM library_files
+    FROM TrackFiles
     WHERE id = ?
   `).get(libraryFileId) as { filePath: string; expectedPath: string; needsRename: number };
 

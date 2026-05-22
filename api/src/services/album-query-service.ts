@@ -40,16 +40,16 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
   ${selectedReleaseExpression} IS NOT NULL
   AND EXISTS (
     SELECT 1
-    FROM mb_tracks t
+    FROM Tracks t
     WHERE t.release_mbid = ${selectedReleaseExpression}
   )
   AND NOT EXISTS (
     SELECT 1
-    FROM mb_tracks t
+    FROM Tracks t
     WHERE t.release_mbid = ${selectedReleaseExpression}
       AND NOT EXISTS (
         SELECT 1
-        FROM library_files lf
+        FROM TrackFiles lf
         WHERE lf.canonical_track_mbid = t.mbid
           AND lf.file_type = 'track'
           ${slotFilter}
@@ -92,12 +92,12 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status
-      FROM mb_release_groups rg
-      LEFT JOIN artists a ON a.mbid = rg.artist_mbid
-      LEFT JOIN release_group_slots stereo
+      FROM Albums rg
+      LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+      LEFT JOIN ReleaseGroupSlots stereo
         ON stereo.release_group_mbid = rg.mbid
        AND stereo.slot = 'stereo'
-      LEFT JOIN release_group_slots spatial
+      LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
       ${whereClause}
@@ -200,12 +200,12 @@ export class AlbumQueryService {
 
         const countQuery = `
           SELECT COUNT(*) AS count
-          FROM mb_release_groups rg
-          LEFT JOIN artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN release_group_slots stereo
+          FROM Albums rg
+          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN ReleaseGroupSlots stereo
             ON stereo.release_group_mbid = rg.mbid
            AND stereo.slot = 'stereo'
-          LEFT JOIN release_group_slots spatial
+          LEFT JOIN ReleaseGroupSlots spatial
             ON spatial.release_group_mbid = rg.mbid
            AND spatial.slot = 'spatial'
           ${whereClause}

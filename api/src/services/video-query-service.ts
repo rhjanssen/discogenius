@@ -6,7 +6,7 @@ import type { VideoDetailContract } from "../contracts/media.js";
 const videoDownloadedPredicate = `
   EXISTS (
     SELECT 1
-    FROM library_files lf
+    FROM TrackFiles lf
     WHERE lf.media_id = media.id
       AND lf.file_type = 'video'
   )
@@ -135,15 +135,15 @@ function getVideoSelectSql(whereClause: string): string {
       media.*,
       COALESCE((
         SELECT lf.quality
-        FROM library_files lf
+        FROM TrackFiles lf
         WHERE lf.media_id = media.id
           AND lf.file_type = 'video'
         ORDER BY lf.verified_at DESC, lf.id DESC
         LIMIT 1
       ), media.quality) as current_quality,
       artists.name as artist_name
-    FROM media
-    LEFT JOIN artists ON media.artist_id = artists.id
+    FROM ProviderMedia media
+    LEFT JOIN Artists artists ON media.artist_id = artists.id
     ${whereClause}
   `;
 }
@@ -191,8 +191,8 @@ export function listVideos(input: ListVideosQuery): VideosListResponseContract {
 
   const totalResult = db.prepare(`
     SELECT COUNT(*) as total
-    FROM media
-    LEFT JOIN artists ON media.artist_id = artists.id
+    FROM ProviderMedia media
+    LEFT JOIN Artists artists ON media.artist_id = artists.id
     ${whereClause}
   `).get(...countParams) as { total: number };
 

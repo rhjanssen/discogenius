@@ -293,9 +293,9 @@ export class DownloadProcessor {
                 ar.name as artist_name,
                 a.num_tracks,
                 COUNT(m.id) as track_count
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
-            LEFT JOIN media m ON m.album_id = a.id AND m.type != 'Music Video'
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
+            LEFT JOIN ProviderMedia m ON m.album_id = a.id AND m.type != 'Music Video'
             WHERE a.id = ?
             GROUP BY a.id, a.title, a.artist_id, ar.name, a.num_tracks
         `).get(albumId) as any;
@@ -316,8 +316,8 @@ export class DownloadProcessor {
     private hasTrackMetadataReady(trackId: string): boolean {
         const row = db.prepare(`
             SELECT m.id, m.title, m.artist_id, m.album_id, a.id as album_exists
-            FROM media m
-            LEFT JOIN albums a ON a.id = m.album_id
+            FROM ProviderMedia m
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ?
         `).get(trackId) as any;
 
@@ -327,7 +327,7 @@ export class DownloadProcessor {
     private hasVideoMetadataReady(videoId: string): boolean {
         const row = db.prepare(`
             SELECT id, title, artist_id
-            FROM media
+            FROM ProviderMedia
             WHERE id = ? AND type = 'Music Video'
         `).get(videoId) as any;
 
@@ -388,8 +388,8 @@ export class DownloadProcessor {
             if (type === 'album') {
                 const row = db.prepare(`
                     SELECT a.title, a.cover, ar.name as artist_name
-                    FROM albums a
-                    LEFT JOIN artists ar ON ar.id = a.artist_id
+                    FROM ProviderAlbums a
+                    LEFT JOIN Artists ar ON ar.id = a.artist_id
                     WHERE a.id = ?
                 `).get(tidalId) as any;
                 return {
@@ -402,9 +402,9 @@ export class DownloadProcessor {
             if (type === 'video') {
                 const row = db.prepare(`
                     SELECT m.title, m.cover as video_cover, ar.name as artist_name, a.cover as album_cover
-                    FROM media m
-                    LEFT JOIN artists ar ON ar.id = m.artist_id
-                    LEFT JOIN albums a ON a.id = m.album_id
+                    FROM ProviderMedia m
+                    LEFT JOIN Artists ar ON ar.id = m.artist_id
+                    LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                     WHERE m.id = ? AND m.type = 'Music Video'
                 `).get(tidalId) as any;
                 return {
@@ -416,9 +416,9 @@ export class DownloadProcessor {
 
             const row = db.prepare(`
                 SELECT m.title, ar.name as artist_name, a.cover as album_cover
-                FROM media m
-                LEFT JOIN artists ar ON ar.id = m.artist_id
-                LEFT JOIN albums a ON a.id = m.album_id
+                FROM ProviderMedia m
+                LEFT JOIN Artists ar ON ar.id = m.artist_id
+                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                 WHERE m.id = ?
             `).get(tidalId) as any;
             return {
@@ -444,7 +444,7 @@ export class DownloadProcessor {
             if (type === 'album') {
                 const row = db.prepare(`
                     SELECT quality
-                    FROM albums
+                    FROM ProviderAlbums
                     WHERE id = ?
                 `).get(tidalId) as { quality?: string | null } | undefined;
                 return row?.quality ?? null;
@@ -452,7 +452,7 @@ export class DownloadProcessor {
 
             const row = db.prepare(`
                 SELECT quality
-                FROM media
+                FROM ProviderMedia
                 WHERE id = ?
             `).get(tidalId) as { quality?: string | null } | undefined;
             return row?.quality ?? null;
@@ -773,8 +773,8 @@ export class DownloadProcessor {
                     const row = db.prepare(
                         `SELECT COUNT(DISTINCT m.id) as total,
                                 COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) as done
-                         FROM media m
-                         LEFT JOIN library_files lf
+                         FROM ProviderMedia m
+                         LEFT JOIN TrackFiles lf
                            ON lf.media_id = m.id
                           AND lf.file_type = 'track'
                          WHERE m.album_id = ? AND m.type != 'Music Video'`
@@ -808,7 +808,7 @@ export class DownloadProcessor {
                 } else if (type === 'track' || type === 'video') {
                     const row = db.prepare(`
                         SELECT 1
-                        FROM library_files
+                        FROM TrackFiles
                         WHERE media_id = ?
                           AND file_type = ?
                         LIMIT 1
@@ -1061,8 +1061,8 @@ export class DownloadProcessor {
                                        m.track_number as track_num,
                                        COALESCE(m.volume_number, 1) as volume_num,
                                        ar.name as artist_name
-                                FROM media m
-                                LEFT JOIN artists ar ON ar.id = m.artist_id
+                                FROM ProviderMedia m
+                                LEFT JOIN Artists ar ON ar.id = m.artist_id
                                 WHERE m.album_id = ? AND m.type != 'Music Video'
                                 ORDER BY m.volume_number, m.track_number
                             `).all(id) as any[];

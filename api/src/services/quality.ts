@@ -8,7 +8,7 @@ import { db } from "../database.js";
  *   - HIRES_LOSSLESS (up to 24-bit 192kHz)
  *   - DOLBY_ATMOS (spatial audio - separate media type)
  *
- * Discogenius stores the actual library-file quality in `library_files.quality`.
+ * Discogenius stores the actual library-file quality in `track_files.quality`.
  * That means AAC downloads converted by tidal-dl-ng can show up as `LOW` or `HIGH`
  * in the local library even if the TIDAL source metadata only reports lossless tiers.
  * 
@@ -187,7 +187,7 @@ export class QualityService {
         // Get album info
         const album = db.prepare(`
             SELECT id, quality as available_quality, artist_id
-            FROM albums
+            FROM ProviderAlbums
             WHERE id = ?
         `).get(albumId) as any;
 
@@ -203,8 +203,8 @@ export class QualityService {
                 m.quality as media_quality,
                 lf.quality as file_quality,
                 lf.id as file_id
-            FROM media m
-            INNER JOIN library_files lf ON lf.media_id = m.id
+            FROM ProviderMedia m
+            INNER JOIN TrackFiles lf ON lf.media_id = m.id
             WHERE m.album_id = ? AND lf.file_type = 'track'
         `).all(albumId) as any[];
 
@@ -253,9 +253,9 @@ export class QualityService {
                 a.title as album_title,
                 ar.name as artist_name
             FROM upgrade_queue uq
-            INNER JOIN media m ON m.id = uq.media_id
-            INNER JOIN albums a ON a.id = uq.album_id
-            INNER JOIN artists ar ON ar.id = a.artist_id
+            INNER JOIN ProviderMedia m ON m.id = uq.media_id
+            INNER JOIN ProviderAlbums a ON a.id = uq.album_id
+            INNER JOIN Artists ar ON ar.id = a.artist_id
             WHERE uq.status = 'pending'
             ORDER BY uq.created_at DESC
         `).all();

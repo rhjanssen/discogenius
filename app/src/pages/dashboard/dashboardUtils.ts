@@ -70,15 +70,7 @@ function splitWorkflowDescription(description: string) {
     };
 }
 
-function ensureLabeled(label: string, value: string): string {
-    const trimmed = value.trim();
-    if (!trimmed) return "";
-    const prefix = new RegExp(`^${label}:`, "i");
-    if (prefix.test(trimmed)) {
-        return trimmed.replace(prefix, `${label}:`);
-    }
-    return `${label}: ${trimmed}`;
-}
+
 
 function stripLabel(label: string, value: string): string {
     const trimmed = value.trim();

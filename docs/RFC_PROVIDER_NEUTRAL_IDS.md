@@ -43,24 +43,24 @@ Discogenius needs that same separation before Apple Music or other providers can
 
 ### Schema identity is TIDAL-primary
 
-`api/src/database.ts` still defines:
+`api/src/database.ts` now separates the MusicBrainz/Lidarr graph from provider compatibility rows, but compatibility paths still define:
 
-- `artists.id INT PRIMARY KEY` as the TIDAL artist ID
-- `albums.id INT PRIMARY KEY` as the TIDAL album ID
-- `media.id INT PRIMARY KEY` as the TIDAL track or video ID
+- `Artists.id TEXT PRIMARY KEY` as the local managed artist id, currently often equal to a MusicBrainz MBID or imported provider id
+- `ProviderAlbums.id TEXT PRIMARY KEY` as the actionable provider album offer id
+- `ProviderMedia.id TEXT PRIMARY KEY` as the actionable provider track or video id
 
 The same assumption flows into:
 
-- `album_artists`
-- `media_artists`
-- `similar_artists`
-- `similar_albums`
-- `library_files`
+- `ProviderAlbumArtists`
+- `ProviderMediaArtists`
+- `ProviderSimilarArtists`
+- `ProviderSimilarAlbums`
+- `TrackFiles`
 - `upgrade_queue`
 - `history_events`
-- `provider_ids`
+- provider offer lookups in `ProviderItems`
 
-`provider_ids` exists, but it still references provider-primary entity IDs instead of stable internal IDs.
+`ProviderItems` is intentionally a provider-offer cache, not a stable provider-neutral identity table. Stable app-owned IDs still require a future migration away from provider-primary compatibility IDs.
 
 ### Queue and status payloads are provider-shaped
 
@@ -139,7 +139,7 @@ interface ProviderMapping {
 }
 ```
 
-This generalizes the current `provider_ids` table and makes TIDAL just another provider entry.
+This would be a new stable provider identity map. The current `ProviderItems` table is deliberately narrower: it caches availability/actionable provider offers and match evidence.
 
 ### Matching Keys
 
@@ -163,13 +163,13 @@ Important: `mb_release_group_id` remains a linking hint only. It is not a dedup 
 
 The target tables should look like this conceptually:
 
-- `artists.id TEXT PRIMARY KEY` (internal UUID)
-- `albums.id TEXT PRIMARY KEY` (internal UUID)
-- `media.id TEXT PRIMARY KEY` (internal UUID)
+- `Artists.id TEXT PRIMARY KEY` (internal UUID)
+- canonical MusicBrainz `Albums` remain release-group MBIDs, matching the Lidarr-style metadata graph
+- `ProviderAlbums.id TEXT PRIMARY KEY` and `ProviderMedia.id TEXT PRIMARY KEY` are replaced by provider offer rows keyed through a provider identity map
 - `playlists.id TEXT PRIMARY KEY` (internal UUID)
-- `provider_ids.entity_id TEXT` references those internal IDs
+- provider identity rows reference those internal IDs
 
-Foreign keys in tables like `library_files`, `history_events`, `upgrade_queue`, `album_artists`, and `media_artists` should all reference internal IDs.
+Foreign keys in tables like `TrackFiles`, `history_events`, `upgrade_queue`, `ProviderAlbumArtists`, and `ProviderMediaArtists` should all reference internal IDs or canonical MBIDs, not provider IDs.
 
 ### Additive Migration First
 
@@ -177,10 +177,9 @@ SQLite does not support in-place primary-key rewrites cleanly. The safe path is 
 
 Phase A:
 
-- add `uuid` columns to `artists`, `albums`, and `media`
+- add `uuid` columns to provider-primary compatibility tables where needed
 - backfill UUIDs for all existing rows
-- add `entity_uuid` to `provider_ids`
-- backfill `provider_ids` with `provider='tidal'` entries for all existing entities
+- add provider identity rows for all existing provider-primary compatibility rows
 - add new UUID-based foreign-key columns to dependent tables without removing old INT columns yet
 
 Phase B:
@@ -281,7 +280,7 @@ Highest-risk code and schema areas that the migration must explicitly cover:
 Playlists need to follow the same pattern eventually:
 
 - add internal `playlists.id`
-- keep remote provider playlist IDs in `provider_ids`
+- keep remote provider playlist IDs in provider identity rows, not canonical playlist rows
 - stop assuming `uuid === tidal_id`
 
 The current playlist table is still useful because it already proves Discogenius can keep a provider-specific identifier alongside a separate local record.

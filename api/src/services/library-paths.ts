@@ -180,7 +180,7 @@ export function reconcileStoredLibraryPaths(): {
 } {
   const libraryRows = db.prepare(`
     SELECT id, file_path, relative_path, library_root, expected_path
-    FROM library_files
+    FROM TrackFiles
   `).all() as Array<{
     id: number;
     file_path: string;
@@ -191,7 +191,7 @@ export function reconcileStoredLibraryPaths(): {
 
   const unmappedRows = db.prepare(`
     SELECT id, file_path, relative_path, library_root
-    FROM unmapped_files
+    FROM UnmappedFiles
   `).all() as Array<{
     id: number;
     file_path: string;
@@ -200,7 +200,7 @@ export function reconcileStoredLibraryPaths(): {
   }>;
 
   const updateLibraryFile = db.prepare(`
-    UPDATE library_files
+    UPDATE TrackFiles
     SET file_path = ?,
         relative_path = ?,
         library_root = ?,
@@ -210,11 +210,11 @@ export function reconcileStoredLibraryPaths(): {
         verified_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
-  const deleteLibraryFile = db.prepare(`DELETE FROM library_files WHERE id = ?`);
-  const findLibraryConflict = db.prepare(`SELECT id FROM library_files WHERE file_path = ? AND id != ? LIMIT 1`);
+  const deleteLibraryFile = db.prepare(`DELETE FROM TrackFiles WHERE id = ?`);
+  const findLibraryConflict = db.prepare(`SELECT id FROM TrackFiles WHERE file_path = ? AND id != ? LIMIT 1`);
 
   const updateUnmappedFile = db.prepare(`
-    UPDATE unmapped_files
+    UPDATE UnmappedFiles
     SET file_path = ?,
         relative_path = ?,
         library_root = ?,
@@ -223,8 +223,8 @@ export function reconcileStoredLibraryPaths(): {
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
-  const deleteUnmappedFile = db.prepare(`DELETE FROM unmapped_files WHERE id = ?`);
-  const findUnmappedConflict = db.prepare(`SELECT id FROM unmapped_files WHERE file_path = ? AND id != ? LIMIT 1`);
+  const deleteUnmappedFile = db.prepare(`DELETE FROM UnmappedFiles WHERE id = ?`);
+  const findUnmappedConflict = db.prepare(`SELECT id FROM UnmappedFiles WHERE file_path = ? AND id != ? LIMIT 1`);
 
   let libraryFilesUpdated = 0;
   let libraryFilesDeduplicated = 0;

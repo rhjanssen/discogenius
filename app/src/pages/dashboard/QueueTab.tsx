@@ -889,13 +889,15 @@ const QueueTab = () => {
     }, [isSelectionMode, pendingReorderGroups.length, exitSelectionMode]);
 
     const handleGroupContextMenu = useCallback((e: ReactMouseEvent, groupId: string) => {
-        if (!isPendingReorderableGroup(groupedDownloads.find((g) => g.id === groupId))) return;
+        const group = groupedDownloads.find((g) => g.id === groupId);
+        if (!group || !isPendingReorderableGroup(group)) return;
         e.preventDefault();
         enterSelectionMode(groupId);
     }, [groupedDownloads, enterSelectionMode]);
 
     const handleGroupTouchStart = useCallback((_e: ReactTouchEvent, groupId: string) => {
-        if (!isPendingReorderableGroup(groupedDownloads.find((g) => g.id === groupId))) return;
+        const group = groupedDownloads.find((g) => g.id === groupId);
+        if (!group || !isPendingReorderableGroup(group)) return;
         longPressTimerRef.current = setTimeout(() => {
             enterSelectionMode(groupId);
         }, 400);
@@ -1567,10 +1569,11 @@ const QueueTab = () => {
                                             );
                                         })}
 
-                                        {group.type === 'album' && group.items.length === 1 && (prog?.tracks?.length ?? 0) > 0 && (
+                                        {group.type === 'album' && group.items.length === 1 && prog && prog.tracks && prog.tracks.length > 0 && (
                                             <div>
-                                                {prog!.tracks!.map((t, idx) => {
-                                                    const visualStatus = inferAlbumTrackStatus(idx, prog, prog.tracks, t.status);
+                                                {prog.tracks.map((t, idx) => {
+                                                    const tracks = prog.tracks || [];
+                                                    const visualStatus = inferAlbumTrackStatus(idx, prog, tracks, t.status);
                                                     const isTrackDownloading = visualStatus === 'downloading';
                                                     const isTrackCompleted = visualStatus === 'completed';
                                                     const isTrackFailed = visualStatus === 'error';
@@ -1579,7 +1582,7 @@ const QueueTab = () => {
                                                     });
                                                     const shouldShowTrackProgress = isTrackDownloading
                                                         && prog.trackProgress !== undefined
-                                                        && (matchesActiveTrack(t.title, prog.currentTrack) || findActiveAlbumTrackIndex(prog, prog.tracks) === idx);
+                                                        && (matchesActiveTrack(t.title, prog.currentTrack) || findActiveAlbumTrackIndex(prog, tracks) === idx);
 
                                                     return (
                                                         <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
@@ -1604,7 +1607,7 @@ const QueueTab = () => {
                                                                         {trackStatusText}
                                                                     </Text>
                                                                 ) : null}
-                                                                {shouldShowTrackProgress && (
+                                                                {shouldShowTrackProgress && prog.trackProgress !== undefined && (
                                                                     <div className={styles.downloadProgress}>
                                                                         <div className={styles.progressBarWrapper}>
                                                                             <ProgressBar

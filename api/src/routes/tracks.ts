@@ -45,7 +45,7 @@ function refreshTrackState(trackId: string) {
 
   const row = db.prepare(`
     SELECT album_id
-    FROM media
+    FROM ProviderMedia
     WHERE id = ? AND album_id IS NOT NULL
   `).get(trackId) as { album_id?: number | null } | undefined;
 
@@ -127,14 +127,14 @@ router.post("/", async (req, res) => {
     const albumId = String(trackData.album_id);
 
     db.prepare(`
-      UPDATE albums
+      UPDATE ProviderAlbums
       SET monitor = 1,
           monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
       WHERE id = ?
     `).run(albumId);
 
     db.prepare(`
-      UPDATE media
+      UPDATE ProviderMedia
       SET monitor = 1,
           monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
       WHERE id = ? AND album_id = ? AND type != 'Music Video'
@@ -157,7 +157,7 @@ router.post("/:trackId/monitor", (req, res) => {
     const monitored = getRequiredBoolean(body, "monitored");
 
     const result = db.prepare(
-      "UPDATE media SET monitor = ? WHERE id = ? AND album_id IS NOT NULL"
+      "UPDATE ProviderMedia SET monitor = ? WHERE id = ? AND album_id IS NOT NULL"
     ).run(monitored ? 1 : 0, trackId);
 
     if (result.changes === 0) {
@@ -209,7 +209,7 @@ router.patch("/:trackId", (req, res) => {
 
     values.push(trackId);
 
-    const result = db.prepare(`UPDATE media SET ${updates.join(", ")} WHERE id = ? AND album_id IS NOT NULL`)
+    const result = db.prepare(`UPDATE ProviderMedia SET ${updates.join(", ")} WHERE id = ? AND album_id IS NOT NULL`)
       .run(...values);
 
     if (result.changes === 0) {

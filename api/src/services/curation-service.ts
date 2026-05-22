@@ -3,9 +3,6 @@ import { JobTypes, TaskQueueService } from "./queue.js";
 import { getConfigSection } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
 import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
-import { normalizeComparableText } from "./import-matching-utils.js";
-import { streamingProviderManager } from "./providers/index.js";
-import type { ProviderTrack } from "./providers/streaming-provider.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
 
 type ReleaseGroupForCuration = {
@@ -30,12 +27,31 @@ type PreferredReleaseRecordings = {
     recordingIds: Set<string>;
 };
 
-type ProviderTrackSignatures = {
-    identities: Set<string>;
-    titleKeys: Set<string>;
+type ArtistCurationIdentity = {
+    artistId: string | null;
+    artistMbid: string | null;
 };
 
 export class CurationService {
+    private static resolveArtistCurationIdentity(artistIdOrMbid: string): ArtistCurationIdentity {
+        const input = String(artistIdOrMbid || "").trim();
+        if (!input) {
+            return { artistId: null, artistMbid: null };
+        }
+
+        const row = db.prepare(`
+            SELECT id, mbid
+            FROM Artists
+            WHERE id = ? OR mbid = ?
+            LIMIT 1
+        `).get(input, input) as { id: string | number; mbid: string | null } | undefined;
+
+        return {
+            artistId: row?.id != null ? String(row.id) : null,
+            artistMbid: row?.mbid ? String(row.mbid) : this.looksLikeMusicBrainzMbid(input) ? input : null,
+        };
+    }
+
     private static parseSecondaryTypes(value: unknown): string[] {
         try {
             const parsed = JSON.parse(String(value || "[]"));
@@ -80,8 +96,8 @@ export class CurationService {
     private static hasCachedReleaseTracks(releaseGroupMbid: string): boolean {
         const row = db.prepare(`
             SELECT 1
-            FROM mb_releases r
-            JOIN mb_tracks t ON t.release_mbid = r.mbid
+            FROM AlbumReleases r
+            JOIN Tracks t ON t.release_mbid = r.mbid
             WHERE r.release_group_mbid = ?
             LIMIT 1
         `).get(releaseGroupMbid);
@@ -113,12 +129,12 @@ export class CurationService {
                 r.mbid,
                 CASE
                   WHEN EXISTS (
-                    SELECT 1 FROM mb_mediums m
+                    SELECT 1 FROM AlbumReleaseMedia m
                     WHERE m.release_mbid = r.mbid
                       AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
                   ) THEN 1 ELSE 0
                 END AS digital_score
-            FROM mb_releases r
+            FROM AlbumReleases r
             WHERE r.release_group_mbid = ?
             ORDER BY
                 digital_score DESC,
@@ -135,7 +151,7 @@ export class CurationService {
 
         const rows = db.prepare(`
             SELECT DISTINCT recording_mbid
-            FROM mb_tracks
+            FROM Tracks
             WHERE release_mbid = ?
               AND recording_mbid IS NOT NULL
               AND recording_mbid != ''
@@ -163,198 +179,17 @@ export class CurationService {
         return overlap / candidate.size;
     }
 
-    private static providerTrackIdentity(track: ProviderTrack): string {
-        const isrc = String(track.isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        if (isrc) {
-            return `isrc:${isrc}`;
-        }
-
-        const title = normalizeComparableText(track.title);
-        const duration = Number(track.duration || 0);
-        const durationBucket = Number.isFinite(duration) && duration > 0 ? Math.round(duration / 5) * 5 : 0;
-        return `title:${title}:duration:${durationBucket}`;
-    }
-
-    private static providerTrackTitleKey(track: ProviderTrack): string {
-        return normalizeComparableText(track.title)
-            .replace(/\b(radio|single|album|clean|explicit|edit|version|remaster(?:ed)?|mtv|unplugged|live)\b/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
-
-    private static async loadProviderTrackSignatures(
-        providerId: string,
-        providerAlbumId: string,
-        cache: Map<string, ProviderTrackSignatures>,
-    ): Promise<ProviderTrackSignatures> {
-        const key = `${providerId}:${providerAlbumId}`;
-        const cached = cache.get(key);
-        if (cached) {
-            return cached;
-        }
-
-        try {
-            const provider = streamingProviderManager.getStreamingProvider(providerId);
-            const tracks = await provider.getAlbumTracks(providerAlbumId);
-            const signatures = {
-                identities: new Set(
-                    tracks
-                        .map((track) => this.providerTrackIdentity(track))
-                        .filter((identity) => !identity.startsWith("title::")),
-                ),
-                titleKeys: new Set(
-                    tracks
-                        .map((track) => this.providerTrackTitleKey(track))
-                        .filter(Boolean),
-                ),
-            };
-            cache.set(key, signatures);
-            return signatures;
-        } catch (error) {
-            console.warn(`[Curation] Failed to hydrate provider track list for ${providerId}:${providerAlbumId}:`, error);
-            const empty = { identities: new Set<string>(), titleKeys: new Set<string>() };
-            cache.set(key, empty);
-            return empty;
-        }
-    }
-
-    private static async findReleaseGroupsContainedByProviderTracks(
-        releaseGroups: ReleaseGroupForCuration[],
-        includedReleaseGroupIds: Set<string>,
-        slotRows: ReleaseGroupSlotRow[],
-    ): Promise<Set<string>> {
-        const releaseGroupsById = new Map(releaseGroups.map((releaseGroup) => [releaseGroup.mbid, releaseGroup]));
-        const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
-        const largerReleaseGroupIds = new Set(included.map((releaseGroup) => releaseGroup.mbid));
-        const candidateReleaseGroupIds = new Set(included
-            .filter((releaseGroup) => this.isSingleOrEp(releaseGroup))
-            .map((releaseGroup) => releaseGroup.mbid));
-
-        if (largerReleaseGroupIds.size === 0 || candidateReleaseGroupIds.size === 0) {
-            return new Set();
-        }
-
-        const slotsByName = new Map<string, ReleaseGroupSlotRow[]>();
-        for (const slot of slotRows) {
-            const slotName = String(slot.slot || "stereo").toLowerCase();
-            const providerId = String(slot.selected_provider || "").trim();
-            const providerAlbumId = String(slot.selected_provider_id || "").trim();
-            if (!providerId || !providerAlbumId || !includedReleaseGroupIds.has(slot.release_group_mbid)) {
-                continue;
-            }
-            const slots = slotsByName.get(slotName) || [];
-            slots.push(slot);
-            slotsByName.set(slotName, slots);
-        }
-
-        const redundantReleaseGroupIds = new Set<string>();
-        const trackCache = new Map<string, ProviderTrackSignatures>();
-
-        for (const slots of slotsByName.values()) {
-            const largerSlots = slots.filter((slot) => largerReleaseGroupIds.has(slot.release_group_mbid));
-            const candidateSlots = slots.filter((slot) => candidateReleaseGroupIds.has(slot.release_group_mbid));
-            if (largerSlots.length === 0 || candidateSlots.length === 0) {
-                continue;
-            }
-
-            const largerTrackSets = [] as Array<{
-                slot: ReleaseGroupSlotRow;
-                tracks: Set<string>;
-                titleKeys: Set<string>;
-            }>;
-            for (const slot of largerSlots) {
-                const signatures = await this.loadProviderTrackSignatures(
-                    String(slot.selected_provider),
-                    String(slot.selected_provider_id),
-                    trackCache,
-                );
-                if (signatures.identities.size > 0 || signatures.titleKeys.size > 0) {
-                    largerTrackSets.push({ slot, tracks: signatures.identities, titleKeys: signatures.titleKeys });
-                }
-            }
-
-            for (const candidateSlot of candidateSlots) {
-                const candidateReleaseGroup = releaseGroupsById.get(candidateSlot.release_group_mbid);
-                if (!candidateReleaseGroup || !this.isSingleOrEp(candidateReleaseGroup)) {
-                    continue;
-                }
-
-                const candidateSignatures = await this.loadProviderTrackSignatures(
-                    String(candidateSlot.selected_provider),
-                    String(candidateSlot.selected_provider_id),
-                    trackCache,
-                );
-                if (candidateSignatures.identities.size === 0 && candidateSignatures.titleKeys.size === 0) {
-                    continue;
-                }
-
-                const candidateSize = Math.max(candidateSignatures.identities.size, candidateSignatures.titleKeys.size);
-                const isContained = largerTrackSets.some(({ slot, tracks, titleKeys }) => {
-                    if (slot.release_group_mbid === candidateSlot.release_group_mbid || candidateSize > Math.max(tracks.size, titleKeys.size)) {
-                        return false;
-                    }
-
-                    let overlap = 0;
-                    for (const identity of candidateSignatures.identities) {
-                        if (tracks.has(identity)) {
-                            overlap++;
-                        }
-                    }
-                    let titleOverlap = 0;
-                    for (const titleKey of candidateSignatures.titleKeys) {
-                        if (titleKeys.has(titleKey)) {
-                            titleOverlap++;
-                        }
-                    }
-                    const identityRatio = candidateSignatures.identities.size > 0
-                        ? overlap / candidateSignatures.identities.size
-                        : 0;
-                    const titleRatio = candidateSignatures.titleKeys.size > 0
-                        ? titleOverlap / candidateSignatures.titleKeys.size
-                        : 0;
-
-                    return Math.max(identityRatio, titleRatio) >= (candidateSize <= 2 ? 1 : 0.8);
-                });
-
-                if (isContained) {
-                    redundantReleaseGroupIds.add(candidateSlot.release_group_mbid);
-                }
-            }
-        }
-
-        if (redundantReleaseGroupIds.size > 0) {
-            console.log(
-                `[Curation] Marked ${redundantReleaseGroupIds.size} EP/single release group(s) redundant by provider track containment.`
-            );
-        }
-
-        return redundantReleaseGroupIds;
-    }
-
     private static async findReleaseGroupsContainedByAlbums(
         artistMbid: string,
         releaseGroups: ReleaseGroupForCuration[],
         includedReleaseGroupIds: Set<string>,
-        slotRows: ReleaseGroupSlotRow[],
-        requireProviderAvailability: boolean,
     ): Promise<Set<string>> {
-        const providerMatchedReleaseGroupIds = new Set(
-            slotRows
-                .filter((slot) =>
-                    String(slot.selected_provider || "").trim()
-                    && String(slot.selected_provider_id || "").trim()
-                )
-                .map((slot) => slot.release_group_mbid)
-                .filter(Boolean),
-        );
         const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
         const albumReleaseGroups = included.filter((releaseGroup) =>
             !this.isSingleOrEp(releaseGroup)
-            && (!requireProviderAvailability || providerMatchedReleaseGroupIds.has(releaseGroup.mbid))
         );
         const candidateReleaseGroups = included.filter((releaseGroup) =>
             this.isSingleOrEp(releaseGroup)
-            && (!requireProviderAvailability || providerMatchedReleaseGroupIds.has(releaseGroup.mbid))
         );
 
         if (albumReleaseGroups.length === 0 || candidateReleaseGroups.length === 0) {
@@ -410,16 +245,24 @@ export class CurationService {
     }
 
     private static async processReleaseGroupSlots(
-        artistMbid: string,
+        artistIdOrMbid: string,
     ): Promise<{ newAlbums: number; upgradedAlbums: number }> {
+        const identity = this.resolveArtistCurationIdentity(artistIdOrMbid);
+        const artistMbid = identity.artistMbid;
+
+        if (!artistMbid) {
+            console.log(`⚖️ [Curation] Skipping release-group slots for artist ${artistIdOrMbid}: missing MusicBrainz artist MBID.`);
+            return { newAlbums: 0, upgradedAlbums: 0 };
+        }
+
         console.log(`⚖️ [Curation] Processing MusicBrainz release-group slots for artist ${artistMbid}...`);
 
         const curationConfig = getConfigSection("filtering");
         const includeSpatial = curationConfig.include_spatial === true;
-        const requireProviderAvailability = curationConfig.require_provider_availability !== false;
+        const enableRedundancyFilter = curationConfig.enable_redundancy_filter !== false;
         const releaseGroups = db.prepare(`
             SELECT mbid, title, primary_type, secondary_types
-            FROM mb_release_groups
+            FROM Albums
             WHERE artist_mbid = ?
         `).all(artistMbid) as ReleaseGroupForCuration[];
 
@@ -439,31 +282,23 @@ export class CurationService {
 
         const slotRows = db.prepare(`
             SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, provider_data
-            FROM release_group_slots
+            FROM ReleaseGroupSlots
             WHERE artist_mbid = ?
         `).all(artistMbid) as ReleaseGroupSlotRow[];
 
-        const redundantReleaseGroupIds = await this.findReleaseGroupsContainedByAlbums(
-            artistMbid,
-            releaseGroups,
-            includedReleaseGroupIds,
-            slotRows,
-            requireProviderAvailability,
-        );
-        for (const releaseGroupMbid of redundantReleaseGroupIds) {
-            includedReleaseGroupIds.delete(releaseGroupMbid);
-        }
-        const providerRedundantReleaseGroupIds = await this.findReleaseGroupsContainedByProviderTracks(
-            releaseGroups,
-            includedReleaseGroupIds,
-            slotRows,
-        );
-        for (const releaseGroupMbid of providerRedundantReleaseGroupIds) {
-            includedReleaseGroupIds.delete(releaseGroupMbid);
+        if (enableRedundancyFilter) {
+            const redundantReleaseGroupIds = await this.findReleaseGroupsContainedByAlbums(
+                artistMbid,
+                releaseGroups,
+                includedReleaseGroupIds,
+            );
+            for (const releaseGroupMbid of redundantReleaseGroupIds) {
+                includedReleaseGroupIds.delete(releaseGroupMbid);
+            }
         }
 
         const updateSlot = db.prepare(`
-            UPDATE release_group_slots
+            UPDATE ReleaseGroupSlots
             SET wanted = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
@@ -473,13 +308,8 @@ export class CurationService {
         db.transaction(() => {
             for (const slot of slotRows) {
                 const slotName = String(slot.slot || "").toLowerCase();
-                const hasProviderOffer = Boolean(
-                    String(slot.selected_provider || "").trim()
-                    && String(slot.selected_provider_id || "").trim()
-                );
                 const wanted = includedReleaseGroupIds.has(slot.release_group_mbid)
                     && (slotName !== "spatial" || includeSpatial)
-                    && (!requireProviderAvailability || hasProviderOffer)
                     ? 1
                     : 0;
                 if (wanted) {
@@ -492,20 +322,72 @@ export class CurationService {
             }
         })();
 
+        // Synchronize albums and tracks monitor status based on release group slot wanted status
+        let albumMonitorUpdates = 0;
+        let mediaMonitorUpdates = 0;
+
+        if (identity.artistId) {
+            const artistId = identity.artistId;
+            const artistAlbumRows = db.prepare(`
+                SELECT DISTINCT id
+                FROM ProviderAlbums
+                WHERE artist_id = ?
+                UNION
+                SELECT DISTINCT album_id AS id
+                FROM ProviderAlbumArtists
+                WHERE artist_id = ?
+            `).all(artistId, artistId) as Array<{ id: string | number }>;
+
+            const wantedAlbums = db.prepare(`
+                SELECT selected_provider_id
+                FROM ReleaseGroupSlots
+                WHERE artist_mbid = ?
+                  AND wanted = 1
+                  AND selected_provider_id IS NOT NULL
+            `).all(artistMbid) as Array<{ selected_provider_id: string }>;
+            const wantedAlbumIds = new Set(wantedAlbums.map((r) => String(r.selected_provider_id)));
+
+            db.transaction(() => {
+                const updateAlbumMonitor = db.prepare(`
+                    UPDATE ProviderAlbums
+                    SET monitor = ?, monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE NULL END
+                    WHERE id = ? AND (monitor_lock = 0 OR monitor_lock IS NULL) AND COALESCE(monitor, 0) != ?
+                `);
+
+                const updateMediaMonitor = db.prepare(`
+                    UPDATE ProviderMedia
+                    SET monitor = ?, monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE NULL END
+                    WHERE album_id = ? AND type != 'Music Video' AND (monitor_lock = 0 OR monitor_lock IS NULL) AND COALESCE(monitor, 0) != ?
+                `);
+
+                for (const album of artistAlbumRows) {
+                    const albumId = String(album.id);
+                    const wanted = wantedAlbumIds.has(albumId) ? 1 : 0;
+                    const albRes = updateAlbumMonitor.run(wanted, wanted, albumId, wanted);
+                    const medRes = updateMediaMonitor.run(wanted, wanted, albumId, wanted);
+                    albumMonitorUpdates += albRes.changes;
+                    mediaMonitorUpdates += medRes.changes;
+                }
+            })();
+        }
+
         const videoWanted = curationConfig.include_videos !== false ? 1 : 0;
-        const videoResult = db.prepare(`
-            UPDATE media
-            SET monitor = ?
-            WHERE artist_id = ?
-              AND type = 'Music Video'
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-              AND COALESCE(monitor, 0) != ?
-        `).run(videoWanted, artistMbid, videoWanted);
+        const videoMonitorUpdates = identity.artistId
+            ? db.prepare(`
+                UPDATE ProviderMedia
+                SET monitor = ?
+                WHERE artist_id = ?
+                  AND type = 'Music Video'
+                  AND (monitor_lock = 0 OR monitor_lock IS NULL)
+                  AND COALESCE(monitor, 0) != ?
+            `).run(videoWanted, identity.artistId, videoWanted).changes
+            : 0;
 
         console.log(
             `   Release groups: ${includedReleaseGroupIds.size}/${releaseGroups.length} included, ` +
-            `${wantedSlots}/${slotRows.length} provider slots wanted, ${slotUpdates} slot updates, ` +
-            `${(videoResult as any).changes || 0} video monitor updates.`
+            `${wantedSlots}/${slotRows.length} slots wanted, ${slotUpdates} slot updates, ` +
+            `${albumMonitorUpdates} album monitor updates, ${mediaMonitorUpdates} track monitor updates, ` +
+            `${videoMonitorUpdates} video monitor updates.`
         );
 
         return { newAlbums: slotUpdates, upgradedAlbums: 0 };
@@ -518,7 +400,7 @@ export class CurationService {
     ): void {
         const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
         const insertMissingSlot = db.prepare(`
-            INSERT INTO release_group_slots (
+            INSERT INTO ReleaseGroupSlots (
                 artist_mbid,
                 release_group_mbid,
                 slot,
@@ -565,7 +447,7 @@ export class CurationService {
             const trackWork = db.prepare(`
                 SELECT 1
                 FROM job_queue jq
-                JOIN media m ON m.id = jq.ref_id
+                JOIN ProviderMedia m ON m.id = jq.ref_id
                 WHERE m.album_id = ?
                   AND jq.type IN ('DownloadTrack', 'ImportDownload')
                   AND jq.status IN ('pending', 'processing')
@@ -578,7 +460,7 @@ export class CurationService {
         const hasImportedVideoFile = (mediaIdColumn: string) => `
             EXISTS (
                 SELECT 1
-                FROM library_files lf
+                FROM TrackFiles lf
                 WHERE lf.media_id = ${mediaIdColumn}
                   AND lf.file_type = 'video'
             )
@@ -697,9 +579,9 @@ export class CurationService {
                 rg.secondary_types,
                 rg.title,
                 monitored_artist.name as artist_name
-            FROM release_group_slots rgs
-            JOIN mb_release_groups rg ON rg.mbid = rgs.release_group_mbid
-            JOIN artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
+            FROM ReleaseGroupSlots rgs
+            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
+            JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
             WHERE rgs.wanted = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
@@ -715,7 +597,7 @@ export class CurationService {
             const albumId = String(slot.id);
             const hasImportedTracks = db.prepare(`
                 SELECT 1
-                FROM library_files lf
+                FROM TrackFiles lf
                 WHERE lf.album_id = ?
                   AND lf.file_type = 'track'
                 LIMIT 1
@@ -756,9 +638,9 @@ export class CurationService {
                     m.artist_id as artist_id,
                     ar.name as artist_name,
                     a.cover as album_cover
-                FROM media m
-                LEFT JOIN artists ar ON ar.id = m.artist_id
-                LEFT JOIN albums a ON a.id = m.album_id
+                FROM ProviderMedia m
+                LEFT JOIN Artists ar ON ar.id = m.artist_id
+                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                 WHERE m.type = 'Music Video'
                   AND m.monitor = 1
                   AND NOT ${hasImportedVideoFile('m.id')}
@@ -803,7 +685,7 @@ export class CurationService {
      * Process release-group slot curation based on config.
      * Spatial audio is handled by separate release-group slots.
      * 
-     * @param artistId - Artist ID to process
+     * @param artistId - Local artist ID to process. MusicBrainz MBID input is tolerated for direct/test callers.
      * @param options.skipDownloadQueue - If true, apply curation only and do not queue downloads
      */
     static async processAll(
@@ -811,21 +693,25 @@ export class CurationService {
         options: { skipDownloadQueue?: boolean; forceDownloadQueue?: boolean } = {}
     ): Promise<{ newAlbums: number; upgradedAlbums: number }> {
         const monitoringConfig = getConfigSection("monitoring");
+        const identity = this.resolveArtistCurationIdentity(artistId);
 
         const result = await this.processReleaseGroupSlots(artistId);
+        const cleanupArtistId = identity.artistId ?? (this.looksLikeMusicBrainzMbid(artistId) ? null : artistId);
 
-        if (monitoringConfig.remove_unmonitored_files === true) {
-            const cleanup = LibraryFilesService.pruneUnmonitoredFiles(artistId);
+        if (cleanupArtistId && monitoringConfig.remove_unmonitored_files === true) {
+            const cleanup = LibraryFilesService.pruneUnmonitoredFiles(cleanupArtistId);
             if (cleanup.deleted > 0 || cleanup.missing > 0 || cleanup.errors > 0) {
-                console.log(`[LibraryFiles] Cleanup for artist ${artistId}: ${cleanup.deleted} deleted, ${cleanup.missing} missing, ${cleanup.errors} errors.`);
+                console.log(`[TrackFiles] Cleanup for artist ${cleanupArtistId}: ${cleanup.deleted} deleted, ${cleanup.missing} missing, ${cleanup.errors} errors.`);
             }
         }
 
         // Always prune metadata files whose type was disabled in config
         // (independent of remove_unmonitored_files — this is about settings, not monitoring)
-        const metaCleanup = LibraryFilesService.pruneDisabledMetadataFiles(artistId);
-        if (metaCleanup.deleted > 0 || metaCleanup.missing > 0 || metaCleanup.errors > 0) {
-            console.log(`[LibraryFiles] Disabled metadata cleanup for artist ${artistId}: ${metaCleanup.deleted} deleted, ${metaCleanup.missing} missing, ${metaCleanup.errors} errors.`);
+        if (cleanupArtistId) {
+            const metaCleanup = LibraryFilesService.pruneDisabledMetadataFiles(cleanupArtistId);
+            if (metaCleanup.deleted > 0 || metaCleanup.missing > 0 || metaCleanup.errors > 0) {
+                console.log(`[TrackFiles] Disabled metadata cleanup for artist ${cleanupArtistId}: ${metaCleanup.deleted} deleted, ${metaCleanup.missing} missing, ${metaCleanup.errors} errors.`);
+            }
         }
 
         // Intentionally avoid a full empty-directory sweep per artist here.

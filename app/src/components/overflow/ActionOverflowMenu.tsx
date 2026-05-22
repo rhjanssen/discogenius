@@ -30,7 +30,7 @@ const OverflowMenuItem = ({ action }: { action: OverflowAction }) => {
 };
 
 export const ActionOverflowMenu = ({ actions }: { actions: OverflowAction[] }) => {
-  const { ref, overflowCount, isOverflowing } = useOverflowMenu<HTMLButtonElement>();
+  const { ref, isOverflowing } = useOverflowMenu<HTMLButtonElement>();
   if (!isOverflowing) return null;
   return (
     <Menu>

@@ -99,7 +99,7 @@ export function invalidateAlbumDownloadStatus(albumId: string): void {
 
   const album = db.prepare(`
     SELECT mb_release_group_id
-    FROM albums
+    FROM ProviderAlbums
     WHERE CAST(id AS TEXT) = ?
     LIMIT 1
   `).get(String(albumId)) as { mb_release_group_id?: string | null } | undefined;
@@ -155,7 +155,7 @@ export function getMediaDownloadStateMap(
     const placeholders = missing.map(() => "?").join(", ");
     const rows = db.prepare(`
       SELECT DISTINCT CAST(media_id AS TEXT) AS media_id
-      FROM library_files
+      FROM TrackFiles
       WHERE file_type = ?
         AND media_id IN (${placeholders})
     `).all(fileType, ...missing) as Array<{ media_id: string }>;
@@ -196,8 +196,8 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
         CAST(m.album_id AS TEXT) AS album_id,
         COUNT(DISTINCT m.id) AS total_tracks,
         COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-      FROM media m
-      LEFT JOIN library_files lf
+      FROM ProviderMedia m
+      LEFT JOIN TrackFiles lf
         ON lf.media_id = m.id
        AND lf.file_type = 'track'
       WHERE m.album_id IN (${placeholders})
@@ -265,17 +265,17 @@ export function getReleaseGroupDownloadStatsMap(
             ${normalizedSlot === "spatial" ? "stereo.selected_release_mbid" : "spatial.selected_release_mbid"},
             (
               SELECT r.mbid
-              FROM mb_releases r
+              FROM AlbumReleases r
               WHERE r.release_group_mbid = trg.release_group_mbid
               ORDER BY COALESCE(r.track_count, 0) DESC, COALESCE(r.date, '') DESC, r.mbid ASC
               LIMIT 1
             )
           ) AS release_mbid
         FROM target_release_groups trg
-        LEFT JOIN release_group_slots stereo
+        LEFT JOIN ReleaseGroupSlots stereo
           ON stereo.release_group_mbid = trg.release_group_mbid
          AND stereo.slot = 'stereo'
-        LEFT JOIN release_group_slots spatial
+        LEFT JOIN ReleaseGroupSlots spatial
           ON spatial.release_group_mbid = trg.release_group_mbid
          AND spatial.slot = 'spatial'
       )
@@ -284,9 +284,9 @@ export function getReleaseGroupDownloadStatsMap(
         COUNT(DISTINCT t.mbid) AS total_tracks,
         COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
       FROM selected_releases sr
-      LEFT JOIN mb_tracks t
+      LEFT JOIN Tracks t
         ON t.release_mbid = sr.release_mbid
-      LEFT JOIN library_files lf
+      LEFT JOIN TrackFiles lf
         ON lf.canonical_track_mbid = t.mbid
        AND lf.file_type = 'track'
        ${slotFilter}
@@ -339,12 +339,12 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
           CAST(al.id AS TEXT) AS album_id,
           COUNT(DISTINCT m.id) AS total_tracks,
           COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-        FROM album_artists aa
-        JOIN albums al ON al.id = aa.album_id
-        LEFT JOIN media m
+        FROM ProviderAlbumArtists aa
+        JOIN ProviderAlbums al ON al.id = aa.album_id
+        LEFT JOIN ProviderMedia m
           ON m.album_id = al.id
          AND m.type != 'Music Video'
-        LEFT JOIN library_files lf
+        LEFT JOIN TrackFiles lf
           ON lf.media_id = m.id
          AND lf.file_type = 'track'
         WHERE CAST(aa.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
@@ -360,12 +360,12 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
           CAST(m.id AS TEXT) AS media_id,
           CASE WHEN EXISTS (
             SELECT 1
-            FROM library_files lf
+            FROM TrackFiles lf
             WHERE lf.media_id = m.id
               AND lf.file_type = CASE WHEN m.type = 'Music Video' THEN 'video' ELSE 'track' END
           ) THEN 1 ELSE 0 END AS is_downloaded
-        FROM media m
-        LEFT JOIN albums al ON al.id = m.album_id
+        FROM ProviderMedia m
+        LEFT JOIN ProviderAlbums al ON al.id = m.album_id
         WHERE CAST(m.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
           AND (
             m.monitor = 1
@@ -432,22 +432,22 @@ export function getArtistDownloadStats(artistId: string | number): ArtistDownloa
 export function countDownloadedAlbums(): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM albums a
+    FROM ProviderAlbums a
     WHERE (a.monitor = 1 OR COALESCE(a.monitor_lock, 0) = 1)
       AND EXISTS (
         SELECT 1
-        FROM media m
+        FROM ProviderMedia m
         WHERE m.album_id = a.id
           AND m.type != 'Music Video'
       )
       AND NOT EXISTS (
         SELECT 1
-        FROM media m
+        FROM ProviderMedia m
         WHERE m.album_id = a.id
           AND m.type != 'Music Video'
           AND NOT EXISTS (
             SELECT 1
-            FROM library_files lf
+            FROM TrackFiles lf
             WHERE lf.media_id = m.id
               AND lf.file_type = 'track'
           )
@@ -460,12 +460,12 @@ export function countDownloadedAlbums(): number {
 export function countDownloadedTracks(): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM media m
+    FROM ProviderMedia m
     WHERE m.album_id IS NOT NULL
       AND (m.monitor = 1 OR COALESCE(m.monitor_lock, 0) = 1)
       AND EXISTS (
         SELECT 1
-        FROM library_files lf
+        FROM TrackFiles lf
         WHERE lf.media_id = m.id
           AND lf.file_type = 'track'
       )
@@ -477,12 +477,12 @@ export function countDownloadedTracks(): number {
 export function countDownloadedVideos(): number {
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM media m
+    FROM ProviderMedia m
     WHERE m.type = 'Music Video'
       AND (m.monitor = 1 OR COALESCE(m.monitor_lock, 0) = 1)
       AND EXISTS (
         SELECT 1
-        FROM library_files lf
+        FROM TrackFiles lf
         WHERE lf.media_id = m.id
           AND lf.file_type = 'video'
       )
@@ -496,7 +496,7 @@ export function countDownloadedManagedArtists(): number {
   const row = db.prepare(`
     WITH target_artists AS (
       SELECT CAST(a.id AS TEXT) AS artist_id
-      FROM artists a
+      FROM Artists a
       WHERE ${completionPredicate}
     ),
     monitored_albums AS (
@@ -505,12 +505,12 @@ export function countDownloadedManagedArtists(): number {
         CAST(al.id AS TEXT) AS album_id,
         COUNT(DISTINCT m.id) AS total_tracks,
         COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-      FROM album_artists aa
-      JOIN albums al ON al.id = aa.album_id
-      LEFT JOIN media m
+      FROM ProviderAlbumArtists aa
+      JOIN ProviderAlbums al ON al.id = aa.album_id
+      LEFT JOIN ProviderMedia m
         ON m.album_id = al.id
        AND m.type != 'Music Video'
-      LEFT JOIN library_files lf
+      LEFT JOIN TrackFiles lf
         ON lf.media_id = m.id
        AND lf.file_type = 'track'
       WHERE CAST(aa.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
@@ -526,12 +526,12 @@ export function countDownloadedManagedArtists(): number {
         CAST(m.id AS TEXT) AS media_id,
         CASE WHEN EXISTS (
           SELECT 1
-          FROM library_files lf
+          FROM TrackFiles lf
           WHERE lf.media_id = m.id
             AND lf.file_type = CASE WHEN m.type = 'Music Video' THEN 'video' ELSE 'track' END
         ) THEN 1 ELSE 0 END AS is_downloaded
-      FROM media m
-      LEFT JOIN albums al ON al.id = m.album_id
+      FROM ProviderMedia m
+      LEFT JOIN ProviderAlbums al ON al.id = m.album_id
       WHERE CAST(m.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
         AND (
           m.monitor = 1
@@ -598,7 +598,7 @@ export function updateArtistDownloadStatusFromAlbum(albumId: string): void {
 
   const artistIds = db.prepare(`
     SELECT DISTINCT CAST(artist_id AS TEXT) AS artist_id
-    FROM album_artists
+    FROM ProviderAlbumArtists
     WHERE album_id = ?
   `).all(albumId) as Array<{ artist_id: string }>;
 
@@ -614,7 +614,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
 
   const media = db.prepare(`
     SELECT artist_id, album_id
-    FROM media
+    FROM ProviderMedia
     WHERE id = ?
   `).get(mediaId) as { artist_id?: number | null; album_id?: number | null } | undefined;
 

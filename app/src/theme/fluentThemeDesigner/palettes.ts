@@ -26,10 +26,8 @@ const snappingPointsForKeyColor = (keyColor: string): number[] => {
     return range;
 };
 
-const pointsForKeyColor = (keyColor: string, range: number[], centerPoint: number): number[] => {
-    const hueIndex = hueIndexForKeyColor(keyColor);
-    const center = (hueToSnappingPointsMap[hueIndex] ?? hueToSnappingPointsMap[0])[1] * 100;
-    const linear = linearInterpolationThroughPoint(range[0], range[1], center, 16);
+const pointsForKeyColor = (_keyColor: string, range: number[], centerPoint: number): number[] => {
+    const linear = linearInterpolationThroughPoint(range[0], range[1], centerPoint, 16);
     return linear;
 };
 

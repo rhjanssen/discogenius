@@ -2,7 +2,7 @@
  * Video detail page — shows video metadata, monitor/download controls,
  * and a native video player when the file is downloaded locally.
  */
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -417,7 +417,7 @@ const VideoPage = () => {
                 hls.loadSource(remoteStreamUrl);
                 hls.attachMedia(videoRef.current);
 
-                hls.on(Hls.Events.ERROR, (_event, data) => {
+                hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
                     if (!data.fatal) {
                         return;
                     }

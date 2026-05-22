@@ -56,8 +56,8 @@ function getCanonicalTrack(input: {
               t.position,
               t.medium_position,
               t.length_ms
-            FROM mb_tracks t
-            JOIN mb_releases r ON r.mbid = t.release_mbid
+            FROM Tracks t
+            JOIN AlbumReleases r ON r.mbid = t.release_mbid
             WHERE t.mbid = ?
               AND r.release_group_mbid = ?
             LIMIT 1
@@ -75,8 +75,8 @@ function getCanonicalTrack(input: {
               t.position,
               t.medium_position,
               t.length_ms
-            FROM mb_tracks t
-            JOIN mb_releases r ON r.mbid = t.release_mbid
+            FROM Tracks t
+            JOIN AlbumReleases r ON r.mbid = t.release_mbid
             WHERE t.recording_mbid = ?
               AND r.release_group_mbid = ?
             ORDER BY t.medium_position ASC, t.position ASC
@@ -112,7 +112,7 @@ function getProviderAlbumSelections(
           selected_provider,
           selected_provider_id,
           quality
-        FROM release_group_slots
+        FROM ReleaseGroupSlots
         WHERE release_group_mbid = ?
           AND selected_provider IS NOT NULL
           AND selected_provider_id IS NOT NULL

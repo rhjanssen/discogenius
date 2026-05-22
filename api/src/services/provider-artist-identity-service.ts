@@ -86,7 +86,7 @@ export class ProviderArtistIdentityService {
   static async resolve(provider: string, artist: ProviderArtistIdentityInput): Promise<ProviderArtistIdentityResolution> {
     const cached = db.prepare(`
       SELECT artist_mbid, match_status, match_confidence, match_method
-      FROM provider_items
+      FROM ProviderItems
       WHERE provider = ?
         AND entity_type = 'artist'
         AND provider_id = ?
@@ -155,15 +155,15 @@ export class ProviderArtistIdentityService {
     };
   }
 
-  static store(provider: string, artist: ProviderArtistIdentityInput, resolution: ProviderArtistIdentityResolution, localArtistId?: string | null): void {
+  static store(provider: string, artist: ProviderArtistIdentityInput, resolution: ProviderArtistIdentityResolution, _localArtistId?: string | null): void {
     db.prepare(`
-      INSERT INTO provider_items (
+      INSERT INTO ProviderItems (
         provider, entity_type, provider_id, artist_mbid,
         title, match_status, match_confidence, match_method, data, updated_at
       )
       VALUES (?, 'artist', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-        artist_mbid = COALESCE(excluded.artist_mbid, provider_items.artist_mbid),
+        artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
         title = excluded.title,
         match_status = excluded.match_status,
         match_confidence = excluded.match_confidence,
@@ -178,50 +178,7 @@ export class ProviderArtistIdentityService {
       resolution.status,
       resolution.confidence,
       resolution.method,
-      JSON.stringify(artist.raw ?? artist),
-    );
-
-    if (!localArtistId) {
-      return;
-    }
-
-    db.prepare(`
-      INSERT INTO local_entities (local_id, entity_type, legacy_id, musicbrainz_id, display_name, updated_at)
-      VALUES (?, 'artist', ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(local_id) DO UPDATE SET
-        legacy_id = COALESCE(local_entities.legacy_id, excluded.legacy_id),
-        musicbrainz_id = COALESCE(excluded.musicbrainz_id, local_entities.musicbrainz_id),
-        display_name = excluded.display_name,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      `artist:${localArtistId}`,
-      localArtistId,
-      resolution.mbid || null,
-      artist.name,
-    );
-
-    db.prepare(`
-      INSERT INTO provider_entity_ids (
-        local_id, entity_type, provider, external_id, provider_entity_type,
-        match_status, match_confidence, match_method, data, updated_at
-      )
-      VALUES (?, 'artist', ?, ?, 'artist', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(provider, provider_entity_type, external_id) DO UPDATE SET
-        local_id = excluded.local_id,
-        entity_type = excluded.entity_type,
-        match_status = excluded.match_status,
-        match_confidence = excluded.match_confidence,
-        match_method = excluded.match_method,
-        data = excluded.data,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      `artist:${localArtistId}`,
-      provider,
-      artist.providerId,
-      resolution.status,
-      resolution.confidence,
-      resolution.method,
-      JSON.stringify(artist.raw ?? artist),
+      null,
     );
   }
 }

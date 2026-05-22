@@ -1,6 +1,6 @@
 # Curation Workflow
 
-Last updated: 2026-05-07
+Last updated: 2026-05-21
 
 Discogenius curation is MusicBrainz release-group based. It no longer runs the old provider-album redundancy engine as a runtime fallback.
 
@@ -8,7 +8,9 @@ Discogenius curation is MusicBrainz release-group based. It no longer runs the o
 
 - MusicBrainz/Lidarr metadata defines artists, release groups, releases, media, tracks, and recordings.
 - Streaming providers define availability and actionable resources.
-- `release_group_slots` connects the two by selecting provider offers for each library slot.
+- `ReleaseGroupSlots` connects the two by selecting provider offers for each library slot.
+- `ProviderItems` is the single provider-offer cache. Discogenius intentionally does not maintain a second provider-shaped catalog beside the MusicBrainz graph.
+- Provider rows store normalized availability/action evidence, not full raw catalog responses.
 
 ## Slots
 
@@ -21,10 +23,10 @@ Each wanted release group can have independent slots:
 ## Runtime Flow
 
 1. Artist add/search resolves to a MusicBrainz artist MBID through the Lidarr metadata service.
-2. Artist refresh syncs MusicBrainz release groups and release details into the `mb_*` tables.
+2. Artist refresh syncs MusicBrainz release groups and release details into `ArtistMetadata`, `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, and `Recordings`.
 3. The active streaming provider supplies release offers for the artist.
 4. Provider offers are matched to MusicBrainz release groups, and to a specific MusicBrainz release when evidence supports it.
-5. Curation applies category settings to `release_group_slots.wanted`.
+5. Curation applies MusicBrainz category and redundancy settings to `ReleaseGroupSlots.wanted`.
 6. Download Missing queues selected provider resources for wanted, missing slots.
 7. Download/import writes library files, metadata sidecars, and tags from canonical MusicBrainz identity plus provider evidence.
 
@@ -46,11 +48,13 @@ Curation uses MusicBrainz release-group fields:
 - secondary types: compilation, soundtrack, live, remix, DJ mix, demo;
 - global setting for whether spatial and videos are wanted.
 
-The category policy only marks slots wanted or unwanted. It does not replace MusicBrainz grouping with provider-derived version groups.
+The category policy only marks slots wanted or unwanted. It does not replace MusicBrainz grouping with provider-derived version groups, and provider availability does not decide whether a MusicBrainz release group is wanted.
+
+Provider matching only fills or clears slot availability fields such as `selected_provider`, `selected_provider_id`, `selected_release_mbid`, quality, compact offer snapshot, and match evidence. A wanted slot with no selected provider offer remains wanted but unavailable for download until a provider match appears.
 
 ## Queue Coupling
 
-`queueMonitoredItems` queues selected provider resources from `release_group_slots`.
+`queueMonitoredItems` queues selected provider resources from `ReleaseGroupSlots`.
 
 - Stereo slots download into the music root.
 - Spatial slots download into the spatial root.

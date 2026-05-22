@@ -19,6 +19,9 @@ export type VideoQualityValue = (typeof VIDEO_QUALITY_VALUES)[number];
 export const UPC_TARGET_VALUES = ["UPC", "EAN", "BARCODE"] as const;
 export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 
+export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline"] as const;
+export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
+
 export const VIDEO_THUMBNAIL_RESOLUTION_VALUES = [
   "origin",
   "640x360",
@@ -82,6 +85,7 @@ export interface PathConfigContract {
   spatial_path: string;
   video_path: string;
   create_empty_artist_folders?: boolean;
+  video_folder_layout?: VideoFolderLayoutValue;
 }
 
 export interface NamingConfigContract {
@@ -220,6 +224,9 @@ export function parsePathConfigContract(value: unknown): PathConfigContract {
     spatial_path: expectString(record.spatial_path, "path.spatial_path"),
     video_path: expectString(record.video_path, "path.video_path"),
     create_empty_artist_folders: expectOptionalBoolean(record.create_empty_artist_folders, "path.create_empty_artist_folders"),
+    video_folder_layout: record.video_folder_layout !== undefined
+      ? expectOneOf(record.video_folder_layout, VIDEO_FOLDER_LAYOUT_VALUES, "path.video_folder_layout")
+      : undefined,
   };
 }
 

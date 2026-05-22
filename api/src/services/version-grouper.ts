@@ -85,8 +85,8 @@ export class VersionGrouper {
         // Get all album IDs for this artist
         const albumRows = db.prepare(`
             SELECT DISTINCT aa.album_id, a.title
-            FROM album_artists aa
-            JOIN albums a ON a.id = aa.album_id
+            FROM ProviderAlbumArtists aa
+            JOIN ProviderAlbums a ON a.id = aa.album_id
             WHERE aa.artist_id = ?
         `).all(artistId) as { album_id: number; title: string }[];
 
@@ -180,7 +180,7 @@ export class VersionGrouper {
         }
 
         const updateStmt = db.prepare(`
-            UPDATE album_artists 
+            UPDATE ProviderAlbumArtists 
             SET version_group_id = ?, version_group_name = ?
             WHERE artist_id = ? AND album_id = ?
         `);

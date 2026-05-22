@@ -22,7 +22,7 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: T
 
         const existingRows = db.prepare(`
             SELECT file_path, relative_path, library_root
-            FROM library_files
+            FROM TrackFiles
             WHERE media_id = ? AND file_type = 'video'
         `).all(mediaId) as LibraryRow[];
         rows.push(...existingRows);
@@ -35,7 +35,7 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: T
         const placeholders = trackIds.map(() => "?").join(", ");
         const existingRows = db.prepare(`
             SELECT file_path, relative_path, library_root
-            FROM library_files
+            FROM TrackFiles
             WHERE file_type = 'track'
               AND media_id IN (${placeholders})
         `).all(...trackIds) as LibraryRow[];

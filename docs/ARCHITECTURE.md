@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-03-27
+Last updated: 2026-05-21
 
 ## Purpose
 
@@ -35,7 +35,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - scanning/import and organization
 - curation/dedup and download queueing
 
-1. Treat library_files as canonical on-disk inventory for managed media and sidecars.
+1. Treat `TrackFiles` as canonical on-disk inventory for managed media and sidecars.
 
 1. Respect lock semantics (monitor_lock) as intentional user state.
 
@@ -183,9 +183,9 @@ Naming renderer behavior (api/src/services/naming.ts):
 
 MusicBrainz identity behavior:
 
-- Artist refresh resolves `artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
-- Album refresh resolves `albums.mbid` and `albums.mb_release_group_id` by UPC first, then MusicBrainz release search.
-- Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes `media.mbid`, `media.acoustid_id`, and fingerprint metadata.
+- Artist refresh resolves `Artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
+- MusicBrainz/Lidarr release-group metadata is stored in `Albums`; provider album IDs do not define album identity.
+- Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes canonical MBIDs to `Tracks`/`Recordings` and imported-file provenance to `TrackFiles`.
 - Music videos are tracked in the same status table, but MusicBrainz video IDs are treated as generally unavailable; video NFO files still include artist and album MusicBrainz IDs when the linked rows have them.
 - Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside TIDAL metadata.
 - `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
@@ -194,12 +194,14 @@ MusicBrainz identity behavior:
 
 Primary persisted entities:
 
-- artists, albums, media
-- album_artists, media_artists
-- library_files
+- `Artists`, `ArtistMetadata`
+- `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, `Recordings`
+- `ProviderItems`, `ReleaseGroupSlots`
+- `ProviderAlbums`, `ProviderMedia`, `ProviderAlbumArtists`, `ProviderMediaArtists` while provider-primary compatibility paths still exist
+- `TrackFiles`
 - metadata_identity_status
 - history_events
-- unmapped_files
+- `UnmappedFiles`
 - job_queue, scheduled_tasks, monitoring_runtime_state
 - quality_profiles, upgrade_queue
 - config
@@ -209,6 +211,10 @@ Operationally important semantics:
 - monitor = eligible for automation (curation/download/maintenance scope)
 - monitor_lock = manual override; automation must not flip locked state
 - redundant = why a release is filtered out of active curation selection
+- MusicBrainz/Lidarr tables are the canonical metadata graph.
+- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers and match evidence, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles` stores provider provenance for already imported files.
+- Provider raw response blobs are not durable catalog data. Persist only normalized availability/action fields plus compact selected-offer snapshots required for queue/display behavior.
+- Provider offer rows must not create canonical artists, albums, releases, tracks, or wanted state by themselves.
 
 ## Current Workflow Topology
 
@@ -217,8 +223,8 @@ Operationally important semantics:
 1. Queue workflow entry (refresh, scan, curation, or monitoring pass).
 2. Metadata refresh and/or library scan runs.
 3. Scan completion emits events.
-4. Curation pass updates monitored/redundant state.
-5. Download-missing queueing adds concrete download jobs.
+4. Curation pass updates MusicBrainz-driven wanted/redundant state.
+5. Provider availability fills selected slot resources, and download-missing queueing adds concrete jobs only for wanted slots with an available provider offer.
 6. Download processor fetches media, then organizer commits files.
 7. Library file cleanup/metadata sidecar cleanup runs as needed.
 
@@ -256,7 +262,7 @@ Operationally important semantics:
 
 - No direct music downloads through tidal-dl-ng.
 - No heavy route-level orchestration for scan/import/curation/download operations.
-- No shadow file-state source outside library_files.
+- No shadow file-state source outside `TrackFiles`.
 - No lock-blind monitor updates.
 - Provider authentication is optional for MusicBrainz library management; downloads, previews, followed artists, provider artwork, and provider lyrics require a capable connected provider.
 

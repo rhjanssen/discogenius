@@ -2,7 +2,6 @@ import {
   expectArray,
   expectNullableString,
   expectNumber,
-  expectOptionalNumber,
   expectRecord,
   expectString,
   expectOneOf,

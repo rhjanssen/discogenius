@@ -27,6 +27,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import MediaCard from '@/components/cards/MediaCard';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
+import { type UnmappedFile } from './ManualImportTab';
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm', 'ts']);
 
@@ -178,22 +179,6 @@ const useStyles = makeStyles({
     },
 });
 
-interface UnmappedFile {
-    id: number;
-    file_path: string;
-    relative_path: string;
-    library_root: string;
-    filename: string;
-    extension: string;
-    file_size: number;
-    duration?: number | null;
-    detected_artist?: string | null;
-    detected_album?: string | null;
-    detected_track?: string | null;
-    audio_quality?: string | null;
-    reason?: string | null;
-    ignored: boolean;
-}
 
 interface Props {
     isOpen: boolean;
@@ -480,7 +465,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                     <div className={styles.localFilePanel}>
                                         <Text weight="semibold">{localFile.filename}</Text>
                                         <div className={styles.localFileMeta}>
-                                            <Badge appearance="filled">{formatBytes(localFile.file_size)}</Badge>
+                                            <Badge appearance="filled">{formatBytes(localFile.file_size ?? 0)}</Badge>
                                             {formatDuration(localFile.duration) ? <Badge appearance="outline">{formatDuration(localFile.duration)}</Badge> : null}
                                             {localFile.audio_quality ? <Badge appearance="outline">{localFile.audio_quality}</Badge> : null}
                                         </div>
@@ -568,7 +553,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                             <Text weight="semibold">Local file</Text>
                                             <Text className={styles.filename}>{localFile.filename}</Text>
                                             <div className={styles.localFileMeta}>
-                                                <Badge appearance="filled">{formatBytes(localFile.file_size)}</Badge>
+                                                <Badge appearance="filled">{formatBytes(localFile.file_size ?? 0)}</Badge>
                                                 {formatDuration(localFile.duration) ? <Badge appearance="outline">{formatDuration(localFile.duration)}</Badge> : null}
                                                 {selectedFiles[localFile.id] ? <Badge appearance="tint">Selected</Badge> : null}
                                             </div>
@@ -618,7 +603,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                                                                     <span className={styles.filename} title={file.filename}>{file.filename}</span>
                                                                     <Text size={100} className={styles.secondaryText}>
-                                                                        {formatBytes(file.file_size)}
+                                                                        {formatBytes(file.file_size ?? 0)}
                                                                     </Text>
                                                                 </div>
                                                             </TableCell>

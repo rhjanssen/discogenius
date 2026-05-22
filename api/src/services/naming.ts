@@ -33,7 +33,7 @@ export type NamingContext = {
 
   videoTitle?: string | null;
 
-  // Audio quality metadata (optional, from library_files)
+  // Audio quality metadata (optional, from TrackFiles)
   quality?: string | null;
   codec?: string | null;
   bitrate?: number | null;

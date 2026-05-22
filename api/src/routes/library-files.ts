@@ -140,7 +140,7 @@ router.get("/content", (req, res) => {
     // Security: Verify the file is in our database (prevents arbitrary file reads)
     const file = db.prepare(`
       SELECT id, file_type, file_path, relative_path, library_root
-      FROM library_files
+      FROM TrackFiles
       WHERE file_path = ?
     `).get(filePath) as any;
     if (!file) {
@@ -181,7 +181,7 @@ router.get("/stream/:id", async (req, res) => {
     }
 
     // Get file from database
-    const file = db.prepare("SELECT * FROM library_files WHERE id = ?").get(id) as any;
+    const file = db.prepare("SELECT * FROM TrackFiles WHERE id = ?").get(id) as any;
     if (!file) {
       return res.status(404).json({ detail: "File not found in library" });
     }
@@ -318,7 +318,7 @@ router.get("/stream/:id", async (req, res) => {
 router.post("/scan/:artistId", (req, res) => {
   try {
     const { artistId } = req.params;
-    const artist = db.prepare("SELECT id, name FROM artists WHERE id = ?").get(artistId) as any;
+    const artist = db.prepare("SELECT id, name FROM Artists WHERE id = ?").get(artistId) as any;
     if (!artist) {
       return res.status(404).json({ detail: `Artist ${artistId} not found` });
     }

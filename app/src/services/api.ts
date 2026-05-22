@@ -213,14 +213,14 @@ class ApiClient {
 
     const { timeoutMs = null, ...requestOptions } = options;
 
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...requestOptions.headers,
-    };
+    const headers = new Headers(requestOptions.headers);
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
 
     // Add auth token if available
     if (this.authToken) {
-      headers['Authorization'] = `Bearer ${this.authToken}`;
+      headers.set('Authorization', `Bearer ${this.authToken}`);
     }
 
     const callerSignal = requestOptions.signal;
@@ -828,10 +828,9 @@ class ApiClient {
   }
 
   createScanRootFoldersStream(): EventSource {
-    const url = `${this.baseUrl}${API_PREFIX}/library-files/scan-roots-now`;
     // SSE via POST requires fetch, but we use EventSource pattern with a workaround
     // Use fetch-based SSE reader instead
-    return null as any; // Handled by dedicated hook
+    throw new Error("createScanRootFoldersStream is not supported; use scanRootFolders for queued root scans.");
   }
 
   getScanRootFoldersUrl(): string {
@@ -885,9 +884,9 @@ class ApiClient {
 
   async getFileContent(filePath: string): Promise<string> {
     const url = `${this.baseUrl}${API_PREFIX}/library-files/content?path=${encodeURIComponent(filePath)}`;
-    const headers: HeadersInit = {};
+    const headers = new Headers();
     if (this.authToken) {
-      headers['Authorization'] = `Bearer ${this.authToken}`;
+      headers.set('Authorization', `Bearer ${this.authToken}`);
     }
     const resp = await fetch(url, { headers });
     if (!resp.ok) throw new Error(`Failed to fetch content: ${resp.status}`);

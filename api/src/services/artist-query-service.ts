@@ -164,7 +164,7 @@ const duplicateProviderArtistPredicate = `NOT (
     AND CAST(a.id AS TEXT) != CAST(a.mbid AS TEXT)
     AND EXISTS (
         SELECT 1
-        FROM artists canonical_artist
+        FROM Artists canonical_artist
         WHERE canonical_artist.mbid = a.mbid
           AND CAST(canonical_artist.id AS TEXT) = CAST(canonical_artist.mbid AS TEXT)
     )
@@ -183,9 +183,9 @@ export class ArtistQueryService {
         let query = `
       SELECT a.*,
         CASE WHEN ${managedArtistPredicate} THEN 1 ELSE 0 END as effective_monitor
-      FROM artists a
+      FROM Artists a
     `;
-        let countQuery = "SELECT COUNT(*) as total FROM artists a";
+        let countQuery = "SELECT COUNT(*) as total FROM Artists a";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
         const where: string[] = [duplicateProviderArtistPredicate];
@@ -236,7 +236,7 @@ export class ArtistQueryService {
             const placeholders = artistMbids.map(() => "?").join(",");
             const rows = db.prepare(`
                 SELECT artist_mbid, COUNT(*) AS cnt
-                FROM mb_release_groups
+                FROM ProviderAlbums
                 WHERE artist_mbid IN (${placeholders})
                 GROUP BY artist_mbid
             `).all(...artistMbids) as Array<{ artist_mbid: string; cnt: number }>;
@@ -323,8 +323,8 @@ export class ArtistQueryService {
     static getArtistAlbums(artistId: string): any[] {
         const albums = db.prepare(`
       SELECT a.*, aa.type as relationship_type, aa.group_type as group_type
-      FROM albums a
-      JOIN album_artists aa ON a.id = aa.album_id
+      FROM ProviderAlbums a
+      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
       WHERE aa.artist_id = ?
       ORDER BY a.release_date DESC
     `).all(artistId) as any[];
@@ -352,14 +352,14 @@ export class ArtistQueryService {
         const albumJobs = db.prepare(`
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
-      INNER JOIN albums a ON a.id = jq.ref_id
+      INNER JOIN ProviderAlbums a ON a.id = jq.ref_id
       WHERE a.artist_id = ? AND jq.type IN ('RefreshAlbum', 'ScanAlbum') AND jq.status IN ('pending', 'processing')
     `).all(artistId) as any[];
 
         const albumDownloadJobs = db.prepare(`
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
-      INNER JOIN albums a ON a.id = jq.ref_id
+      INNER JOIN ProviderAlbums a ON a.id = jq.ref_id
       WHERE a.artist_id = ?
         AND jq.type IN ('DownloadAlbum', 'ImportDownload')
         AND jq.status IN ('pending', 'processing')
@@ -368,7 +368,7 @@ export class ArtistQueryService {
         const mediaDownloadJobs = db.prepare(`
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
-      INNER JOIN media m ON m.id = jq.ref_id
+      INNER JOIN ProviderMedia m ON m.id = jq.ref_id
       WHERE m.artist_id = ?
         AND jq.type IN ('DownloadTrack', 'DownloadVideo', 'ImportDownload')
         AND jq.status IN ('pending', 'processing')
@@ -377,7 +377,7 @@ export class ArtistQueryService {
         const releaseGroupSlotJobs = db.prepare(`
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
-      INNER JOIN mb_release_groups rg
+      INNER JOIN Albums rg
         ON rg.mbid = json_extract(jq.payload, '$.releaseGroupMbid')
       WHERE rg.artist_mbid = ?
         AND jq.type IN ('DownloadAlbum', 'ImportDownload')
@@ -428,7 +428,7 @@ export class ArtistQueryService {
         }
 
         const artist = db.prepare(`
-      SELECT * FROM artists WHERE id = ?
+      SELECT * FROM Artists WHERE id = ?
     `).get(id) as any;
 
         if (!artist) {
@@ -436,7 +436,7 @@ export class ArtistQueryService {
         }
 
         const albums = db.prepare(`
-      SELECT * FROM albums
+      SELECT * FROM ProviderAlbums
       WHERE artist_id = ?
       ORDER BY release_date DESC
     `).all(id) as any[];
@@ -498,7 +498,7 @@ export class ArtistQueryService {
 
         const albums: any[] = [];
 
-        const videos = db.prepare("SELECT * FROM media WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
+        const videos = db.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
         SELECT
@@ -523,11 +523,11 @@ export class ArtistQueryService {
             ELSE 0
           END AS wanted,
           rg.data
-        FROM mb_release_groups rg
-        LEFT JOIN release_group_slots stereo
+        FROM Albums rg
+        LEFT JOIN ReleaseGroupSlots stereo
           ON stereo.release_group_mbid = rg.mbid
          AND stereo.slot = 'stereo'
-        LEFT JOIN release_group_slots spatial
+        LEFT JOIN ReleaseGroupSlots spatial
           ON spatial.release_group_mbid = rg.mbid
          AND spatial.slot = 'spatial'
         WHERE rg.artist_mbid = ?
@@ -543,8 +543,8 @@ export class ArtistQueryService {
           a.name,
           a.picture,
           COALESCE(a.popularity, 0) as popularity
-        FROM similar_artists sa
-        JOIN artists a ON sa.similar_artist_id = a.id
+        FROM ProviderSimilarArtists sa
+        JOIN Artists a ON sa.similar_artist_id = a.id
         WHERE sa.artist_id = ?
         ORDER BY COALESCE(a.popularity, 0) DESC, sa.created_at ASC, a.id ASC
         LIMIT 10
@@ -578,10 +578,10 @@ export class ArtistQueryService {
         a.cover as album_cover,
         a.id as album_id,
         ta.name as artist_name
-      FROM media t
-      JOIN albums a ON t.album_id = a.id
-      JOIN media_artists ma ON t.id = ma.media_id
-      LEFT JOIN artists ta ON ta.id = t.artist_id
+      FROM ProviderMedia t
+      JOIN ProviderAlbums a ON t.album_id = a.id
+      JOIN ProviderMediaArtists ma ON t.id = ma.media_id
+      LEFT JOIN Artists ta ON ta.id = t.artist_id
       WHERE t.album_id IS NOT NULL
         AND t.type <> 'Music Video'
         AND ma.artist_id = ?
@@ -809,7 +809,7 @@ export class ArtistQueryService {
         const artistFiles = LibraryFilesService.resolveExistingFiles(db.prepare(`
       SELECT id, media_id, file_type, file_path, relative_path, filename, extension,
              quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
-      FROM library_files
+      FROM TrackFiles
       WHERE artist_id = ?
         AND album_id IS NULL
         AND media_id IS NULL

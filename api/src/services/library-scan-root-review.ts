@@ -6,7 +6,7 @@ import { getUnmappedMediaMetrics } from "./library-media-metrics.js";
 
 export function clearRootFolderReviewEntries(roots: Iterable<string>, folderNames: string[]) {
     const deleteByPrefix = db.prepare(`
-        DELETE FROM unmapped_files
+        DELETE FROM UnmappedFiles
         WHERE file_path = ? OR file_path LIKE ?
     `);
 
@@ -24,7 +24,7 @@ export function persistRootReviewCandidates(candidates: ImportCandidate[]) {
     }
 
     const upsertUnmappedFile = db.prepare(`
-        INSERT INTO unmapped_files (
+        INSERT INTO UnmappedFiles (
             file_path, relative_path, library_root, filename, extension, file_size, duration,
             bitrate, sample_rate, bit_depth, channels, codec,
             detected_artist, detected_album, detected_track, audio_quality, reason

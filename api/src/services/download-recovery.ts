@@ -26,13 +26,13 @@ export function getExistingLibraryMediaIds(
     const rows = type === 'album'
         ? db.prepare(`
                 SELECT lf.file_path, lf.library_root, m.id as media_id
-                FROM library_files lf
-                JOIN media m ON m.id = lf.media_id
+                FROM TrackFiles lf
+                JOIN ProviderMedia m ON m.id = lf.media_id
                 WHERE m.album_id = ? AND lf.file_type = 'track'
             `).all(tidalId) as Array<{ file_path: string; library_root: string; media_id: number }>
         : db.prepare(`
                 SELECT file_path, library_root, media_id
-                FROM library_files
+                FROM TrackFiles
                 WHERE media_id = ? AND file_type = ?
             `).all(
             tidalId,

@@ -57,7 +57,7 @@ export class ManualImportService {
 
         for (const item of items) {
             try {
-                const file = db.prepare("SELECT * FROM unmapped_files WHERE id = ?").get(item.id) as any;
+                const file = db.prepare("SELECT * FROM UnmappedFiles WHERE id = ?").get(item.id) as any;
                 if (!file) {
                     console.warn(`[Bulk Import] Unmapped file ID ${item.id} not found.`);
                     continue;
@@ -116,7 +116,7 @@ export class ManualImportService {
                 // Fetch artist info if needed (check DB first to avoid redundant API calls)
                 let artistInfo: CollectedItem["artistInfo"] = null;
                 if (artistId) {
-                    const existingArtist = db.prepare("SELECT id FROM artists WHERE id = ?").get(artistId);
+                    const existingArtist = db.prepare("SELECT id FROM Artists WHERE id = ?").get(artistId);
                     if (!existingArtist) {
                         const fallbackName = trackData.artist?.name || trackData.artist_name || "Unknown Artist";
                         try {
@@ -130,7 +130,7 @@ export class ManualImportService {
 
                 // Read artist row for naming (may have been inserted in a prior iteration's commit — read fresh)
                 const artistRow = artistId
-                    ? db.prepare("SELECT name, mbid, path FROM artists WHERE id = ?").get(artistId) as any
+                    ? db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any
                     : null;
 
                 // Scan provider album metadata when the imported item belongs to an album.
@@ -142,7 +142,7 @@ export class ManualImportService {
                 }
 
                 // Read album row for naming (may have been created by RefreshAlbumService.scanShallow)
-                const albumRow = albumId ? db.prepare("SELECT * FROM albums WHERE id = ?").get(albumId) as any : null;
+                const albumRow = albumId ? db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumId) as any : null;
 
                 // Fingerprint + filesystem stats
                 let fingerprint: string | null = null;
@@ -256,11 +256,11 @@ export class ManualImportService {
                 // Album monitor + album_artists
                 if (c.albumId) {
                     db.prepare(`
-                        UPDATE albums SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                        UPDATE ProviderAlbums SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
                         WHERE id = ? AND monitor_lock = 0
                     `).run(c.albumId);
                     db.prepare(`
-                        INSERT OR IGNORE INTO album_artists (album_id, artist_id, type, group_type, module)
+                        INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
                         VALUES (?, ?, 'MAIN', 'ALBUMS', NULL)
                     `).run(c.albumId, c.artistId);
                 }
@@ -268,7 +268,7 @@ export class ManualImportService {
                 // Video media upsert
                 if (c.isVideo) {
                     db.prepare(`
-                        INSERT INTO media (
+                        INSERT INTO ProviderMedia (
                             id, artist_id, album_id, title, version, release_date, type,
                             explicit, quality, duration, popularity, cover, monitor
                         ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, 1)
@@ -291,7 +291,7 @@ export class ManualImportService {
 
                 // Check for existing library file
                 const existingLibraryFile = db.prepare(`
-                    SELECT id, file_path, relative_path, library_root FROM library_files
+                    SELECT id, file_path, relative_path, library_root FROM TrackFiles
                     WHERE media_id = ? AND file_type = ?
                     ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
                     LIMIT 1
@@ -313,7 +313,7 @@ export class ManualImportService {
 
                 if (existingLibraryFile && existingTrackedFilePresent && !sameTrackedPath) {
                     db.prepare(`
-                        UPDATE unmapped_files SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+                        UPDATE UnmappedFiles SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
                     `).run("Duplicate of an existing imported library file", c.id);
                     console.warn(`[Bulk Import] Skipping duplicate: ${c.file.file_path} for media ${c.tidalId}`);
                     continue;
@@ -321,7 +321,7 @@ export class ManualImportService {
 
                 if (existingLibraryFile && sameTrackedPath) {
                     db.prepare(`
-                        UPDATE library_files SET
+                        UPDATE TrackFiles SET
                             artist_id=?, album_id=?, media_id=?, file_path=?, relative_path=?,
                             library_root=?, filename=?, extension=?, file_size=?, duration=?,
                             file_type=?, quality=?, needs_rename=?, naming_template=?,
@@ -337,11 +337,11 @@ export class ManualImportService {
                         c.fingerprint, c.stats.mtime.toISOString(),
                         existingLibraryFile.id,
                     );
-                    db.prepare(`DELETE FROM library_files WHERE media_id = ? AND file_type = ? AND id != ?`)
+                    db.prepare(`DELETE FROM TrackFiles WHERE media_id = ? AND file_type = ? AND id != ?`)
                         .run(c.tidalId, c.fileType, existingLibraryFile.id);
                 } else {
                     db.prepare(`
-                        INSERT INTO library_files (
+                        INSERT INTO TrackFiles (
                             artist_id, album_id, media_id,
                             file_path, relative_path, library_root,
                             filename, extension, file_size, duration,
@@ -378,9 +378,9 @@ export class ManualImportService {
 
                 // Monitor media + remove from unmapped
                 db.prepare(`
-                    UPDATE media SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
+                    UPDATE ProviderMedia SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
                 `).run(c.tidalId);
-                db.prepare("DELETE FROM unmapped_files WHERE id = ?").run(c.id);
+                db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
 
                 // Track finalization targets (outside transaction, post-commit)
                 const libraryFileId = resolveImportedLibraryFileId(c.file.file_path);

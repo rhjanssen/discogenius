@@ -46,7 +46,7 @@ const inDb = (tidalId: string, table: string): boolean => {
 };
 
 function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
-    return db.prepare("SELECT id, monitor, picture, cover_image_url FROM artists WHERE mbid = ? LIMIT 1").get(mbid) as
+    return db.prepare("SELECT id, monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
         { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
 }
 
@@ -182,11 +182,11 @@ router.get("/", async (req, res) => {
                 const localArtists = db
                     .prepare(
                         `SELECT id, name, COALESCE(cover_image_url, picture) AS picture, monitor
-                         FROM artists current_artist
+                         FROM Artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
                              SELECT 1
-                             FROM artists canonical_artist
+                             FROM Artists canonical_artist
                              WHERE canonical_artist.mbid IS NOT NULL
                                AND canonical_artist.id != current_artist.id
                                AND lower(canonical_artist.name) = lower(current_artist.name)
@@ -221,9 +221,9 @@ router.get("/", async (req, res) => {
              slot.provider_data,
              slot.quality AS quality,
 	             CASE WHEN slot.id IS NOT NULL THEN COALESCE(slot.wanted, 0) ELSE COALESCE(a.monitor, 0) END AS monitored
-	           FROM mb_release_groups rg
-	           LEFT JOIN artists a ON a.mbid = rg.artist_mbid
-	           LEFT JOIN release_group_slots slot
+	           FROM Albums rg
+	           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+	           LEFT JOIN ReleaseGroupSlots slot
              ON slot.release_group_mbid = rg.mbid
             AND slot.slot = 'stereo'
 	           WHERE rg.title LIKE ? ESCAPE '\\'
@@ -250,9 +250,9 @@ router.get("/", async (req, res) => {
                 const localTracks = db
                     .prepare(
                         `SELECT m.id, m.title, ar.name as artist_name, m.monitor as monitored, a.cover as album_cover
-           FROM media m
-           LEFT JOIN artists ar ON ar.id = m.artist_id
-           LEFT JOIN albums a ON a.id = m.album_id
+           FROM ProviderMedia m
+           LEFT JOIN Artists ar ON ar.id = m.artist_id
+           LEFT JOIN ProviderAlbums a ON a.id = m.album_id
            WHERE m.album_id IS NOT NULL AND m.title LIKE ? ESCAPE '\\'
            ORDER BY m.title LIMIT ?`
                     )
@@ -279,14 +279,14 @@ router.get("/", async (req, res) => {
              m.cover,
              COALESCE((
                SELECT lf.quality
-               FROM library_files lf
+               FROM TrackFiles lf
                WHERE lf.media_id = m.id
                  AND lf.file_type = 'video'
                ORDER BY lf.verified_at DESC, lf.id DESC
                LIMIT 1
              ), m.quality) as current_quality
-           FROM media m
-           LEFT JOIN artists ar ON ar.id = m.artist_id
+           FROM ProviderMedia m
+           LEFT JOIN Artists ar ON ar.id = m.artist_id
            WHERE m.type = 'Music Video' AND m.title LIKE ? ESCAPE '\\'
            ORDER BY m.release_date DESC LIMIT ?`
                     )
@@ -312,7 +312,7 @@ router.get("/", async (req, res) => {
                 const lidarrArtists = await lidarrMetadataService.searchArtists(query, limit);
                 const seenArtists = new Set(results.artists.map((artist: SearchResultContract) => String(artist.id)));
                 const seenMbids = new Set(
-                    db.prepare("SELECT mbid FROM artists WHERE mbid IS NOT NULL").all()
+                    db.prepare("SELECT mbid FROM Artists WHERE mbid IS NOT NULL").all()
                         .map((row: any) => String(row.mbid))
                 );
 

@@ -171,7 +171,7 @@ function recordIdentityStatus(result: MetadataIdentityResult): void {
 
 function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityResult, mbid?: string | null): void {
     db.prepare(`
-        UPDATE artists SET
+        UPDATE Artists SET
             mbid = COALESCE(?, mbid),
             musicbrainz_status = ?,
             musicbrainz_last_checked = CURRENT_TIMESTAMP,
@@ -196,7 +196,7 @@ function updateAlbumIdentityColumns(
         : null;
 
     db.prepare(`
-        UPDATE albums SET
+        UPDATE ProviderAlbums SET
             mbid = COALESCE(?, mbid),
             mb_release_group_id = COALESCE(?, mb_release_group_id),
             mb_primary = COALESCE(?, mb_primary),
@@ -227,7 +227,7 @@ function updateTrackIdentityColumns(
     } = {},
 ): void {
     db.prepare(`
-        UPDATE media SET
+        UPDATE ProviderMedia SET
             mbid = COALESCE(?, mbid),
             acoustid_id = COALESCE(?, acoustid_id),
             acoustid_fingerprint = COALESCE(?, acoustid_fingerprint),
@@ -248,7 +248,7 @@ function updateTrackIdentityColumns(
 
     if (options.fingerprint || options.acoustidId || options.fingerprintDuration) {
         db.prepare(`
-            UPDATE library_files SET
+            UPDATE TrackFiles SET
                 fingerprint = COALESCE(?, fingerprint),
                 acoustid_id = COALESCE(?, acoustid_id),
                 fingerprint_duration = COALESCE(?, fingerprint_duration)
@@ -438,7 +438,7 @@ export class MetadataIdentityService {
     }
 
     static async resolveArtist(artistId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
-        const artist = db.prepare("SELECT id, name, mbid FROM artists WHERE id = ?").get(artistId) as ArtistRow | undefined;
+        const artist = db.prepare("SELECT id, name, mbid FROM Artists WHERE id = ?").get(artistId) as ArtistRow | undefined;
         if (!artist) {
             const result = this.result("artist", artistId, "error", 0, "local-row", "Artist is not in the Discogenius database");
             recordIdentityStatus(result);
@@ -500,8 +500,8 @@ export class MetadataIdentityService {
                 a.mb_release_group_id,
                 ar.name AS artist_name,
                 ar.mbid AS artist_mbid
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id = ?
         `).get(albumId) as AlbumRow | undefined;
 
@@ -592,7 +592,7 @@ export class MetadataIdentityService {
         options: { force?: boolean; releaseId?: string | null } = {},
     ): Promise<MetadataIdentityResult[]> {
         const releaseId = options.releaseId
-            || (db.prepare("SELECT mbid FROM albums WHERE id = ?").get(albumId) as { mbid?: string | null } | undefined)?.mbid
+            || (db.prepare("SELECT mbid FROM ProviderAlbums WHERE id = ?").get(albumId) as { mbid?: string | null } | undefined)?.mbid
             || null;
         let releaseTracks: ReleaseTrackCandidate[] = [];
 
@@ -605,7 +605,7 @@ export class MetadataIdentityService {
         }
 
         const tracks = db.prepare(`
-            SELECT id FROM media
+            SELECT id FROM ProviderMedia
             WHERE album_id = ? AND type != 'Music Video'
             ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0), id
         `).all(albumId) as Array<{ id: number }>;
@@ -645,9 +645,9 @@ export class MetadataIdentityService {
                 ar.mbid AS artist_mbid,
                 al.title AS album_title,
                 al.mbid AS album_mbid
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
-            LEFT JOIN albums al ON al.id = m.album_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
+            LEFT JOIN ProviderAlbums al ON al.id = m.album_id
             WHERE m.id = ?
         `).get(mediaId) as TrackRow | undefined;
 
@@ -716,7 +716,7 @@ export class MetadataIdentityService {
 
                     if (acoustidMatches[0]?.id || fingerprint.fingerprint) {
                         db.prepare(`
-                            UPDATE media SET
+                            UPDATE ProviderMedia SET
                                 acoustid_id = COALESCE(?, acoustid_id),
                                 acoustid_fingerprint = COALESCE(?, acoustid_fingerprint),
                                 fingerprint_duration = COALESCE(?, fingerprint_duration)
@@ -786,7 +786,7 @@ export class MetadataIdentityService {
     private static findBestTrackFile(mediaId: string): string | null {
         const row = db.prepare(`
             SELECT file_path, relative_path, library_root
-            FROM library_files
+            FROM TrackFiles
             WHERE media_id = ? AND file_type = 'track'
             ORDER BY verified_at DESC, id DESC
             LIMIT 1

@@ -18,9 +18,9 @@ before(async () => {
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM media").run();
-    dbModule.db.prepare("DELETE FROM albums").run();
-    dbModule.db.prepare("DELETE FROM artists").run();
+    dbModule.db.prepare("DELETE FROM ProviderMedia").run();
+    dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
+    dbModule.db.prepare("DELETE FROM Artists").run();
 });
 
 after(() => {
@@ -30,12 +30,12 @@ after(() => {
 
 function seedMusicBrainzMetadata() {
     dbModule.db.prepare(`
-        INSERT INTO artists(id, name, mbid, bio_text)
+        INSERT INTO Artists(id, name, mbid, bio_text)
         VALUES(?, ?, ?, ?)
     `).run("100", "The Example Artist", "artist-mbid-100", "Artist bio & history");
 
     dbModule.db.prepare(`
-        INSERT INTO albums(
+        INSERT INTO ProviderAlbums(
             id, artist_id, title, release_date, type, explicit, quality,
             num_tracks, num_volumes, num_videos, duration, review_text,
             upc, mbid, mb_release_group_id
@@ -60,7 +60,7 @@ function seedMusicBrainzMetadata() {
     );
 
     dbModule.db.prepare(`
-        INSERT INTO media(
+        INSERT INTO ProviderMedia(
             id, artist_id, album_id, title, release_date, type, explicit,
             quality, track_number, volume_number, duration, mbid
         )
@@ -81,7 +81,7 @@ function seedMusicBrainzMetadata() {
     );
 
     dbModule.db.prepare(`
-        INSERT INTO media(
+        INSERT INTO ProviderMedia(
             id, artist_id, album_id, title, release_date, type, explicit,
             quality, track_number, volume_number, duration
         )

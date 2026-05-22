@@ -63,15 +63,15 @@ Measured 2026-03-13:
 
 ## Provider-Agnostic ID Model (Multi-Provider Foundation)
 
-**Current state (as of 2026-03):**
+**Current state (as of 2026-05):**
 
-The schema uses TIDAL IDs as primary keys for `artists`, `albums`, and `media`. Cross-provider identity is partially covered already:
+The schema now keeps the Lidarr-style MusicBrainz graph separate from provider availability/actionability:
 
-- `isrc` on `media` — the industry-standard cross-provider track identity key (used by our dedup logic)
-- `upc` on `albums` — specific pressing/edition identity
-- `mbid` on `artists`, `albums`, `media` — sparsely populated MusicBrainz IDs
-- `albums.mb_release_group_id` — MusicBrainz Release Group ID, the cross-provider join key for the **abstract album concept**
-- `provider_ids` table — maps TIDAL-primary entity IDs to identifiers from other providers
+- `Artists`, `ArtistMetadata`, `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, and `Recordings` are the canonical metadata graph.
+- `ProviderItems` caches provider availability/offers and match evidence; it is not a catalog truth table.
+- `ReleaseGroupSlots` selects the provider offer that can satisfy a MusicBrainz release group and library slot.
+- `ProviderAlbums` and `ProviderMedia` remain as compatibility tables for provider-primary download/import paths that still need to be retired.
+- `TrackFiles` stores imported file inventory with canonical MBIDs plus provider provenance.
 - API contract normalization is in place for TIDAL entity payloads: `tidal.ts` emits canonical `id` in both search mappers and core getters (`getArtist`, `getTrack`, `getArtistVideos`, `getVideo`) while retaining `tidal_id` as a compatibility field.
 - Import matching candidate identity now uses canonical `id` (including fingerprint-backed candidate paths) instead of `tidal_id` fallback keys.
 
@@ -86,17 +86,17 @@ A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different T
 | Track identity | `isrc` | Same recording regardless of provider or format |
 | Specific pressing | `upc` / `mbid` (Release) | A specific edition with specific UPC |
 | Abstract album | `mb_release_group_id` | The "album concept" — cross-provider join key |
-| Artist identity | `mbid` on artists | Cross-provider artist join key |
+| Artist identity | `Artists.mbid` | Cross-provider artist join key |
 
 **Path to full multi-provider support (post-1.0):**
 
-1. Populate `mb_release_group_id` via ISRC→MB or UPC→MB lookups during background scans (no audio needed, MB API supports both).
-2. Populate `provider_ids` for TIDAL entities (retroactively storing TIDAL IDs there too) so all providers are stored symmetrically.
-3. Migrate `artists.id`, `albums.id`, `media.id` from TIDAL IDs to internal UUIDs, with TIDAL ID moved to `provider_ids`. This is a breaking schema migration and should happen in a single versioned step.
+1. Keep MusicBrainz/Lidarr metadata as the only curation source for release groups, releases, and tracks.
+2. Keep provider offer data in `ProviderItems`/`ReleaseGroupSlots`, not in canonical metadata tables.
+3. Migrate provider-primary compatibility IDs out of `ProviderAlbums`/`ProviderMedia` read paths into provider offer rows or a narrow provider identity map.
 4. Add pluggable metadata source interface (TIDAL API today, others later).
 5. Add pluggable download backend registry (Orpheus and tidal-dl-ng today, others later).
 
-Items 1–2 are low-risk and can start pre-1.0. Items 3–5 are post-1.0.
+Items 1-2 are the current architecture rule. Item 3 is the remaining breaking cleanup needed to remove the last provider-primary compatibility surfaces.
 
 See also:
 

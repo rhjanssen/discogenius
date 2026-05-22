@@ -62,9 +62,9 @@ export class UpgraderService {
             a.quality       as album_quality,
             uq.status       as upgrade_status,
             uq.target_quality as upgrade_target
-        FROM media m
-        JOIN library_files lf ON lf.media_id = m.id
-        LEFT JOIN albums a ON a.id = m.album_id
+        FROM ProviderMedia m
+        JOIN TrackFiles lf ON lf.media_id = m.id
+        LEFT JOIN ProviderAlbums a ON a.id = m.album_id
         LEFT JOIN upgrade_queue uq ON uq.media_id = m.id
                 WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
           ${artistId ? "AND m.artist_id = ?" : ""}
@@ -158,7 +158,7 @@ export class UpgraderService {
 
             // Only queue as album if a significant portion needs upgrading (≥50% or ≥3 tracks)
             const totalAlbumTracks = (db.prepare(
-                `SELECT COUNT(*) as cnt FROM media WHERE album_id = ? AND type != 'Music Video'`
+                `SELECT COUNT(*) as cnt FROM ProviderMedia WHERE album_id = ? AND type != 'Music Video'`
             ).get(albumId) as any)?.cnt || 0;
 
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {

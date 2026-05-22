@@ -44,7 +44,7 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
     if (type === "album") {
         const albumRow = db.prepare(`
             SELECT id, artist_id, quality
-            FROM albums
+            FROM ProviderAlbums
             WHERE id = ?
         `).get(tidalId) as { id: number; artist_id: number; quality: string | null } | undefined;
 
@@ -63,7 +63,7 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
     if (type === "track" || type === "video") {
         const mediaRow = db.prepare(`
             SELECT id, artist_id, album_id, quality
-            FROM media
+            FROM ProviderMedia
             WHERE id = ?
         `).get(tidalId) as {
             id: number;
@@ -102,10 +102,10 @@ function clearUpgradeQueue(type: string, tidalId: string) {
 
 function resolveAffectedArtistId(type: string, tidalId: string): number | null {
     if (type === "album") {
-        return (db.prepare(`SELECT artist_id FROM albums WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+        return (db.prepare(`SELECT artist_id FROM ProviderAlbums WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
     }
 
-    return (db.prepare(`SELECT artist_id FROM media WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+    return (db.prepare(`SELECT artist_id FROM ProviderMedia WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
 }
 
 function reconcileImportedDownload(type: string, tidalId: string, organizeResult: OrganizeResult) {
@@ -134,7 +134,7 @@ function reconcileImportedDownload(type: string, tidalId: string, organizeResult
     }
 
     try {
-        const albumRow = db.prepare("SELECT album_id FROM media WHERE id = ?").get(tidalId) as { album_id?: number | null } | undefined;
+        const albumRow = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(tidalId) as { album_id?: number | null } | undefined;
         if (albumRow?.album_id) {
             updateAlbumDownloadStatus(String(albumRow.album_id));
         } else {
@@ -178,7 +178,7 @@ export class DownloadedTracksImportService {
             }
 
             const expectedTracks = type === "album"
-                ? Number((db.prepare(`SELECT COUNT(*) as count FROM media WHERE album_id = ? AND type != 'Music Video'`).get(tidalId) as { count?: number } | undefined)?.count || recoveredMediaIds.length)
+                ? Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id = ? AND type != 'Music Video'`).get(tidalId) as { count?: number } | undefined)?.count || recoveredMediaIds.length)
                 : 1;
 
             organizeResult = {
@@ -254,13 +254,13 @@ export class DownloadedTracksImportService {
                 state: "importing",
             });
 
-            // The organizer already creates library_files records for every file
+            // The organizer already creates track_files records for every file
             // it processes (tracks, videos, covers, lyrics, etc.) via upsertLibraryFile().
             // A full DiskScanService.scan() here is unnecessary — it would re-walk the
             // entire artist directory and re-parse every unmapped audio file (1-5s per FLAC).
             // Instead, just verify the imported files are tracked.
             const trackedCount = (db.prepare(
-                `SELECT COUNT(*) as count FROM library_files WHERE artist_id = ? AND verified_at IS NOT NULL`,
+                `SELECT COUNT(*) as count FROM TrackFiles WHERE artist_id = ? AND verified_at IS NOT NULL`,
             ).get(String(affectedArtistId)) as { count: number }).count;
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);

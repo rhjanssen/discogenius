@@ -32,7 +32,7 @@ after(() => {
 });
 
 test("DownloadMissingForce skips legacy flag reset when skip_download/skip_upgrade columns are absent", async () => {
-    const mediaColumns = dbModule.db.prepare("PRAGMA table_info(media)").all() as Array<{ name: string }>;
+    const mediaColumns = dbModule.db.prepare("PRAGMA table_info(ProviderMedia)").all() as Array<{ name: string }>;
     const mediaColumnNames = new Set(mediaColumns.map((column) => column.name));
     assert.equal(mediaColumnNames.has("skip_download"), false);
     assert.equal(mediaColumnNames.has("skip_upgrade"), false);
@@ -101,7 +101,7 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
 
 test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {
     dbModule.db.prepare(`
-        INSERT INTO artists (id, name, monitor)
+        INSERT INTO Artists (id, name, monitor)
         VALUES (?, ?, ?), (?, ?, ?)
     `).run(101, "Monitored Artist", 1, 202, "Ignored Artist", 0);
 

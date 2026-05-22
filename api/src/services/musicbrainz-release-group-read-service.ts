@@ -32,12 +32,12 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         spatial.match_status AS spatial_match_status,
         stereo.provider_data AS stereo_provider_data,
         spatial.provider_data AS spatial_provider_data
-      FROM mb_release_groups rg
-      LEFT JOIN artists a ON a.mbid = rg.artist_mbid
-      LEFT JOIN release_group_slots stereo
+      FROM Albums rg
+      LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+      LEFT JOIN ReleaseGroupSlots stereo
         ON stereo.release_group_mbid = rg.mbid
        AND stereo.slot = 'stereo'
-      LEFT JOIN release_group_slots spatial
+      LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
       WHERE rg.mbid = ?
@@ -50,12 +50,12 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
         r.*,
         CASE
           WHEN EXISTS (
-            SELECT 1 FROM mb_mediums m
+            SELECT 1 FROM AlbumReleaseMedia m
             WHERE m.release_mbid = r.mbid
               AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
           ) THEN 1 ELSE 0
         END AS digital_score
-      FROM mb_releases r
+      FROM AlbumReleases r
       WHERE r.release_group_mbid = ?
       ORDER BY
         digital_score DESC,
@@ -245,7 +245,7 @@ function getReleaseTrackContracts(
         t.position,
         t.medium_position,
         t.length_ms
-      FROM mb_tracks t
+      FROM Tracks t
       WHERE t.release_mbid = ?
       ORDER BY t.medium_position ASC, t.position ASC
     `).all(releaseMbid) as any[];
@@ -367,8 +367,8 @@ function attachLocalFilesToTracks(
         lf.channels,
         lf.codec,
         lf.duration
-      FROM media m
-      LEFT JOIN library_files lf
+      FROM ProviderMedia m
+      LEFT JOIN TrackFiles lf
         ON CAST(lf.media_id AS TEXT) = CAST(m.id AS TEXT)
        AND lf.file_type = 'track'
       WHERE CAST(m.album_id AS TEXT) IN (${placeholders})
@@ -447,7 +447,7 @@ function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackC
         lf.channels,
         lf.codec,
         lf.duration
-      FROM library_files lf
+      FROM TrackFiles lf
       WHERE lf.canonical_track_mbid IN (${placeholders})
         AND lf.file_type IN ('track', 'lyrics')
       ORDER BY lf.file_type ASC, lf.id ASC
@@ -584,7 +584,7 @@ export class MusicBrainzReleaseGroupReadService {
             return null;
         }
 
-        const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM mb_releases WHERE release_group_mbid = ?")
+        const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
             .get(releaseGroupMbid) as { count: number } | undefined;
 
         if (Number(releaseCount?.count || 0) === 0) {

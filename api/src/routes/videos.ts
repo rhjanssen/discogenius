@@ -109,7 +109,7 @@ router.post("/", async (req, res) => {
     const videoData = await MediaSeedService.seedVideo(tidalId, { monitorArtist: true });
 
     db.prepare(`
-      UPDATE media
+      UPDATE ProviderMedia
       SET monitor = 1,
           monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
       WHERE id = ? AND type = 'Music Video'
@@ -157,7 +157,7 @@ router.patch("/:videoId", (req, res) => {
 
     values.push(videoId);
 
-    const result = db.prepare(`UPDATE media SET ${updates.join(", ")} WHERE id = ? AND type = 'Music Video'`)
+    const result = db.prepare(`UPDATE ProviderMedia SET ${updates.join(", ")} WHERE id = ? AND type = 'Music Video'`)
       .run(...values);
 
     if (result.changes === 0) {

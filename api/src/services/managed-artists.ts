@@ -20,7 +20,7 @@ export function buildManagedArtistPredicate(alias: string = "a", options: Manage
   if (includeLibraryFiles) {
     clauses.push(`EXISTS (
       SELECT 1
-      FROM library_files lf
+      FROM TrackFiles lf
       WHERE lf.artist_id = ${alias}.id
         AND lf.file_type IN ('track', 'video')
     )`);
@@ -34,14 +34,14 @@ export function buildArtistCompletionPredicate(alias: string = "a"): string {
     ${alias}.monitor = 1
     OR EXISTS (
       SELECT 1
-      FROM albums al
-      JOIN album_artists aa ON aa.album_id = al.id
+      FROM ProviderAlbums al
+      JOIN ProviderAlbumArtists aa ON aa.album_id = al.id
       WHERE aa.artist_id = ${alias}.id
         AND COALESCE(al.monitor_lock, 0) = 1
     )
     OR EXISTS (
       SELECT 1
-      FROM media m
+      FROM ProviderMedia m
       WHERE m.artist_id = ${alias}.id
         AND COALESCE(m.monitor_lock, 0) = 1
     )
@@ -56,7 +56,7 @@ export function countManagedArtists(options: ManagedArtistOptions = {}): number 
   const idClause = artistIds.length > 0 ? ` AND a.id IN (${artistIds.map(() => "?").join(",")})` : "";
   const row = db.prepare(`
     SELECT COUNT(*) AS count
-    FROM artists a
+    FROM Artists a
     WHERE ${predicate}${idClause}
   `).get(...artistIds) as { count: number } | undefined;
 
@@ -75,7 +75,7 @@ export function getManagedArtists(options: { includeLibraryFiles?: boolean; orde
 
   return db.prepare(`
     SELECT DISTINCT a.id, a.name, a.monitor, a.last_scanned
-    FROM artists a
+    FROM Artists a
     WHERE ${predicate}${idClause}
     ${orderBy}
   `).all(...artistIds) as ManagedArtistRow[];

@@ -459,7 +459,7 @@ const Library = () => {
       : [],
     [albums, selectedTab],
   );
-  const { items: albumQueueDetails } = useQueueDetails({
+  useQueueDetails({
     albumIds: visibleAlbumIds,
     enabled: selectedTab === "albums" && visibleAlbumIds.length > 0,
   });
@@ -805,26 +805,6 @@ const Library = () => {
     videoSelection.clearSelection();
   };
 
-  // Helper to check if album is in queue or downloaded
-  const getAlbumDownloadStatus = (album: any) => {
-    const albumId = String(album.id);
-    const inQueue = albumQueueDetails.find((item) =>
-      item.tidalId === albumId || item.album_id === albumId,
-    );
-
-    if (album.is_downloaded) return 'downloaded';
-    if (inQueue?.status === 'downloading') return 'downloading';
-    if (inQueue?.status === 'pending') return 'pending';
-    if (inQueue?.status === 'failed') return 'failed';
-    return 'none';
-  };
-
-  const handleDownloadAlbum = async (e: React.MouseEvent, album: any) => {
-    e.stopPropagation(); // Prevent card click navigation
-
-
-    await api.addAlbum(String(album.id));
-  };
 
   const { setBrandKeyColor } = useTheme();
 
@@ -1759,8 +1739,8 @@ const Library = () => {
     children,
     topContent,
   }: {
-    scrollRef: React.RefObject<HTMLDivElement | null>;
-    sentinelRef: React.RefObject<HTMLDivElement | null>;
+    scrollRef: any;
+    sentinelRef: any;
     isFetching: boolean;
     children: React.ReactNode;
     topContent?: React.ReactNode;
@@ -1856,7 +1836,7 @@ const Library = () => {
             <SearchBox
               placeholder="Filter..."
               value={localSearchQuery}
-              onChange={(e, data) => setLocalSearchQuery(data.value || '')}
+              onChange={(_, data) => setLocalSearchQuery(data.value || '')}
               className={mergeClasses(styles.searchBox, styles.desktopSearchBox)}
             />
             <div className={styles.compactActions}>
@@ -1896,7 +1876,7 @@ const Library = () => {
           <SearchBox
             placeholder="Filter..."
             value={localSearchQuery}
-            onChange={(e, data) => setLocalSearchQuery(data.value || '')}
+            onChange={(_, data) => setLocalSearchQuery(data.value || '')}
             className={mergeClasses(styles.searchBox, styles.mobileSearchBox)}
           />
         </div>

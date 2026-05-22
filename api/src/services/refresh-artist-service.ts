@@ -88,7 +88,7 @@ function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArt
 
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
-        const row = db.prepare("SELECT mbid FROM artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+        const row = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
         return row?.mbid ? String(row.mbid) : null;
     }
 
@@ -98,7 +98,7 @@ export class RefreshArtistService {
             return null;
         }
 
-        const cachedCount = db.prepare("SELECT COUNT(*) AS count FROM mb_release_groups WHERE artist_mbid = ?")
+        const cachedCount = db.prepare("SELECT COUNT(*) AS count FROM Albums WHERE artist_mbid = ?")
             .get(artistMbid) as { count: number };
         if (!force && Number(cachedCount?.count || 0) > 0) {
             return artistMbid;
@@ -119,7 +119,7 @@ export class RefreshArtistService {
         }
 
         const existing = db.prepare(
-            "SELECT id, monitor, path FROM artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
+            "SELECT id, monitor, path FROM Artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
         ).get(artistMbid, artistMbid, artistMbid) as { id: string | number; monitor?: number | null; path?: string | null } | undefined;
         const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
         const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitor);
@@ -143,7 +143,7 @@ export class RefreshArtistService {
 
         if (!existing) {
             db.prepare(`
-                INSERT INTO artists (
+                INSERT INTO Artists (
                     id, name, picture, cover_image_url, popularity, artist_types, artist_roles,
                     mbid, musicbrainz_status, musicbrainz_last_checked, musicbrainz_match_method,
                     bio_text, bio_source,
@@ -168,7 +168,7 @@ export class RefreshArtistService {
             );
         } else {
             db.prepare(`
-                UPDATE artists SET
+                UPDATE Artists SET
                     name = ?,
                     picture = COALESCE(?, picture),
                     cover_image_url = COALESCE(?, cover_image_url),
@@ -246,7 +246,7 @@ export class RefreshArtistService {
         }
 
         const upsert = db.prepare(`
-            INSERT INTO provider_items (
+            INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality,
                 upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
                 match_status, match_confidence, match_method, match_evidence, data, updated_at
@@ -294,7 +294,7 @@ export class RefreshArtistService {
                     match?.confidence ?? null,
                     match?.method || null,
                     match ? JSON.stringify(match.evidence) : null,
-                    JSON.stringify(album),
+                    null,
                 );
             }
         })();
@@ -311,13 +311,13 @@ export class RefreshArtistService {
 
     private static storeProviderArtistMatch(provider: StreamingProvider, artistMbid: string, artist: ProviderArtist, status: "verified" | "probable"): void {
         db.prepare(`
-            INSERT INTO provider_items (
+            INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, artist_mbid,
                 title, match_status, match_confidence, match_method, data, updated_at
             )
             VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                artist_mbid = COALESCE(excluded.artist_mbid, provider_items.artist_mbid),
+                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 title = excluded.title,
                 match_status = excluded.match_status,
                 match_confidence = excluded.match_confidence,
@@ -331,7 +331,7 @@ export class RefreshArtistService {
             artist.name || null,
             status,
             status === "verified" ? 1 : 0.75,
-            JSON.stringify(artist.raw ?? artist),
+            null,
         );
     }
 
@@ -342,7 +342,7 @@ export class RefreshArtistService {
 
         const cached = db.prepare(`
             SELECT provider_id
-            FROM provider_items
+            FROM ProviderItems
             WHERE provider = ?
               AND entity_type = 'artist'
               AND artist_mbid = ?
@@ -353,7 +353,7 @@ export class RefreshArtistService {
             return String(cached.provider_id);
         }
 
-        const localArtist = db.prepare("SELECT name FROM artists WHERE id = ? OR mbid = ? LIMIT 1")
+        const localArtist = db.prepare("SELECT name FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
             .get(artistId, artistMbid) as { name?: string | null } | undefined;
         const artistName = String(localArtist?.name || "").trim();
         if (!artistName) {
@@ -380,10 +380,10 @@ export class RefreshArtistService {
 
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
         const artist = db.prepare(`
-            SELECT artists.id, artists.name, artists.mbid, artists.path, mb_artists.disambiguation
-            FROM artists
-            LEFT JOIN mb_artists ON mb_artists.mbid = artists.mbid
-            WHERE artists.id = ?
+            SELECT Artists.id, Artists.name, Artists.mbid, Artists.path, ArtistMetadata.disambiguation
+            FROM Artists
+            LEFT JOIN ArtistMetadata ON ArtistMetadata.mbid = Artists.mbid
+            WHERE Artists.id = ?
         `).get(artistId) as {
             id: number | string;
             name: string | null;
@@ -413,7 +413,7 @@ export class RefreshArtistService {
             artistMbId: artist.mbid,
             artistDisambiguation: artist.disambiguation,
         });
-        db.prepare("UPDATE artists SET path = ? WHERE id = ?").run(nextPath, artistId);
+        db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(nextPath, artistId);
     }
 
     private static async storeSimilarArtists(artistId: string, forceUpdate = false): Promise<string[]> {
@@ -430,7 +430,7 @@ export class RefreshArtistService {
                 : [];
             const ids = new Set<string>();
 
-            const deleteRelations = db.prepare("DELETE FROM similar_artists WHERE artist_id = ?");
+            const deleteRelations = db.prepare("DELETE FROM ProviderSimilarArtists WHERE artist_id = ?");
             const insertRelation = db.prepare(`
                 INSERT OR IGNORE INTO similar_artists (artist_id, similar_artist_id)
                 VALUES (?, ?)
@@ -477,9 +477,9 @@ export class RefreshArtistService {
                 picture,
                 bio_text,
                 last_scanned,
-                (SELECT COUNT(*) FROM album_artists WHERE artist_id = ?) AS album_count,
-                (SELECT COUNT(*) FROM media WHERE artist_id = ? AND type = 'Music Video') AS video_count
-            FROM artists
+                (SELECT COUNT(*) FROM ProviderAlbumArtists WHERE artist_id = ?) AS album_count,
+                (SELECT COUNT(*) FROM ProviderMedia WHERE artist_id = ? AND type = 'Music Video') AS video_count
+            FROM Artists
             WHERE id = ?
         `).get(artistId, artistId, artistId) as {
             id?: string;
@@ -512,7 +512,7 @@ export class RefreshArtistService {
         console.log(`[RefreshArtistService] scanBasic for ${artistId}`);
 
         const existing = db.prepare(
-            "SELECT id, monitor, name, mbid, last_scanned, path FROM artists WHERE id = ?",
+            "SELECT id, monitor, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
         ).get(artistId) as any;
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const shouldRefresh =
@@ -543,7 +543,7 @@ export class RefreshArtistService {
         if (existing && !shouldRefresh) {
             if (options.monitorArtist === true && existing.monitor !== shouldMonitorInt) {
                 db.prepare(`
-                    UPDATE artists SET
+                    UPDATE Artists SET
                         monitor = ?,
                         monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                     WHERE id = ?
@@ -553,7 +553,7 @@ export class RefreshArtistService {
             const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
             if (includeSimilar) {
                 const hasSimilar = db.prepare(
-                    "SELECT 1 FROM similar_artists WHERE artist_id = ? LIMIT 1",
+                    "SELECT 1 FROM ProviderSimilarArtists WHERE artist_id = ? LIMIT 1",
                 ).get(artistId) as any;
                 const shouldFetchSimilar = options.seedSimilarArtists === true || !hasSimilar;
 
@@ -614,7 +614,7 @@ export class RefreshArtistService {
         console.log(`[RefreshArtistService] scanShallow for ${artistId}`);
 
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
-        const existing = db.prepare("SELECT bio_text, last_scanned FROM artists WHERE id = ?").get(artistId) as any;
+        const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
         const shouldRefreshBio =
             options.forceUpdate === true ||
             existing?.bio_text == null ||
@@ -622,7 +622,7 @@ export class RefreshArtistService {
 
         await this.scanBasic(artistId, options);
 
-        const refreshed = db.prepare("SELECT mbid FROM artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+        const refreshed = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
         if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
             console.log(`[RefreshArtistService] Skipping provider biography lookup for MusicBrainz artist ${artistId}`);
             return;
@@ -639,7 +639,7 @@ export class RefreshArtistService {
 
             if (bioText !== null && bioText !== undefined) {
                 db.prepare(`
-                    UPDATE artists SET
+                    UPDATE Artists SET
                         bio_text = ?,
                         bio_source = ?,
                         bio_last_updated = ?
@@ -647,7 +647,7 @@ export class RefreshArtistService {
                 `).run(bioText ?? "", provider.id, new Date().toISOString(), artistId);
             } else if (options.forceUpdate === true || existing?.bio_text == null) {
                 db.prepare(`
-                    UPDATE artists SET
+                    UPDATE Artists SET
                         bio_text = ?,
                         bio_source = ?,
                         bio_last_updated = ?
@@ -666,7 +666,7 @@ export class RefreshArtistService {
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
 
         const monitoringConfig = getConfigSection("monitoring");
-        const artistRow = db.prepare("SELECT last_scanned FROM artists WHERE id = ?").get(artistId) as any;
+        const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
         const currentLevel = this.getScanLevel(artistId);
         const shouldScanArtist =
             options.forceUpdate === true ||
@@ -709,14 +709,14 @@ export class RefreshArtistService {
                     `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
                     `(provider not connected)`,
                 );
-                db.prepare("UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
+                db.prepare("UPDATE Artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
                 return;
             }
 
             const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
             if (!providerArtistId) {
                 console.log(`[RefreshArtistService] Skipping provider catalog hydration for ${artistId} (no provider artist match)`);
-                db.prepare("UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
+                db.prepare("UPDATE Artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
                 return;
             }
 
@@ -774,7 +774,7 @@ export class RefreshArtistService {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
         }
 
-        db.prepare("UPDATE artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
+        db.prepare("UPDATE Artists SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(artistId);
         console.log(`[RefreshArtistService] scanDeep complete for ${artistId}`);
     }
 }

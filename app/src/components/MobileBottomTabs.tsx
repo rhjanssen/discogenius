@@ -7,13 +7,9 @@ import {
   DataUsage24Filled,
   Settings24Regular,
   Settings24Filled,
-  ArrowDownload24Regular,
-  ArrowDownload24Filled,
   Search24Regular,
   Search24Filled,
 } from "@fluentui/react-icons";
-// Queue stats passed from Layout to avoid duplicate polling/SSE connections.
-import { OPEN_ACTIVITY_QUEUE_EVENT, OPEN_SEARCH_EVENT } from "@/utils/appEvents";
 
 const useStyles = makeStyles({
   bar: {

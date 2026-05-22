@@ -127,7 +127,7 @@ function getJobAlbumId(job: QueueJobRow): string | null {
   if (contentType === "track" || contentType === "video") {
     const row = db.prepare(`
       SELECT album_id
-      FROM media
+      FROM ProviderMedia
       WHERE id = ?
     `).get(tidalId) as { album_id?: string | number | null } | undefined;
 
@@ -157,7 +157,7 @@ function getJobArtistId(job: QueueJobRow): string | null {
   if (contentType === "album") {
     const row = db.prepare(`
       SELECT artist_id
-      FROM albums
+      FROM ProviderAlbums
       WHERE id = ?
     `).get(tidalId) as { artist_id?: string | number | null } | undefined;
 
@@ -167,7 +167,7 @@ function getJobArtistId(job: QueueJobRow): string | null {
   if (contentType === "track" || contentType === "video") {
     const row = db.prepare(`
       SELECT artist_id
-      FROM media
+      FROM ProviderMedia
       WHERE id = ?
     `).get(tidalId) as { artist_id?: string | number | null } | undefined;
 
@@ -485,8 +485,8 @@ export class DownloadQueueQueryService {
         if (contentType === "album") {
           const row = db.prepare(`
             SELECT a.title, a.cover, ar.name as artist_name, a.id as album_id, a.quality
-            FROM albums a
-            LEFT JOIN artists ar ON ar.id = a.artist_id
+            FROM ProviderAlbums a
+            LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id = ?
           `).get(tidalId) as {
             title?: string;
@@ -505,9 +505,9 @@ export class DownloadQueueQueryService {
         } else if (contentType === "video") {
           const row = db.prepare(`
             SELECT m.title, ar.name as artist_name, m.cover as video_cover, a.id as album_id, a.title as album_title, m.quality
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
-            LEFT JOIN albums a ON a.id = m.album_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ? AND m.type = 'Music Video'
           `).get(tidalId) as {
             title?: string;
@@ -540,9 +540,9 @@ export class DownloadQueueQueryService {
         } else {
           const row = db.prepare(`
             SELECT m.title, m.version as version, ar.name as artist_name, a.cover as album_cover, a.id as album_id, a.title as album_title, m.quality
-            FROM media m
-            LEFT JOIN artists ar ON ar.id = m.artist_id
-            LEFT JOIN albums a ON a.id = m.album_id
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
+            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ?
           `).get(tidalId) as {
             title?: string;

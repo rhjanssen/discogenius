@@ -76,14 +76,14 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
 
 export function backfillArtistPaths(): number {
   const artists = db.prepare(`
-    SELECT artists.id, artists.name, artists.mbid, mb_artists.disambiguation
-    FROM artists
-    LEFT JOIN mb_artists ON mb_artists.mbid = artists.mbid
-    WHERE artists.path IS NULL
+    SELECT Artists.id, Artists.name, Artists.mbid, ArtistMetadata.disambiguation
+    FROM Artists
+    LEFT JOIN ArtistMetadata ON ArtistMetadata.mbid = Artists.mbid
+    WHERE Artists.path IS NULL
   `).all() as Array<{ id: number; name: string; mbid: string | null; disambiguation: string | null }>;
   if (artists.length === 0) return 0;
 
-  const update = db.prepare("UPDATE artists SET path = ? WHERE id = ? AND path IS NULL");
+  const update = db.prepare("UPDATE Artists SET path = ? WHERE id = ? AND path IS NULL");
   const tx = db.transaction(() => {
     for (const artist of artists) {
       update.run(resolveArtistFolderForPersistence({
@@ -142,6 +142,33 @@ function tableExists(tableName: string): boolean {
   return hasTable(tableName);
 }
 
+function exactTableExists(tableName: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name: string } | undefined;
+  return Boolean(row?.name);
+}
+
+function findTableNameCaseInsensitive(tableName: string): string | undefined {
+  const row = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table' AND lower(name) = lower(?)
+    ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END
+    LIMIT 1
+  `).get(tableName, tableName) as { name?: string } | undefined;
+  return row?.name;
+}
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, "\"\"")}"`;
+}
+
+function getTableColumns(tableName: string): string[] {
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>;
+  return columns.map((column) => column.name);
+}
+
 function columnExists(tableName: string, columnName: string): boolean {
   return hasColumn(tableName, columnName);
 }
@@ -155,6 +182,414 @@ function tableHasRows(tableName: string): boolean {
   return row?.present === 1;
 }
 
+const LEGACY_LIBRARY_FILE_INDEXES = [
+  "idx_library_files_artist_album_media",
+  "idx_library_files_artist_id",
+  "idx_library_files_album_id",
+  "idx_library_files_media_id",
+  "idx_library_files_file_type",
+  "idx_library_files_library_root",
+  "idx_library_files_needs_rename",
+  "idx_library_files_quality",
+  "idx_library_files_path",
+  "idx_library_files_fingerprint",
+  "idx_library_files_acoustid_id",
+  "idx_library_files_media_id_file_type",
+  "idx_library_files_canonical_artist",
+  "idx_library_files_canonical_release_group",
+  "idx_library_files_canonical_release",
+  "idx_library_files_canonical_track",
+  "idx_library_files_canonical_recording",
+  "idx_library_files_provider_resource",
+  "idx_library_files_slot_type",
+  "idx_library_files_media_identity",
+  "idx_library_files_media_sidecar_identity",
+  "idx_library_files_album_sidecar_identity",
+  "idx_library_files_artist_sidecar_identity",
+];
+
+function dropLegacyLibraryFileIndexes(): void {
+  for (const indexName of LEGACY_LIBRARY_FILE_INDEXES) {
+    db.exec(`DROP INDEX IF EXISTS ${indexName}`);
+  }
+}
+
+function ensureTrackFilesTableName(): void {
+  if (tableExists("LibraryFiles") && !tableExists("TrackFiles")) {
+    db.exec("ALTER TABLE LibraryFiles RENAME TO TrackFiles");
+  }
+
+  dropLegacyLibraryFileIndexes();
+}
+
+function withForeignKeysDisabled(action: () => void): void {
+  db.pragma("foreign_keys = OFF");
+  try {
+    action();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+function copyCommonColumns(sourceTable: string, targetTable: string, whereClause = ""): void {
+  if (!exactTableExists(sourceTable) || !exactTableExists(targetTable)) {
+    return;
+  }
+
+  const targetColumns = new Set(getTableColumns(targetTable));
+  const commonColumns = getTableColumns(sourceTable).filter((column) => targetColumns.has(column));
+  if (commonColumns.length === 0) {
+    return;
+  }
+
+  const columnSql = commonColumns.map(quoteIdentifier).join(", ");
+  db.exec(`
+    INSERT OR IGNORE INTO ${quoteIdentifier(targetTable)} (${columnSql})
+    SELECT ${columnSql}
+    FROM ${quoteIdentifier(sourceTable)}
+    ${whereClause}
+  `);
+}
+
+function mergeAndDropLegacyTable(sourceTable: string, targetTable: string, whereClause = ""): void {
+  if (!exactTableExists(sourceTable)) {
+    return;
+  }
+
+  if (exactTableExists(targetTable)) {
+    copyCommonColumns(sourceTable, targetTable, whereClause);
+    db.exec(`DROP TABLE ${quoteIdentifier(sourceTable)}`);
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${quoteIdentifier(sourceTable)} RENAME TO ${quoteIdentifier(targetTable)}`);
+}
+
+function normalizeTableNameCase(tableName: string): void {
+  const actualTableName = findTableNameCaseInsensitive(tableName);
+  if (!actualTableName || actualTableName === tableName) {
+    return;
+  }
+
+  const temporaryName = `__discogenius_rename_${tableName}`;
+  if (exactTableExists(temporaryName)) {
+    db.exec(`DROP TABLE ${quoteIdentifier(temporaryName)}`);
+  }
+
+  db.exec(`ALTER TABLE ${quoteIdentifier(actualTableName)} RENAME TO ${quoteIdentifier(temporaryName)}`);
+  db.exec(`ALTER TABLE ${quoteIdentifier(temporaryName)} RENAME TO ${quoteIdentifier(tableName)}`);
+}
+
+function rebuildUpgradeQueueWithProviderReferences(): void {
+  if (!exactTableExists("upgrade_queue")) {
+    return;
+  }
+
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(upgrade_queue)").all() as Array<{ table: string }>;
+  const hasCurrentReferences = foreignKeys.some((foreignKey) => foreignKey.table === "ProviderMedia")
+    && foreignKeys.some((foreignKey) => foreignKey.table === "ProviderAlbums");
+  if (hasCurrentReferences) {
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE upgrade_queue RENAME TO upgrade_queue_legacy;
+
+    CREATE TABLE upgrade_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id INT NOT NULL,
+      album_id INT,
+      current_quality TEXT NOT NULL,
+      target_quality TEXT NOT NULL,
+      reason TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      processed_at DATETIME,
+      UNIQUE(media_id),
+      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
+      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
+    );
+
+    INSERT OR IGNORE INTO upgrade_queue (
+      id, media_id, album_id, current_quality, target_quality,
+      reason, status, created_at, processed_at
+    )
+    SELECT
+      id, media_id, NULLIF(album_id, 0), current_quality, target_quality,
+      reason, status, created_at, processed_at
+    FROM upgrade_queue_legacy
+    WHERE EXISTS (
+      SELECT 1 FROM ProviderMedia
+      WHERE CAST(ProviderMedia.id AS TEXT) = CAST(upgrade_queue_legacy.media_id AS TEXT)
+    )
+      AND (
+        album_id IS NULL
+        OR album_id = 0
+        OR EXISTS (
+          SELECT 1 FROM ProviderAlbums
+          WHERE CAST(ProviderAlbums.id AS TEXT) = CAST(upgrade_queue_legacy.album_id AS TEXT)
+        )
+      );
+
+    DROP TABLE upgrade_queue_legacy;
+  `);
+}
+
+function rebuildPlaylistTracksWithProviderReferences(): void {
+  if (!exactTableExists("playlist_tracks") || !exactTableExists("playlists")) {
+    return;
+  }
+
+  const foreignKeys = db.prepare("PRAGMA foreign_key_list(playlist_tracks)").all() as Array<{ table: string }>;
+  if (foreignKeys.some((foreignKey) => foreignKey.table === "ProviderMedia")) {
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE playlist_tracks RENAME TO playlist_tracks_legacy;
+
+    CREATE TABLE playlist_tracks (
+      playlist_uuid TEXT NOT NULL,
+      track_id INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (playlist_uuid, position),
+      FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
+      FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
+    );
+
+    INSERT OR IGNORE INTO playlist_tracks (playlist_uuid, track_id, position)
+    SELECT playlist_uuid, track_id, position
+    FROM playlist_tracks_legacy
+    WHERE EXISTS (
+      SELECT 1 FROM playlists
+      WHERE playlists.uuid = playlist_tracks_legacy.playlist_uuid
+    )
+      AND EXISTS (
+        SELECT 1 FROM ProviderMedia
+        WHERE CAST(ProviderMedia.id AS TEXT) = CAST(playlist_tracks_legacy.track_id AS TEXT)
+      );
+
+    DROP TABLE playlist_tracks_legacy;
+  `);
+}
+
+function ensureProviderCompatibilityTablesUseCurrentNames(): void {
+  withForeignKeysDisabled(() => {
+    normalizeTableNameCase("Artists");
+    mergeAndDropLegacyTable("albums", "ProviderAlbums");
+    mergeAndDropLegacyTable("media", "ProviderMedia");
+    mergeAndDropLegacyTable("album_artists", "ProviderAlbumArtists");
+    mergeAndDropLegacyTable("media_artists", "ProviderMediaArtists");
+    mergeAndDropLegacyTable("similar_albums", "ProviderSimilarAlbums");
+    mergeAndDropLegacyTable("similar_artists", "ProviderSimilarArtists");
+    mergeAndDropLegacyTable("library_files", "TrackFiles");
+    rebuildUpgradeQueueWithProviderReferences();
+  });
+}
+
+function ensureProviderIdentityTablesUseCurrentNames(): void {
+  withForeignKeysDisabled(() => {
+    mergeAndDropLegacyTable("provider_items", "ProviderItems");
+    mergeAndDropLegacyTable("release_group_slots", "ReleaseGroupSlots");
+  });
+}
+
+function hasCanonicalAlbumsShape(): boolean {
+  const tableName = findTableNameCaseInsensitive("Albums");
+  return tableName
+    ? hasColumns(tableName, ["mbid", "artist_mbid", "title", "primary_type", "first_release_date"])
+    : false;
+}
+
+function ensureCanonicalMusicBrainzTableShapes(): void {
+  const existingAlbumsTable = findTableNameCaseInsensitive("Albums");
+  if (existingAlbumsTable && !hasCanonicalAlbumsShape()) {
+    withForeignKeysDisabled(() => {
+      if (!tableExists("ProviderAlbums")) {
+        db.exec(`ALTER TABLE ${quoteIdentifier(existingAlbumsTable)} RENAME TO ProviderAlbums`);
+      } else {
+        copyCommonColumns(existingAlbumsTable, "ProviderAlbums");
+        db.exec(`DROP TABLE ${quoteIdentifier(existingAlbumsTable)}`);
+      }
+    });
+  }
+}
+
+function backfillCanonicalMusicBrainzTablesFromLegacy(): void {
+  if (tableExists("mb_artists") && hasColumns("mb_artists", ["mbid", "name"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO ArtistMetadata (
+        mbid, name, sort_name, disambiguation, type, country, begin_date, end_date, data, updated_at
+      )
+      SELECT
+        mbid,
+        COALESCE(NULLIF(name, ''), mbid),
+        sort_name,
+        disambiguation,
+        type,
+        country,
+        begin_date,
+        end_date,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_artists
+      WHERE mbid IS NOT NULL AND mbid != ''
+    `);
+  }
+
+  if (tableExists("mb_release_groups") && hasColumns("mb_release_groups", ["mbid", "artist_mbid", "title"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO ArtistMetadata (mbid, name, updated_at)
+      SELECT DISTINCT artist_mbid, artist_mbid, CURRENT_TIMESTAMP
+      FROM mb_release_groups
+      WHERE artist_mbid IS NOT NULL AND artist_mbid != ''
+    `);
+
+    db.exec(`
+      INSERT OR IGNORE INTO Albums (
+        mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at
+      )
+      SELECT
+        mbid,
+        artist_mbid,
+        COALESCE(NULLIF(title, ''), mbid),
+        primary_type,
+        secondary_types,
+        first_release_date,
+        disambiguation,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_release_groups
+      WHERE mbid IS NOT NULL
+        AND mbid != ''
+        AND artist_mbid IS NOT NULL
+        AND artist_mbid != ''
+    `);
+  }
+
+  if (tableExists("mb_releases") && hasColumns("mb_releases", ["mbid", "release_group_mbid", "artist_mbid", "title"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO ArtistMetadata (mbid, name, updated_at)
+      SELECT DISTINCT artist_mbid, artist_mbid, CURRENT_TIMESTAMP
+      FROM mb_releases
+      WHERE artist_mbid IS NOT NULL AND artist_mbid != ''
+    `);
+
+    db.exec(`
+      INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, updated_at)
+      SELECT DISTINCT
+        release_group_mbid,
+        artist_mbid,
+        COALESCE(NULLIF(title, ''), release_group_mbid),
+        CURRENT_TIMESTAMP
+      FROM mb_releases
+      WHERE release_group_mbid IS NOT NULL
+        AND release_group_mbid != ''
+        AND artist_mbid IS NOT NULL
+        AND artist_mbid != ''
+    `);
+
+    db.exec(`
+      INSERT OR IGNORE INTO AlbumReleases (
+        mbid, release_group_mbid, artist_mbid, title, status, country, date,
+        barcode, disambiguation, media_count, track_count, data, updated_at
+      )
+      SELECT
+        mbid,
+        release_group_mbid,
+        artist_mbid,
+        COALESCE(NULLIF(title, ''), mbid),
+        status,
+        country,
+        date,
+        barcode,
+        disambiguation,
+        media_count,
+        track_count,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_releases
+      WHERE mbid IS NOT NULL
+        AND mbid != ''
+        AND release_group_mbid IS NOT NULL
+        AND release_group_mbid != ''
+        AND artist_mbid IS NOT NULL
+        AND artist_mbid != ''
+    `);
+  }
+
+  if (tableExists("mb_mediums") && hasColumns("mb_mediums", ["release_mbid", "position"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO AlbumReleaseMedia (
+        id, release_mbid, position, format, title, track_count, data, updated_at
+      )
+      SELECT
+        id,
+        release_mbid,
+        position,
+        format,
+        title,
+        track_count,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_mediums
+      WHERE EXISTS (
+        SELECT 1 FROM AlbumReleases
+        WHERE AlbumReleases.mbid = mb_mediums.release_mbid
+      )
+    `);
+  }
+
+  if (tableExists("mb_recordings") && hasColumns("mb_recordings", ["mbid", "title"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO Recordings (
+        mbid, title, artist_credit, length_ms, isrcs, data, updated_at
+      )
+      SELECT
+        mbid,
+        COALESCE(NULLIF(title, ''), mbid),
+        artist_credit,
+        length_ms,
+        isrcs,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_recordings
+      WHERE mbid IS NOT NULL AND mbid != ''
+    `);
+  }
+
+  if (tableExists("mb_tracks") && hasColumns("mb_tracks", ["mbid", "release_mbid", "recording_mbid"])) {
+    db.exec(`
+      INSERT OR IGNORE INTO Tracks (
+        mbid, release_mbid, recording_mbid, medium_position, position, number,
+        title, length_ms, data, updated_at
+      )
+      SELECT
+        mbid,
+        release_mbid,
+        recording_mbid,
+        medium_position,
+        position,
+        number,
+        COALESCE(NULLIF(title, ''), mbid),
+        length_ms,
+        data,
+        COALESCE(updated_at, CURRENT_TIMESTAMP)
+      FROM mb_tracks
+      WHERE mbid IS NOT NULL
+        AND mbid != ''
+        AND EXISTS (
+          SELECT 1 FROM AlbumReleases
+          WHERE AlbumReleases.mbid = mb_tracks.release_mbid
+        )
+        AND EXISTS (
+          SELECT 1 FROM Recordings
+          WHERE Recordings.mbid = mb_tracks.recording_mbid
+        )
+    `);
+  }
+}
+
 function getConfigValue(key: string): string | undefined {
   if (!tableExists("config")) {
     return undefined;
@@ -165,18 +600,18 @@ function getConfigValue(key: string): string | undefined {
 }
 
 function ensureUnmappedFilesAudioMetadataColumns() {
-  if (!tableExists("unmapped_files")) {
+  if (!tableExists("UnmappedFiles")) {
     return;
   }
 
-  const cols = db.prepare("PRAGMA table_info(unmapped_files)").all() as Array<{ name: string }>;
+  const cols = db.prepare("PRAGMA table_info(UnmappedFiles)").all() as Array<{ name: string }>;
   const existing = new Set(cols.map((c) => c.name));
   const toAdd = [
-    { name: "bitrate", sql: "ALTER TABLE unmapped_files ADD COLUMN bitrate INT" },
-    { name: "sample_rate", sql: "ALTER TABLE unmapped_files ADD COLUMN sample_rate INT" },
-    { name: "bit_depth", sql: "ALTER TABLE unmapped_files ADD COLUMN bit_depth INT" },
-    { name: "channels", sql: "ALTER TABLE unmapped_files ADD COLUMN channels INT" },
-    { name: "codec", sql: "ALTER TABLE unmapped_files ADD COLUMN codec TEXT" },
+    { name: "bitrate", sql: "ALTER TABLE UnmappedFiles ADD COLUMN bitrate INT" },
+    { name: "sample_rate", sql: "ALTER TABLE UnmappedFiles ADD COLUMN sample_rate INT" },
+    { name: "bit_depth", sql: "ALTER TABLE UnmappedFiles ADD COLUMN bit_depth INT" },
+    { name: "channels", sql: "ALTER TABLE UnmappedFiles ADD COLUMN channels INT" },
+    { name: "codec", sql: "ALTER TABLE UnmappedFiles ADD COLUMN codec TEXT" },
   ].filter((col) => !existing.has(col.name));
 
   for (const col of toAdd) {
@@ -210,8 +645,8 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             processed_at DATETIME,
             UNIQUE(media_id),
-            FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE,
-            FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE
+            FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
+            FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
           );
 
           INSERT INTO upgrade_queue (
@@ -245,13 +680,13 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
     // 3
     description: "add mb_release_group_id to albums for cross-provider linking",
     up: () => {
-      if (!tableExists("albums")) {
+      if (!tableExists("ProviderAlbums")) {
         return;
       }
 
-      const cols = db.prepare("PRAGMA table_info(albums)").all() as Array<{ name: string }>;
+      const cols = db.prepare("PRAGMA table_info(ProviderAlbums)").all() as Array<{ name: string }>;
       if (cols.some((c) => c.name === "mb_release_group_id")) return;
-      db.exec("ALTER TABLE albums ADD COLUMN mb_release_group_id TEXT");
+      db.exec("ALTER TABLE ProviderAlbums ADD COLUMN mb_release_group_id TEXT");
     },
   },
   {
@@ -339,7 +774,7 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
             position INTEGER NOT NULL,
             PRIMARY KEY (playlist_uuid, position),
             FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-            FOREIGN KEY (track_id) REFERENCES media(id) ON DELETE CASCADE
+            FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
           );
 
           INSERT INTO playlist_tracks (playlist_uuid, track_id, position)
@@ -376,9 +811,9 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
     description: "normalize legacy HI_RES_LOSSLESS quality values to HIRES_LOSSLESS",
     up: () => {
       const qualityColumns: Array<{ table: string; column: string }> = [
-        { table: "albums", column: "quality" },
-        { table: "media", column: "quality" },
-        { table: "library_files", column: "quality" },
+        { table: "ProviderAlbums", column: "quality" },
+        { table: "ProviderMedia", column: "quality" },
+        { table: "TrackFiles", column: "quality" },
         { table: "upgrade_queue", column: "current_quality" },
         { table: "upgrade_queue", column: "target_quality" },
         { table: "quality_profiles", column: "cutoff" },
@@ -439,7 +874,7 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     up: () => {
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media
-        ON media_artists(artist_id, type, media_id)
+        ON ProviderMediaArtists(artist_id, type, media_id)
       `);
     },
   },
@@ -491,8 +926,8 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     version: 4,
     description: "add artist path column for stored folder resolution",
     up: () => {
-      if (!columnExists("artists", "path")) {
-        db.exec("ALTER TABLE artists ADD COLUMN path TEXT");
+      if (!columnExists("Artists", "path")) {
+        db.exec("ALTER TABLE Artists ADD COLUMN path TEXT");
       }
     },
   },
@@ -562,16 +997,53 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
   },
   {
     version: 9,
-    description: "add provider-neutral identity, artwork cache, and provider video matching scaffold",
+    description: "skip superseded provider-neutral identity scaffold",
     up: () => {
-      ensureProviderNeutralIdentitySchema();
+      db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_monitor_date ON ProviderAlbums(artist_id, monitor, release_date DESC)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_media_artist_type_date ON ProviderMedia(artist_id, type, release_date DESC)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_artist_album_media ON TrackFiles(artist_id, album_id, media_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist_type_date ON Albums(artist_mbid, primary_type, first_release_date DESC)");
     },
   },
   {
     version: 10,
-    description: "add canonical MusicBrainz and provider identity columns to library files",
+    description: "add canonical MusicBrainz and provider identity columns to track files",
     up: () => {
-      ensureLibraryFileCanonicalIdentitySchema();
+      ensureTrackFileCanonicalIdentitySchema();
+    },
+  },
+  {
+    version: 11,
+    description: "add missing foreign key and path indexes for cascade deletes and lookup performance",
+    up: () => {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track_id ON playlist_tracks(track_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON ProviderAlbumArtists(album_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_selected_release ON ReleaseGroupSlots(selected_release_mbid)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_artists_path ON Artists(path)");
+    },
+  },
+  {
+    version: 12,
+    description: "drop superseded provider identity tables in favor of provider_items cache",
+    up: () => {
+      dropSupersededProviderIdentityTables();
+    },
+  },
+  {
+    version: 13,
+    description: "rename library file inventory table to Lidarr-aligned TrackFiles",
+    up: () => {
+      ensureTrackFilesTableName();
+      ensureTrackFileCanonicalIdentitySchema();
+    },
+  },
+  {
+    version: 14,
+    description: "repair canonical MusicBrainz tables after legacy provider table collisions",
+    up: () => {
+      ensureMusicBrainzProviderSchema();
     },
   },
 ];
@@ -585,23 +1057,23 @@ function addColumnIfMissing(tableName: string, columnName: string, columnDefinit
 }
 
 function ensureMetadataIdentitySchema(): void {
-  addColumnIfMissing("artists", "musicbrainz_status", "TEXT");
-  addColumnIfMissing("artists", "musicbrainz_last_checked", "DATETIME");
-  addColumnIfMissing("artists", "musicbrainz_match_method", "TEXT");
+  addColumnIfMissing("Artists", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("Artists", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("Artists", "musicbrainz_match_method", "TEXT");
 
-  addColumnIfMissing("albums", "musicbrainz_status", "TEXT");
-  addColumnIfMissing("albums", "musicbrainz_last_checked", "DATETIME");
-  addColumnIfMissing("albums", "musicbrainz_match_method", "TEXT");
+  addColumnIfMissing("ProviderAlbums", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("ProviderAlbums", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("ProviderAlbums", "musicbrainz_match_method", "TEXT");
 
-  addColumnIfMissing("media", "musicbrainz_status", "TEXT");
-  addColumnIfMissing("media", "musicbrainz_last_checked", "DATETIME");
-  addColumnIfMissing("media", "musicbrainz_match_method", "TEXT");
-  addColumnIfMissing("media", "acoustid_id", "TEXT");
-  addColumnIfMissing("media", "acoustid_fingerprint", "TEXT");
-  addColumnIfMissing("media", "fingerprint_duration", "INT");
+  addColumnIfMissing("ProviderMedia", "musicbrainz_status", "TEXT");
+  addColumnIfMissing("ProviderMedia", "musicbrainz_last_checked", "DATETIME");
+  addColumnIfMissing("ProviderMedia", "musicbrainz_match_method", "TEXT");
+  addColumnIfMissing("ProviderMedia", "acoustid_id", "TEXT");
+  addColumnIfMissing("ProviderMedia", "acoustid_fingerprint", "TEXT");
+  addColumnIfMissing("ProviderMedia", "fingerprint_duration", "INT");
 
-  addColumnIfMissing("library_files", "acoustid_id", "TEXT");
-  addColumnIfMissing("library_files", "fingerprint_duration", "INT");
+  addColumnIfMissing("TrackFiles", "acoustid_id", "TEXT");
+  addColumnIfMissing("TrackFiles", "fingerprint_duration", "INT");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS metadata_identity_status (
@@ -619,10 +1091,11 @@ function ensureMetadataIdentitySchema(): void {
 }
 
 function ensureMusicBrainzProviderSchema(): void {
-  addColumnIfMissing("artists", "cover_image_url", "TEXT");
+  ensureCanonicalMusicBrainzTableShapes();
+  addColumnIfMissing("Artists", "cover_image_url", "TEXT");
 
   db.exec(`
-    CREATE TABLE IF NOT EXISTS mb_artists (
+    CREATE TABLE IF NOT EXISTS ArtistMetadata (
       mbid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       sort_name TEXT,
@@ -635,7 +1108,7 @@ function ensureMusicBrainzProviderSchema(): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS mb_release_groups (
+    CREATE TABLE IF NOT EXISTS Albums (
       mbid TEXT PRIMARY KEY,
       artist_mbid TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -645,10 +1118,10 @@ function ensureMusicBrainzProviderSchema(): void {
       disambiguation TEXT,
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS mb_releases (
+    CREATE TABLE IF NOT EXISTS AlbumReleases (
       mbid TEXT PRIMARY KEY,
       release_group_mbid TEXT NOT NULL,
       artist_mbid TEXT NOT NULL,
@@ -662,11 +1135,11 @@ function ensureMusicBrainzProviderSchema(): void {
       track_count INT,
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(release_group_mbid) REFERENCES mb_release_groups(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE
+      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS mb_mediums (
+    CREATE TABLE IF NOT EXISTS AlbumReleaseMedia (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       release_mbid TEXT NOT NULL,
       position INT NOT NULL,
@@ -676,10 +1149,10 @@ function ensureMusicBrainzProviderSchema(): void {
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, position),
-      FOREIGN KEY(release_mbid) REFERENCES mb_releases(mbid) ON DELETE CASCADE
+      FOREIGN KEY(release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS mb_recordings (
+    CREATE TABLE IF NOT EXISTS Recordings (
       mbid TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       artist_credit TEXT,
@@ -689,7 +1162,7 @@ function ensureMusicBrainzProviderSchema(): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS mb_tracks (
+    CREATE TABLE IF NOT EXISTS Tracks (
       mbid TEXT PRIMARY KEY,
       release_mbid TEXT NOT NULL,
       recording_mbid TEXT NOT NULL,
@@ -701,11 +1174,11 @@ function ensureMusicBrainzProviderSchema(): void {
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, medium_position, position),
-      FOREIGN KEY(release_mbid) REFERENCES mb_releases(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(recording_mbid) REFERENCES mb_recordings(mbid) ON DELETE CASCADE
+      FOREIGN KEY(release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(recording_mbid) REFERENCES Recordings(mbid) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS provider_items (
+    CREATE TABLE IF NOT EXISTS ProviderItems (
       provider TEXT NOT NULL,
       entity_type TEXT NOT NULL,
       provider_id TEXT NOT NULL,
@@ -733,12 +1206,12 @@ function ensureMusicBrainzProviderSchema(): void {
       PRIMARY KEY(provider, entity_type, provider_id)
     );
 
-    CREATE TABLE IF NOT EXISTS release_group_slots (
+    CREATE TABLE IF NOT EXISTS ReleaseGroupSlots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       artist_mbid TEXT NOT NULL,
       release_group_mbid TEXT NOT NULL,
       slot TEXT NOT NULL,
-      wanted BOOLEAN NOT NULL DEFAULT 1,
+      wanted BOOLEAN NOT NULL DEFAULT 0,
       selected_provider TEXT,
       selected_provider_id TEXT,
       selected_release_mbid TEXT,
@@ -751,191 +1224,93 @@ function ensureMusicBrainzProviderSchema(): void {
       checked_at DATETIME,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_group_mbid, slot),
-      FOREIGN KEY(artist_mbid) REFERENCES mb_artists(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(release_group_mbid) REFERENCES mb_release_groups(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(selected_release_mbid) REFERENCES mb_releases(mbid) ON DELETE SET NULL
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(selected_release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE SET NULL
     );
   `);
 
-  addColumnIfMissing("provider_items", "library_slot", "TEXT");
-  addColumnIfMissing("provider_items", "match_status", "TEXT");
-  addColumnIfMissing("provider_items", "match_confidence", "REAL");
-  addColumnIfMissing("provider_items", "match_method", "TEXT");
-  addColumnIfMissing("provider_items", "match_evidence", "TEXT");
+  backfillCanonicalMusicBrainzTablesFromLegacy();
+  ensureProviderIdentityTablesUseCurrentNames();
 
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist ON mb_release_groups(artist_mbid, first_release_date)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_group ON mb_releases(release_group_mbid, date)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_release_position ON mb_tracks(release_mbid, medium_position, position)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_artist ON provider_items(provider, artist_mbid, entity_type)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release_group ON provider_items(provider, release_group_mbid, entity_type)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release ON provider_items(provider, release_mbid, entity_type)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording ON provider_items(provider, recording_mbid, entity_type)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_upc ON provider_items(provider, upc)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON provider_items(provider, isrc)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON provider_items(provider, entity_type, match_status)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist ON release_group_slots(artist_mbid, slot)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON release_group_slots(selected_provider, selected_provider_id)");
+  addColumnIfMissing("ProviderItems", "library_slot", "TEXT");
+  addColumnIfMissing("ProviderItems", "match_status", "TEXT");
+  addColumnIfMissing("ProviderItems", "match_confidence", "REAL");
+  addColumnIfMissing("ProviderItems", "match_method", "TEXT");
+  addColumnIfMissing("ProviderItems", "match_evidence", "TEXT");
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist ON Albums(artist_mbid, first_release_date)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_group ON AlbumReleases(release_group_mbid, date)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_release_position ON Tracks(release_mbid, medium_position, position)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_artist ON ProviderItems(provider, artist_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release_group ON ProviderItems(provider, release_group_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_release ON ProviderItems(provider, release_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording ON ProviderItems(provider, recording_mbid, entity_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_upc ON ProviderItems(provider, upc)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist ON ReleaseGroupSlots(artist_mbid, slot)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
 }
 
-function ensureProviderNeutralIdentitySchema(): void {
+function dropSupersededProviderIdentityTables(): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS local_entities (
-      local_id TEXT PRIMARY KEY,
-      entity_type TEXT NOT NULL,
-      legacy_id TEXT,
-      musicbrainz_id TEXT,
-      display_name TEXT,
-      data TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(entity_type, legacy_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_entity_ids (
-      local_id TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      external_id TEXT NOT NULL,
-      provider_entity_type TEXT,
-      match_status TEXT,
-      match_confidence REAL,
-      match_method TEXT,
-      match_evidence TEXT,
-      data TEXT,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(provider, provider_entity_type, external_id),
-      FOREIGN KEY(local_id) REFERENCES local_entities(local_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS artist_metadata (
-      local_artist_id TEXT PRIMARY KEY,
-      musicbrainz_artist_id TEXT,
-      old_musicbrainz_artist_ids TEXT,
-      name TEXT NOT NULL,
-      sort_name TEXT,
-      aliases TEXT,
-      overview TEXT,
-      disambiguation TEXT,
-      type TEXT,
-      status TEXT,
-      links TEXT,
-      genres TEXT,
-      members TEXT,
-      ratings TEXT,
-      images TEXT,
-      source TEXT,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(local_artist_id) REFERENCES local_entities(local_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS artwork_cache (
-      entity_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      artwork_type TEXT NOT NULL,
-      source TEXT NOT NULL,
-      url TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'candidate',
-      width INT,
-      height INT,
-      failure_count INT NOT NULL DEFAULT 0,
-      checked_at DATETIME,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(entity_type, entity_id, artwork_type, source, url)
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_video_identity (
-      identity_key TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      artist_name TEXT,
-      artist_mbid TEXT,
-      recording_mbid TEXT,
-      duration_bucket INT,
-      match_method TEXT NOT NULL,
-      confidence REAL NOT NULL DEFAULT 0,
-      data TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_video_items (
-      provider TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      identity_key TEXT NOT NULL,
-      media_id TEXT,
-      title TEXT NOT NULL,
-      artist_name TEXT,
-      artist_mbid TEXT,
-      recording_mbid TEXT,
-      duration INT,
-      release_date TEXT,
-      url TEXT,
-      cover TEXT,
-      match_status TEXT,
-      match_confidence REAL,
-      match_method TEXT,
-      match_evidence TEXT,
-      data TEXT,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(provider, provider_id),
-      FOREIGN KEY(identity_key) REFERENCES provider_video_identity(identity_key) ON DELETE CASCADE
-    );
+    DROP TABLE IF EXISTS provider_entity_ids;
+    DROP TABLE IF EXISTS artist_metadata;
+    DROP TABLE IF EXISTS provider_video_items;
+    DROP TABLE IF EXISTS provider_video_identity;
+    DROP TABLE IF EXISTS artwork_cache;
+    DROP TABLE IF EXISTS provider_ids;
+    DROP TABLE IF EXISTS local_entities;
   `);
 
-  db.exec("CREATE INDEX IF NOT EXISTS idx_local_entities_type_mbid ON local_entities(entity_type, musicbrainz_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_local ON provider_entity_ids(local_id, entity_type)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_entity_ids_provider_type ON provider_entity_ids(provider, provider_entity_type, external_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_artist_metadata_mbid ON artist_metadata(musicbrainz_artist_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_artwork_cache_lookup ON artwork_cache(entity_type, entity_id, artwork_type, status)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_items_identity ON provider_video_items(identity_key)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_items_recording ON provider_video_items(recording_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_video_identity_recording ON provider_video_identity(recording_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_monitor_date ON albums(artist_id, monitor, release_date DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_media_artist_type_date ON media(artist_id, type, release_date DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_artist_album_media ON library_files(artist_id, album_id, media_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist_type_date ON mb_release_groups(artist_mbid, primary_type, first_release_date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_monitor_date ON ProviderAlbums(artist_id, monitor, release_date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_media_artist_type_date ON ProviderMedia(artist_id, type, release_date DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_artist_album_media ON TrackFiles(artist_id, album_id, media_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist_type_date ON Albums(artist_mbid, primary_type, first_release_date DESC)");
 }
 
-function ensureLibraryFileCanonicalIdentitySchema(): void {
-  addColumnIfMissing("library_files", "canonical_artist_mbid", "TEXT");
-  addColumnIfMissing("library_files", "canonical_release_group_mbid", "TEXT");
-  addColumnIfMissing("library_files", "canonical_release_mbid", "TEXT");
-  addColumnIfMissing("library_files", "canonical_track_mbid", "TEXT");
-  addColumnIfMissing("library_files", "canonical_recording_mbid", "TEXT");
-  addColumnIfMissing("library_files", "provider", "TEXT");
-  addColumnIfMissing("library_files", "provider_entity_type", "TEXT");
-  addColumnIfMissing("library_files", "provider_id", "TEXT");
-  addColumnIfMissing("library_files", "library_slot", "TEXT");
+function ensureTrackFileCanonicalIdentitySchema(): void {
+  addColumnIfMissing("TrackFiles", "canonical_artist_mbid", "TEXT");
+  addColumnIfMissing("TrackFiles", "canonical_release_group_mbid", "TEXT");
+  addColumnIfMissing("TrackFiles", "canonical_release_mbid", "TEXT");
+  addColumnIfMissing("TrackFiles", "canonical_track_mbid", "TEXT");
+  addColumnIfMissing("TrackFiles", "canonical_recording_mbid", "TEXT");
+  addColumnIfMissing("TrackFiles", "provider", "TEXT");
+  addColumnIfMissing("TrackFiles", "provider_entity_type", "TEXT");
+  addColumnIfMissing("TrackFiles", "provider_id", "TEXT");
+  addColumnIfMissing("TrackFiles", "library_slot", "TEXT");
 
   db.exec(`
-    UPDATE library_files
+    UPDATE TrackFiles
     SET
       canonical_artist_mbid = COALESCE(
         canonical_artist_mbid,
-        (SELECT a.mbid FROM artists a WHERE CAST(a.id AS TEXT) = CAST(library_files.artist_id AS TEXT) LIMIT 1)
+        (SELECT a.mbid FROM Artists a WHERE CAST(a.id AS TEXT) = CAST(TrackFiles.artist_id AS TEXT) LIMIT 1)
       ),
       canonical_release_group_mbid = COALESCE(
         canonical_release_group_mbid,
-        (SELECT a.mb_release_group_id FROM albums a WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT) LIMIT 1),
+        (SELECT a.mb_release_group_id FROM ProviderAlbums a WHERE CAST(a.id AS TEXT) = CAST(TrackFiles.album_id AS TEXT) LIMIT 1),
         (
           SELECT r.release_group_mbid
-          FROM albums a
-          JOIN mb_releases r ON r.mbid = a.mbid
-          WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT)
+          FROM ProviderAlbums a
+          JOIN AlbumReleases r ON r.mbid = a.mbid
+          WHERE CAST(a.id AS TEXT) = CAST(TrackFiles.album_id AS TEXT)
           LIMIT 1
         ),
         (
           SELECT a.mb_release_group_id
-          FROM media m
-          JOIN albums a ON CAST(a.id AS TEXT) = CAST(m.album_id AS TEXT)
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN ProviderAlbums a ON CAST(a.id AS TEXT) = CAST(m.album_id AS TEXT)
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         ),
         (
           SELECT r.release_group_mbid
-          FROM media m
-          JOIN mb_tracks t ON t.mbid = m.mbid
-          JOIN mb_releases r ON r.mbid = t.release_mbid
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN Tracks t ON t.mbid = m.mbid
+          JOIN AlbumReleases r ON r.mbid = t.release_mbid
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         )
       ),
@@ -943,16 +1318,16 @@ function ensureLibraryFileCanonicalIdentitySchema(): void {
         canonical_release_mbid,
         (
           SELECT r.mbid
-          FROM albums a
-          JOIN mb_releases r ON r.mbid = a.mbid
-          WHERE CAST(a.id AS TEXT) = CAST(library_files.album_id AS TEXT)
+          FROM ProviderAlbums a
+          JOIN AlbumReleases r ON r.mbid = a.mbid
+          WHERE CAST(a.id AS TEXT) = CAST(TrackFiles.album_id AS TEXT)
           LIMIT 1
         ),
         (
           SELECT t.release_mbid
-          FROM media m
-          JOIN mb_tracks t ON t.mbid = m.mbid
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN Tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         )
       ),
@@ -960,9 +1335,9 @@ function ensureLibraryFileCanonicalIdentitySchema(): void {
         canonical_track_mbid,
         (
           SELECT t.mbid
-          FROM media m
-          JOIN mb_tracks t ON t.mbid = m.mbid
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN Tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         )
       ),
@@ -970,16 +1345,16 @@ function ensureLibraryFileCanonicalIdentitySchema(): void {
         canonical_recording_mbid,
         (
           SELECT t.recording_mbid
-          FROM media m
-          JOIN mb_tracks t ON t.mbid = m.mbid
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN Tracks t ON t.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         ),
         (
           SELECT r.mbid
-          FROM media m
-          JOIN mb_recordings r ON r.mbid = m.mbid
-          WHERE CAST(m.id AS TEXT) = CAST(library_files.media_id AS TEXT)
+          FROM ProviderMedia m
+          JOIN Recordings r ON r.mbid = m.mbid
+          WHERE CAST(m.id AS TEXT) = CAST(TrackFiles.media_id AS TEXT)
           LIMIT 1
         )
       ),
@@ -1016,13 +1391,13 @@ function ensureLibraryFileCanonicalIdentitySchema(): void {
       END)
   `);
 
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_artist ON library_files(canonical_artist_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release_group ON library_files(canonical_release_group_mbid, library_slot)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release ON library_files(canonical_release_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_track ON library_files(canonical_track_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_canonical_recording ON library_files(canonical_recording_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_provider_resource ON library_files(provider, provider_entity_type, provider_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_library_files_slot_type ON library_files(library_slot, file_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_artist ON TrackFiles(canonical_artist_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release_group ON TrackFiles(canonical_release_group_mbid, library_slot)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_track ON TrackFiles(canonical_track_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_recording ON TrackFiles(canonical_recording_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_provider_resource ON TrackFiles(provider, provider_entity_type, provider_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_slot_type ON TrackFiles(library_slot, file_type)");
 }
 
 type MigrationRunSummary = {
@@ -1063,7 +1438,7 @@ function runMigrations(): MigrationRunSummary {
   let normalizedVersion = db.pragma("user_version", { simple: true }) as number;
   const shouldBackfillLegacyUnversionedSchema =
     normalizedVersion === 0
-    && (tableHasRows("artists") || tableHasRows("albums") || tableHasRows("media") || tableHasRows("library_files"));
+    && (tableHasRows("Artists") || tableHasRows("ProviderAlbums") || tableHasRows("ProviderMedia") || tableHasRows("TrackFiles"));
 
   if (shouldBackfillLegacyUnversionedSchema) {
     runLegacyPending(0);
@@ -1112,7 +1487,7 @@ export function initDatabase() {
   // ARTISTS TABLE
   // ====================================================================
   db.exec(`
-    CREATE TABLE IF NOT EXISTS artists (
+    CREATE TABLE IF NOT EXISTS Artists (
       id TEXT PRIMARY KEY,             -- Local managed artist id; MusicBrainz MBID for canonical artists
       name TEXT NOT NULL,              -- Artist name
       picture TEXT,                    -- Resolved or provider-native artist image reference
@@ -1139,12 +1514,13 @@ export function initDatabase() {
       downloaded INT DEFAULT 0         -- number between 0 and 100 representing percentage of artist's monitored media downloaded
     )
   `);
+  withForeignKeysDisabled(() => normalizeTableNameCase("Artists"));
 
   // ====================================================================
   // ALBUMS TABLE
   // ====================================================================
   db.exec(`
-    CREATE TABLE IF NOT EXISTS albums (
+    CREATE TABLE IF NOT EXISTS ProviderAlbums (
       id TEXT PRIMARY KEY,               -- Temporary provider offer id until albums move fully to MB release groups
       artist_id TEXT NOT NULL,           -- Managed artist id
       title TEXT NOT NULL,               -- Album title
@@ -1197,7 +1573,7 @@ export function initDatabase() {
       downloaded INT,                   -- number between 0 and 100 representing percentage of album's tracks downloaded
       redundant TEXT,                   -- If redundant, points to the id of the better version
 
-      FOREIGN KEY(artist_id) REFERENCES artists(id) ON DELETE CASCADE
+      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE
     )
   `);
 
@@ -1205,7 +1581,7 @@ export function initDatabase() {
   // MEDIA TABLE  
   // ====================================================================
   db.exec(`
-    CREATE TABLE IF NOT EXISTS media (
+    CREATE TABLE IF NOT EXISTS ProviderMedia (
       id TEXT PRIMARY KEY,              -- Temporary provider media id until tracks/videos move fully to canonical identities
       artist_id TEXT NOT NULL,          -- Managed artist id
       album_id TEXT,                    -- Provider offer id for album tracks while compatibility table remains
@@ -1262,8 +1638,8 @@ export function initDatabase() {
       downloaded BOOLEAN,               -- whether this track has been downloaded
       redundant TEXT,                   -- If redundant, points to the id of the better version
       
-      FOREIGN KEY(artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE
+      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
 
@@ -1273,7 +1649,7 @@ export function initDatabase() {
 
   // Album artists relationship
   db.exec(`
-    CREATE TABLE IF NOT EXISTS album_artists (
+    CREATE TABLE IF NOT EXISTS ProviderAlbumArtists (
       album_id TEXT NOT NULL,            -- Provider offer id while compatibility table remains
       artist_id TEXT NOT NULL,           -- Managed artist id
       artist_name TEXT,                  -- Cached artist name (for fast UI rendering)
@@ -1284,20 +1660,20 @@ export function initDatabase() {
       version_group_name TEXT,           -- Group name for related album versions ("Album Name")
       module TEXT,                       -- derived from release type and page module ALBUM, EP, SINGLE, COMPILATIONS, LIVE, REMIX, APPEARS_ON
       PRIMARY KEY (artist_id, album_id),
-      FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-      FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
 
   // Media artist relationship
   db.exec(`
-    CREATE TABLE IF NOT EXISTS media_artists (
+    CREATE TABLE IF NOT EXISTS ProviderMediaArtists (
       media_id TEXT NOT NULL,            -- Provider media id while compatibility table remains
       artist_id TEXT NOT NULL,           -- Managed artist id
       type TEXT NOT NULL,                -- contribution type
       PRIMARY KEY (media_id, artist_id),
-      FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
-      FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+      FOREIGN KEY (media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
+      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE
     )
   `);
 
@@ -1307,33 +1683,35 @@ export function initDatabase() {
 
   // Similar artists relationship (junction table)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS similar_artists (
+    CREATE TABLE IF NOT EXISTS ProviderSimilarArtists (
       artist_id INT NOT NULL,              -- Source artist
       similar_artist_id INT NOT NULL,      -- Similar artist
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (artist_id, similar_artist_id),
-      FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-      FOREIGN KEY (similar_artist_id) REFERENCES artists(id) ON DELETE CASCADE
+      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY (similar_artist_id) REFERENCES Artists(id) ON DELETE CASCADE
     )
   `);
 
   // Similar albums relationship (junction table)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS similar_albums (
+    CREATE TABLE IF NOT EXISTS ProviderSimilarAlbums (
       album_id INT NOT NULL,               -- Source album
       similar_album_id INT NOT NULL,       -- Similar album
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (album_id, similar_album_id),
-      FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
-      FOREIGN KEY (similar_album_id) REFERENCES albums(id) ON DELETE CASCADE
+      FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE,
+      FOREIGN KEY (similar_album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
 
+  ensureTrackFilesTableName();
+
   // ====================================================================
-  // LIBRARY FILES TABLE (Local File Tracking)
+  // TRACKFILES TABLE (Local file tracking; Lidarr-aligned file inventory)
   // ====================================================================
   db.exec(`
-    CREATE TABLE IF NOT EXISTS library_files (
+    CREATE TABLE IF NOT EXISTS TrackFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
       -- Linkage (at least artist_id required, then either media_id for tracks/videos)
@@ -1393,26 +1771,26 @@ export function initDatabase() {
       modified_at DATETIME,              -- File system modified time
       verified_at DATETIME,              -- Last time file existence was verified
       
-      FOREIGN KEY(artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE SET NULL,
-      FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE SET NULL
+      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE SET NULL,
+      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE SET NULL
     )
   `);
+  ensureProviderCompatibilityTablesUseCurrentNames();
 
-  db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_insert`);
-  db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_delete`);
-  db.exec(`DROP TRIGGER IF EXISTS trg_library_files_download_state_update`);
+  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_insert`);
+  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_delete`);
+  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_update`);
 
   ensureMetadataIdentitySchema();
   ensureMusicBrainzProviderSchema();
-  ensureProviderNeutralIdentitySchema();
-  ensureLibraryFileCanonicalIdentitySchema();
+  ensureTrackFileCanonicalIdentitySchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (local files not mapped to canonical metadata/provider evidence)
   // ====================================================================
   db.exec(`
-    CREATE TABLE IF NOT EXISTS unmapped_files (
+    CREATE TABLE IF NOT EXISTS UnmappedFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file
@@ -1442,6 +1820,7 @@ export function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  withForeignKeysDisabled(() => mergeAndDropLegacyTable("unmapped_files", "UnmappedFiles"));
 
   ensureUnmappedFilesAudioMetadataColumns();
 
@@ -1524,10 +1903,11 @@ export function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       processed_at DATETIME,
       UNIQUE(media_id),
-      FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE
+      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
+      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
+  withForeignKeysDisabled(() => rebuildUpgradeQueueWithProviderReferences());
   // ====================================================================
   // CONFIG TABLE (Application settings)
   // ====================================================================
@@ -1568,29 +1948,6 @@ export function initDatabase() {
   `);
 
   // ====================================================================
-  // PROVIDER IDS TABLE
-  // Maps managed compatibility entities to IDs from providers/sources.
-  // entity_type: 'artist' | 'album' | 'media'
-  // entity_id: references artists.id / albums.id / media.id while compatibility tables remain
-  // provider: 'tidal' | 'spotify' | 'apple' | 'musicbrainz' | 'discogs' | 'deezer'
-  // external_id: the provider's own identifier for this entity
-  //
-  // For albums, join on mb_release_group_id to group format variants (16-bit,
-  // 24-bit, spatial) that share the same abstract album across providers.
-  // For media, ISRC on the media table is already the canonical cross-provider key.
-  // ====================================================================
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS provider_ids (
-      entity_type TEXT NOT NULL,
-      entity_id   INT  NOT NULL,
-      provider    TEXT NOT NULL,
-      external_id TEXT NOT NULL,
-      fetched_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (entity_type, entity_id, provider)
-    )
-  `);
-
-  // ====================================================================
   // INDEXES
   // ====================================================================
   // PLAYLISTS TABLE
@@ -1627,9 +1984,10 @@ export function initDatabase() {
         position INTEGER NOT NULL,
         PRIMARY KEY (playlist_uuid, position),
         FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-        FOREIGN KEY (track_id) REFERENCES media(id) ON DELETE CASCADE
+        FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
       )
     `);
+  withForeignKeysDisabled(() => rebuildPlaylistTracksWithProviderReferences());
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)`);
 
@@ -1649,52 +2007,52 @@ export function initDatabase() {
   // INDEXES
   // ====================================================================
   // Artist indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_monitor ON artists(monitor)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_popularity ON artists(popularity)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_last_scanned ON artists(last_scanned)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_user_date_added ON artists(user_date_added)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_musicbrainz_status ON artists(musicbrainz_status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_monitor ON Artists(monitor)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_name ON Artists(name)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_popularity ON Artists(popularity)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_last_scanned ON Artists(last_scanned)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_user_date_added ON Artists(user_date_added)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid ON Artists(mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_musicbrainz_status ON Artists(musicbrainz_status)`);
 
   // Album indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitor ON albums(monitor)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitor_lock ON albums(monitor_lock)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_type ON albums(type)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_quality ON albums(quality)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_release_date ON albums(release_date)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mbid ON albums(mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mb_release_group ON albums(mb_release_group_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_musicbrainz_status ON albums(musicbrainz_status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON ProviderAlbums(artist_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitor ON ProviderAlbums(monitor)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitor_lock ON ProviderAlbums(monitor_lock)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_type ON ProviderAlbums(type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_quality ON ProviderAlbums(quality)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_release_date ON ProviderAlbums(release_date)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_title ON ProviderAlbums(title)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mbid ON ProviderAlbums(mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mb_release_group ON ProviderAlbums(mb_release_group_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_musicbrainz_status ON ProviderAlbums(musicbrainz_status)`);
   db.exec(`DROP INDEX IF EXISTS idx_albums_downloaded`);
 
   // Album artists indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_album_artists_version_group ON album_artists(version_group_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_album_artists_version_group ON ProviderAlbumArtists(version_group_id)`);
 
   // Similar entities indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_source ON similar_artists(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_target ON similar_artists(similar_artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_source ON similar_albums(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_target ON similar_albums(similar_album_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_source ON ProviderSimilarArtists(artist_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_target ON ProviderSimilarArtists(similar_artist_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_source ON ProviderSimilarAlbums(album_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_target ON ProviderSimilarAlbums(similar_album_id)`);
 
   // Media indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artist_id ON media(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_album_id ON media(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_isrc ON media(isrc)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_mbid ON media(mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_acoustid_id ON media(acoustid_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_musicbrainz_status ON media(musicbrainz_status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor ON media(monitor)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor_lock ON media(monitor_lock)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_quality ON media(quality)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_type ON media(type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artist_id ON ProviderMedia(artist_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_album_id ON ProviderMedia(album_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_isrc ON ProviderMedia(isrc)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_mbid ON ProviderMedia(mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_acoustid_id ON ProviderMedia(acoustid_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_musicbrainz_status ON ProviderMedia(musicbrainz_status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor ON ProviderMedia(monitor)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitor_lock ON ProviderMedia(monitor_lock)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_quality ON ProviderMedia(quality)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_type ON ProviderMedia(type)`);
   db.exec(`DROP INDEX IF EXISTS idx_media_downloaded`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_title ON media(title)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_release_date ON media(release_date)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_last_scanned ON media(last_scanned)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media ON media_artists(artist_id, type, media_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_title ON ProviderMedia(title)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_release_date ON ProviderMedia(release_date)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_last_scanned ON ProviderMedia(last_scanned)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media ON ProviderMediaArtists(artist_id, type, media_id)`);
 
   // Job indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON job_queue(status)`);
@@ -1711,33 +2069,29 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);
 
   // Library file indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_artist_id ON library_files(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_album_id ON library_files(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_media_id ON library_files(media_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_file_type ON library_files(file_type)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_library_root ON library_files(library_root)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_needs_rename ON library_files(needs_rename)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_quality ON library_files(quality)`);
-  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_path ON library_files(file_path)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_fingerprint ON library_files(fingerprint)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_acoustid_id ON library_files(acoustid_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_media_id_file_type ON library_files(media_id, file_type)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_artist ON library_files(canonical_artist_mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release_group ON library_files(canonical_release_group_mbid, library_slot)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_release ON library_files(canonical_release_mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_track ON library_files(canonical_track_mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_canonical_recording ON library_files(canonical_recording_mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_provider_resource ON library_files(provider, provider_entity_type, provider_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_library_files_slot_type ON library_files(library_slot, file_type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_artist_id ON TrackFiles(artist_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_album_id ON TrackFiles(album_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_media_id ON TrackFiles(media_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_file_type ON TrackFiles(file_type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_library_root ON TrackFiles(library_root)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_needs_rename ON TrackFiles(needs_rename)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_quality ON TrackFiles(quality)`);
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_path ON TrackFiles(file_path)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_fingerprint ON TrackFiles(fingerprint)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_acoustid_id ON TrackFiles(acoustid_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_media_id_file_type ON TrackFiles(media_id, file_type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_artist ON TrackFiles(canonical_artist_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release_group ON TrackFiles(canonical_release_group_mbid, library_slot)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_track ON TrackFiles(canonical_track_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_recording ON TrackFiles(canonical_recording_mbid)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_provider_resource ON TrackFiles(provider, provider_entity_type, provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_slot_type ON TrackFiles(library_slot, file_type)`);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 
   // Quality profiles indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_quality_profiles_name ON quality_profiles(name)`);
-
-  // Provider IDs indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_provider_ids_entity ON provider_ids(entity_type, entity_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_provider_ids_provider ON provider_ids(provider, external_id)`);
 
   // History / schema provenance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_date ON history_events(date DESC)");
@@ -1753,6 +2107,14 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
+
+  // Foreign key and lookup performance indexes
+  db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track_id ON playlist_tracks(track_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON ProviderAlbumArtists(album_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_selected_release ON ReleaseGroupSlots(selected_release_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artists_path ON Artists(path)");
 
   console.log("✅ Database schema initialized");
 

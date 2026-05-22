@@ -93,48 +93,48 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     }
 
     findById(id: number): Album | undefined {
-        return this.prepare("SELECT * FROM albums WHERE id = ?")
+        return this.prepare("SELECT * FROM ProviderAlbums WHERE id = ?")
             .get(id) as Album | undefined;
     }
 
     findAll(limit: number = 100, offset: number = 0): Album[] {
-        return this.prepare("SELECT * FROM albums ORDER BY release_date DESC LIMIT ? OFFSET ?")
+        return this.prepare("SELECT * FROM ProviderAlbums ORDER BY release_date DESC LIMIT ? OFFSET ?")
             .all(limit, offset) as Album[];
     }
 
     findByArtist(artistId: number, limit?: number, offset?: number): Album[] {
         const sql = limit !== undefined
-            ? "SELECT * FROM albums WHERE artist_id = ? ORDER BY release_date DESC LIMIT ? OFFSET ?"
-            : "SELECT * FROM albums WHERE artist_id = ? ORDER BY release_date DESC";
+            ? "SELECT * FROM ProviderAlbums WHERE artist_id = ? ORDER BY release_date DESC LIMIT ? OFFSET ?"
+            : "SELECT * FROM ProviderAlbums WHERE artist_id = ? ORDER BY release_date DESC";
 
         const params = limit !== undefined ? [artistId, limit, offset || 0] : [artistId];
         return this.prepare(sql).all(...params) as Album[];
     }
 
     findMonitored(): Album[] {
-        return this.prepare("SELECT * FROM albums WHERE monitor = 1 ORDER BY release_date DESC")
+        return this.prepare("SELECT * FROM ProviderAlbums WHERE monitor = 1 ORDER BY release_date DESC")
             .all() as Album[];
     }
 
     count(): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM albums").get() as { count: number };
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums").get() as { count: number };
         return result.count;
     }
 
     countByArtist(artistId: number): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM albums WHERE artist_id = ?")
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums WHERE artist_id = ?")
             .get(artistId) as { count: number };
         return result.count;
     }
 
     countMonitored(): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM albums WHERE monitor = 1")
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums WHERE monitor = 1")
             .get() as { count: number };
         return result.count;
     }
 
     countDownloaded(): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM albums WHERE downloaded = 100")
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums WHERE downloaded = 100")
             .get() as { count: number };
         return result.count;
     }
@@ -144,7 +144,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
      */
     insert(album: AlbumInsert): void {
         this.prepare(`
-            INSERT INTO albums (
+            INSERT INTO ProviderAlbums (
                 id, artist_id, title, version, release_date, type,
                 explicit, quality, user_date_added, cover, vibrant_color, video_cover,
                 num_tracks, num_volumes, num_videos, duration, popularity,
@@ -191,7 +191,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
 
         return this.transaction(() => {
             const stmt = this.prepare(`
-                INSERT INTO albums (
+                INSERT INTO ProviderAlbums (
                     id, artist_id, title, version, release_date, type,
                     explicit, quality, user_date_added, cover, vibrant_color, video_cover,
                     num_tracks, num_volumes, num_videos, duration, popularity,
@@ -242,7 +242,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
      */
     upsert(album: AlbumInsert): void {
         this.prepare(`
-            INSERT INTO albums (
+            INSERT INTO ProviderAlbums (
                 id, artist_id, title, version, release_date, type,
                 explicit, quality, user_date_added, cover, vibrant_color, video_cover,
                 num_tracks, num_volumes, num_videos, duration, popularity,
@@ -316,7 +316,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
         if (fields.length === 0) return;
 
         values.push(id);
-        this.prepare(`UPDATE albums SET ${fields.join(", ")} WHERE id = ?`)
+        this.prepare(`UPDATE ProviderAlbums SET ${fields.join(", ")} WHERE id = ?`)
             .run(...values);
     }
 
@@ -325,7 +325,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
      */
     setMonitored(id: number, monitored: boolean): void {
         this.prepare(`
-            UPDATE albums SET 
+            UPDATE ProviderAlbums SET 
                 monitor = ?, 
                 monitored_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE monitored_at END
             WHERE id = ?
@@ -338,7 +338,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     setLocked(id: number, locked: boolean, wantedState?: boolean): void {
         if (wantedState !== undefined) {
             this.prepare(`
-                UPDATE albums SET 
+                UPDATE ProviderAlbums SET 
                     monitor_lock = ?, 
                     monitor = ?,
                     locked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE locked_at END
@@ -346,7 +346,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
             `).run(locked ? 1 : 0, wantedState ? 1 : 0, locked ? 1 : 0, id);
         } else {
             this.prepare(`
-                UPDATE albums SET 
+                UPDATE ProviderAlbums SET 
                     monitor_lock = ?, 
                     locked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE locked_at END
                 WHERE id = ?
@@ -355,6 +355,6 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     }
 
     delete(id: number): void {
-        this.prepare("DELETE FROM albums WHERE id = ?").run(id);
+        this.prepare("DELETE FROM ProviderAlbums WHERE id = ?").run(id);
     }
 }

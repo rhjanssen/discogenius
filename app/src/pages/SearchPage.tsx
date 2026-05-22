@@ -1,4 +1,3 @@
-import React from "react";
 import { Body1, makeStyles, tokens, Title1 } from "@fluentui/react-components";
 import { useSearchParams } from "react-router-dom";
 import GlobalSearch from "@/components/GlobalSearch";

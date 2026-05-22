@@ -240,7 +240,7 @@ async function buildArtistPageModuleMap(artistId: string, cachedPageData?: any):
 
 /**
  * Propagate module tags within version groups.
- * Uses pre-computed version_group_id from album_artists table.
+ * Uses pre-computed version_group_id from ProviderAlbumArtists table.
  * If any album in a group has a special module (LIVE, COMPILATION, etc.),
  * all albums in that group should inherit it.
  */
@@ -250,8 +250,8 @@ function propagateModulesWithinVersionGroups(
 ): void {
     const albumGroups = db.prepare(`
         SELECT aa.album_id, aa.version_group_id, aa.module, a.mb_secondary, a.type as album_type
-        FROM album_artists aa
-        JOIN albums a ON a.id = aa.album_id
+        FROM ProviderAlbumArtists aa
+        JOIN ProviderAlbums a ON a.id = aa.album_id
         WHERE aa.artist_id = ? AND aa.version_group_id IS NOT NULL
     `).all(artistId) as Array<{
         album_id: number;
@@ -326,7 +326,7 @@ export class ModuleFixer {
 
         // 0) Normalize legacy module values to the canonical set used by the UI layer
         db.prepare(`
-            UPDATE album_artists
+            UPDATE ProviderAlbumArtists
             SET module = CASE
                 WHEN module IS NULL THEN NULL
                 WHEN UPPER(module) IN ('ALBUM', 'ALBUMS', 'ARTIST_ALBUMS') THEN 'ALBUM'
@@ -340,7 +340,7 @@ export class ModuleFixer {
                 WHEN UPPER(module) IN ('APPEARS_ON', 'ARTIST_APPEARS_ON') THEN 'APPEARS_ON'
                 WHEN UPPER(module) IN ('DJ_MIXES', 'DJ MIXES', 'DJ-MIXES') THEN 'DJ_MIXES'
                 WHEN UPPER(module) IN ('ARTIST_EPS_AND_SINGLES', 'EPSANDSINGLES') THEN (
-                    CASE UPPER(COALESCE((SELECT type FROM albums WHERE id = album_id), 'ALBUM'))
+                    CASE UPPER(COALESCE((SELECT type FROM ProviderAlbums WHERE id = album_id), 'ALBUM'))
                         WHEN 'EP' THEN 'EP'
                         WHEN 'SINGLE' THEN 'SINGLE'
                         ELSE 'ALBUM'
@@ -368,8 +368,8 @@ export class ModuleFixer {
                    a.mb_primary as mb_primary,
                    a.mb_secondary as mb_secondary,
                    a.musicbrainz_status as musicbrainz_status
-            FROM album_artists aa
-            JOIN albums a ON a.id = aa.album_id
+            FROM ProviderAlbumArtists aa
+            JOIN ProviderAlbums a ON a.id = aa.album_id
             WHERE aa.artist_id = ?
         `).all(artistId) as Array<{
             album_id: number | string;
@@ -382,13 +382,13 @@ export class ModuleFixer {
         }>;
 
         const updateModule = db.prepare(`
-            UPDATE album_artists
+            UPDATE ProviderAlbumArtists
             SET module = ?
             WHERE artist_id = ? AND album_id = ?
         `);
 
         const updateMb = db.prepare(`
-            UPDATE albums
+            UPDATE ProviderAlbums
             SET mb_primary = ?,
                 mb_secondary = ?
             WHERE id = ?

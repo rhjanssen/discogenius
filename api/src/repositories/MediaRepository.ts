@@ -238,12 +238,12 @@ export class MediaRepository extends BaseRepository<Media, number> {
     }
 
     findById(id: number): Media | undefined {
-        return this.prepare("SELECT * FROM media WHERE id = ?")
+        return this.prepare("SELECT * FROM ProviderMedia WHERE id = ?")
             .get(id) as Media | undefined;
     }
 
     findAll(limit: number = 100, offset: number = 0): Media[] {
-        return this.prepare("SELECT * FROM media ORDER BY id DESC LIMIT ? OFFSET ?")
+        return this.prepare("SELECT * FROM ProviderMedia ORDER BY id DESC LIMIT ? OFFSET ?")
             .all(limit, offset) as Media[];
     }
 
@@ -253,21 +253,21 @@ export class MediaRepository extends BaseRepository<Media, number> {
      */
     findByType(type: 'track' | 'video', limit: number = 100, offset: number = 0): Media[] {
         if (type === 'track') {
-            return this.prepare("SELECT * FROM media WHERE type != 'Music Video' ORDER BY id DESC LIMIT ? OFFSET ?")
+            return this.prepare("SELECT * FROM ProviderMedia WHERE type != 'Music Video' ORDER BY id DESC LIMIT ? OFFSET ?")
                 .all(limit, offset) as Media[];
         } else {
-            return this.prepare("SELECT * FROM media WHERE type = 'Music Video' ORDER BY id DESC LIMIT ? OFFSET ?")
+            return this.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' ORDER BY id DESC LIMIT ? OFFSET ?")
                 .all(limit, offset) as Media[];
         }
     }
 
     findByAlbum(albumId: number): Media[] {
-        return this.prepare("SELECT * FROM media WHERE album_id = ? ORDER BY volume_number, track_number")
+        return this.prepare("SELECT * FROM ProviderMedia WHERE album_id = ? ORDER BY volume_number, track_number")
             .all(albumId) as Media[];
     }
 
     findByArtist(artistId: number, type?: 'track' | 'video', limit?: number, offset?: number): Media[] {
-        let sql = "SELECT * FROM media WHERE artist_id = ?";
+        let sql = "SELECT * FROM ProviderMedia WHERE artist_id = ?";
         const params: any[] = [artistId];
 
         if (type === 'track') {
@@ -289,18 +289,18 @@ export class MediaRepository extends BaseRepository<Media, number> {
     count(type?: 'track' | 'video'): number {
         let sql: string;
         if (type === 'track') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type != 'Music Video'";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type != 'Music Video'";
         } else if (type === 'video') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type = 'Music Video'";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video'";
         } else {
-            sql = "SELECT COUNT(*) as count FROM media";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia";
         }
         const result = this.prepare(sql).get() as { count: number };
         return result.count;
     }
 
     countByAlbum(albumId: number): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM media WHERE album_id = ?")
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id = ?")
             .get(albumId) as { count: number };
         return result.count;
     }
@@ -308,11 +308,11 @@ export class MediaRepository extends BaseRepository<Media, number> {
     countDownloaded(type?: 'track' | 'video'): number {
         let sql: string;
         if (type === 'track') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type != 'Music Video' AND downloaded = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type != 'Music Video' AND downloaded = 1";
         } else if (type === 'video') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type = 'Music Video' AND downloaded = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video' AND downloaded = 1";
         } else {
-            sql = "SELECT COUNT(*) as count FROM media WHERE downloaded = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE downloaded = 1";
         }
         const result = this.prepare(sql).get() as { count: number };
         return result.count;
@@ -321,11 +321,11 @@ export class MediaRepository extends BaseRepository<Media, number> {
     countMonitored(type?: 'track' | 'video'): number {
         let sql: string;
         if (type === 'track') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type != 'Music Video' AND monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type != 'Music Video' AND monitor = 1";
         } else if (type === 'video') {
-            sql = "SELECT COUNT(*) as count FROM media WHERE type = 'Music Video' AND monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video' AND monitor = 1";
         } else {
-            sql = "SELECT COUNT(*) as count FROM media WHERE monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE monitor = 1";
         }
         const result = this.prepare(sql).get() as { count: number };
         return result.count;
@@ -336,7 +336,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
      */
     insert(media: MediaInsert): void {
         this.prepare(`
-            INSERT INTO media (
+            INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date, type,
                 explicit, quality, user_date_added, track_number, volume_number,
                 duration, popularity, bpm, key, key_scale, peak, replay_gain,
@@ -377,7 +377,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
 
         return this.transaction(() => {
             const stmt = this.prepare(`
-                INSERT INTO media (
+                INSERT INTO ProviderMedia (
                     id, artist_id, album_id, title, version, release_date, type,
                     explicit, quality, user_date_added, track_number, volume_number,
                     duration, popularity, bpm, key, key_scale, peak, replay_gain,
@@ -423,7 +423,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
      */
     upsert(media: MediaInsert): void {
         this.prepare(`
-            INSERT INTO media (
+            INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date, type,
                 explicit, quality, user_date_added, track_number, volume_number,
                 duration, popularity, bpm, key, key_scale, peak, replay_gain,
@@ -464,7 +464,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
     }
 
     /**
-     * Update media fields
+     * Update ProviderMedia fields
      */
     update(id: number, updates: Partial<Media>): void {
         const fields: string[] = [];
@@ -487,39 +487,39 @@ export class MediaRepository extends BaseRepository<Media, number> {
         if (fields.length === 0) return;
 
         values.push(id);
-        this.prepare(`UPDATE media SET ${fields.join(", ")} WHERE id = ?`)
+        this.prepare(`UPDATE ProviderMedia SET ${fields.join(", ")} WHERE id = ?`)
             .run(...values);
     }
 
     delete(id: number): void {
-        this.prepare("DELETE FROM media WHERE id = ?").run(id);
+        this.prepare("DELETE FROM ProviderMedia WHERE id = ?").run(id);
     }
 
     /**
      * Delete all media for an album
      */
     deleteByAlbum(albumId: number): void {
-        this.prepare("DELETE FROM media WHERE album_id = ?").run(albumId);
+        this.prepare("DELETE FROM ProviderMedia WHERE album_id = ?").run(albumId);
     }
 
     /**
      * Delete all media for an artist
      */
     deleteByArtist(artistId: number): void {
-        this.prepare("DELETE FROM media WHERE artist_id = ?").run(artistId);
+        this.prepare("DELETE FROM ProviderMedia WHERE artist_id = ?").run(artistId);
     }
 
     // ========== Convenience methods for tracks ==========
 
     findTrackById(id: number): Media | undefined {
         // Tracks are media items that are not videos (type != 'Music Video')
-        return this.prepare("SELECT * FROM media WHERE id = ? AND type != 'Music Video'")
+        return this.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type != 'Music Video'")
             .get(id) as Media | undefined;
     }
 
     findTracksByAlbum(albumId: number): Media[] {
         // All media items for an album are tracks by definition
-        return this.prepare("SELECT * FROM media WHERE album_id = ? ORDER BY volume_number, track_number")
+        return this.prepare("SELECT * FROM ProviderMedia WHERE album_id = ? ORDER BY volume_number, track_number")
             .all(albumId) as Media[];
     }
 
@@ -535,7 +535,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
 
     findVideoById(id: number): Media | undefined {
         // Videos have type = 'Music Video'
-        return this.prepare("SELECT * FROM media WHERE id = ? AND type = 'Music Video'")
+        return this.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'")
             .get(id) as Media | undefined;
     }
 

@@ -77,7 +77,7 @@ router.get("/:playlistId", (req: Request, res: Response) => {
     const tracks = db.prepare(`
       SELECT m.*, pt.position
       FROM playlist_tracks pt
-      JOIN media m ON pt.track_id = m.id
+      JOIN ProviderMedia m ON pt.track_id = m.id
       WHERE pt.playlist_uuid = ?
       ORDER BY pt.position
     `).all((playlist as any).uuid);
@@ -284,12 +284,12 @@ router.post("/:playlistId/download", async (req: Request, res: Response) => {
     const tracks = db.prepare(`
       SELECT m.id, m.album_id, m.artist_id, m.title
       FROM playlist_tracks pt
-      JOIN media m ON pt.track_id = m.id
+      JOIN ProviderMedia m ON pt.track_id = m.id
       WHERE pt.playlist_uuid = ?
         AND m.type != 'Music Video'
         AND NOT EXISTS (
           SELECT 1
-          FROM library_files lf
+          FROM TrackFiles lf
           WHERE lf.media_id = m.id
             AND lf.file_type = 'track'
         )

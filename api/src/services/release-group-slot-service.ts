@@ -25,6 +25,53 @@ export type ReleaseGroupSlotSelection = {
     score: number;
 };
 
+function objectRecord(value: unknown): Record<string, any> {
+    return value && typeof value === "object" ? value as Record<string, any> : {};
+}
+
+function textOrNull(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = String(value ?? "").trim();
+        if (text) {
+            return text;
+        }
+    }
+    return null;
+}
+
+function numberOrNull(...values: unknown[]): number | null {
+    for (const value of values) {
+        const numberValue = Number(value);
+        if (Number.isFinite(numberValue) && numberValue > 0) {
+            return numberValue;
+        }
+    }
+    return null;
+}
+
+function buildProviderOfferSnapshot(album: ProviderAlbumSlotCandidate): Record<string, unknown> {
+    const raw = objectRecord(album.raw);
+    const rawArtist = objectRecord(raw.artist);
+    const rawArtists = Array.isArray(raw.artists) ? raw.artists.map(objectRecord) : [];
+    const artistName = textOrNull(
+        rawArtist.name,
+        raw.artist_name,
+        rawArtists[0]?.name,
+    );
+
+    return {
+        title: textOrNull(album.title, raw.title),
+        version: textOrNull(album.version, raw.version),
+        cover: textOrNull(raw.cover, raw.image_id, raw.imageId),
+        quality: textOrNull(album.quality, raw.quality),
+        explicit: album.explicit == null ? (raw.explicit == null ? null : Boolean(raw.explicit)) : Boolean(album.explicit),
+        releaseDate: textOrNull(album.releaseDate, raw.release_date, raw.releaseDate),
+        trackCount: numberOrNull(album.trackCount, raw.num_tracks, raw.numberOfTracks, raw.trackCount),
+        volumeCount: numberOrNull(album.volumeCount, raw.num_volumes, raw.numberOfVolumes, raw.volumeCount),
+        artist: artistName ? { name: artistName } : null,
+    };
+}
+
 export function isSpatialQualityTag(quality?: string | null): boolean {
     return isSpatialAudioQuality(quality);
 }
@@ -144,9 +191,8 @@ export class ReleaseGroupSlotService {
 
         const selectionKeys = new Set(selections.map((selection) => `${selection.releaseGroupMbid}:${selection.slot}`));
         const clearStaleSelection = db.prepare(`
-            UPDATE release_group_slots
+            UPDATE ReleaseGroupSlots
             SET
-                wanted = 0,
                 selected_provider = NULL,
                 selected_provider_id = NULL,
                 selected_release_mbid = NULL,
@@ -162,22 +208,21 @@ export class ReleaseGroupSlotService {
         `);
         const existingSlots = db.prepare(`
             SELECT id, release_group_mbid, slot
-            FROM release_group_slots
+            FROM ReleaseGroupSlots
             WHERE artist_mbid = ?
               AND selected_provider = ?
         `).all(input.artistMbid, input.provider) as Array<{ id: number; release_group_mbid: string; slot: string }>;
 
         const upsert = db.prepare(`
-            INSERT INTO release_group_slots (
+            INSERT INTO ReleaseGroupSlots (
                 artist_mbid, release_group_mbid, slot, wanted,
                 selected_provider, selected_provider_id, selected_release_mbid, quality,
                 match_status, match_confidence, match_method, match_evidence,
                 provider_data, checked_at, updated_at
             )
-            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
                 artist_mbid = excluded.artist_mbid,
-                wanted = excluded.wanted,
                 selected_provider = excluded.selected_provider,
                 selected_provider_id = excluded.selected_provider_id,
                 selected_release_mbid = excluded.selected_release_mbid,
@@ -213,7 +258,7 @@ export class ReleaseGroupSlotService {
                     selection.match.confidence,
                     selection.match.method,
                     JSON.stringify({ ...selection.match.evidence, score: selection.score }),
-                    JSON.stringify(selection.album.raw ?? selection.album),
+                    JSON.stringify(buildProviderOfferSnapshot(selection.album)),
                 );
                 counts[selection.slot] += 1;
             }

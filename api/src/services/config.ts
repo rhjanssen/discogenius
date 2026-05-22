@@ -98,7 +98,7 @@ export interface FilteringConfig {
   include_videos: boolean;             // Monitor music videos
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
-  require_provider_availability: boolean; // Only monitor slots with provider availability
+  require_provider_availability: boolean; // Legacy config key; provider availability is now tracked by slot selections, not wanted state
 }
 
 export interface PathConfig {
@@ -106,6 +106,7 @@ export interface PathConfig {
   spatial_path: string;
   video_path: string;
   create_empty_artist_folders?: boolean;
+  video_folder_layout?: "separated" | "inline";
 }
 
 export interface NamingConfig {
@@ -221,13 +222,14 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_appears_on: false,        // Only this is disabled by default
     include_spatial: false,
     include_videos: false,
-    require_provider_availability: true,
+    require_provider_availability: false,
   },
   path: {
     music_path: "/library/stereo-music",
     spatial_path: "/library/spatial-music",
     video_path: "/library/music-videos",
     create_empty_artist_folders: false,
+    video_folder_layout: "separated",
   },
   naming: {
     artist_folder: "{artistName} {mbid-{artistMbId}}",

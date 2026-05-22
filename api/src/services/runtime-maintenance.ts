@@ -112,13 +112,13 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
       verified_at,
       modified_at,
       created_at
-    FROM library_files
+    FROM TrackFiles
     WHERE media_id IS NOT NULL
       AND file_type IN ('track', 'video')
     ORDER BY media_id ASC, file_type ASC, id ASC
   `).all() as LibraryFileRow[];
 
-  const deleteRow = db.prepare("DELETE FROM library_files WHERE id = ?");
+  const deleteRow = db.prepare("DELETE FROM TrackFiles WHERE id = ?");
   let currentKey = "";
   let bucket: LibraryFileRow[] = [];
 
@@ -156,27 +156,27 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
 
 function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
   summary.mediaMonitorRepairs += Number(db.prepare(`
-    UPDATE media
+    UPDATE ProviderMedia AS media
     SET monitor = 1,
         monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
     WHERE monitor = 0
       AND monitored_at IS NULL
       AND EXISTS (
         SELECT 1
-        FROM library_files lf
+        FROM TrackFiles lf
         WHERE lf.media_id = media.id
           AND lf.file_type IN ('track', 'video')
       )
   `).run().changes || 0);
 
   summary.albumMonitorRepairs += Number(db.prepare(`
-    UPDATE albums
+    UPDATE ProviderAlbums AS albums
     SET monitor = 1,
         monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
     WHERE monitor = 0
       AND EXISTS (
         SELECT 1
-        FROM media m
+        FROM ProviderMedia m
         WHERE m.album_id = albums.id
           AND m.type != 'Music Video'
           AND m.monitor = 1
@@ -189,10 +189,10 @@ function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
 
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
   summary.albumStatesRefreshed = Number(
-    (db.prepare("SELECT COUNT(*) AS count FROM albums").get() as { count: number } | undefined)?.count || 0,
+    (db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number } | undefined)?.count || 0,
   );
   summary.artistStatesRefreshed = Number(
-    (db.prepare("SELECT COUNT(*) AS count FROM artists").get() as { count: number } | undefined)?.count || 0,
+    (db.prepare("SELECT COUNT(*) AS count FROM Artists").get() as { count: number } | undefined)?.count || 0,
   );
 
   invalidateAllDownloadState();
@@ -222,29 +222,29 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     repairMonitoringGaps(summary);
 
     db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_media_identity
-      ON library_files(media_id, file_type)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_media_identity
+      ON TrackFiles(media_id, file_type)
       WHERE media_id IS NOT NULL
         AND file_type IN ('track', 'video')
     `);
     summary.mediaIdentityIndexEnsured = true;
 
     db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_media_sidecar_identity
-      ON library_files(media_id, file_type)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_media_sidecar_identity
+      ON TrackFiles(media_id, file_type)
       WHERE media_id IS NOT NULL
         AND file_type IN ('lyrics', 'video_thumbnail')
     `);
     db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_album_sidecar_identity
-      ON library_files(album_id, file_type, library_root)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_album_sidecar_identity
+      ON TrackFiles(album_id, file_type, library_root)
       WHERE album_id IS NOT NULL
         AND media_id IS NULL
         AND file_type IN ('cover', 'video_cover', 'review')
     `);
     db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_library_files_artist_sidecar_identity
-      ON library_files(artist_id, file_type, library_root)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_artist_sidecar_identity
+      ON TrackFiles(artist_id, file_type, library_root)
       WHERE album_id IS NULL
         AND media_id IS NULL
         AND file_type IN ('cover', 'bio')
@@ -293,5 +293,4 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   return summary;
 }
-
 
