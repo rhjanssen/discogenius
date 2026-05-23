@@ -23,9 +23,16 @@ type ReleaseGroupSlotRow = {
     provider_data?: string | null;
 };
 
+type CurationTrack = {
+    recordingMbid: string | null;
+    normalizedTitle: string;
+};
+
 type PreferredReleaseRecordings = {
     releaseMbid: string;
+    tracks: CurationTrack[];
     recordingIds: Set<string>;
+    normalizedTitles: Set<string>;
 };
 
 type ArtistCurationIdentity = {
@@ -103,7 +110,54 @@ export class CurationService {
         }
     }
 
+    private static normalizeTrackTitle(title: string): string {
+        return String(title || "")
+            .toLowerCase()
+            .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?'"’…]/g, "")
+            .replace(/\s+/g, "")
+            .trim();
+    }
+
     private static getPreferredReleaseRecordings(releaseGroupMbid: string): PreferredReleaseRecordings | null {
+        const mapTracks = (releaseMbid: string): PreferredReleaseRecordings | null => {
+            const rows = db.prepare(`
+                SELECT recording_mbid, title
+                FROM Tracks
+                WHERE release_mbid = ?
+            `).all(releaseMbid) as Array<{ recording_mbid: string | null; title: string | null }>;
+
+            if (rows.length === 0) {
+                return null;
+            }
+
+            const tracks: CurationTrack[] = [];
+            const recordingIds = new Set<string>();
+            const normalizedTitles = new Set<string>();
+
+            for (const row of rows) {
+                const title = String(row.title || "").trim();
+                const normTitle = this.normalizeTrackTitle(title);
+                const recId = row.recording_mbid ? String(row.recording_mbid).trim() : null;
+
+                tracks.push({
+                    recordingMbid: recId && this.looksLikeMusicBrainzMbid(recId) ? recId : null,
+                    normalizedTitle: normTitle,
+                });
+
+                if (recId && this.looksLikeMusicBrainzMbid(recId)) {
+                    recordingIds.add(recId);
+                }
+                if (normTitle) {
+                    normalizedTitles.add(normTitle);
+                }
+            }
+
+            if (tracks.length > 0) {
+                return { releaseMbid, tracks, recordingIds, normalizedTitles };
+            }
+            return null;
+        };
+
         const release = db.prepare(`
             SELECT
                 r.mbid,
@@ -127,16 +181,9 @@ export class CurationService {
         `).get(releaseGroupMbid) as { mbid: string } | undefined;
 
         if (release?.mbid) {
-            const rows = db.prepare(`
-                SELECT DISTINCT recording_mbid
-                FROM Tracks
-                WHERE release_mbid = ?
-                  AND recording_mbid IS NOT NULL
-                  AND recording_mbid != ''
-            `).all(release.mbid) as Array<{ recording_mbid: string }>;
-            const recordingIds = new Set(rows.map((row) => String(row.recording_mbid)).filter(Boolean));
-            if (recordingIds.size > 0) {
-                return { releaseMbid: release.mbid, recordingIds };
+            const mapped = mapTracks(release.mbid);
+            if (mapped) {
+                return mapped;
             }
         }
 
@@ -145,24 +192,15 @@ export class CurationService {
             FROM AlbumReleases r
             JOIN Tracks t ON t.release_mbid = r.mbid
             WHERE r.release_group_mbid = ?
-              AND t.recording_mbid IS NOT NULL
-              AND t.recording_mbid != ''
             GROUP BY r.mbid
             ORDER BY track_count DESC
             LIMIT 1
         `).get(releaseGroupMbid) as { mbid: string } | undefined;
 
         if (fallbackRelease?.mbid) {
-            const rows = db.prepare(`
-                SELECT DISTINCT recording_mbid
-                FROM Tracks
-                WHERE release_mbid = ?
-                  AND recording_mbid IS NOT NULL
-                  AND recording_mbid != ''
-            `).all(fallbackRelease.mbid) as Array<{ recording_mbid: string }>;
-            const recordingIds = new Set(rows.map((row) => String(row.recording_mbid)).filter(Boolean));
-            if (recordingIds.size > 0) {
-                return { releaseMbid: fallbackRelease.mbid, recordingIds };
+            const mapped = mapTracks(fallbackRelease.mbid);
+            if (mapped) {
+                return mapped;
             }
         }
 
@@ -231,12 +269,12 @@ export class CurationService {
         }
 
         // Sort all release groups:
-        // 1. By recording/track size descending (larger groups first)
+        // 1. By track count descending (larger groups first)
         // 2. By custom type priority descending to break ties (Album > EP > Single > Broadcast > Other)
         // 3. By MusicBrainz ID comparison for stable sorting
         hydratedGroups.sort((a, b) => {
-            const sizeA = a.preferredRelease.recordingIds.size;
-            const sizeB = b.preferredRelease.recordingIds.size;
+            const sizeA = a.preferredRelease.tracks.length;
+            const sizeB = b.preferredRelease.tracks.length;
             if (sizeB !== sizeA) {
                 return sizeB - sizeA;
             }
@@ -255,18 +293,21 @@ export class CurationService {
 
         for (const entry of hydratedGroups) {
             const isContained = retainedGroups.some(({ preferredRelease }) => {
-                if (entry.preferredRelease.recordingIds.size > preferredRelease.recordingIds.size) {
+                if (entry.preferredRelease.tracks.length > preferredRelease.tracks.length) {
                     return false;
                 }
 
-                // Check strict containment: all recording MBIDs of candidate must be in the retained group
+                // Check containment: for every track in entry, we must find a match in preferredRelease
+                // either by recording ID or by normalized title.
                 let overlap = 0;
-                for (const recordingMbid of entry.preferredRelease.recordingIds) {
-                    if (preferredRelease.recordingIds.has(recordingMbid)) {
+                for (const track of entry.preferredRelease.tracks) {
+                    const hasMatch = (track.recordingMbid && preferredRelease.recordingIds.has(track.recordingMbid))
+                        || (track.normalizedTitle && preferredRelease.normalizedTitles.has(track.normalizedTitle));
+                    if (hasMatch) {
                         overlap++;
                     }
                 }
-                return overlap === entry.preferredRelease.recordingIds.size;
+                return overlap === entry.preferredRelease.tracks.length;
             });
 
             if (isContained) {
@@ -278,7 +319,7 @@ export class CurationService {
 
         if (redundantReleaseGroupIds.size > 0) {
             console.log(
-                `[Curation] Marked ${redundantReleaseGroupIds.size} release group(s) redundant by MusicBrainz recording overlap.`
+                `[Curation] Marked ${redundantReleaseGroupIds.size} release group(s) redundant by MusicBrainz recording/title overlap.`
             );
         }
 
@@ -367,6 +408,7 @@ export class CurationService {
                     && (!requireProvider || hasProvider)
                     ? 1
                     : 0;
+                
                 if (wanted) {
                     wantedSlots++;
                 }

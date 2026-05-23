@@ -782,4 +782,79 @@ test("CurationService respects require_provider_availability filter", async () =
   assert.equal(slot2.wanted, 0); // Unmatched slot should NOT be wanted
 });
 
+test("CurationService marks Single redundant if contained in an EP by track title matching even if recording MBIDs differ", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille", "Bastille");
+
+  // Insert release groups: EP and Single
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-ep", "artist-mbid-bastille", "& EP", "EP");
+  insertReleaseGroup.run("rg-single", "artist-mbid-bastille", "And?", "Single");
+
+  // Insert AlbumReleases for EP
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-ep", "rg-ep", "artist-mbid-bastille", "& EP", "Official", "2024-01-01", 1, 2);
+
+  // Insert AlbumReleases for Single
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-single", "rg-single", "artist-mbid-bastille", "And?", "Official", "2024-01-01", 1, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-ep-1", "And?");
+  insertRecording.run("rec-ep-2", "Other Track");
+  insertRecording.run("rec-single-1", "And?");
+
+  // Insert Tracks for EP
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-ep-1", "release-ep", "rec-ep-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep", "rec-ep-2", 1, 2, "2", "Other Track", 200000);
+
+  // Insert Track for Single with different recording MBID
+  insertTrack.run("track-single-1", "release-single", "rec-single-1", 1, 1, "1", "And?", 200000);
+
+  // Configure filtering to include both EPs and Singles
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+
+  assert.equal(epSlot.wanted, 1);
+  assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
+});
+
 
