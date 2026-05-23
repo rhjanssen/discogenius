@@ -4,7 +4,7 @@ import { getConfigSection, type FilteringConfig } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
 import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
-import { isMusicBrainzReleaseGroupIncluded } from "./musicbrainz-release-group-filter.js";
+import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "./musicbrainz-release-group-filter.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -125,38 +125,81 @@ export class CurationService {
                 r.mbid ASC
             LIMIT 1
         `).get(releaseGroupMbid) as { mbid: string } | undefined;
-        if (!release?.mbid) {
-            return null;
-        }
 
-        const rows = db.prepare(`
-            SELECT DISTINCT recording_mbid
-            FROM Tracks
-            WHERE release_mbid = ?
-              AND recording_mbid IS NOT NULL
-              AND recording_mbid != ''
-        `).all(release.mbid) as Array<{ recording_mbid: string }>;
-        const recordingIds = new Set(rows.map((row) => String(row.recording_mbid)).filter(Boolean));
-        if (recordingIds.size === 0) {
-            return null;
-        }
-
-        return { releaseMbid: release.mbid, recordingIds };
-    }
-
-    private static recordingOverlapRatio(candidate: Set<string>, album: Set<string>): number {
-        if (candidate.size === 0 || album.size === 0) {
-            return 0;
-        }
-
-        let overlap = 0;
-        for (const recordingMbid of candidate) {
-            if (album.has(recordingMbid)) {
-                overlap++;
+        if (release?.mbid) {
+            const rows = db.prepare(`
+                SELECT DISTINCT recording_mbid
+                FROM Tracks
+                WHERE release_mbid = ?
+                  AND recording_mbid IS NOT NULL
+                  AND recording_mbid != ''
+            `).all(release.mbid) as Array<{ recording_mbid: string }>;
+            const recordingIds = new Set(rows.map((row) => String(row.recording_mbid)).filter(Boolean));
+            if (recordingIds.size > 0) {
+                return { releaseMbid: release.mbid, recordingIds };
             }
         }
 
-        return overlap / candidate.size;
+        const fallbackRelease = db.prepare(`
+            SELECT r.mbid, COUNT(t.mbid) as track_count
+            FROM AlbumReleases r
+            JOIN Tracks t ON t.release_mbid = r.mbid
+            WHERE r.release_group_mbid = ?
+              AND t.recording_mbid IS NOT NULL
+              AND t.recording_mbid != ''
+            GROUP BY r.mbid
+            ORDER BY track_count DESC
+            LIMIT 1
+        `).get(releaseGroupMbid) as { mbid: string } | undefined;
+
+        if (fallbackRelease?.mbid) {
+            const rows = db.prepare(`
+                SELECT DISTINCT recording_mbid
+                FROM Tracks
+                WHERE release_mbid = ?
+                  AND recording_mbid IS NOT NULL
+                  AND recording_mbid != ''
+            `).all(fallbackRelease.mbid) as Array<{ recording_mbid: string }>;
+            const recordingIds = new Set(rows.map((row) => String(row.recording_mbid)).filter(Boolean));
+            if (recordingIds.size > 0) {
+                return { releaseMbid: fallbackRelease.mbid, recordingIds };
+            }
+        }
+
+        return null;
+    }
+
+    private static getReleaseGroupPriority(rg: ReleaseGroupForCuration): number {
+        const primary = String(rg.primary_type || "album").trim().toLowerCase();
+        let score = 0;
+
+        if (primary === "album") {
+            score += 100;
+        } else if (primary === "ep") {
+            score += 80;
+        } else if (primary === "single") {
+            score += 60;
+        } else if (primary === "broadcast") {
+            score += 40;
+        } else {
+            score += 20;
+        }
+
+        const secondary = parseMusicBrainzSecondaryTypes(rg.secondary_types);
+        if (secondary.includes("compilation")) {
+            score -= 10;
+        }
+        if (secondary.includes("live")) {
+            score -= 5;
+        }
+        if (secondary.includes("remix")) {
+            score -= 5;
+        }
+        if (secondary.includes("soundtrack")) {
+            score -= 5;
+        }
+
+        return score;
     }
 
     private static async findReleaseGroupsContainedByAlbums(
@@ -165,26 +208,16 @@ export class CurationService {
         includedReleaseGroupIds: Set<string>,
     ): Promise<Set<string>> {
         const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
-        const albumReleaseGroups = included.filter((releaseGroup) =>
-            !this.isSingleOrEp(releaseGroup)
-        );
-        const candidateReleaseGroups = included.filter((releaseGroup) =>
-            this.isSingleOrEp(releaseGroup)
-        );
-
-        if (albumReleaseGroups.length === 0 || candidateReleaseGroups.length === 0) {
+        if (included.length === 0) {
             return new Set();
         }
 
-        const releaseGroupIdsToHydrate = new Set([
-            ...albumReleaseGroups.map((releaseGroup) => releaseGroup.mbid),
-            ...candidateReleaseGroups.map((releaseGroup) => releaseGroup.mbid),
-        ]);
+        const releaseGroupIdsToHydrate = new Set(included.map((rg) => rg.mbid));
         for (const releaseGroupMbid of releaseGroupIdsToHydrate) {
             await this.ensureReleaseGroupTrackCache(artistMbid, releaseGroupMbid);
         }
 
-        const albumRecordingSets = albumReleaseGroups
+        const hydratedGroups = included
             .map((releaseGroup) => ({
                 releaseGroup,
                 preferredRelease: this.getPreferredReleaseRecordings(releaseGroup.mbid),
@@ -192,32 +225,60 @@ export class CurationService {
             .filter((entry): entry is { releaseGroup: ReleaseGroupForCuration; preferredRelease: PreferredReleaseRecordings } =>
                 Boolean(entry.preferredRelease)
             );
-        if (albumRecordingSets.length === 0) {
+
+        if (hydratedGroups.length === 0) {
             return new Set();
         }
 
-        const redundantReleaseGroupIds = new Set<string>();
-        for (const candidate of candidateReleaseGroups) {
-            const candidateRelease = this.getPreferredReleaseRecordings(candidate.mbid);
-            if (!candidateRelease) {
-                continue;
+        // Sort all release groups:
+        // 1. By recording/track size descending (larger groups first)
+        // 2. By custom type priority descending to break ties (Album > EP > Single > Broadcast > Other)
+        // 3. By MusicBrainz ID comparison for stable sorting
+        hydratedGroups.sort((a, b) => {
+            const sizeA = a.preferredRelease.recordingIds.size;
+            const sizeB = b.preferredRelease.recordingIds.size;
+            if (sizeB !== sizeA) {
+                return sizeB - sizeA;
             }
 
-            const isContained = albumRecordingSets.some(({ preferredRelease }) => {
-                if (candidateRelease.recordingIds.size > preferredRelease.recordingIds.size) {
+            const priorityA = this.getReleaseGroupPriority(a.releaseGroup);
+            const priorityB = this.getReleaseGroupPriority(b.releaseGroup);
+            if (priorityB !== priorityA) {
+                return priorityB - priorityA;
+            }
+
+            return a.releaseGroup.mbid.localeCompare(b.releaseGroup.mbid);
+        });
+
+        const retainedGroups: Array<{ releaseGroup: ReleaseGroupForCuration; preferredRelease: PreferredReleaseRecordings }> = [];
+        const redundantReleaseGroupIds = new Set<string>();
+
+        for (const entry of hydratedGroups) {
+            const isContained = retainedGroups.some(({ preferredRelease }) => {
+                if (entry.preferredRelease.recordingIds.size > preferredRelease.recordingIds.size) {
                     return false;
                 }
-                const overlapRatio = this.recordingOverlapRatio(candidateRelease.recordingIds, preferredRelease.recordingIds);
-                return overlapRatio >= 0.8;
+
+                // Check strict containment: all recording MBIDs of candidate must be in the retained group
+                let overlap = 0;
+                for (const recordingMbid of entry.preferredRelease.recordingIds) {
+                    if (preferredRelease.recordingIds.has(recordingMbid)) {
+                        overlap++;
+                    }
+                }
+                return overlap === entry.preferredRelease.recordingIds.size;
             });
+
             if (isContained) {
-                redundantReleaseGroupIds.add(candidate.mbid);
+                redundantReleaseGroupIds.add(entry.releaseGroup.mbid);
+            } else {
+                retainedGroups.push(entry);
             }
         }
 
         if (redundantReleaseGroupIds.size > 0) {
             console.log(
-                `[Curation] Marked ${redundantReleaseGroupIds.size} EP/single release group(s) redundant by MusicBrainz recording overlap.`
+                `[Curation] Marked ${redundantReleaseGroupIds.size} release group(s) redundant by MusicBrainz recording overlap.`
             );
         }
 
@@ -253,18 +314,30 @@ export class CurationService {
 
         this.ensureReleaseGroupSlotRows(artistMbid, releaseGroups, includeSpatial);
 
-        const includedReleaseGroupIds = new Set<string>();
-        for (const releaseGroup of releaseGroups) {
-            if (this.isReleaseGroupIncluded(releaseGroup, curationConfig)) {
-                includedReleaseGroupIds.add(releaseGroup.mbid);
-            }
-        }
-
         const slotRows = db.prepare(`
             SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, provider_data
             FROM ReleaseGroupSlots
             WHERE artist_mbid = ?
         `).all(artistMbid) as ReleaseGroupSlotRow[];
+
+        const requireProvider = curationConfig.require_provider_availability === true;
+        const hasProviderMatch = new Set<string>();
+        if (requireProvider) {
+            for (const slot of slotRows) {
+                if (slot.selected_provider_id != null && slot.selected_provider_id !== "") {
+                    hasProviderMatch.add(slot.release_group_mbid);
+                }
+            }
+        }
+
+        const includedReleaseGroupIds = new Set<string>();
+        for (const releaseGroup of releaseGroups) {
+            if (this.isReleaseGroupIncluded(releaseGroup, curationConfig)) {
+                if (!requireProvider || hasProviderMatch.has(releaseGroup.mbid)) {
+                    includedReleaseGroupIds.add(releaseGroup.mbid);
+                }
+            }
+        }
 
         if (enableRedundancyFilter) {
             const redundantReleaseGroupIds = await this.findReleaseGroupsContainedByAlbums(
@@ -288,8 +361,10 @@ export class CurationService {
         db.transaction(() => {
             for (const slot of slotRows) {
                 const slotName = String(slot.slot || "").toLowerCase();
+                const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
                 const wanted = includedReleaseGroupIds.has(slot.release_group_mbid)
                     && (slotName !== "spatial" || includeSpatial)
+                    && (!requireProvider || hasProvider)
                     ? 1
                     : 0;
                 if (wanted) {

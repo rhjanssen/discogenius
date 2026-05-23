@@ -17,6 +17,7 @@ import {
 } from "@fluentui/react-components";
 import {
     CheckmarkCircle24Filled,
+    CheckmarkCircle24Regular,
     ErrorCircle24Filled,
     ArrowClockwise24Regular,
     Clock24Regular,
@@ -168,8 +169,12 @@ function renderTrackStatusIndicator(
         return <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} />;
     }
 
+    if (options.isImporting) {
+        return <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Importing" />;
+    }
+
     if (options.isDownloading) {
-        return <Spinner size="extra-tiny" aria-label={options.isImporting ? 'importing' : 'downloading'} />;
+        return <Spinner size="extra-tiny" aria-label="downloading" />;
     }
 
     if (options.isSkipped) {
@@ -1251,8 +1256,8 @@ const QueueTab = () => {
                                         ? getProgress(firstItem.id) ?? getEmbeddedQueueItemProgress(firstItem)
                                         : undefined;
                                 const activeStage = activeItem?.stage || firstItem?.stage;
-                                const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing');
-                                const isImportPending = !isDownloading && !isFailed && activeStage === 'import';
+                                const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing' || prog?.state === 'importPending');
+                                const isImportPending = !isDownloading && !isFailed && (activeStage === 'import' || prog?.state === 'importPending' || prog?.state === 'importing');
                                 const shouldRenderGroupedTrackRows = groupedTrackItems.length > 0;
                                 const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                                 const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
@@ -1410,17 +1415,27 @@ const QueueTab = () => {
                                             )}
                                             {!isDownloading && !isFailed && (
                                                 isImportPending
-                                                    ? <Text className={styles.downloadStatusText}>waiting to import</Text>
+                                                    ? (
+                                                        <div className={styles.downloadStateIndicator} style={{ gap: '6px' }}>
+                                                            <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Waiting to import" />
+                                                            <Text className={styles.downloadStatusText}>waiting to import</Text>
+                                                        </div>
+                                                      )
                                                     : renderPendingIndicator(styles)
                                             )}
                                             {isDownloading && (
                                                 isImporting
-                                                    ? <Text className={styles.downloadStatusText}>importing</Text>
+                                                    ? (
+                                                        <div className={styles.downloadStateIndicator} style={{ gap: '6px' }}>
+                                                            <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Importing" />
+                                                            <Text className={styles.downloadStatusText}>importing</Text>
+                                                        </div>
+                                                      )
                                                     : (
                                                         <div className={styles.downloadStateIndicator}>
                                                             <Spinner size="extra-tiny" />
                                                         </div>
-                                                    )
+                                                     )
                                             )}
                                             <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                                 {isPendingReorderable ? (
@@ -1523,7 +1538,7 @@ const QueueTab = () => {
                                             const isItemDownloading = derivedStatus === 'downloading';
                                             const isItemFailed = derivedStatus === 'error';
                                             const isItemCompleted = derivedStatus === 'completed';
-                                            const isItemImporting = isItemDownloading && (item.stage === 'import' || itemProg?.state === 'importing');
+                                            const isItemImporting = isItemDownloading && (item.stage === 'import' || itemProg?.state === 'importing' || itemProg?.state === 'importPending' || prog?.state === 'importing' || prog?.state === 'importPending');
                                             const itemStatusText = getTrackStatusText({
                                                 isImporting: isItemImporting,
                                             });

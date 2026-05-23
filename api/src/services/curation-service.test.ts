@@ -29,7 +29,7 @@ function writeTestConfig(overrides?: {
     include_ep: overrides?.includeEp !== false,
     include_album: overrides?.includeAlbum !== false,
     include_spatial: false,
-    require_provider_availability: true,
+    require_provider_availability: false,
     include_videos: false,
     ...(overrides?.filtering || {}),
   };
@@ -53,12 +53,13 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Tracks").run();
+  db.prepare("DELETE FROM Recordings").run();
+  db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM ProviderMediaArtists").run();
   db.prepare("DELETE FROM ProviderAlbumArtists").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Artists").run();
 
   writeTestConfig();
@@ -486,3 +487,299 @@ test("Album versions are MusicBrainz releases from the release group", async () 
   assert.match(versions[0].version || "", /Official/);
   assert.match(versions[0].version || "", /Worldwide/);
 });
+
+test("CurationService marks Single redundant if contained in an EP", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille", "Bastille");
+
+  // Insert release groups: EP and Single
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-ep", "artist-mbid-bastille", "& EP", "EP");
+  insertReleaseGroup.run("rg-single", "artist-mbid-bastille", "And?", "Single");
+
+  // Insert AlbumReleases for EP
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-ep", "rg-ep", "artist-mbid-bastille", "& EP", "Official", "2024-01-01", 1, 2);
+
+  // Insert AlbumReleases for Single
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-single", "rg-single", "artist-mbid-bastille", "And?", "Official", "2024-01-01", 1, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-1", "And?");
+  insertRecording.run("rec-2", "Other Track");
+
+  // Insert Tracks for EP (contains rec-1 and rec-2)
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-ep-1", "release-ep", "rec-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep", "rec-2", 1, 2, "2", "Other Track", 200000);
+
+  // Insert Track for Single (contains rec-1)
+  insertTrack.run("track-single-1", "release-single", "rec-1", 1, 1, "1", "And?", 200000);
+
+  // Configure filtering to include both EPs and Singles
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+
+  assert.equal(epSlot.wanted, 1);
+  assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP!
+});
+
+test("CurationService marks Album redundant if contained in a Compilation", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille", "Bastille");
+
+  // Insert release groups: Compilation and Album
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-compilation", "artist-mbid-bastille", "All the Hits", "Compilation");
+  insertReleaseGroup.run("rg-album", "artist-mbid-bastille", "Bad Blood", "Album");
+
+  // Insert AlbumReleases for Compilation
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-compilation", "rg-compilation", "artist-mbid-bastille", "All the Hits", "Official", "2024-01-01", 1, 3);
+
+  // Insert AlbumReleases for Album
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-album", "rg-album", "artist-mbid-bastille", "Bad Blood", "Official", "2024-01-01", 1, 2);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-1", "Pompeii");
+  insertRecording.run("rec-2", "Things We Lost in the Fire");
+  insertRecording.run("rec-3", "Flaws");
+
+  // Insert Tracks for Compilation (contains Pompeii, Things We Lost, and Flaws)
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-comp-1", "release-compilation", "rec-1", 1, 1, "1", "Pompeii", 200000);
+  insertTrack.run("track-comp-2", "release-compilation", "rec-2", 1, 2, "2", "Things We Lost in the Fire", 200000);
+  insertTrack.run("track-comp-3", "release-compilation", "rec-3", 1, 3, "3", "Flaws", 200000);
+
+  // Insert Tracks for Album (contains Pompeii and Things We Lost)
+  insertTrack.run("track-alb-1", "release-album", "rec-1", 1, 1, "1", "Pompeii", 200000);
+  insertTrack.run("track-alb-2", "release-album", "rec-2", 1, 2, "2", "Things We Lost in the Fire", 200000);
+
+  // Configure filtering to include both Album and Compilation
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_compilation: true,
+      include_single: false,
+      include_ep: false,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const compSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-compilation") as any;
+  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-album") as any;
+
+  assert.equal(compSlot.wanted, 1);
+  assert.equal(albumSlot.wanted, 0); // Album should be redundant because its tracks are in the Compilation!
+});
+
+test("CurationService uses fallback release when preferred release has no tracks cached", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille", "Bastille");
+
+  // Insert release groups: EP and Single
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-ep", "artist-mbid-bastille", "& EP", "EP");
+  insertReleaseGroup.run("rg-single", "artist-mbid-bastille", "And?", "Single");
+
+  // Insert AlbumReleases for EP (preferred is release-ep-preferred, but fallback is release-ep-fallback)
+  // preferred release (status = Official, date is NULL)
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-ep-preferred", "rg-ep", "artist-mbid-bastille", "& EP (Preferred)", "Official", null, 1, 2);
+
+  // fallback release (status = Official, date is NOT NULL, has tracks)
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-ep-fallback", "rg-ep", "artist-mbid-bastille", "& EP (Fallback)", "Official", "2024-01-01", 1, 2);
+
+  // Insert AlbumReleases for Single
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-single", "rg-single", "artist-mbid-bastille", "And?", "Official", "2024-01-01", 1, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-1", "And?");
+  insertRecording.run("rec-2", "Other Track");
+
+  // Insert Tracks only for the fallback release of EP, none for the preferred release!
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-ep-1", "release-ep-fallback", "rec-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep-fallback", "rec-2", 1, 2, "2", "Other Track", 200000);
+
+  // Insert Track for Single
+  insertTrack.run("track-single-1", "release-single", "rec-1", 1, 1, "1", "And?", 200000);
+
+  // Configure filtering to include both EPs and Singles
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status: the Single should still be marked redundant because the EP
+  // containment check fell back to the fallback release's tracks!
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+
+  assert.equal(epSlot.wanted, 1);
+  assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP fallback release!
+});
+
+test("CurationService respects require_provider_availability filter", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  // Insert two release groups: rg-1 (available) and rg-2 (unavailable)
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-1", "artist-mbid-1", "A Night at the Opera", "album");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-2", "artist-mbid-1", "News of the World", "album");
+
+  // Insert ReleaseGroupSlots manually
+  // rg-1 has a provider matched
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, match_status, selected_provider, selected_provider_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-1", "stereo", 0, "matched", "tidal", "album-prov-1");
+
+  // rg-2 is unmatched (no provider)
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, match_status
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-2", "stereo", 0, "unmatched");
+
+  // Configure filtering with require_provider_availability = true
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      require_provider_availability: true,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const slot1 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-1") as any;
+  const slot2 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-2") as any;
+
+  assert.equal(slot1.wanted, 1); // Matched slot should be wanted
+  assert.equal(slot2.wanted, 0); // Unmatched slot should NOT be wanted
+});
+
+

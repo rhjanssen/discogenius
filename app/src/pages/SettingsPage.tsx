@@ -1666,6 +1666,12 @@ const SettingsPage = () => {
                             checked: curationConfig?.enable_redundancy_filter !== false,
                             onChange: (checked) => updateCuration({ enable_redundancy_filter: checked }),
                         })}
+                        {renderToggleRow({
+                            title: "Require Provider Match",
+                            description: "Only mark releases wanted if they are matched to a connected streaming provider",
+                            checked: curationConfig?.require_provider_availability === true,
+                            onChange: (checked) => updateCuration({ require_provider_availability: checked }),
+                        })}
                         <div className={styles.row}>
                             <Button
                                 appearance="outline"

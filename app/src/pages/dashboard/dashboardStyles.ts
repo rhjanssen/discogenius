@@ -290,6 +290,12 @@ export const useDashboardStyles = makeStyles({
         color: tokens.colorPaletteGreenForeground1,
         flexShrink: 0,
     },
+    downloadStatusImportingIcon: {
+        width: "16px",
+        height: "16px",
+        color: tokens.colorPaletteBlueForeground1,
+        flexShrink: 0,
+    },
     downloadStatusErrorIcon: {
         width: "16px",
         height: "16px",

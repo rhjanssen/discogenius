@@ -76,6 +76,15 @@ function getPrimaryType(input: ReleaseGroupFilterInput): string {
 }
 
 function getPrimaryIncludeDecision(primaryType: string, filteringConfig: FilteringConfig): IncludeDecision {
+    const configKey = SECONDARY_TYPE_CONFIG_KEYS[primaryType];
+    if (configKey) {
+        const include = filteringConfig[configKey] === true;
+        return {
+            include,
+            reason: include ? null : `${primaryType}_excluded`,
+        };
+    }
+
     switch (primaryType) {
         case "album":
             return {
