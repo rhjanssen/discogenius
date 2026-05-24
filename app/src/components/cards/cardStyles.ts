@@ -218,12 +218,8 @@ export const useGridStyles = makeStyles({
         "@media (min-width: 640px)": {
             gridTemplateColumns: "repeat(4, 1fr)",
         },
-        // Small desktop: 5 columns
-        "@media (min-width: 900px)": {
-            gridTemplateColumns: "repeat(5, 1fr)",
-        },
         // Desktop: 6 columns
-        "@media (min-width: 1200px)": {
+        "@media (min-width: 900px)": {
             gridTemplateColumns: "repeat(6, 1fr)",
         },
     },
@@ -238,10 +234,18 @@ export const useGridStyles = makeStyles({
         scrollSnapType: "x mandatory",
         "& > *": {
             scrollSnapAlign: "start",
-            // Card widths in carousel
-            minWidth: "160px",
-            maxWidth: "200px",
+            width: "calc((100vw - 56px) / 3)",
             flexShrink: 0,
+        },
+        "@media (min-width: 480px)": {
+            "& > *": {
+                width: "148px",
+            },
+        },
+        "@media (min-width: 768px)": {
+            "& > *": {
+                width: "calc((100% - (5 * 12px)) / 6)",
+            },
         },
         // Hide scrollbar
         scrollbarWidth: "none",

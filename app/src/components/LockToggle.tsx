@@ -2,6 +2,7 @@ import React from "react";
 import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { LockClosed24Regular, LockOpen24Regular } from "@fluentui/react-icons";
 import { useMonitoring } from "@/hooks/useMonitoring";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 
 interface LockToggleProps {
@@ -53,6 +54,7 @@ export const LockToggle: React.FC<LockToggleProps> = ({
 
 const useStyles = makeStyles({
     root: {
+        ...glassButtonStyles,
         minWidth: "32px",
         width: "32px",
         height: "32px",

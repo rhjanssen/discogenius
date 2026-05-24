@@ -4,6 +4,7 @@ import { getConfigSection, type NamingConfig } from "./config.js";
 export type LibraryRoot = "music" | "spatial" | "videos";
 
 export type NamingContext = {
+  provider?: string | null;
   artistName: string;
   artistMbId?: string | null;
   artistDisambiguation?: string | null;
@@ -42,82 +43,68 @@ export type NamingContext = {
   channels?: number | null;
 };
 
-function sanitizeSegment(input: string): string {
-  return (input || "")
-    .replace(/[<>:"/\\|?*]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+const TitlePrefixRegex = /^(The|An|A)\s+(.*?)((?: *\([^)]+\))*)$/i;
+const ScenifyReplaceChars = /\//g;
+const ScenifyRemoveChars = /(?<=\s)([,<>\/\\;:'"|`~!@$%^*_=\-?])(?=\s)|([':?,])(?=(?:[sm]\s)|\s|$)|([()\[\]{}])/gi;
+const FileNameCleanupRegex = /([- ._])\1+/g;
+const TrimSeparatorsRegex = /[- ._]+$/;
+
+function removeDiacritics(input: string): string {
+  return (input || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-// Path/filename cleaners
-
-function cleanTitle(input: string): string {
-  // 1. Replace & with "and"
-  let result = (input || "").replace(/&/g, "and");
-
-  // 2. Replace / with space
-  result = result.replace(/\//g, " ");
-
-  // 3. Remove special characters
-  // This removes: <>:"/\|?*'!#@$%^~;``() and brackets
-  // The logic is to remove punctuation but keep alphanumeric and spaces
-  result = result.replace(/[<>:"/\\|?*'!#@$%^~;`()[\]{}]/g, " ");
-
-  // 4. Remove diacritics using Unicode normalization
-  result = result.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-  // 5. Cleanup whitespace (multiple spaces -> single space)
-  result = result.replace(/\s+/g, " ").trim();
-
-  return result;
+export function cleanTitle(title: string): string {
+  if (!title) return "";
+  let result = title.replace(/&/g, "and");
+  result = result.replace(ScenifyReplaceChars, " ");
+  result = result.replace(ScenifyRemoveChars, "");
+  return removeDiacritics(result);
 }
 
-function titleThe(input: string): string {
-  // Match: ^(The|An|A) (.*?)((?: *\([^)]+\))*)$
-  // Replace: $2, $1$3 (moves prefix to end, preserves parenthetical suffix)
-  const value = (input || "").trim();
-  if (!value) return "";
-
-  const match = /^(The|An|A)\s+(.*?)((?: *\([^)]+\))*)$/i.exec(value);
-  if (!match) return value;
-
-  const prefix = match[1];
-  const main = match[2].trim();
-  const suffix = match[3];
-
-  return main ? `${main}, ${prefix}${suffix}` : value;
+export function titleThe(title: string): string {
+  if (!title) return "";
+  return title.replace(TitlePrefixRegex, "$2, $1$3");
 }
 
-function cleanTitleThe(input: string): string {
-  // If title matches TitlePrefixRegex, split and clean parts separately
-  // Otherwise return CleanTitle(title)
-  const value = (input || "").trim();
-  if (!value) return "";
-
-  const match = /^(The|An|A)\s+(.*?)((?: *\([^)]+\))*)$/i.exec(value);
-  if (!match) {
-    // No prefix found, just clean the whole thing
-    return cleanTitle(value);
+export function cleanTitleThe(title: string): string {
+  if (!title) return "";
+  const match = TitlePrefixRegex.exec(title);
+  if (match) {
+    const prefix = match[1];
+    const main = match[2];
+    const suffix = match[3];
+    return `${cleanTitle(main).trim()}, ${prefix}${cleanTitle(suffix)}`;
   }
+  return cleanTitle(title);
+}
 
-  const prefix = match[1];
-  const main = match[2].trim();
-  const suffix = match[3];
+export function cleanFileName(name: string): string {
+  let result = name;
+  result = result.replace(/: /g, " - ");
+  result = result.replace(/:/g, "-");
+  result = result.replace(/\\/g, "+");
+  result = result.replace(/\//g, "+");
+  result = result.replace(/</g, "");
+  result = result.replace(/>/g, "");
+  result = result.replace(/\?/g, "!");
+  result = result.replace(/\*/g, "-");
+  result = result.replace(/\|/g, "");
+  result = result.replace(/"/g, "");
+  return result.trimStart().replace(/^[. ]+/, "").trimEnd();
+}
 
-  // Clean main and suffix parts separately
-  const cleanedMain = cleanTitle(main);
-  const cleanedSuffix = cleanTitle(suffix);
-
-  return `${cleanedMain}, ${prefix}${cleanedSuffix}`;
+export function cleanPathSegment(segment: string): string {
+  let result = cleanFileName(segment);
+  result = result.replace(FileNameCleanupRegex, (match) => match[0]);
+  result = result.replace(TrimSeparatorsRegex, "");
+  return result.trimStart().replace(/^[. ]+/, "").trimEnd();
 }
 
 function toCleanText(input: string): string {
-  // Legacy function for backward compatibility with modifier syntax
   return cleanTitle(input);
 }
 
 function toNameThe(input: string): string {
-  // Legacy function for backward compatibility with modifier syntax
   return titleThe(input);
 }
 
@@ -180,6 +167,13 @@ function formatQualityValue(value: unknown, format: string): string {
   return String(value);
 }
 
+function getPrettyProviderName(provider: string | null | undefined): string {
+  const lower = (provider || "tidal").trim().toLowerCase();
+  if (lower === "tidal") return "TIDAL";
+  if (lower === "apple" || lower === "apple-music" || lower === "applemusic") return "Apple Music";
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 function buildDerived(context: NamingContext) {
   const artistName = context.artistName || "Unknown Artist";
   const artistId = context.artistId || "";
@@ -217,6 +211,11 @@ function buildDerived(context: NamingContext) {
   const trackId = context.trackId || context.videoId || "";
   const videoId = context.videoId || context.trackId || "";
 
+  const providerName = getPrettyProviderName(context.provider);
+  const providerArtistId = context.artistId || "";
+  const providerAlbumId = context.albumId || "";
+  const providerTrackId = context.trackId || context.videoId || "";
+
   return {
     artistName,
     artistMbId,
@@ -241,18 +240,15 @@ function buildDerived(context: NamingContext) {
     videoTitle,
     trackId,
     videoId,
+    providerName,
+    providerArtistId,
+    providerAlbumId,
+    providerTrackId,
   };
 }
 
-function resolveToken(rawTokenBody: string, context: NamingContext): string {
+function resolveTokenValue(tokenName: string, customFormat: string, context: NamingContext): string {
   const derived = buildDerived(context);
-
-  // Split by ':' to get token name and format specifiers
-  // Note: modifiers like :the:clean are deprecated; use named variables instead
-  //       e.g., {artistCleanNameThe} instead of {artistName:clean:the}
-  const parts = rawTokenBody.split(":");
-  const tokenName = parts[0];
-  const formatSpecifiers = parts.slice(1);
   const normalizedName = normalizeTokenName(tokenName);
 
   // Check for legacy padded token formats (e.g., trackNumber00, volumeNumber000)
@@ -265,7 +261,6 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
     return applyNumberFormat(derived.volumeNumber, "0".repeat(volumeNumberLegacyPad));
   }
 
-  // Resolve base unsanitized value based on token name
   let baseValue: string | null = null;
   let isNumericToken = false;
   let numericValue: number | null = null;
@@ -294,11 +289,19 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
     case "artistid":
       baseValue = derived.artistId;
       break;
+    case "providername":
+      baseValue = derived.providerName;
+      break;
+    case "providerartistid":
+      baseValue = derived.providerArtistId;
+      break;
     case "artistnamefirstcharacter": {
-      // Like Lidarr's TitleFirstCharacter: strip diacritics first, then check alphanumeric
       const theArtistName = titleThe(derived.artistName);
-      if (theArtistName.length === 0) { baseValue = "_"; break; }
-      const normalized = theArtistName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (theArtistName.length === 0) {
+        baseValue = "_";
+        break;
+      }
+      const normalized = removeDiacritics(theArtistName);
       const first = normalized[0];
       if (/[a-zA-Z0-9]/.test(first)) {
         baseValue = first.toUpperCase();
@@ -336,6 +339,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "albumid":
       baseValue = derived.albumId;
+      break;
+    case "provideralbumid":
+      baseValue = derived.providerAlbumId;
       break;
     case "albumfulltitle":
       baseValue = derived.albumFullTitle;
@@ -383,6 +389,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
     case "trackid":
       baseValue = derived.trackId;
       break;
+    case "providertrackid":
+      baseValue = derived.providerTrackId;
+      break;
 
     // Video titles - all variants
     case "videotitle":
@@ -399,6 +408,9 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "videoid":
       baseValue = derived.videoId;
+      break;
+    case "providervideoid":
+      baseValue = derived.providerTrackId;
       break;
 
     // Track/Medium numbers (support format specifier)
@@ -431,7 +443,7 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
       break;
     case "samplerate":
       if (context.sampleRate) {
-        baseValue = formatQualityValue(context.sampleRate, formatSpecifiers[0] || "");
+        baseValue = formatQualityValue(context.sampleRate, customFormat);
       } else {
         baseValue = "";
       }
@@ -454,54 +466,159 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
 
   // Handle numeric tokens with format specifier
   if (isNumericToken && numericValue !== null) {
-    const format = formatSpecifiers[0] || "";
-    return applyNumberFormat(numericValue, format);
+    return applyNumberFormat(numericValue, customFormat);
   }
 
-  // Apply format specifiers to string-based values (e.g., sampleRate:kHz)
-  // then sanitize
-  if (baseValue !== null) {
-    // Note: Modifiers deprecated. For backward compatibility, still support a few legacy modifiers:
-    // :the, :clean, :first - but new code should use named variables instead
+  return baseValue || "";
+}
+
+function resolveToken(rawTokenBody: string, context: NamingContext): string {
+  const parts = rawTokenBody.split(":");
+  const tokenName = parts[0];
+  const customFormat = parts.slice(1).join(":") || "";
+
+  const hasLetters = /[a-zA-Z]/.test(tokenName);
+  const isAllLowercase = hasLetters && tokenName === tokenName.toLowerCase();
+  const isAllUppercase = hasLetters && tokenName === tokenName.toUpperCase();
+
+  let result = resolveTokenValue(tokenName, customFormat, context);
+
+  // Apply legacy modifiers (deprecated, e.g. :the, :clean)
+  const formatSpecifiers = parts.slice(1);
+  const legacyModifiers = formatSpecifiers.filter((m) => {
+    const trimmed = m.trim();
+    return trimmed === "the" || trimmed === "clean" || trimmed === "first";
+  });
+
+  for (const modifier of legacyModifiers) {
+    const trimmed = modifier.trim();
+    if (trimmed === "the") {
+      result = titleThe(result);
+    } else if (trimmed === "clean") {
+      result = cleanTitle(result);
+    } else if (trimmed === "first") {
+      result = result.trim().charAt(0) || "";
+    }
+  }
+
+  if (isAllLowercase) {
+    result = result.toLowerCase();
+  } else if (isAllUppercase) {
+    result = result.toUpperCase();
+  }
+
+  return cleanFileName(result);
+}
+
+function renderTokens(template: string, context: NamingContext): string {
+  const literalPlaceholders: string[] = [];
+  let processedTemplate = (template || "");
+
+  // 1. Handle new double-bracket nested style: {{token1}-{token2}} -> e.g. {{providerName}-{providerAlbumId}}
+  processedTemplate = processedTemplate.replace(/\{\{([^{}]+)\}-\{([^{}]+)\}\}/g, (_match, token1: string, token2: string) => {
+    const val1 = resolveToken(token1, context);
+    const val2Raw = resolveToken(token2, context);
+    if (!val1 || !val2Raw) {
+      return "";
+    }
+    const parts = val2Raw.split(";").map(p => p.trim()).filter(Boolean);
+    if (parts.length === 0) return "";
+    const combinedIds = parts.join("; ");
+    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
+    literalPlaceholders.push(`{${val1}-${combinedIds}}`);
+    return placeholder;
+  });
+
+  // 2. Handle legacy single-bracket nested style: {prefix-{token}} -> e.g. {tidal-{videoId}}
+  processedTemplate = processedTemplate.replace(/\{([^{}]+)-\{([^{}]+)\}\}/g, (_match, prefix: string, tokenBody: string) => {
+    const val2Raw = resolveToken(tokenBody, context);
+    const literalPrefix = cleanFileName(String(prefix || "").trim());
+    if (!val2Raw || !literalPrefix) {
+      return "";
+    }
+    const parts = val2Raw.split(";").map(p => p.trim()).filter(Boolean);
+    if (parts.length === 0) return "";
+    const combinedIds = parts.join("; ");
+    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
+    literalPlaceholders.push(`{${literalPrefix}-${combinedIds}}`);
+    return placeholder;
+  });
+
+  // 3. Align with Lidarr's TitleRegex and ReplaceToken behavior (allowing colons in customFormat)
+  const TitleRegex = /(\{\{|\}\})|\{([- ._\[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
+
+  const rendered = processedTemplate.replace(TitleRegex, (
+    match: string,
+    escaped: string | undefined,
+    prefix: string | undefined,
+    token: string | undefined,
+    customFormat: string | undefined,
+    suffix: string | undefined,
+  ) => {
+    if (escaped) {
+      if (escaped === "{{") return "{";
+      if (escaped === "}}") return "}";
+      return escaped;
+    }
+
+    const tokenName = token || "";
+    const customFormatVal = customFormat || "";
+    const prefixVal = prefix || "";
+    const suffixVal = suffix || "";
+
+    const separatorMatch = /[- ._]/.exec(tokenName);
+    const separator = separatorMatch ? separatorMatch[0] : "";
+
+    const formatSpecifiers = customFormatVal.split(":");
+    const primaryFormat = formatSpecifiers[0] || "";
+
+    let replacementText = resolveTokenValue(tokenName, primaryFormat, context);
+
+    if (replacementText === null || replacementText === undefined) {
+      return match;
+    }
+
+    // Apply legacy modifiers (deprecated, e.g. :the, :clean, :first)
     const legacyModifiers = formatSpecifiers.filter((m) => {
       const trimmed = m.trim();
       return trimmed === "the" || trimmed === "clean" || trimmed === "first";
     });
 
-    let result = baseValue;
     for (const modifier of legacyModifiers) {
       const trimmed = modifier.trim();
       if (trimmed === "the") {
-        result = titleThe(result);
+        replacementText = titleThe(replacementText);
       } else if (trimmed === "clean") {
-        result = cleanTitle(result);
+        replacementText = cleanTitle(replacementText);
       } else if (trimmed === "first") {
-        result = result.trim().charAt(0) || "";
+        replacementText = replacementText.trim().charAt(0) || "";
       }
     }
 
-    return sanitizeSegment(result);
-  }
+    replacementText = replacementText.trim();
 
-  return "";
-}
+    const letters = tokenName.replace(/[^a-zA-Z]/g, "");
+    const isAllLowercase = letters.length > 0 && letters === letters.toLowerCase();
+    const isAllUppercase = letters.length > 0 && letters === letters.toUpperCase();
 
-function renderTokens(template: string, context: NamingContext): string {
-  const literalPlaceholders: string[] = [];
-  const withNestedTokens = (template || "").replace(/\{([^{}]+)-\{([^{}]+)\}\}/g, (_match, prefix: string, tokenBody: string) => {
-    const value = resolveToken(tokenBody, context);
-    const literalPrefix = sanitizeSegment(String(prefix || "").trim());
-    if (!value || !literalPrefix) {
-      return "";
+    if (isAllLowercase) {
+      replacementText = replacementText.toLowerCase();
+    } else if (isAllUppercase) {
+      replacementText = replacementText.toUpperCase();
     }
 
-    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
-    literalPlaceholders.push(`{${literalPrefix}-${value}}`);
-    return placeholder;
-  });
+    if (separator) {
+      replacementText = replacementText.replace(/ /g, separator);
+    }
 
-  const rendered = withNestedTokens
-    .replace(/\{([^{}]+)\}/g, (_token, body: string) => resolveToken(body, context));
+    replacementText = cleanFileName(replacementText);
+
+    if (replacementText.length > 0) {
+      return prefixVal + replacementText + suffixVal;
+    }
+
+    return "";
+  });
 
   return literalPlaceholders.reduce(
     (current, value, index) => current.replace(`__DISCOGENIUS_LITERAL_${index}__`, value),
@@ -564,6 +681,11 @@ const KNOWN_TOKEN_NAMES = new Set([
   "channels",
   "albumversion",
   "trackversion",
+  "providername",
+  "providerartistid",
+  "provideralbumid",
+  "providertrackid",
+  "providervideoid",
 ]);
 
 export type NamingTemplateValidationResult = {
@@ -653,8 +775,8 @@ export function validateNamingTemplate(
     }
   }
 
-  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "trackId", "videoId"])) {
-    errors.push("Video template must include a video title or TIDAL ID token.");
+  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "trackId", "videoId", "providerTrackId", "providerVideoId"])) {
+    errors.push("Video template must include a video title or provider track/video ID token.");
   }
 
   return {
@@ -676,6 +798,7 @@ export function validateNamingConfig(config: NamingConfig): Record<keyof NamingC
 
 export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
   const baseContext: NamingContext = {
+    provider: "tidal",
     artistName: "Nine Inch Nails",
     artistId: "65662",
     artistMbId: "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
@@ -721,7 +844,7 @@ export function renderRelativePath(template: string, context: NamingContext): st
 
   const segments = rawSegments
     .map((segment) => cleanupRendered(segment))
-    .map((segment) => sanitizeSegment(segment))
+    .map((segment) => cleanPathSegment(segment))
     .filter((segment) => segment.length > 0)
     .filter((segment) => segment !== "." && segment !== "..");
 
@@ -729,7 +852,7 @@ export function renderRelativePath(template: string, context: NamingContext): st
 }
 
 export function renderFileStem(template: string, context: NamingContext): string {
-  return sanitizeSegment(cleanupRendered(renderTokens(template, context)));
+  return cleanPathSegment(cleanupRendered(renderTokens(template, context)));
 }
 
 export function getLibraryRootPath(libraryPath: string, root: LibraryRoot): string {

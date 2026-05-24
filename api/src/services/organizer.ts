@@ -358,12 +358,17 @@ export class OrganizerService {
     albumId: string,
     files: string[],
   ): Promise<Map<string, string>> {
+    const albumIds = albumId.split(";").filter(Boolean);
+    if (albumIds.length === 0) {
+      return new Map();
+    }
+    const placeholders = albumIds.map(() => '?').join(', ');
     const trackRows = db.prepare(`
       SELECT id, title, version, track_number, volume_number, isrc
       FROM ProviderMedia
-      WHERE album_id = ? AND type != 'Music Video'
+      WHERE album_id IN (${placeholders}) AND type != 'Music Video'
       ORDER BY volume_number, track_number, id
-    `).all(albumId) as AlbumTrackRow[];
+    `).all(...albumIds) as AlbumTrackRow[];
 
     const remainingTracks = [...trackRows];
     const matches = new Map<string, string>();
@@ -1010,11 +1015,15 @@ export class OrganizerService {
     [musicRoot, spatialRoot, videoRoot].forEach((root) => this.ensureDir(root));
 
     if (type === "album") {
+      const albumIds = tidalId.split(";").filter(Boolean);
+      if (albumIds.length === 0) throw new Error("Missing tidal id");
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
-      await RefreshAlbumService.scanShallow(tidalId);
+      for (const albumIdVal of albumIds) {
+        await RefreshAlbumService.scanShallow(albumIdVal);
+      }
 
-      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(tidalId) as any;
-      if (!album) throw new Error(`Album ${tidalId} not found in DB after scan`);
+      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumIds[0]) as any;
+      if (!album) throw new Error(`Album ${albumIds[0]} not found in DB after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
@@ -1057,7 +1066,8 @@ export class OrganizerService {
         const idFromName = /^\d+$/.test(base) ? base : null;
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
-        const trackRow = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any;
+        const placeholders = albumIds.map(() => '?').join(', ');
+        const trackRow = db.prepare(`SELECT id FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any;
         return !trackRow;
       });
 
@@ -1103,8 +1113,9 @@ export class OrganizerService {
         }
 
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
+        const placeholders = albumIds.map(() => '?').join(', ');
         const trackRow = trackId
-          ? (db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND album_id = ? AND type != 'Music Video'").get(trackId, tidalId) as any)
+          ? (db.prepare(`SELECT * FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any)
           : null;
 
         if (!trackId || !trackRow) {
@@ -1126,7 +1137,7 @@ export class OrganizerService {
           artistId,
           artistMbId,
           albumTitle: album.title,
-          albumId: tidalId,
+          albumId: String(trackRow.album_id || albumIds[0]),
           albumType: album.type || album.mb_primary || null,
           albumMbId: album.mbid || null,
           albumVersion: album.version || null,
@@ -1170,7 +1181,7 @@ export class OrganizerService {
         db.transaction(() => {
           const libraryFileId = this.upsertLibraryFile({
             artistId,
-            albumId: tidalId,
+            albumId: String(trackRow.album_id || albumIds[0]),
             mediaId: mediaIdStr,
             filePath: destFile,
             libraryRoot: targetRoot,
@@ -1189,7 +1200,7 @@ export class OrganizerService {
           try {
             recordHistoryEvent({
               artistId,
-              albumId: tidalId,
+              albumId: String(trackRow.album_id || albumIds[0]),
               mediaId: mediaIdStr,
               libraryFileId,
               eventType: HISTORY_EVENT_TYPES.TrackFileImported,
@@ -1213,7 +1224,7 @@ export class OrganizerService {
           try {
             const lrcPath = this.relocateLinkedSidecar({
               artistId,
-              albumId: tidalId,
+              albumId: String(trackRow.album_id || albumIds[0]),
               mediaId: trackId,
               mediaPath: destFile,
               libraryRoot: targetRoot,
@@ -1227,7 +1238,7 @@ export class OrganizerService {
             if (fs.existsSync(lrcPath)) {
               this.upsertLibraryFile({
                 artistId,
-                albumId: tidalId,
+                albumId: String(trackRow.album_id || albumIds[0]),
                 mediaId: trackId,
                 filePath: lrcPath,
                 libraryRoot: targetRoot,
@@ -1301,18 +1312,18 @@ export class OrganizerService {
       if (metadataConfig.save_album_cover) {
         this.relocateSingletonSidecar({
           artistId,
-          albumId: tidalId,
+          albumId: albumIds[0],
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
         });
       }
       if (metadataConfig.save_album_cover && !fs.existsSync(albumCoverPath)) {
-        await downloadAlbumCover(tidalId, metadataConfig.album_cover_resolution as any, albumCoverPath);
+        await downloadAlbumCover(albumIds[0], metadataConfig.album_cover_resolution as any, albumCoverPath);
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
-            albumId: tidalId,
+            albumId: albumIds[0],
             mediaId: null,
             filePath: albumCoverPath,
             libraryRoot: targetRoot,
@@ -1329,7 +1340,7 @@ export class OrganizerService {
       if (metadataConfig.save_album_cover && album.video_cover) {
         this.relocateSingletonSidecar({
           artistId,
-          albumId: tidalId,
+          albumId: albumIds[0],
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
@@ -1340,7 +1351,7 @@ export class OrganizerService {
         if (fs.existsSync(albumVideoCoverPath)) {
           this.upsertLibraryFile({
             artistId,
-            albumId: tidalId,
+            albumId: albumIds[0],
             mediaId: null,
             filePath: albumVideoCoverPath,
             libraryRoot: targetRoot,
@@ -1373,10 +1384,10 @@ export class OrganizerService {
         }
 
         try {
-          await saveAlbumNfoFile(tidalId, albumNfoPath);
+          await saveAlbumNfoFile(albumIds[0], albumNfoPath);
           this.upsertLibraryFile({
             artistId,
-            albumId: tidalId,
+            albumId: albumIds[0],
             mediaId: null,
             filePath: albumNfoPath,
             libraryRoot: targetRoot,
@@ -1386,8 +1397,16 @@ export class OrganizerService {
             expectedPath: albumNfoPath,
           });
         } catch (error) {
-          console.warn(`[Organizer] Failed to write album NFO for ${tidalId}:`, error);
+          console.warn(`[Organizer] Failed to write album NFO for ${albumIds[0]}:`, error);
         }
+      }
+
+      let expectedTracks = Number(album.num_tracks || 0);
+      if (albumIds.length > 1) {
+        const placeholders = albumIds.map(() => '?').join(', ');
+        try {
+          expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || expectedTracks);
+        } catch {}
       }
 
       return {
@@ -1395,7 +1414,7 @@ export class OrganizerService {
         tidalId,
         processedTrackIds: destFiles.map((file) => file.trackId),
         totalTracksInStaging: files.length,
-        expectedTracks: Number(album.num_tracks || 0),
+        expectedTracks,
       };
     }
 

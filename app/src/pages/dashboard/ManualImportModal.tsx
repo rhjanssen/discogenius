@@ -25,6 +25,7 @@ import {
 import { ArrowImport24Regular, Search24Regular } from '@fluentui/react-icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import MediaCard from '@/components/cards/MediaCard';
+import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { type UnmappedFile } from './ManualImportTab';
@@ -81,6 +82,7 @@ const useStyles = makeStyles({
         flex: 1,
     },
     searchButton: {
+        ...glassButtonStyles,
         '@media (max-width: 639px)': {
             width: '100%',
             justifyContent: 'center',

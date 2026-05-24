@@ -53,7 +53,7 @@ test("normalized filename variants resolve correctly", () => {
 
   assert.equal(
     rendered,
-    "The Beatles ; The Beatles ; The Beatles ; The Beatles ; The White Album ; ALBUM ; album-mbid-1 ; 1968 ; Helter Skelter ; Helter Skelter ; recording-mbid-1 ; The Beatles ; artist-mbid-1"
+    "The Beatles ; the_beatles ; The.Beatles ; THE BEATLES ; The White Album ; ALBUM ; album-mbid-1 ; 1968 ; Helter Skelter ; Helter Skelter ; recording-mbid-1 ; The Beatles ; artist-mbid-1"
   );
 });
 
@@ -102,7 +102,7 @@ test("modifiers work: :clean removes non-alphanumeric characters (deprecated, us
     }
   );
 
-  assert.equal(rendered, "AC DC ; The White Album ; Don t Stop Me Now");
+  assert.equal(rendered, "AC DC ; The White Album ; Don't Stop Me Now!");
 });
 
 test("modifiers work: :first extracts first character (deprecated, use named variables)", () => {
@@ -170,11 +170,7 @@ test("named variables: {albumCleanTitleThe} produces CleanTitleThe result", () =
     albumTitle: "The White Album (Remastered)",
   });
 
-  // TitleThe regex preserves parenthetical suffixes in capture group 3,
-  // then both main part and suffix are cleaned separately.
-  // Parentheses are removed during cleaning, and "(Remastered)" becomes "Remastered"
-  // Result: "White Album, TheRemastered"
-  assert.equal(rendered, "White Album, TheRemastered");
+  assert.equal(rendered, "White Album, The Remastered");
 });
 
 test("named variables: {trackCleanTitle} produces CleanTitle result", () => {
@@ -183,7 +179,7 @@ test("named variables: {trackCleanTitle} produces CleanTitle result", () => {
     trackTitle: "Don't Stop Me Now!",
   });
 
-  assert.equal(rendered, "Don t Stop Me Now");
+  assert.equal(rendered, "Don't Stop Me Now!");
 });
 
 test("named variables: {trackTitleThe} produces TitleThe result", () => {
@@ -237,7 +233,7 @@ test("named variables: {videoCleanTitle} produces CleanTitle result", () => {
     videoTitle: "Music Video #1",
   });
 
-  assert.equal(rendered, "Music Video 1");
+  assert.equal(rendered, "Music Video #1");
 });
 
 test("named variables: {videoTitleThe} produces TitleThe result", () => {
@@ -290,7 +286,7 @@ test("quality metadata variables render correctly", () => {
     }
   );
 
-  assert.equal(rendered, "LOSSLESS ; FLAC ; 320 ; 44100 ; 24 ; 2");
+  assert.equal(rendered, "lossless ; flac ; 320 ; 44100 ; 24 ; 2");
 });
 
 test("sampleRate format modifier: kHz", () => {
@@ -319,7 +315,7 @@ test("quality metadata variables render empty when not provided", () => {
     }
   );
 
-  assert.equal(rendered, "start-------end");
+  assert.equal(rendered, "start-end");
 });
 
 test("quality metadata variables handle high-resolution audio", () => {
@@ -333,7 +329,7 @@ test("quality metadata variables handle high-resolution audio", () => {
     }
   );
 
-  assert.equal(rendered, "HIRES_LOSSLESS @ 192Hz 24bit");
+  assert.equal(rendered, "hires_lossless @ 192Hz 24bit");
 });
 
 test("unknown tokens render as empty strings", () => {
@@ -341,7 +337,7 @@ test("unknown tokens render as empty strings", () => {
     artistName: "Daft Punk",
   });
 
-  assert.equal(rendered, "start--end");
+  assert.equal(rendered, "start-end");
 });
 
 test("renderRelativePath returns \"Unknown\" when all segments collapse", () => {
@@ -387,4 +383,52 @@ test("validateNamingConfig rejects unknown tokens and unsafe track templates", (
 
   assert.equal(validation.album_track_path_multi.valid, false);
   assert.match(validation.album_track_path_multi.errors.join(" "), /parent-directory/i);
+});
+
+test("provider-neutral tokens and double-bracket nested expressions render correctly", () => {
+  const context = {
+    provider: "apple-music",
+    artistName: "Bastille",
+    artistId: "112233",
+    albumTitle: "Give Me The Future",
+    albumId: "445566;778899",
+    trackTitle: "Shut Off The Lights",
+    trackId: "998877",
+  };
+
+  const renderedTokens = renderFileStem(
+    "{providerName} ; {providerArtistId} ; {providerAlbumId} ; {providerTrackId}",
+    context
+  );
+  assert.equal(renderedTokens, "Apple Music ; 112233 ; 445566;778899 ; 998877");
+
+  const renderedNestedSingle = renderFileStem(
+    "{{providerName}-{providerTrackId}}",
+    context
+  );
+  assert.equal(renderedNestedSingle, "{Apple Music-998877}");
+
+  const renderedNestedMultiple = renderFileStem(
+    "{{providerName}-{providerAlbumId}}",
+    context
+  );
+  assert.equal(renderedNestedMultiple, "{Apple Music-445566; 778899}");
+
+  const renderedNestedSingleBracket = renderFileStem(
+    "{apple-music-{providerAlbumId}}",
+    context
+  );
+  assert.equal(renderedNestedSingleBracket, "{apple-music-445566; 778899}");
+});
+
+test("validateNamingConfig accepts provider-neutral tokens", () => {
+  const config = {
+    artist_folder: "{artistCleanNameThe}",
+    album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
+    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}",
+    video_file: "{artistCleanName} - {videoCleanTitle} {{providerName}-{providerTrackId}}",
+  };
+
+  const validation = validateNamingConfig(config);
+  assert.equal(Object.values(validation).every((result) => result.valid), true);
 });

@@ -50,7 +50,11 @@ import { useStatusOverview } from "@/hooks/useStatusOverview";
 import { formatCompactNumber } from "@/utils/format";
 import { useSystemTasks } from "@/hooks/useSystemTasks";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
-import { compactDetailActionButtonStyles, detailActionButtonRadiusStyles } from "@/components/media/detailActionStyles";
+import {
+    compactDetailActionButtonStyles,
+    detailActionGlassButtonStyles,
+    detailActionPrimaryButtonStyles,
+} from "@/components/media/detailActionStyles";
 
 const useStyles = makeStyles({
     container: {
@@ -159,7 +163,7 @@ const useStyles = makeStyles({
     },
     headerActionButton: {
         ...compactDetailActionButtonStyles,
-        ...detailActionButtonRadiusStyles,
+        ...detailActionGlassButtonStyles,
         minWidth: "76px",
         "@media (min-width: 768px)": {
             ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
@@ -199,6 +203,12 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalM,
     },
     queueActionButton: {
+        ...detailActionGlassButtonStyles,
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+    },
+    queuePrimaryActionButton: {
+        ...detailActionPrimaryButtonStyles,
         flexShrink: 0,
         whiteSpace: "nowrap",
     },
@@ -455,7 +465,7 @@ const Dashboard = () => {
                                     </Button>
                                 </OverflowItem>
                             ))}
-                            <ActionOverflowMenu actions={actions} />
+                            <ActionOverflowMenu actions={actions} className={styles.headerActionButton} />
                         </div>
                     </Overflow>
                 </div>
@@ -547,7 +557,7 @@ const Dashboard = () => {
                     </div>
                     {mobileTab === "queue" && (
                         <Button
-                            className={styles.queueActionButton}
+                            className={queueIsPaused ? styles.queuePrimaryActionButton : styles.queueActionButton}
                             appearance={queueIsPaused ? "primary" : "outline"}
                             icon={queueIsPaused ? <Play24Regular /> : <Pause24Regular />}
                             onClick={handlePauseResume}
@@ -605,9 +615,6 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
-
-
 
 
 

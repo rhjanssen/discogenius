@@ -7,6 +7,7 @@ import {
 } from "@fluentui/react-components";
 import { Pause24Filled, Play24Regular } from "@fluentui/react-icons";
 import { formatDurationSeconds } from "@/utils/format";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 interface AudioPlayerProps {
     src: string;
@@ -37,11 +38,11 @@ const useStyles = makeStyles({
         },
     },
     playButton: {
+        ...glassButtonStyles,
         flexShrink: 0,
         color: tokens.colorNeutralForeground1,
         ":hover": {
             color: tokens.colorNeutralForeground1,
-            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
         },
         ":active": {
             color: tokens.colorBrandForeground2,

@@ -857,7 +857,7 @@ test("CurationService marks Single redundant if contained in an EP by track titl
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
 });
 
-test("CurationService marks Single redundant if contained in an Album by track title matching with edit suffix", async () => {
+test("CurationService does not mark Single redundant if contained in an Album by track title matching with edit suffix when recording IDs differ", async () => {
   const { db } = dbModule;
 
   // Insert artist
@@ -872,7 +872,7 @@ test("CurationService marks Single redundant if contained in an Album by track t
     VALUES (?, ?)
   `).run("artist-mbid-bastille-edit", "Bastille");
 
-  // Insert release groups: Album and Single
+  // Insert Album and Single Release Groups
   const insertReleaseGroup = db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
@@ -880,17 +880,13 @@ test("CurationService marks Single redundant if contained in an Album by track t
   insertReleaseGroup.run("rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "album");
   insertReleaseGroup.run("rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "single");
 
-  // Insert AlbumReleases for Album
-  db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+  // Insert Album and Single Releases
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-album-edit", "rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "Official", "2024-01-01", 1, 2);
-
-  // Insert AlbumReleases for Single
-  db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-single-edit", "rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "Official", "2024-01-01", 1, 1);
+  `);
+  insertRelease.run("release-album-edit", "rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "Official", "2024-01-01", 2, 1);
+  insertRelease.run("release-single-edit", "rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "Official", "2024-01-01", 1, 1);
 
   // Insert Recordings
   const insertRecording = db.prepare(`
@@ -929,7 +925,5 @@ test("CurationService marks Single redundant if contained in an Album by track t
   const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single-edit") as any;
 
   assert.equal(albumSlot.wanted, 1);
-  assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches (ignoring edit suffix)!
+  assert.equal(singleSlot.wanted, 1); // Single should not be redundant because different edit versions are treated as distinct recordings when recording IDs/ISRCs differ!
 });
-
-

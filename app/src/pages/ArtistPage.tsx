@@ -54,7 +54,8 @@ import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import {
   compactDetailActionButtonStyles,
-  detailActionButtonRadiusStyles,
+  detailActionGlassButtonStyles,
+  detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import {
@@ -220,11 +221,11 @@ const useStyles = makeStyles({
   },
   // Transparent button base style
   transparentButton: {
-    ...detailActionButtonRadiusStyles,
+    ...detailActionGlassButtonStyles,
   },
   // Primary action button (Monitor when not monitored, Scan when not scanned)
   primaryButton: {
-    ...detailActionButtonRadiusStyles,
+    ...detailActionPrimaryButtonStyles,
   },
   actionButton: {
     ...compactDetailActionButtonStyles,
@@ -271,9 +272,6 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalM,
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    },
-    "@media (min-width: 1200px)": {
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
@@ -315,8 +313,7 @@ const useStyles = makeStyles({
   videoGrid: {
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     "@media (min-width: 640px)": { gridTemplateColumns: "repeat(4, minmax(0, 1fr))" },
-    "@media (min-width: 900px)": { gridTemplateColumns: "repeat(5, minmax(0, 1fr))" },
-    "@media (min-width: 1200px)": { gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
+    "@media (min-width: 900px)": { gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
   },
   sectionAction: {
     flexShrink: 0,
@@ -1386,7 +1383,7 @@ const ArtistPage = () => {
                     </Button>
                   </OverflowItem>
 
-                  <ActionOverflowMenu actions={artistActions} />
+                  <ActionOverflowMenu actions={artistActions} className={mergeClasses(styles.actionButton, styles.transparentButton)} />
 
                   <div className={styles.filterViewDesktop}>
                     <FilterMenu

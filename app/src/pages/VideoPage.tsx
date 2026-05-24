@@ -39,7 +39,8 @@ import { ErrorState } from "@/components/ui/ContentState";
 
 import {
     compactDetailActionButtonStyles,
-    detailActionButtonRadiusStyles,
+    detailActionGlassButtonStyles,
+    detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import {
     ACTIVITY_REFRESH_EVENT,
@@ -167,9 +168,9 @@ const useStyles = makeStyles({
         cursor: "pointer",
         padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
         borderRadius: tokens.borderRadiusMedium,
-        transition: "background-color 0.2s",
+        transition: `background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
         ":hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha,
         }
     },
     artistAvatar: {
@@ -205,10 +206,10 @@ const useStyles = makeStyles({
         ...compactDetailActionButtonStyles,
     },
     primaryButton: {
-        ...detailActionButtonRadiusStyles,
+        ...detailActionPrimaryButtonStyles,
     },
     transparentButton: {
-        ...detailActionButtonRadiusStyles,
+        ...detailActionGlassButtonStyles,
     },
     fileInfo: {
         display: "flex",

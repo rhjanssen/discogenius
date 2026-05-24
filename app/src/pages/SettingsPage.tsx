@@ -36,6 +36,7 @@ import {
     Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
@@ -138,6 +139,13 @@ const QUALITY_NAMING_TOKENS: NamingToken[] = [
     { section: "Quality", token: "{E}", example: "[E] or empty" },
 ];
 
+const PROVIDER_NAMING_TOKENS: NamingToken[] = [
+    { section: "Provider", token: "{Provider Name}", example: "TIDAL" },
+    { section: "Provider", token: "{Provider ArtistId}", example: "8847" },
+    { section: "Provider", token: "{Provider AlbumId}", example: "1550545" },
+    { section: "Provider", token: "{Provider TrackId}", example: "1550546" },
+];
+
 const NAMING_HELP: Record<
     NamingFieldKey,
     { title: string; description: string; tokens: NamingToken[] }
@@ -161,6 +169,7 @@ const NAMING_HELP: Record<
             ...ALBUM_NAMING_TOKENS,
             ...TRACK_NAMING_TOKENS,
             ...QUALITY_NAMING_TOKENS,
+            ...PROVIDER_NAMING_TOKENS,
         ],
     },
     album_track_path_multi: {
@@ -173,6 +182,7 @@ const NAMING_HELP: Record<
             ...ALBUM_NAMING_TOKENS,
             ...TRACK_NAMING_TOKENS,
             ...QUALITY_NAMING_TOKENS,
+            ...PROVIDER_NAMING_TOKENS,
         ],
     },
     video_file: {
@@ -186,9 +196,9 @@ const NAMING_HELP: Record<
             { section: "Video", token: "{Video TitleThe}", example: "Around the World" },
             { section: "Video", token: "{Video CleanTitleThe}", example: "Around the World" },
             { section: "Video", token: "{Video Id}", example: "44187439" },
-            { section: "Video", token: "{tidal-{Video Id}}", example: "{tidal-44187439}" },
             { section: "Video", token: "{Track Id}", example: "1550546" },
             ...QUALITY_NAMING_TOKENS,
+            ...PROVIDER_NAMING_TOKENS,
         ],
     },
 };
@@ -304,6 +314,7 @@ const useStyles = makeStyles({
         },
     },
     fullWidthButton: {
+        ...glassButtonStyles,
         width: '100%',
         justifyContent: 'center',
         minHeight: '36px',
@@ -312,6 +323,7 @@ const useStyles = makeStyles({
         },
     },
     inlineActionButton: {
+        ...glassButtonStyles,
         minHeight: '36px',
         [MEDIA.mobile]: {
             minHeight: '40px',
@@ -338,6 +350,7 @@ const useStyles = makeStyles({
         width: '100%',
     },
     templateHelpButton: {
+        ...glassButtonStyles,
         flexShrink: 0,
         minWidth: '36px',
         minHeight: '36px',

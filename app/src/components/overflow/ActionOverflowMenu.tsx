@@ -5,10 +5,13 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  makeStyles,
+  mergeClasses,
   useIsOverflowItemVisible,
   useOverflowMenu,
 } from "@fluentui/react-components";
 import { MoreHorizontal24Regular } from "@fluentui/react-icons";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export interface OverflowAction {
   key: string;
@@ -29,13 +32,20 @@ const OverflowMenuItem = ({ action }: { action: OverflowAction }) => {
   );
 };
 
-export const ActionOverflowMenu = ({ actions }: { actions: OverflowAction[] }) => {
+const useStyles = makeStyles({
+  moreButton: {
+    ...glassButtonStyles,
+  },
+});
+
+export const ActionOverflowMenu = ({ actions, className }: { actions: OverflowAction[]; className?: string }) => {
+  const styles = useStyles();
   const { ref, isOverflowing } = useOverflowMenu<HTMLButtonElement>();
   if (!isOverflowing) return null;
   return (
     <Menu>
       <MenuTrigger disableButtonEnhancement>
-        <Button ref={ref} appearance="subtle" icon={<MoreHorizontal24Regular />}>
+        <Button ref={ref} appearance="subtle" icon={<MoreHorizontal24Regular />} className={mergeClasses(styles.moreButton, className)}>
           More
         </Button>
       </MenuTrigger>

@@ -19,6 +19,7 @@ import { DataGrid, type DataGridColumn } from '@/components/DataGrid';
 import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
 import { EmptyState } from '@/components/ui/ContentState';
 import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
+import { glassButtonStyles, glassDangerButtonStyles, glassPrimaryButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
@@ -271,13 +272,19 @@ const useStyles = makeStyles({
         justifyContent: 'flex-end',
         flexWrap: 'nowrap',
     },
+    actionButton: {
+        ...glassButtonStyles,
+    },
+    primaryActionButton: {
+        ...glassPrimaryButtonStyles,
+    },
     actionCell: {
         minWidth: '120px',
         overflow: 'visible',
         paddingRight: tokens.spacingHorizontalM,
     },
     destructiveButton: {
-        color: tokens.colorPaletteRedForeground1,
+        ...glassDangerButtonStyles,
     },
 });
 
@@ -760,6 +767,7 @@ const ManualImportTab = () => {
                 icon={<Search24Regular />}
                 title={row.kind === 'group' ? 'Review grouped files' : 'Search mapping'}
                 aria-label={`Review ${row.title}`}
+                className={styles.actionButton}
                 disabled={row.ignored || mutationPending}
                 onClick={(event) => {
                     event.stopPropagation();
@@ -773,6 +781,7 @@ const ManualImportTab = () => {
                     icon={<Eye24Regular />}
                     title="Restore file"
                     aria-label={`Restore ${row.title}`}
+                    className={styles.actionButton}
                     disabled={mutationPending}
                     onClick={(event) => {
                         event.stopPropagation();
@@ -786,6 +795,7 @@ const ManualImportTab = () => {
                     icon={<EyeOff24Regular />}
                     title="Ignore file"
                     aria-label={`Ignore ${row.title}`}
+                    className={styles.actionButton}
                     disabled={mutationPending}
                     onClick={(event) => {
                         event.stopPropagation();
@@ -807,7 +817,7 @@ const ManualImportTab = () => {
                 }}
             />
         </div>
-    ), [mutationPending, runRowAction, styles.actionGroup, styles.destructiveButton]);
+    ), [mutationPending, runRowAction, styles.actionButton, styles.actionGroup, styles.destructiveButton]);
 
     const columns = useMemo<DataGridColumn<DisplayRow>[]>(() => [
         {
@@ -978,6 +988,7 @@ const ManualImportTab = () => {
                             <Button
                                 appearance={showIgnored ? 'primary' : 'outline'}
                                 size="small"
+                                className={showIgnored ? styles.primaryActionButton : styles.actionButton}
                                 onClick={() => setShowIgnored((current) => !current)}
                             >
                                 {showIgnored ? 'Hide Ignored' : `Show Ignored (${ignoredCount})`}
@@ -993,6 +1004,7 @@ const ManualImportTab = () => {
                                         appearance="subtle"
                                         size="small"
                                         icon={<EyeOff24Regular />}
+                                        className={styles.actionButton}
                                         disabled={mutationPending}
                                         onClick={() => runBulkAction(selectedFileIds.filter((id) => selectedFiles.some((file) => file.id === id && !file.ignored)), 'ignore')}
                                     >
@@ -1004,6 +1016,7 @@ const ManualImportTab = () => {
                                         appearance="subtle"
                                         size="small"
                                         icon={<Eye24Regular />}
+                                        className={styles.actionButton}
                                         disabled={mutationPending}
                                         onClick={() => runBulkAction(selectedFileIds.filter((id) => selectedFiles.some((file) => file.id === id && file.ignored)), 'unignore')}
                                     >
@@ -1055,5 +1068,3 @@ const ManualImportTab = () => {
 };
 
 export default ManualImportTab;
-
-

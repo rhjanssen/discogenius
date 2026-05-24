@@ -48,6 +48,7 @@ import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import LibraryTrackList from "@/components/LibraryTrackList";
 import VideoGrid from "@/components/VideoGrid";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useLibrary } from "@/hooks/useLibrary";
 import { useTidalSearch } from "@/hooks/useTidalSearch";
 import { useTracks } from "@/hooks/useTracks";
@@ -179,11 +180,8 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalS,
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 1200px)": {
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+      gap: tokens.spacingHorizontalM,
     },
   },
   tabContent: {
@@ -240,9 +238,7 @@ const useStyles = makeStyles({
     opacity: 0.6,
   },
   menuButtonIconOnly: {
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    backdropFilter: "blur(12px) saturate(140%)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+    ...glassButtonStyles,
     minHeight: "36px",
     "@media (max-width: 639px)": {
       minHeight: "40px",

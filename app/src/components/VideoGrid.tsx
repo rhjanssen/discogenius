@@ -31,12 +31,9 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(4, 1fr)",
       gap: tokens.spacingHorizontalM,
     },
-    "@media (min-width: 1024px)": {
-      gridTemplateColumns: "repeat(5, 1fr)",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 1280px)": {
+    "@media (min-width: 900px)": {
       gridTemplateColumns: "repeat(6, 1fr)",
+      gap: tokens.spacingHorizontalM,
     },
   },
   card: {

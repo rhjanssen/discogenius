@@ -111,13 +111,7 @@ export class CurationService {
     }
 
     private static normalizeTrackTitle(title: string): string {
-        const cleaned = String(title || "")
-            .replace(/\s*[\(\[](?:radio\s+|single\s+)?edit[\)\]]/gi, "")
-            .replace(/\s*-\s*(?:radio\s+|single\s+)?edit$/gi, "")
-            .replace(/\s*[\(\[]single\s+version[\)\]]/gi, "")
-            .replace(/\s*-\s*single\s+version$/gi, "");
-
-        return cleaned
+        return String(title || "")
             .toLowerCase()
             .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?'"’…]/g, "")
             .replace(/\s+/g, "")
@@ -448,7 +442,9 @@ export class CurationService {
                   AND wanted = 1
                   AND selected_provider_id IS NOT NULL
             `).all(artistMbid) as Array<{ selected_provider_id: string }>;
-            const wantedAlbumIds = new Set(wantedAlbums.map((r) => String(r.selected_provider_id)));
+            const wantedAlbumIds = new Set(
+                wantedAlbums.flatMap((r) => String(r.selected_provider_id || "").split(";").filter(Boolean))
+            );
 
             db.transaction(() => {
                 const updateAlbumMonitor = db.prepare(`
@@ -543,19 +539,25 @@ export class CurationService {
         };
 
         const hasActiveAlbumWork = (albumId: string) => {
-            if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], albumId)) {
-                return true;
+            const albumIds = (albumId || "").split(";").filter(Boolean);
+            if (albumIds.length === 0) return false;
+
+            for (const id of albumIds) {
+                if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], id)) {
+                    return true;
+                }
             }
 
+            const placeholders = albumIds.map(() => '?').join(', ');
             const trackWork = db.prepare(`
                 SELECT 1
                 FROM job_queue jq
                 JOIN ProviderMedia m ON m.id = jq.ref_id
-                WHERE m.album_id = ?
+                WHERE m.album_id IN (${placeholders})
                   AND jq.type IN ('DownloadTrack', 'ImportDownload')
                   AND jq.status IN ('pending', 'processing')
                 LIMIT 1
-            `).get(albumId);
+            `).get(...albumIds);
 
             return Boolean(trackWork);
         };
@@ -676,13 +678,18 @@ export class CurationService {
             }
 
             const albumId = String(slot.id);
-            const hasImportedTracks = db.prepare(`
-                SELECT 1
-                FROM TrackFiles lf
-                WHERE lf.album_id = ?
-                  AND lf.file_type = 'track'
-                LIMIT 1
-            `).get(albumId);
+            const albumIds = albumId.split(";").filter(Boolean);
+            let hasImportedTracks = false;
+            if (albumIds.length > 0) {
+                const placeholders = albumIds.map(() => '?').join(', ');
+                hasImportedTracks = Boolean(db.prepare(`
+                    SELECT 1
+                    FROM TrackFiles lf
+                    WHERE lf.album_id IN (${placeholders})
+                      AND lf.file_type = 'track'
+                    LIMIT 1
+                `).get(...albumIds));
+            }
             if (hasImportedTracks) {
                 continue;
             }

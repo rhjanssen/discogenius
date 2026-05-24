@@ -24,6 +24,7 @@ import { MobileBottomTabs } from "./MobileBottomTabs";
 import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 function isStandaloneDisplayMode(): boolean {
   // iOS Safari uses `navigator.standalone`, other browsers support the media query.
@@ -210,6 +211,7 @@ const useStyles = makeStyles({
     position: "relative",
   },
   navIconButton: {
+    ...glassButtonStyles,
     minWidth: "36px",
     minHeight: "36px",
     "@media (max-width: 639px)": {

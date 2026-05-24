@@ -2,6 +2,7 @@ import React from "react";
 import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { Eye24Regular, EyeOff24Regular } from "@fluentui/react-icons";
 import { useMonitoring } from "@/hooks/useMonitoring";
+import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 
 interface MonitorButtonProps {
     id: string;
@@ -64,6 +65,7 @@ export const MonitorButton: React.FC<MonitorButtonProps> = ({
             icon={<Icon />}
             className={mergeClasses(
                 styles.root,
+                finalAppearance === "primary" ? styles.primary : styles.glass,
                 isLocked && styles.locked,
                 className
             )}
@@ -80,6 +82,12 @@ const useStyles = makeStyles({
         transitionProperty: "all",
         transitionDuration: tokens.durationNormal,
         transitionTimingFunction: tokens.curveEasyEase,
+    },
+    glass: {
+        ...glassButtonStyles,
+    },
+    primary: {
+        ...glassPrimaryButtonStyles,
     },
     locked: {
         opacity: 0.7,

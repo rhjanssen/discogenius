@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { Button, Badge, makeStyles, mergeClasses, tokens, Tooltip } from "@fluentui/react-components";
+import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export interface LibrarySelectionAction {
   key: string;
@@ -79,6 +80,12 @@ const useStyles = makeStyles({
       display: "inline",
     },
   },
+  glassButton: {
+    ...glassButtonStyles,
+  },
+  primaryButton: {
+    ...glassPrimaryButtonStyles,
+  },
 });
 
 export function LibrarySelectionBar({
@@ -99,7 +106,7 @@ export function LibrarySelectionBar({
           {selectedCount}
         </Badge>
         <Button
-          className={styles.metaButton}
+          className={mergeClasses(styles.metaButton, styles.glassButton)}
           appearance="subtle"
           size="small"
           onClick={onSelectAllVisible}
@@ -108,6 +115,7 @@ export function LibrarySelectionBar({
           Select all
         </Button>
         <Button
+          className={styles.glassButton}
           appearance="subtle"
           size="small"
           onClick={onClearSelection}
@@ -126,6 +134,7 @@ export function LibrarySelectionBar({
               icon={action.icon}
               disabled={action.disabled}
               onClick={action.onClick}
+              className={action.appearance === "primary" ? styles.primaryButton : styles.glassButton}
             >
               <span className={styles.actionLabel}>{action.label}</span>
             </Button>

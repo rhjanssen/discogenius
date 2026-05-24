@@ -1,8 +1,19 @@
 import { tokens } from "@fluentui/react-components";
+import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export const detailActionButtonRadiusStyles = {
   borderRadius: tokens.borderRadiusXLarge,
 };
+
+export const detailActionGlassButtonStyles = {
+  ...detailActionButtonRadiusStyles,
+  ...glassButtonStyles,
+} as const;
+
+export const detailActionPrimaryButtonStyles = {
+  ...detailActionButtonRadiusStyles,
+  ...glassPrimaryButtonStyles,
+} as const;
 
 export const standardDetailActionButtonStyles = {
   flexDirection: "column",

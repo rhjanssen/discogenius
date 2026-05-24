@@ -21,6 +21,7 @@ type LibraryFileRow = {
   file_type: string;
   extension: string;
   library_slot?: string | null;
+  provider?: string | null;
   // Quality metadata
   quality?: string | null;
   codec?: string | null;
@@ -505,6 +506,7 @@ export class LibraryFilesService {
     });
 
     const contextBase: NamingContext = {
+      provider: row.provider || "tidal",
       artistName,
       artistId: String(row.artist_id),
       artistMbId,

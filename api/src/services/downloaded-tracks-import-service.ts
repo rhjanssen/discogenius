@@ -42,11 +42,15 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
     };
 
     if (type === "album") {
+        const albumIds = tidalId.split(";").filter(Boolean);
+        if (albumIds.length === 0) {
+            return fallback;
+        }
         const albumRow = db.prepare(`
             SELECT id, artist_id, quality
             FROM ProviderAlbums
             WHERE id = ?
-        `).get(tidalId) as { id: number; artist_id: number; quality: string | null } | undefined;
+        `).get(albumIds[0]) as { id: number; artist_id: number; quality: string | null } | undefined;
 
         if (!albumRow) {
             return fallback;
@@ -93,7 +97,11 @@ function clearUpgradeQueue(type: string, tidalId: string) {
     }
 
     if (type === "album") {
-        db.prepare(`DELETE FROM upgrade_queue WHERE album_id = ?`).run(tidalId);
+        const albumIds = tidalId.split(";").filter(Boolean);
+        if (albumIds.length > 0) {
+            const placeholders = albumIds.map(() => '?').join(', ');
+            db.prepare(`DELETE FROM upgrade_queue WHERE album_id IN (${placeholders})`).run(...albumIds);
+        }
         return;
     }
 
@@ -102,7 +110,9 @@ function clearUpgradeQueue(type: string, tidalId: string) {
 
 function resolveAffectedArtistId(type: string, tidalId: string): number | null {
     if (type === "album") {
-        return (db.prepare(`SELECT artist_id FROM ProviderAlbums WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+        const albumIds = tidalId.split(";").filter(Boolean);
+        if (albumIds.length === 0) return null;
+        return (db.prepare(`SELECT artist_id FROM ProviderAlbums WHERE id = ?`).get(albumIds[0]) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
     }
 
     return (db.prepare(`SELECT artist_id FROM ProviderMedia WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
@@ -124,7 +134,10 @@ function reconcileImportedDownload(type: string, tidalId: string, organizeResult
             console.warn(`[ImportDownload] Album ${tidalId}: only ${processedIds.length}/${expected} tracks were imported. Partial download.`);
         }
 
-        updateAlbumDownloadStatus(String(tidalId));
+        const albumIds = tidalId.split(";").filter(Boolean);
+        for (const albumId of albumIds) {
+            updateAlbumDownloadStatus(String(albumId));
+        }
         return;
     }
 
@@ -177,9 +190,16 @@ export class DownloadedTracksImportService {
                 throw new Error(`Import files for ${type} ${tidalId} are no longer available. Re-download the item to retry import.`);
             }
 
-            const expectedTracks = type === "album"
-                ? Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id = ? AND type != 'Music Video'`).get(tidalId) as { count?: number } | undefined)?.count || recoveredMediaIds.length)
-                : 1;
+            let expectedTracks = 1;
+            if (type === "album") {
+                const albumIds = tidalId.split(";").filter(Boolean);
+                if (albumIds.length > 0) {
+                    const placeholders = albumIds.map(() => '?').join(', ');
+                    expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || recoveredMediaIds.length);
+                } else {
+                    expectedTracks = recoveredMediaIds.length;
+                }
+            }
 
             organizeResult = {
                 type,
@@ -278,7 +298,14 @@ export class DownloadedTracksImportService {
 
             try {
                 if (type === "album") {
-                    await MetadataIdentityService.resolveAlbum(tidalId, { includeTracks: true });
+                    const albumIds = tidalId.split(";").filter(Boolean);
+                    for (const albumId of albumIds) {
+                        try {
+                            await MetadataIdentityService.resolveAlbum(albumId, { includeTracks: true });
+                        } catch (err) {
+                            console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
+                        }
+                    }
                 } else {
                     await MetadataIdentityService.resolveTrack(tidalId);
                 }

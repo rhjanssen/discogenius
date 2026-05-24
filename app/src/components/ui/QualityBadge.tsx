@@ -1,6 +1,7 @@
 import React from "react";
 import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { tidalBadgeColor } from "@/theme/theme";
+import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 
 // Standard quality values we store in DB (no underscore in HIRES)
@@ -58,11 +59,74 @@ const useStyles = makeStyles({
         height: "24px",
         fontSize: tokens.fontSizeBase200,
         padding: `0 ${tokens.spacingHorizontalS}`,
-    }
+    },
+    atmosBadge: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderStyle: "solid",
+        borderWidth: tokens.strokeWidthThin,
+        lineHeight: 0,
+        textTransform: "none",
+    },
+    atmosBadgeDark: {
+        backgroundColor: "#ffffff",
+        borderColor: "rgba(255, 255, 255, 0.82)",
+        color: "#020202",
+    },
+    atmosBadgeLight: {
+        backgroundColor: "#111111",
+        borderColor: "rgba(0, 0, 0, 0.72)",
+        color: "#ffffff",
+    },
+    atmosLogo: {
+        display: "block",
+        flexShrink: 0,
+        backgroundColor: "currentColor",
+        WebkitMaskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
+        maskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        WebkitMaskSize: "contain",
+        maskSize: "contain",
+    },
+    atmosSmall: {
+        height: "18px",
+        minWidth: "42px",
+        padding: `0 ${tokens.spacingHorizontalXS}`,
+        borderRadius: tokens.borderRadiusMedium,
+    },
+    atmosMedium: {
+        height: "22px",
+        minWidth: "52px",
+        padding: `0 ${tokens.spacingHorizontalSNudge}`,
+        borderRadius: tokens.borderRadiusMedium,
+    },
+    atmosLarge: {
+        height: "28px",
+        minWidth: "68px",
+        padding: `0 ${tokens.spacingHorizontalS}`,
+        borderRadius: tokens.borderRadiusLarge,
+    },
+    atmosLogoSmall: {
+        width: "32px",
+        height: "12px",
+    },
+    atmosLogoMedium: {
+        width: "43px",
+        height: "16px",
+    },
+    atmosLogoLarge: {
+        width: "57px",
+        height: "21px",
+    },
 });
 
 export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, size = "medium" }) => {
     const styles = useStyles();
+    const { isDarkMode } = useTheme();
 
     // Normalize input string
     const normalizedQuality = normalizeQualityTag(quality);
@@ -90,40 +154,26 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
 
     if (normalizedQuality === "DOLBY_ATMOS") {
-        const logoHeightPx = size === "small" ? 9 : size === "large" ? 13 : 11;
-        const logoAspect = 110.7599945 / 15.6427517; // viewBox width/height
-        const logoWidthPx = Math.round(logoHeightPx * logoAspect);
+        const atmosSizeClass = size === "small" ? styles.atmosSmall : size === "large" ? styles.atmosLarge : styles.atmosMedium;
+        const atmosLogoSizeClass = size === "small" ? styles.atmosLogoSmall : size === "large" ? styles.atmosLogoLarge : styles.atmosLogoMedium;
 
         return (
             <Badge
-                shape="circular"
+                shape="rounded"
                 appearance="tint"
-                className={mergeClasses(styles.base, badgeClass, sizeClass, className)}
-                style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
+                className={mergeClasses(
+                    styles.base,
+                    styles.atmosBadge,
+                    isDarkMode ? styles.atmosBadgeDark : styles.atmosBadgeLight,
+                    atmosSizeClass,
+                    className
+                )}
                 aria-label="Dolby Atmos"
                 title="Dolby Atmos"
             >
                 <span
                     aria-hidden="true"
-                    style={{
-                        height: `${logoHeightPx}px`,
-                        width: `${logoWidthPx}px`,
-                        display: "block",
-                        backgroundColor: tokens.colorNeutralForegroundOnBrand,
-                        WebkitMaskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
-                        maskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
-                        WebkitMaskRepeat: "no-repeat",
-                        maskRepeat: "no-repeat",
-                        WebkitMaskPosition: "center",
-                        maskPosition: "center",
-                        WebkitMaskSize: "contain",
-                        maskSize: "contain",
-                        flexShrink: 0,
-                    }}
+                    className={mergeClasses(styles.atmosLogo, atmosLogoSizeClass)}
                 />
             </Badge>
         );

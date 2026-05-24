@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactElement } from "react";
 import { Button, Tooltip, makeStyles, tokens } from "@fluentui/react-components";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export interface LibraryRowActionItem {
   key: string;
@@ -23,6 +24,9 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     flexWrap: "nowrap",
   },
+  actionButton: {
+    ...glassButtonStyles,
+  },
 });
 
 export function LibraryRowActions({ actions, className }: LibraryRowActionsProps) {
@@ -38,6 +42,7 @@ export function LibraryRowActions({ actions, className }: LibraryRowActionsProps
             icon={action.icon}
             disabled={action.disabled}
             onClick={action.onClick}
+            className={styles.actionButton}
           />
         </Tooltip>
       ))}

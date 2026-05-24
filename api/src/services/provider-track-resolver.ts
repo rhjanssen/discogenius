@@ -33,6 +33,13 @@ export function looksLikeMusicBrainzMbid(value: unknown): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 }
 
+function splitProviderAlbumIds(value: unknown): string[] {
+    return String(value || "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
 function getCanonicalTrack(input: {
     releaseGroupMbid?: string | null;
     canonicalTrackMbid?: string | null;
@@ -133,12 +140,12 @@ function getProviderAlbumSelections(
     }>;
 
     return rows
-        .map((row) => ({
+        .flatMap((row) => splitProviderAlbumIds(row.selected_provider_id).map((providerAlbumId) => ({
             slot: String(row.slot || ""),
             provider: String(row.selected_provider || ""),
-            providerAlbumId: String(row.selected_provider_id || ""),
+            providerAlbumId,
             quality: row.quality == null ? null : String(row.quality),
-        }))
+        })))
         .filter((row) => row.slot && row.provider && row.providerAlbumId);
 }
 

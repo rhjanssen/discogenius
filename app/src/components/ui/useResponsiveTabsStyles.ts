@@ -1,4 +1,5 @@
 import { makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 const useBaseStyles = makeStyles({
     tabSlot: {
@@ -18,9 +19,7 @@ const useBaseStyles = makeStyles({
         },
     },
     menuButton: {
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-        backdropFilter: "blur(12px) saturate(140%)",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+        ...glassButtonStyles,
         minHeight: "36px",
         "@media (max-width: 639px)": {
             minHeight: "40px",

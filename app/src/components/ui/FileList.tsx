@@ -37,6 +37,7 @@ import {
 } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export interface LibraryFile {
     id: number;
@@ -90,7 +91,7 @@ const useStyles = makeStyles({
     tableRow: {
         cursor: "pointer",
         ":hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha,
         },
     },
     fileIcon: {
@@ -157,7 +158,7 @@ const useStyles = makeStyles({
         width: "100%",
         cursor: "pointer",
         ":hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha,
         },
     },
     mobileHeader: {
@@ -194,6 +195,7 @@ const useStyles = makeStyles({
         wordBreak: "break-all",
     },
     expandButton: {
+        ...glassButtonStyles,
         marginTop: tokens.spacingVerticalXXS,
     },
     dialogContent: {
@@ -217,6 +219,7 @@ const useStyles = makeStyles({
         wordBreak: "break-all",
     },
     copyButton: {
+        ...glassButtonStyles,
         flexShrink: 0,
     },
     compactRow: {
@@ -229,7 +232,7 @@ const useStyles = makeStyles({
         fontSize: tokens.fontSizeBase100,
         cursor: "pointer",
         "&:hover": {
-            backgroundColor: tokens.colorNeutralBackground1Hover,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha,
         },
     },
     compactContainer: {

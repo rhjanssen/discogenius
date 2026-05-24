@@ -83,6 +83,13 @@ function parseProviderData(value: unknown): any | null {
     }
 }
 
+function splitProviderAlbumIds(value: unknown): string[] {
+    return String(value || "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
 function formatReleaseVersionLabel(release: any): string | null {
     const country = formatReleaseCountry(release.country);
     const parts = [
@@ -374,7 +381,7 @@ function attachLocalFilesToTracks(
     providerAlbumIds: string[],
     providerId: string | null,
 ): AlbumTrackContract[] {
-    const normalizedAlbumIds = Array.from(new Set(providerAlbumIds.map((value) => String(value || "").trim()).filter(Boolean)));
+    const normalizedAlbumIds = Array.from(new Set(providerAlbumIds.flatMap(splitProviderAlbumIds)));
     if (normalizedAlbumIds.length === 0 || tracks.length === 0) {
         return tracks;
     }
@@ -554,7 +561,10 @@ async function attachProviderPreviewTracks(
             providerId: String(releaseGroup.selected_provider || "").trim(),
             providerAlbumId: String(releaseGroup.selected_provider_id || "").trim(),
         },
-    ].filter((selection) => selection.providerId && selection.providerAlbumId);
+    ].flatMap((selection) => splitProviderAlbumIds(selection.providerAlbumId).map((providerAlbumId) => ({
+        providerId: selection.providerId,
+        providerAlbumId,
+    }))).filter((selection) => selection.providerId && selection.providerAlbumId);
     const seenAlbums = new Set<string>();
     const uniqueSelections = providerAlbumSelections.filter((selection) => {
         const key = `${selection.providerId}:${selection.providerAlbumId}`;
@@ -613,7 +623,7 @@ async function buildReleaseGroupTrackContracts(
         releaseGroup.stereo_provider_id,
         releaseGroup.spatial_provider_id,
         releaseGroup.selected_provider_id,
-    ].map((value) => String(value || "").trim()).filter(Boolean);
+    ].flatMap(splitProviderAlbumIds);
     const providerId = String(releaseGroup.selected_provider || "").trim() || null;
     const canonicalTracks = getReleaseTrackContracts(
         release.mbid,

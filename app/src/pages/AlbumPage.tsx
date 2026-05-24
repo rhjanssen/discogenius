@@ -56,7 +56,8 @@ import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
 import { getAlbumCover } from "@/utils/tidalImages";
 import {
-  detailActionButtonRadiusStyles,
+  detailActionGlassButtonStyles,
+  detailActionPrimaryButtonStyles,
   standardDetailActionButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
@@ -205,11 +206,11 @@ const useStyles = makeStyles({
   },
   // Transparent button base style
   transparentButton: {
-    ...detailActionButtonRadiusStyles,
+    ...detailActionGlassButtonStyles,
   },
   // Primary action button
   primaryButton: {
-    ...detailActionButtonRadiusStyles,
+    ...detailActionPrimaryButtonStyles,
   },
   actionButton: {
     ...standardDetailActionButtonStyles,
@@ -256,9 +257,6 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalM,
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    },
-    "@media (min-width: 1200px)": {
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
@@ -860,7 +858,7 @@ const AlbumPage = () => {
                     )}
                   </OverflowItem>
 
-                  <ActionOverflowMenu actions={albumActions} />
+                  <ActionOverflowMenu actions={albumActions} className={mergeClasses(styles.actionButton, styles.transparentButton)} />
                 </div>
               </Overflow>
             </div>

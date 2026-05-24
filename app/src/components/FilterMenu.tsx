@@ -11,6 +11,7 @@ import {
     tokens,
     MenuProps,
     makeStyles,
+    mergeClasses,
 } from "@fluentui/react-components";
 import {
     Filter24Regular,
@@ -26,6 +27,7 @@ import {
     CloudArrowDown24Regular,
 } from "@fluentui/react-icons";
 import type { StatusFilters } from "@/utils/statusFilters";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 interface FilterMenuProps {
     // Library type filter (single selection)
@@ -54,6 +56,12 @@ interface FilterMenuProps {
 }
 
 const useStyles = makeStyles({
+    triggerButton: {
+        ...glassButtonStyles,
+    },
+    activeTriggerButton: {
+        color: tokens.colorBrandForeground1,
+    },
     mobileHiddenLabel: {
         "@media (max-width: 639px)": {
             display: "none",
@@ -154,8 +162,11 @@ const FilterMenu = ({
                 <Button
                     icon={<Filter24Regular />}
                     appearance="subtle"
-                    style={{ color: activeFilterCount > 0 ? tokens.colorBrandForeground1 : undefined }}
-                    className={className}
+                    className={mergeClasses(
+                        styles.triggerButton,
+                        activeFilterCount > 0 ? styles.activeTriggerButton : undefined,
+                        className
+                    )}
                     aria-label={`Filters${activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}`}
                 >
                     <span className={hideLabelOnMobile ? styles.mobileHiddenLabel : undefined}>

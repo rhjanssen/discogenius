@@ -136,6 +136,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                             if (!imageFailed && fallbackImageUrl) {
                                 setImageFailed(true);
                             } else {
+                                setImageFailed(true);
                                 setFallbackFailed(true);
                             }
                         }}

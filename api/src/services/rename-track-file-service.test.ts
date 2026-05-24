@@ -132,7 +132,7 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
 
 test("RenameTrackFileService applies the same quality-token path shown in preview", () => {
   const config = configModule.readConfig();
-  config.naming.album_track_path_single = "{albumTitle}/{quality}/{trackNumber00} - {trackTitle}";
+  config.naming.album_track_path_single = "{albumTitle}/{QUALITY}/{trackNumber00} - {trackTitle}";
   configModule.writeConfig(config);
 
   seedTrackedFile();

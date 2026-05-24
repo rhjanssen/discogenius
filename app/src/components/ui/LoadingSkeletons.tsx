@@ -160,11 +160,8 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 1200px)": {
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+      gap: tokens.spacingHorizontalM,
     },
   },
   mediaCard: {
