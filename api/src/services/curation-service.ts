@@ -111,7 +111,13 @@ export class CurationService {
     }
 
     private static normalizeTrackTitle(title: string): string {
-        return String(title || "")
+        const cleaned = String(title || "")
+            .replace(/\s*[\(\[](?:radio\s+|single\s+)?edit[\)\]]/gi, "")
+            .replace(/\s*-\s*(?:radio\s+|single\s+)?edit$/gi, "")
+            .replace(/\s*[\(\[]single\s+version[\)\]]/gi, "")
+            .replace(/\s*-\s*single\s+version$/gi, "");
+
+        return cleaned
             .toLowerCase()
             .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?'"’…]/g, "")
             .replace(/\s+/g, "")

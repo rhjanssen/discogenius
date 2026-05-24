@@ -857,4 +857,79 @@ test("CurationService marks Single redundant if contained in an EP by track titl
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
 });
 
+test("CurationService marks Single redundant if contained in an Album by track title matching with edit suffix", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille-edit", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille-edit", "Bastille");
+
+  // Insert release groups: Album and Single
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "album");
+  insertReleaseGroup.run("rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "single");
+
+  // Insert AlbumReleases for Album
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-album-edit", "rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "Official", "2024-01-01", 1, 2);
+
+  // Insert AlbumReleases for Single
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-single-edit", "rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "Official", "2024-01-01", 1, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-album-edit-1", "Killing Me Softly With His Song");
+  insertRecording.run("rec-album-edit-2", "Other Track");
+  insertRecording.run("rec-single-edit-1", "Killing Me Softly With His Song (edit)");
+
+  // Insert Tracks for Album
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-album-edit-1", "release-album-edit", "rec-album-edit-1", 1, 1, "1", "Killing Me Softly With His Song", 200000);
+  insertTrack.run("track-album-edit-2", "release-album-edit", "rec-album-edit-2", 1, 2, "2", "Other Track", 200000);
+
+  // Insert Track for Single with different recording MBID and (edit) suffix
+  insertTrack.run("track-single-edit-1", "release-single-edit", "rec-single-edit-1", 1, 1, "1", "Killing Me Softly With His Song (edit)", 200000);
+
+  // Configure filtering to include both Albums and Singles
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-album-edit") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single-edit") as any;
+
+  assert.equal(albumSlot.wanted, 1);
+  assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches (ignoring edit suffix)!
+});
+
 
