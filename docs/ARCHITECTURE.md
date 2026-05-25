@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-05-21
+Last updated: 2026-05-25
 
 ## Purpose
 
@@ -35,7 +35,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - scanning/import and organization
 - curation/dedup and download queueing
 
-1. Treat `TrackFiles` as canonical on-disk inventory for managed media and sidecars.
+1. Treat `TrackFiles` as canonical on-disk inventory for managed playable media. Treat `MetadataFiles`, `LyricFiles`, and `ExtraFiles` as the Lidarr-style sidecar inventories; `TrackFiles` still carries sidecar projection rows during the transition.
 
 1. Respect lock semantics (monitor_lock) as intentional user state.
 
@@ -142,10 +142,15 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - api/src/services/refresh-video-service.ts: video upsert/refresh helpers for artist catalog scans
 - api/src/services/media-seed-service.ts: small targeted metadata seed flows for single track/video intake
 - api/src/services/metadata-identity-service.ts: MusicBrainz and AcoustID identity enrichment for artists, albums, tracks, and videos during scan/import
+- api/src/services/metadata/musicbrainz-video-service.ts: MusicBrainz-first music-video recording sync and recording-to-recording relationship import
 - api/src/services/library-scan.ts: disk reconciliation/import coordination
 - api/src/services/import-service.ts + import-* services: manual import discovery/matching/apply/finalize pipeline
 - api/src/services/identification-service.ts + fingerprint.ts: local-file identification support
-- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO sidecar generation using provider data when available and local database metadata as fallback
+- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO/artwork sidecar generation using provider data when available and local database metadata as fallback
+- api/src/services/extras/files/extra-file-service.ts: Lidarr-style base extra-file inventory helpers
+- api/src/services/extras/metadata/files/metadata-file-service.ts: Lidarr-style `MetadataFiles` write path for artwork/NFO sidecars
+- api/src/services/extras/lyrics/lyric-file-service.ts: Lidarr-style `LyricFiles` write/read path for lyric sidecars
+- api/src/services/extras/lyrics/lyric-service.ts: Lidarr-style lyric sidecar lookup plus stereo/spatial lyric sharing across related provider recordings
 
 ### Curation and Download Candidate Selection
 
@@ -186,9 +191,10 @@ MusicBrainz identity behavior:
 - Artist refresh resolves `Artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
 - MusicBrainz/Lidarr release-group metadata is stored in `Albums`; provider album IDs do not define album identity.
 - Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes canonical MBIDs to `Tracks`/`Recordings` and imported-file provenance to `TrackFiles`.
-- Music videos are tracked in the same status table, but MusicBrainz video IDs are treated as generally unavailable; video NFO files still include artist and album MusicBrainz IDs when the linked rows have them.
+- MusicBrainz video recordings are synced into `Recordings` with `IsVideo = 1` where MusicBrainz exposes them. Provider videos are represented as provisional local recordings when they do not yet have an MBID, and provider acquisition IDs stay in `ProviderItems`/`ProviderMedia`.
 - Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside TIDAL metadata.
 - `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
+- Artwork resolution is metadata-source first: SkyHook/Lidarr and Cover Art Archive URLs are preferred for artist/album art, while provider artwork remains a fallback or selected-offer supplement. Album cover settings use CAA-friendly `Original`, `1200`, `500`, and `250` sizes rather than TIDAL-only size names.
 
 ## Data and State Model
 
@@ -199,6 +205,7 @@ Primary persisted entities:
 - `ProviderItems`, `ReleaseGroupSlots`
 - `ProviderAlbums`, `ProviderMedia`, `ProviderAlbumArtists`, `ProviderMediaArtists` while provider-primary compatibility paths still exist
 - `TrackFiles`
+- `MetadataFiles`, `LyricFiles`, `ExtraFiles`
 - metadata_identity_status
 - history_events
 - `UnmappedFiles`
@@ -212,9 +219,13 @@ Operationally important semantics:
 - monitor_lock = manual override; automation must not flip locked state
 - redundant = why a release is filtered out of active curation selection
 - MusicBrainz/Lidarr tables are the canonical metadata graph.
-- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers and match evidence, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles` stores provider provenance for already imported files.
+- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers and match evidence, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles`/extra-file tables store provider provenance for already imported files and sidecars.
 - Provider raw response blobs are not durable catalog data. Persist only normalized availability/action fields plus compact selected-offer snapshots required for queue/display behavior.
 - Provider offer rows must not create canonical artists, albums, releases, tracks, or wanted state by themselves.
+- Canonical MusicBrainz tables now carry Lidarr-style local `Id` and `Foreign*Id` columns where those entities exist in Lidarr. The existing snake_case MBID columns remain the active TypeScript read path until the remaining provider-primary compatibility surfaces are retired.
+- `Recordings` is Discogenius' extension point for audio recordings, spatial/alternate mixes, MusicBrainz video recordings, and provider-only provisional video recordings. MusicBrainz videos use `IsVideo = 1`; provider-only videos use `MetadataStatus = 'provider_only'` until matched.
+- `RecordingRelations` stores MusicBrainz `music_video_for` links and Discogenius-inferred relationships such as `same_lyrical_content`.
+- Lyrics are treated as sidecar files in `LyricFiles`, like Lidarr's extra-file flow and like generated NFO/artwork sidecars in `MetadataFiles`. The lyric payload is not stored in metadata tables; `RecordingRelations` only records evidence that two recordings can share lyrical content.
 
 ## Current Workflow Topology
 
@@ -262,7 +273,7 @@ Operationally important semantics:
 
 - No direct music downloads through tidal-dl-ng.
 - No heavy route-level orchestration for scan/import/curation/download operations.
-- No shadow file-state source outside `TrackFiles`.
+- No provider-shaped shadow file state. Playable media lives in `TrackFiles`; sidecar inventory lives in the Lidarr-style extra-file tables.
 - No lock-blind monitor updates.
 - Provider authentication is optional for MusicBrainz library management; downloads, previews, followed artists, provider artwork, and provider lyrics require a capable connected provider.
 

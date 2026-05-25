@@ -1285,10 +1285,11 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
-        const resolution = typeof metadataConfig.artist_picture_resolution === "string"
-          ? parseInt(metadataConfig.artist_picture_resolution, 10)
-          : metadataConfig.artist_picture_resolution;
-        const safeRes = (resolution === 160 || resolution === 320 || resolution === 480 || resolution === 750) ? resolution : 750;
+        const rawResolution = metadataConfig.artist_picture_resolution;
+        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
+        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
+          ? parsedResolution
+          : 500;
         await downloadArtistPicture(artistId, safeRes, artistPicPath);
         if (fs.existsSync(artistPicPath)) {
           this.upsertLibraryFile({
@@ -1600,10 +1601,11 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
-        const resolution = typeof metadataConfig.artist_picture_resolution === "string"
-          ? parseInt(metadataConfig.artist_picture_resolution, 10)
-          : metadataConfig.artist_picture_resolution;
-        const safeRes = (resolution === 160 || resolution === 320 || resolution === 480 || resolution === 750) ? resolution : 750;
+        const rawResolution = metadataConfig.artist_picture_resolution;
+        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
+        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
+          ? parsedResolution
+          : 500;
         await downloadArtistPicture(artistId, safeRes, artistPicPath);
         if (fs.existsSync(artistPicPath)) {
           this.upsertLibraryFile({

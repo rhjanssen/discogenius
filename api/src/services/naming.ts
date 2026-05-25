@@ -24,6 +24,10 @@ export type NamingContext = {
   trackArtistName?: string | null;
   trackArtistMbId?: string | null;
   trackMbId?: string | null;
+  recordingId?: string | null;
+  recordingMbId?: string | null;
+  mediaId?: string | null;
+  providerMediaId?: string | null;
   trackNumber?: number | null;
   volumeNumber?: number | null;
 
@@ -210,11 +214,14 @@ function buildDerived(context: NamingContext) {
   const videoTitle = context.videoTitle || "Unknown Video";
   const trackId = context.trackId || context.videoId || "";
   const videoId = context.videoId || context.trackId || "";
+  const mediaId = context.mediaId || context.providerMediaId || trackId || videoId || "";
+  const recordingId = context.recordingId || "";
+  const recordingMbId = context.recordingMbId || trackMbId || "";
 
   const providerName = getPrettyProviderName(context.provider);
   const providerArtistId = context.artistId || "";
   const providerAlbumId = context.albumId || "";
-  const providerTrackId = context.trackId || context.videoId || "";
+  const providerTrackId = context.providerMediaId || context.mediaId || context.trackId || context.videoId || "";
 
   return {
     artistName,
@@ -233,6 +240,9 @@ function buildDerived(context: NamingContext) {
     trackArtistName,
     trackArtistMbId,
     trackMbId,
+    recordingId,
+    recordingMbId,
+    mediaId,
     trackVersion,
     trackFullTitle,
     trackNumber,
@@ -244,6 +254,7 @@ function buildDerived(context: NamingContext) {
     providerArtistId,
     providerAlbumId,
     providerTrackId,
+    providerMediaId: providerTrackId,
   };
 }
 
@@ -386,11 +397,23 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
     case "trackmbid":
       baseValue = derived.trackMbId;
       break;
+    case "recordingid":
+      baseValue = derived.recordingId;
+      break;
+    case "recordingmbid":
+      baseValue = derived.recordingMbId;
+      break;
+    case "mediaid":
+      baseValue = derived.mediaId;
+      break;
     case "trackid":
       baseValue = derived.trackId;
       break;
     case "providertrackid":
       baseValue = derived.providerTrackId;
+      break;
+    case "providermediaid":
+      baseValue = derived.providerMediaId;
       break;
 
     // Video titles - all variants
@@ -661,6 +684,9 @@ const KNOWN_TOKEN_NAMES = new Set([
   "trackartistcleannamethe",
   "trackartistmbid",
   "trackmbid",
+  "recordingid",
+  "recordingmbid",
+  "mediaid",
   "trackid",
   "videotitle",
   "videocleantitle",
@@ -686,6 +712,7 @@ const KNOWN_TOKEN_NAMES = new Set([
   "provideralbumid",
   "providertrackid",
   "providervideoid",
+  "providermediaid",
 ]);
 
 export type NamingTemplateValidationResult = {
@@ -775,7 +802,7 @@ export function validateNamingTemplate(
     }
   }
 
-  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "trackId", "videoId", "providerTrackId", "providerVideoId"])) {
+  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "mediaId", "trackId", "videoId", "providerMediaId", "providerTrackId", "providerVideoId"])) {
     errors.push("Video template must include a video title or provider track/video ID token.");
   }
 
@@ -817,6 +844,10 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     trackArtistName: "Nine Inch Nails",
     trackArtistMbId: "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
     trackMbId: "f4d1b6b1-0a1a-47f0-bf0b-fae0e5f5a5f4",
+    recordingId: "42",
+    recordingMbId: "f4d1b6b1-0a1a-47f0-bf0b-fae0e5f5a5f4",
+    mediaId: "123456789",
+    providerMediaId: "123456789",
     trackId: "123456789",
     videoId: "987654321",
     trackNumber: 14,

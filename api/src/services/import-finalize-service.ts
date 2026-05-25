@@ -60,54 +60,7 @@ export async function finalizeImportedDirectories(params: {
         }
     }
 
-    const upsertMovedSidecar = db.prepare(`
-        INSERT INTO TrackFiles (
-            artist_id, album_id, media_id,
-            canonical_artist_mbid, canonical_release_group_mbid,
-            canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
-            provider, provider_entity_type, provider_id, library_slot,
-            file_path, relative_path, library_root,
-            filename, extension, file_size, duration,
-            file_type, quality, needs_rename,
-            expected_path, original_filename,
-            modified_at, verified_at
-        ) VALUES (
-            @artistId, @albumId, @mediaId,
-            @canonicalArtistMbid, @canonicalReleaseGroupMbid,
-            @canonicalReleaseMbid, @canonicalTrackMbid, @canonicalRecordingMbid,
-            @provider, @providerEntityType, @providerId, @librarySlot,
-            @filePath, @relativePath, @libraryRoot,
-            @filename, @extension, @fileSize, 0,
-            @fileType, @quality, 0,
-            @expectedPath, @originalFilename,
-            @modifiedAt, CURRENT_TIMESTAMP
-        )
-        ON CONFLICT(file_path) DO UPDATE SET
-            artist_id = excluded.artist_id,
-            album_id = excluded.album_id,
-            media_id = excluded.media_id,
-            canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, TrackFiles.canonical_artist_mbid),
-            canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, TrackFiles.canonical_release_group_mbid),
-            canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, TrackFiles.canonical_release_mbid),
-            canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, TrackFiles.canonical_track_mbid),
-            canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, TrackFiles.canonical_recording_mbid),
-            provider = COALESCE(excluded.provider, TrackFiles.provider),
-            provider_entity_type = COALESCE(excluded.provider_entity_type, TrackFiles.provider_entity_type),
-            provider_id = COALESCE(excluded.provider_id, TrackFiles.provider_id),
-            library_slot = COALESCE(excluded.library_slot, TrackFiles.library_slot),
-            relative_path = excluded.relative_path,
-            library_root = excluded.library_root,
-            filename = excluded.filename,
-            extension = excluded.extension,
-            file_size = excluded.file_size,
-            file_type = excluded.file_type,
-            quality = excluded.quality,
-            needs_rename = 0,
-            expected_path = excluded.expected_path,
-            original_filename = excluded.original_filename,
-            modified_at = excluded.modified_at,
-            verified_at = CURRENT_TIMESTAMP
-    `);
+
 
     const normalizePath = (inputPath: string) => {
         const normalized = path.resolve(inputPath);
@@ -154,6 +107,9 @@ export async function finalizeImportedDirectories(params: {
                     }
 
                     db.prepare("DELETE FROM TrackFiles WHERE file_path = ?").run(fullPath);
+                    db.prepare("DELETE FROM MetadataFiles WHERE FilePath = ?").run(fullPath);
+                    db.prepare("DELETE FROM LyricFiles WHERE FilePath = ?").run(fullPath);
+                    db.prepare("DELETE FROM ExtraFiles WHERE FilePath = ?").run(fullPath);
                 }
 
                 let fileType = "other";
@@ -195,10 +151,17 @@ export async function finalizeImportedDirectories(params: {
                     libraryRoot: mapping.libraryRootPath,
                 });
 
-                upsertMovedSidecar.run({
+
+
+                LibraryFilesService.upsertLibraryFile({
                     artistId: mapping.artistId,
                     albumId: linkedMedia?.album_id || mapping.albumId,
                     mediaId: fileType === "lyrics" || fileType === "video_thumbnail" ? linkedMedia?.media_id || null : null,
+                    filePath: targetPath,
+                    libraryRoot: mapping.libraryRootPath,
+                    fileType,
+                    quality: linkedMedia?.quality || null,
+                    expectedPath: targetPath,
                     canonicalArtistMbid: sidecarIdentity.canonicalArtistMbid,
                     canonicalReleaseGroupMbid: sidecarIdentity.canonicalReleaseGroupMbid,
                     canonicalReleaseMbid: sidecarIdentity.canonicalReleaseMbid,
@@ -208,17 +171,7 @@ export async function finalizeImportedDirectories(params: {
                     providerEntityType: sidecarIdentity.providerEntityType,
                     providerId: sidecarIdentity.providerId,
                     librarySlot: sidecarIdentity.librarySlot,
-                    filePath: targetPath,
-                    relativePath,
-                    libraryRoot: mapping.libraryRootPath,
-                    filename: path.basename(targetPath),
-                    extension: ext.replace(".", ""),
-                    fileSize: stats.size,
-                    fileType,
-                    quality: linkedMedia?.quality || null,
-                    expectedPath: targetPath,
-                    originalFilename: path.basename(targetPath),
-                    modifiedAt: stats.mtime.toISOString(),
+                    removeFromUnmapped: false,
                 });
 
                 if (fileType !== "other") {

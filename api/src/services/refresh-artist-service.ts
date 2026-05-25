@@ -11,6 +11,7 @@ import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
 import { skyHookProxy } from "./metadata/skyhook-proxy.js";
+import { syncMusicBrainzVideosForArtist } from "./metadata/musicbrainz-video-service.js";
 import {
     matchProviderAlbumsToReleaseGroups,
     type ProviderReleaseGroupMatch,
@@ -113,12 +114,25 @@ export class RefreshArtistService {
 
         const cachedCount = db.prepare("SELECT COUNT(*) AS count FROM Albums WHERE artist_mbid = ?")
             .get(artistMbid) as { count: number };
-        if (!force && Number(cachedCount?.count || 0) > 0) {
+        const cachedVideoCount = db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM Recordings
+            WHERE artist_mbid = ?
+              AND IsVideo = 1
+        `).get(artistMbid) as { count: number };
+
+        if (!force && Number(cachedCount?.count || 0) > 0 && Number(cachedVideoCount?.count || 0) > 0) {
             return artistMbid;
         }
 
         try {
-            await skyHookProxy.syncArtist(artistMbid);
+            if (force || Number(cachedCount?.count || 0) === 0) {
+                await skyHookProxy.syncArtist(artistMbid);
+            }
+            const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force });
+            if (syncedVideos > 0) {
+                console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
+            }
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to sync Lidarr metadata for artist ${artistId} (${artistMbid}):`, error);
         }

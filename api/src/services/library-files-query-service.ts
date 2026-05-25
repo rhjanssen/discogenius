@@ -1,3 +1,4 @@
+import path from "path";
 import { db } from "../database.js";
 import { UpgradableSpecification } from "./upgradable-specification.js";
 import type { LibraryFileContract, LibraryFilesListResponseContract } from "../contracts/media.js";
@@ -26,6 +27,14 @@ type LibraryFileRow = {
   album_quality?: string | null;
 };
 
+type TextLibraryFileRow = {
+  id: number;
+  file_type: string;
+  file_path: string;
+  relative_path: string | null;
+  library_root: string | null;
+};
+
 export type ListLibraryFilesOptions = {
   limit?: number;
   offset?: number;
@@ -42,6 +51,8 @@ function parseNumberOrDefault(value: unknown, fallback: number): number {
 }
 
 function mapLibraryFileRow(item: LibraryFileRow): LibraryFileContract {
+  const filename = item.filename ?? (item.file_path ? path.basename(item.file_path) : undefined);
+  const extension = item.extension ?? (item.file_path ? path.extname(item.file_path).replace(".", "") : undefined);
   return {
     id: item.id,
     file_type: item.file_type,
@@ -50,8 +61,8 @@ function mapLibraryFileRow(item: LibraryFileRow): LibraryFileContract {
     album_id: item.album_id == null ? null : String(item.album_id),
     media_id: item.media_id == null ? null : String(item.media_id),
     relative_path: item.relative_path == null ? undefined : item.relative_path,
-    filename: item.filename == null ? undefined : item.filename,
-    extension: item.extension == null ? undefined : item.extension,
+    filename: filename == null ? undefined : filename,
+    extension: extension == null ? undefined : extension,
     quality: item.quality ?? null,
     library_root: item.library_root == null ? undefined : item.library_root,
     file_size: item.file_size == null ? undefined : item.file_size,
@@ -66,6 +77,111 @@ function mapLibraryFileRow(item: LibraryFileRow): LibraryFileContract {
     qualityChangeDirection: "none",
     qualityCutoffNotMet: false,
     qualityChangeReason: null,
+  };
+}
+
+export function findTextLibraryFileByPath(filePath: string): TextLibraryFileRow | null {
+  return (db.prepare(`
+    SELECT id, file_type, file_path, relative_path, library_root
+    FROM (
+      SELECT
+        0 AS source_order,
+        Id AS id,
+        'lyrics' AS file_type,
+        FilePath AS file_path,
+        RelativePath AS relative_path,
+        LibraryRoot AS library_root
+      FROM LyricFiles
+      WHERE FilePath = ?
+
+      UNION ALL
+
+      SELECT
+        1 AS source_order,
+        Id AS id,
+        FileType AS file_type,
+        FilePath AS file_path,
+        RelativePath AS relative_path,
+        LibraryRoot AS library_root
+      FROM MetadataFiles
+      WHERE FilePath = ?
+        AND FileType IN ('nfo', 'bio', 'review')
+
+      UNION ALL
+
+      SELECT
+        2 AS source_order,
+        id,
+        file_type,
+        file_path,
+        relative_path,
+        library_root
+      FROM TrackFiles
+      WHERE file_path = ?
+        AND file_type IN ('lyrics', 'bio', 'review', 'nfo')
+    )
+    ORDER BY source_order ASC, id DESC
+    LIMIT 1
+  `).get(filePath, filePath, filePath) as TextLibraryFileRow | undefined) ?? null;
+}
+
+export function findLibraryFileById(syntheticId: number): {
+  id: number;
+  file_path: string;
+  library_root: string;
+  relative_path: string | null;
+  file_type: string;
+  quality?: string | null;
+  codec?: string | null;
+} | null {
+  if (syntheticId >= 30000000) {
+    const id = syntheticId - 30000000;
+    const row = db.prepare("SELECT FilePath, LibraryRoot, RelativePath, Quality FROM LyricFiles WHERE Id = ?").get(id) as any;
+    if (!row) return null;
+    return {
+      id,
+      file_path: row.FilePath,
+      library_root: row.LibraryRoot,
+      relative_path: row.RelativePath,
+      file_type: "lyrics",
+      quality: row.Quality,
+    };
+  }
+  if (syntheticId >= 20000000) {
+    const id = syntheticId - 20000000;
+    const row = db.prepare("SELECT FilePath, LibraryRoot, RelativePath, FileType FROM ExtraFiles WHERE Id = ?").get(id) as any;
+    if (!row) return null;
+    return {
+      id,
+      file_path: row.FilePath,
+      library_root: row.LibraryRoot,
+      relative_path: row.RelativePath,
+      file_type: row.FileType,
+    };
+  }
+  if (syntheticId >= 10000000) {
+    const id = syntheticId - 10000000;
+    const row = db.prepare("SELECT FilePath, LibraryRoot, RelativePath, FileType FROM MetadataFiles WHERE Id = ?").get(id) as any;
+    if (!row) return null;
+    return {
+      id,
+      file_path: row.FilePath,
+      library_root: row.LibraryRoot,
+      relative_path: row.RelativePath,
+      file_type: row.FileType,
+    };
+  }
+
+  const row = db.prepare("SELECT id, file_path, library_root, relative_path, file_type, quality, codec FROM TrackFiles WHERE id = ?").get(syntheticId) as any;
+  if (!row) return null;
+  return {
+    id: row.id,
+    file_path: row.file_path,
+    library_root: row.library_root,
+    relative_path: row.relative_path,
+    file_type: row.file_type,
+    quality: row.quality,
+    codec: row.codec,
   };
 }
 
@@ -103,7 +219,33 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       m.type AS media_type,
       m.quality AS source_quality,
       a.quality AS album_quality
-    FROM TrackFiles lf
+    FROM (
+      SELECT
+        id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, filename, extension,
+        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration, created_at
+      FROM TrackFiles
+
+      UNION ALL
+
+      SELECT
+        Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, NULL AS filename, Extension AS extension,
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+      FROM MetadataFiles
+
+      UNION ALL
+
+      SELECT
+        Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, NULL AS filename, Extension AS extension,
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+      FROM ExtraFiles
+
+      UNION ALL
+
+      SELECT
+        Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, NULL AS filename, Extension AS extension,
+        Quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+      FROM LyricFiles
+    ) lf
     LEFT JOIN ProviderMedia m ON m.id = lf.media_id
     LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}

@@ -4,7 +4,7 @@ import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { db } from "../database.js";
-import { listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/library-files-query-service.js";
+import { findLibraryFileById, findTextLibraryFileByPath, listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/library-paths.js";
 import { queueArtistWorkflow } from "../services/artist-workflow.js";
 import { JobTypes, TaskQueueService } from "../services/queue.js";
@@ -138,17 +138,13 @@ router.get("/content", (req, res) => {
     }
 
     // Security: Verify the file is in our database (prevents arbitrary file reads)
-    const file = db.prepare(`
-      SELECT id, file_type, file_path, relative_path, library_root
-      FROM TrackFiles
-      WHERE file_path = ?
-    `).get(filePath) as any;
+    const file = findTextLibraryFileByPath(filePath);
     if (!file) {
       return res.status(404).json({ detail: "File not found in library" });
     }
 
     // Only allow text file types
-    const allowedTypes = ["lyrics", "bio", "review"];
+    const allowedTypes = ["lyrics", "bio", "review", "nfo"];
     if (!allowedTypes.includes(file.file_type)) {
       return res.status(400).json({ detail: "Content retrieval only supported for text files" });
     }
@@ -181,7 +177,7 @@ router.get("/stream/:id", async (req, res) => {
     }
 
     // Get file from database
-    const file = db.prepare("SELECT * FROM TrackFiles WHERE id = ?").get(id) as any;
+    const file = findLibraryFileById(id);
     if (!file) {
       return res.status(404).json({ detail: "File not found in library" });
     }
@@ -381,6 +377,5 @@ router.post("/scan-roots-now", async (req, res) => {
 });
 
 export default router;
-
 
 

@@ -806,15 +806,53 @@ export class ArtistQueryService {
 
         const bio = artist.bio_text || null;
         const artistFiles = LibraryFilesService.resolveExistingFiles(db.prepare(`
-      SELECT id, media_id, file_type, file_path, relative_path, filename, extension,
-             quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
-      FROM TrackFiles
-      WHERE artist_id = ?
-        AND album_id IS NULL
-        AND media_id IS NULL
-        AND file_type IN ('cover', 'bio')
+      SELECT
+        Id AS id,
+        MediaId AS media_id,
+        FileType AS file_type,
+        FilePath AS file_path,
+        RelativePath AS relative_path,
+        NULL AS filename,
+        Extension AS extension,
+        NULL AS quality,
+        LibraryRoot AS library_root,
+        NULL AS file_size,
+        NULL AS bitrate,
+        NULL AS sample_rate,
+        NULL AS bit_depth,
+        NULL AS codec,
+        NULL AS duration
+      FROM MetadataFiles
+      WHERE ArtistId = ?
+        AND AlbumId IS NULL
+        AND MediaId IS NULL
+        AND FileType IN ('cover', 'bio')
+
+      UNION ALL
+
+      SELECT
+        Id AS id,
+        MediaId AS media_id,
+        FileType AS file_type,
+        FilePath AS file_path,
+        RelativePath AS relative_path,
+        NULL AS filename,
+        Extension AS extension,
+        NULL AS quality,
+        LibraryRoot AS library_root,
+        NULL AS file_size,
+        NULL AS bitrate,
+        NULL AS sample_rate,
+        NULL AS bit_depth,
+        NULL AS codec,
+        NULL AS duration
+      FROM ExtraFiles
+      WHERE ArtistId = ?
+        AND AlbumId IS NULL
+        AND MediaId IS NULL
+        AND FileType IN ('cover', 'bio')
       ORDER BY file_type ASC, id ASC
-    `).all(artistId) as any[]);
+    `).all(artistId, artistId) as any[]);
 
         return {
             artist: {

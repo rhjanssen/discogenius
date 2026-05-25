@@ -68,14 +68,14 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
     LIMIT 1
   `).get() as { schemaFrom: number; schemaTo: number; migrationNotes: string } | undefined;
 
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
   assert.deepEqual(runtimeRows, [
-    { key: "runtime.current_schema_version", value: "14" },
+    { key: "runtime.current_schema_version", value: "16" },
     { key: "runtime.schema_version_format", value: "integer" },
   ]);
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 10000);
-  assert.equal(latestHistory?.schemaTo, 14);
+  assert.equal(latestHistory?.schemaTo, 16);
   assert.match(latestHistory?.migrationNotes ?? "", /baseline current schema as 1/);
   assert.match(latestHistory?.migrationNotes ?? "", /add reverse media_artists lookup index/i);
   assert.match(latestHistory?.migrationNotes ?? "", /queue ordering column/i);
@@ -90,6 +90,8 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
   assert.match(latestHistory?.migrationNotes ?? "", /drop superseded provider identity tables/i);
   assert.match(latestHistory?.migrationNotes ?? "", /Lidarr-aligned TrackFiles/i);
   assert.match(latestHistory?.migrationNotes ?? "", /legacy provider table collisions/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /extra file tables/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /retire sidecar projection/i);
 });
 
 // ====================================================================
@@ -98,10 +100,11 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
 
 test("fresh database initializes with correct schema version", () => {
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
 
   const coreTables = [
     "Artists", "ProviderAlbums", "ProviderMedia", "ProviderMediaArtists", "TrackFiles",
+    "MetadataFiles", "LyricFiles", "ExtraFiles",
     "UnmappedFiles", "config", "job_queue", "quality_profiles",
     "upgrade_queue", "playlists", "playlist_tracks", "history_events",
     "database_version_history",
@@ -141,6 +144,16 @@ test("fresh database initializes with correct schema version", () => {
   ]) {
     assert.ok(libraryFileCols.some((column) => column.name === columnName), `Expected TrackFiles.${columnName}`);
   }
+
+  const metadataFileCols = dbModule.db.prepare("PRAGMA table_info(MetadataFiles)").all() as Array<{ name: string }>;
+  for (const columnName of ["Id", "ArtistId", "AlbumId", "TrackFileId", "RelativePath", "FilePath", "Consumer", "Type", "FileType"]) {
+    assert.ok(metadataFileCols.some((column) => column.name === columnName), `Expected MetadataFiles.${columnName}`);
+  }
+
+  const lyricFileCols = dbModule.db.prepare("PRAGMA table_info(LyricFiles)").all() as Array<{ name: string }>;
+  for (const columnName of ["Id", "ArtistId", "AlbumId", "TrackFileId", "RelativePath", "FilePath", "CanonicalRecordingMbid"]) {
+    assert.ok(lyricFileCols.some((column) => column.name === columnName), `Expected LyricFiles.${columnName}`);
+  }
 });
 
 test("migration from integer schema v1 runs pending migrations", () => {
@@ -154,7 +167,7 @@ test("migration from integer schema v1 runs pending migrations", () => {
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
 
   // v4 migration adds Artists.path
   const artistCols = dbModule.db.prepare("PRAGMA table_info(Artists)").all() as Array<{ name: string }>;
@@ -177,7 +190,7 @@ test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
 
   const latestHistory = dbModule.db.prepare(`
     SELECT schema_from as schemaFrom, schema_to as schemaTo, migration_notes as migrationNotes
@@ -188,7 +201,7 @@ test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
 
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 3);
-  assert.equal(latestHistory?.schemaTo, 14);
+  assert.equal(latestHistory?.schemaTo, 16);
   assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
   assert.match(latestHistory?.migrationNotes ?? "", /lidarr-aligned names/i);
   assert.match(latestHistory?.migrationNotes ?? "", /provider mapping scaffold/i);
@@ -197,6 +210,8 @@ test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {
   assert.match(latestHistory?.migrationNotes ?? "", /drop superseded provider identity tables/i);
   assert.match(latestHistory?.migrationNotes ?? "", /Lidarr-aligned TrackFiles/i);
   assert.match(latestHistory?.migrationNotes ?? "", /legacy provider table collisions/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /extra file tables/i);
+  assert.match(latestHistory?.migrationNotes ?? "", /retire sidecar projection/i);
 });
 
 test("unversioned database with existing data runs full migration chain", () => {
@@ -207,7 +222,7 @@ test("unversioned database with existing data runs full migration chain", () => 
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
 
   const latestHistory = dbModule.db.prepare(`
     SELECT schema_from as schemaFrom, schema_to as schemaTo
@@ -218,7 +233,7 @@ test("unversioned database with existing data runs full migration chain", () => 
 
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 0);
-  assert.equal(latestHistory?.schemaTo, 14);
+  assert.equal(latestHistory?.schemaTo, 16);
 });
 
 test("schema v13 repairs legacy provider-shaped Albums table collision", () => {
@@ -306,7 +321,7 @@ test("schema v13 repairs legacy provider-shaped Albums table collision", () => {
   dbModule.initDatabase();
 
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
-  assert.equal(userVersion, 14);
+  assert.equal(userVersion, 16);
 
   const albumCols = dbModule.db.prepare("PRAGMA table_info(Albums)").all() as Array<{ name: string }>;
   assert.ok(albumCols.some((column) => column.name === "artist_mbid"), "Expected canonical Albums.artist_mbid");

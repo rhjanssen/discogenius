@@ -279,6 +279,81 @@ export function reconcileStoredLibraryPaths(): {
       libraryFilesUpdated++;
     }
 
+    // Reconcile sidecar tables
+    const sidecarTables = ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const;
+    for (const table of sidecarTables) {
+      const rows = db.prepare(`
+        SELECT Id AS id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, ExpectedPath AS expected_path
+        FROM ${table}
+      `).all() as Array<{
+        id: number;
+        file_path: string;
+        relative_path: string | null;
+        library_root: string;
+        expected_path: string | null;
+      }>;
+
+      const updateStmt = db.prepare(`
+        UPDATE ${table}
+        SET FilePath = ?,
+            RelativePath = ?,
+            LibraryRoot = ?,
+            Extension = ?,
+            ExpectedPath = ?,
+            LastUpdated = CURRENT_TIMESTAMP
+        WHERE Id = ?
+      `);
+      const deleteStmt = db.prepare(`DELETE FROM ${table} WHERE Id = ?`);
+      const findConflict = db.prepare(`SELECT Id FROM ${table} WHERE FilePath = ? AND Id != ? LIMIT 1`);
+
+      for (const row of rows) {
+        const libraryRootKey = resolveLibraryRootKey(row.library_root, row.file_path);
+        if (!libraryRootKey) continue;
+
+        const currentRoot = getCurrentLibraryRootPath(libraryRootKey);
+        const resolvedFilePath = resolveStoredLibraryPath({
+          filePath: row.file_path,
+          libraryRoot: row.library_root,
+          relativePath: row.relative_path,
+        });
+
+        if (!fs.existsSync(resolvedFilePath)) continue;
+
+        const nextRelativePath = path.relative(currentRoot, resolvedFilePath);
+        const nextExpectedPath = translateExpectedPath(row.expected_path, libraryRootKey);
+        const normalizedCurrentPath = normalizeComparablePath(row.file_path);
+        const normalizedResolvedPath = normalizeComparablePath(resolvedFilePath);
+        const normalizedStoredRoot = normalizeComparablePath(row.library_root);
+        const normalizedCurrentRoot = normalizeComparablePath(currentRoot);
+
+        if (
+          normalizedCurrentPath === normalizedResolvedPath &&
+          normalizedStoredRoot === normalizedCurrentRoot &&
+          (row.relative_path || "") === nextRelativePath &&
+          (row.expected_path || null) === nextExpectedPath
+        ) {
+          continue;
+        }
+
+        const conflict = findConflict.get(resolvedFilePath, row.id) as { Id: number } | undefined;
+        if (conflict) {
+          deleteStmt.run(row.id);
+          libraryFilesDeduplicated++;
+          continue;
+        }
+
+        updateStmt.run(
+          resolvedFilePath,
+          nextRelativePath,
+          currentRoot,
+          path.extname(resolvedFilePath).replace(".", ""),
+          nextExpectedPath,
+          row.id,
+        );
+        libraryFilesUpdated++;
+      }
+    }
+
     for (const row of unmappedRows) {
       const libraryRootKey = resolveLibraryRootKey(row.library_root, row.file_path);
       if (!libraryRootKey) continue;

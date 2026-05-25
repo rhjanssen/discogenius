@@ -778,7 +778,38 @@ export class MetadataIdentityService {
     }
 
     static markVideoKnown(videoId: string): MetadataIdentityResult {
-        const result = this.result("video", videoId, "unmatched", 1, "not-applicable", "Music videos generally do not have MusicBrainz recording IDs");
+        const video = db.prepare(`
+            SELECT m.mbid, pi.recording_id
+            FROM ProviderMedia m
+            LEFT JOIN ProviderItems pi
+              ON pi.provider = 'tidal'
+             AND pi.entity_type = 'video'
+             AND CAST(pi.provider_id AS TEXT) = CAST(m.id AS TEXT)
+            WHERE CAST(m.id AS TEXT) = CAST(? AS TEXT)
+              AND m.type = 'Music Video'
+            LIMIT 1
+        `).get(videoId) as { mbid?: string | null; recording_id?: number | null } | undefined;
+
+        const recordingMbid = String(video?.mbid || "").trim();
+        if (recordingMbid) {
+            const result = this.result("video", videoId, "verified", 1, "musicbrainz-recording", undefined, {
+                recordingId: recordingMbid,
+            });
+            recordIdentityStatus(result);
+            return result;
+        }
+
+        const result = this.result(
+            "video",
+            videoId,
+            "unmatched",
+            video?.recording_id ? 0.7 : 1,
+            video?.recording_id ? "provider-recording" : "musicbrainz-video-unmatched",
+            video?.recording_id
+                ? "Provider video is represented as a provisional local recording without a MusicBrainz ID"
+                : "No matching MusicBrainz video recording has been linked yet",
+            video?.recording_id ? { recordingId: video.recording_id } : undefined,
+        );
         recordIdentityStatus(result);
         return result;
     }

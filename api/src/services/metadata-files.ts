@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../database.js';
 import { streamingProviderManager } from "./providers/index.js";
+import { getLyricsForProviderMedia } from "./extras/lyrics/lyric-service.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     normalizeArtworkUrl,
@@ -395,7 +396,7 @@ function loadArtistArtworkContext(artistId: string): {
  */
 export async function downloadAlbumCover(
     albumId: string,
-    resolution: 80 | 160 | 320 | 640 | 1280 | 'origin',
+    resolution: 80 | 160 | 250 | 320 | 500 | 640 | 1200 | 1280 | 'origin',
     outputPath: string
 ): Promise<void> {
     const context = loadAlbumArtworkContext(albumId);
@@ -428,7 +429,7 @@ export async function downloadAlbumVideoCover(
     resolution: number | "origin",
     outputPath: string
 ): Promise<void> {
-    const allowed = [80, 160, 320, 640, 1280];
+    const allowed = [80, 160, 250, 320, 500, 640, 1200, 1280];
     const numericResolution = typeof resolution === "number" ? resolution : Number(resolution);
     const safeResolution = resolution === "origin"
         ? "origin"
@@ -447,14 +448,13 @@ export async function downloadAlbumVideoCover(
 
 /**
  * Download artist picture at specified resolution
- * NOTE: Artist pictures DO NOT have "origin" resolution! Max is 750x750
  * @param artistId - Tidal artist ID
- * @param resolution - Resolution: 160, 320, 480, or 750 (NO origin!)
+ * @param resolution - Preferred resolution. SkyHook/source images are used as-is; provider fallback may quantize.
  * @param outputPath - Full path where to save the image
  */
 export async function downloadArtistPicture(
     artistId: string,
-    resolution: 160 | 320 | 480 | 750,
+    resolution: number | "origin",
     outputPath: string
 ): Promise<void> {
     const context = loadArtistArtworkContext(artistId);
@@ -513,13 +513,9 @@ export async function getTrackLyrics(trackId: string): Promise<{
     text: string;
     subtitles: string;
     provider: string;
+    matchType?: string;
 } | null> {
-    try {
-        return await streamingProviderManager.getDefaultStreamingProvider().getLyrics?.(trackId) ?? null;
-    } catch (error: any) {
-        console.error(`❌ [METADATA] Failed to fetch lyrics for track ${trackId}:`, error.message);
-        return null;
-    }
+    return getLyricsForProviderMedia(trackId);
 }
 
 /**
@@ -533,12 +529,13 @@ export async function saveLyricsFile(
 ): Promise<void> {
     const lyrics = await getTrackLyrics(trackId);
 
-    if (!lyrics?.subtitles) {
-        throw new Error(`No synchronized lyrics available for track ${trackId}`);
+    const content = lyrics?.subtitles || lyrics?.text || "";
+    if (!content) {
+        throw new Error(`No lyrics available for track ${trackId}`);
     }
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, lyrics.subtitles, 'utf-8');
+    fs.writeFileSync(outputPath, content, 'utf-8');
 
     console.log(`✅ [METADATA] Lyrics saved: ${outputPath}`);
 }

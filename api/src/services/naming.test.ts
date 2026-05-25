@@ -68,7 +68,7 @@ test("TRaSH-style prefixed nested tokens render as literal folder disambiguators
 
 test("release group and video id tokens render correctly", () => {
   const rendered = renderFileStem(
-    "{releaseGroupMbId} ; {videoId} ; {trackId}",
+    "{releaseGroupMbId} ; {videoId} ; {trackId} ; {mediaId}",
     {
       artistName: "Test Artist",
       releaseGroupMbId: "release-group-mbid-1",
@@ -76,7 +76,22 @@ test("release group and video id tokens render correctly", () => {
     }
   );
 
-  assert.equal(rendered, "release-group-mbid-1 ; video-1 ; video-1");
+  assert.equal(rendered, "release-group-mbid-1 ; video-1 ; video-1 ; video-1");
+});
+
+test("provider media and recording tokens render without track/video split", () => {
+  const rendered = renderFileStem(
+    "{mediaId} ; {providerMediaId} ; {recordingId} ; {recordingMbId}",
+    {
+      artistName: "Test Artist",
+      mediaId: "provider-media-1",
+      providerMediaId: "provider-media-1",
+      recordingId: "42",
+      recordingMbId: "recording-mbid-1",
+    }
+  );
+
+  assert.equal(rendered, "provider-media-1 ; provider-media-1 ; 42 ; recording-mbid-1");
 });
 
 test("modifiers work: :the applies The suffix transform (deprecated, use named variables)", () => {
@@ -394,13 +409,14 @@ test("provider-neutral tokens and double-bracket nested expressions render corre
     albumId: "445566;778899",
     trackTitle: "Shut Off The Lights",
     trackId: "998877",
+    mediaId: "998877",
   };
 
   const renderedTokens = renderFileStem(
-    "{providerName} ; {providerArtistId} ; {providerAlbumId} ; {providerTrackId}",
+    "{providerName} ; {providerArtistId} ; {providerAlbumId} ; {providerTrackId} ; {providerMediaId} ; {mediaId}",
     context
   );
-  assert.equal(renderedTokens, "Apple Music ; 112233 ; 445566;778899 ; 998877");
+  assert.equal(renderedTokens, "Apple Music ; 112233 ; 445566;778899 ; 998877 ; 998877 ; 998877");
 
   const renderedNestedSingle = renderFileStem(
     "{{providerName}-{providerTrackId}}",

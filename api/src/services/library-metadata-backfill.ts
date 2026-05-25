@@ -104,11 +104,12 @@ class LibraryMetadataBackfillService {
                 const picPath = path.join(artistDir, picName);
                 if (!fs.existsSync(picPath)) {
                     try {
-                        const resolution = typeof metadataConfig.artist_picture_resolution === "string"
-                            ? parseInt(metadataConfig.artist_picture_resolution, 10)
-                            : metadataConfig.artist_picture_resolution;
-                        const safeRes = (resolution === 160 || resolution === 320 || resolution === 480 || resolution === 750) ? resolution : 750;
-                        await downloadArtistPicture(artistId, safeRes as 160 | 320 | 480 | 750, picPath);
+                        const rawResolution = metadataConfig.artist_picture_resolution;
+                        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
+                        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
+                            ? parsedResolution
+                            : 500;
+                        await downloadArtistPicture(artistId, safeRes as number | "origin", picPath);
                         if (fs.existsSync(picPath)) {
                             this.upsertLibraryFile({
                                 artistId,
@@ -282,10 +283,9 @@ class LibraryMetadataBackfillService {
         AND lf.file_type = 'track'
         AND lf.media_id IS NOT NULL
         AND NOT EXISTS (
-          SELECT 1 FROM TrackFiles lf2
-          WHERE lf2.media_id = lf.media_id
-            AND lf2.file_type = 'lyrics'
-            AND lf2.library_slot IS lf.library_slot
+          SELECT 1 FROM LyricFiles lyric
+          WHERE CAST(lyric.MediaId AS TEXT) = CAST(lf.media_id AS TEXT)
+            AND lyric.LibrarySlot IS lf.library_slot
         )
     `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null; library_slot: string | null }>;
 
@@ -340,8 +340,9 @@ class LibraryMetadataBackfillService {
         AND lf.file_type = 'video'
         AND m.cover IS NOT NULL
         AND NOT EXISTS (
-          SELECT 1 FROM TrackFiles lf2
-          WHERE lf2.media_id = lf.media_id AND lf2.file_type = 'video_thumbnail'
+          SELECT 1 FROM MetadataFiles mf
+          WHERE CAST(mf.MediaId AS TEXT) = CAST(lf.media_id AS TEXT)
+            AND mf.FileType = 'video_thumbnail'
         )
     `).all(artistId) as Array<{ file_path: string; media_id: number; cover: string }>;
 

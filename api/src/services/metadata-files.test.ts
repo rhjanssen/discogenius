@@ -18,6 +18,12 @@ before(async () => {
 });
 
 beforeEach(() => {
+    dbModule.db.prepare("DELETE FROM LyricFiles").run();
+    dbModule.db.prepare("DELETE FROM MetadataFiles").run();
+    dbModule.db.prepare("DELETE FROM ExtraFiles").run();
+    dbModule.db.prepare("DELETE FROM TrackFiles").run();
+    dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+    dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM ProviderMedia").run();
     dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
@@ -130,4 +136,91 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(videoNfo, /<musicbrainzartistid>artist-mbid-100<\/musicbrainzartistid>/);
     assert.match(videoNfo, /<musicbrainzalbumid>album-mbid-200<\/musicbrainzalbumid>/);
     assert.match(videoNfo, /<uniqueid type="tidalVideo" default="true">400<\/uniqueid>/);
+});
+
+test("lyrics cached for a stereo provider item are shared with a spatial counterpart", async () => {
+    dbModule.db.prepare(`
+        INSERT INTO Artists(id, name, mbid)
+        VALUES(?, ?, ?)
+    `).run("100", "The Example Artist", "artist-mbid-100");
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderAlbums(
+            id, artist_id, title, release_date, type, explicit, quality,
+            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("200", "100", "Example Album", "2024-02-03", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, "release-group-mbid-200");
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderAlbums(
+            id, artist_id, title, release_date, type, explicit, quality,
+            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("201", "100", "Example Album", "2024-02-03", "ALBUM", 0, "DOLBY_ATMOS", 1, 1, 0, 180, "release-group-mbid-200");
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderMedia(
+            id, artist_id, album_id, title, release_date, type, explicit,
+            quality, track_number, volume_number, duration, mbid
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("stereo-track", "100", "200", "Example Track", "2024-02-03", "TRACK", 0, "LOSSLESS", 1, 1, 180, "recording-stereo");
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderMedia(
+            id, artist_id, album_id, title, release_date, type, explicit,
+            quality, track_number, volume_number, duration, mbid
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("spatial-track", "100", "201", "Example Track", "2024-02-03", "TRACK", 0, "DOLBY_ATMOS", 1, 1, 181, "recording-atmos");
+
+    const stereoLyricsPath = path.join(tempDir, "stereo-track.lrc");
+    fs.writeFileSync(stereoLyricsPath, "[00:01.00]plain lyric", "utf-8");
+
+    dbModule.db.prepare(`
+        INSERT INTO LyricFiles(
+            ArtistId, AlbumId, MediaId,
+            CanonicalArtistMbid, CanonicalReleaseGroupMbid, CanonicalRecordingMbid,
+            Provider, ProviderEntityType, ProviderId, LibrarySlot,
+            FilePath, RelativePath, LibraryRoot, Extension,
+            Quality, ExpectedPath
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "100",
+        "200",
+        "stereo-track",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "recording-stereo",
+        "tidal",
+        "track",
+        "stereo-track",
+        "stereo",
+        stereoLyricsPath,
+        path.basename(stereoLyricsPath),
+        tempDir,
+        "lrc",
+        "LOSSLESS",
+        stereoLyricsPath,
+    );
+
+    const lyrics = await metadataFilesModule.getTrackLyrics("spatial-track");
+    assert.equal(lyrics?.subtitles, "[00:01.00]plain lyric");
+    assert.equal(lyrics?.matchType, "shared_from_related_recording");
+
+    const linked = dbModule.db.prepare(`
+        SELECT RelationType, SourceForeignRecordingId, TargetForeignRecordingId
+        FROM RecordingRelations
+        WHERE RelationType = 'same_lyrical_content'
+          AND SourceForeignRecordingId = 'recording-stereo'
+          AND TargetForeignRecordingId = 'recording-atmos'
+        LIMIT 1
+    `).get() as { RelationType?: string; SourceForeignRecordingId?: string; TargetForeignRecordingId?: string } | undefined;
+
+    assert.equal(linked?.RelationType, "same_lyrical_content");
+    assert.equal(linked?.SourceForeignRecordingId, "recording-stereo");
+    assert.equal(linked?.TargetForeignRecordingId, "recording-atmos");
 });

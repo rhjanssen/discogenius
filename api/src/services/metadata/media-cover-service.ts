@@ -209,8 +209,12 @@ export function chooseCachedAlbumArtwork(options: {
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
 }): string | null {
-  return getSkyHookAlbumImageUrl(options.skyHookData)
-    || chooseCachedProviderArtwork(options.providerCandidates || [], "album");
+  const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
+  const images = getSkyHookImages(options.skyHookData);
+  if (images.length > 0) {
+    return skyHookUrl;
+  }
+  return chooseCachedProviderArtwork(options.providerCandidates || [], "album");
 }
 
 export function chooseCachedArtistArtwork(options: {
@@ -218,8 +222,12 @@ export function chooseCachedArtistArtwork(options: {
   providerCandidates?: ProviderArtworkCandidate[];
   preferredCoverTypes?: string | string[];
 }): string | null {
-  return getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes)
-    || chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
+  const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
+  const images = getSkyHookImages(options.skyHookData);
+  if (images.length > 0) {
+    return skyHookUrl;
+  }
+  return chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
 }
 
 function configuredArtistPictureResolution(): number {
@@ -275,7 +283,8 @@ export async function resolveAlbumArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
-  if (skyHookUrl) {
+  const images = getSkyHookImages(options.skyHookData);
+  if (images.length > 0) {
     return skyHookUrl;
   }
 
@@ -298,7 +307,8 @@ export async function resolveArtistArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
-  if (skyHookUrl) {
+  const images = getSkyHookImages(options.skyHookData);
+  if (images.length > 0) {
     return skyHookUrl;
   }
 

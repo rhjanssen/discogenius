@@ -339,15 +339,19 @@ export class DownloadProcessor {
         type: 'track' | 'video' | 'album' | 'playlist',
     ): Promise<void> {
         switch (type) {
-            case 'album':
-                if (!this.hasAlbumMetadataReady(tidalId)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Album ${tidalId} is missing complete metadata; running album scan before download`);
-                    await RefreshAlbumService.scanShallow(tidalId, {
-                        includeSimilarAlbums: false,
-                        seedSimilarAlbums: false,
-                    });
+            case 'album': {
+                const albumIds = tidalId.split(";").filter(Boolean);
+                for (const subAlbumId of albumIds) {
+                    if (!this.hasAlbumMetadataReady(subAlbumId)) {
+                        console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; running album scan before download`);
+                        await RefreshAlbumService.scanShallow(subAlbumId, {
+                            includeSimilarAlbums: false,
+                            seedSimilarAlbums: false,
+                        });
+                    }
                 }
                 return;
+            }
             case 'track':
                 if (!this.hasTrackMetadataReady(tidalId)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Track ${tidalId} is missing metadata; seeding track before download`);
@@ -386,16 +390,27 @@ export class DownloadProcessor {
 
         try {
             if (type === 'album') {
-                const row = db.prepare(`
-                    SELECT a.title, a.cover, ar.name as artist_name
-                    FROM ProviderAlbums a
-                    LEFT JOIN Artists ar ON ar.id = a.artist_id
-                    WHERE a.id = ?
-                `).get(tidalId) as any;
+                const albumIds = tidalId.split(";").filter(Boolean);
+                const titles: string[] = [];
+                let artistName = 'Unknown';
+                let cover: string | null = null;
+                for (const subAlbumId of albumIds) {
+                    const row = db.prepare(`
+                        SELECT a.title, a.cover, ar.name as artist_name
+                        FROM ProviderAlbums a
+                        LEFT JOIN Artists ar ON ar.id = a.artist_id
+                        WHERE a.id = ?
+                    `).get(subAlbumId) as any;
+                    if (row) {
+                        if (row.title) titles.push(row.title);
+                        if (row.artist_name) artistName = row.artist_name;
+                        if (!cover && row.cover) cover = row.cover;
+                    }
+                }
                 return {
-                    title: fallbackTitle || row?.title || 'Unknown',
-                    artist: fallbackArtist || row?.artist_name || 'Unknown',
-                    cover: fallbackCover ?? row?.cover ?? null,
+                    title: fallbackTitle || (titles.length > 0 ? titles.join(" / ") : 'Unknown'),
+                    artist: fallbackArtist || artistName,
+                    cover: fallbackCover ?? cover ?? null,
                 };
             }
 
@@ -427,7 +442,11 @@ export class DownloadProcessor {
                 cover: fallbackCover ?? row?.album_cover ?? null,
             };
         } catch {
-            return { title: fallbackTitle || 'Unknown', artist: fallbackArtist || 'Unknown', cover: fallbackCover };
+            return {
+                title: fallbackTitle || 'Unknown',
+                artist: fallbackArtist || 'Unknown',
+                cover: fallbackCover,
+            };
         }
     }
 
@@ -442,11 +461,12 @@ export class DownloadProcessor {
 
         try {
             if (type === 'album') {
+                const firstId = tidalId.split(";")[0];
                 const row = db.prepare(`
                     SELECT quality
                     FROM ProviderAlbums
                     WHERE id = ?
-                `).get(tidalId) as { quality?: string | null } | undefined;
+                `).get(firstId) as { quality?: string | null } | undefined;
                 return row?.quality ?? null;
             }
 

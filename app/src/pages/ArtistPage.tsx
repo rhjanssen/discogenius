@@ -873,7 +873,6 @@ const ArtistPage = () => {
         key={tidalId}
         to={getAlbumPath(tidalId)}
         imageUrl={imageUrl}
-        fallbackImageUrl={item.provider_cover_id || null}
         alt={albumTitle}
         title={albumTitle}
         subtitle={subtitle}

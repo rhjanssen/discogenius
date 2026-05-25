@@ -1957,12 +1957,10 @@ const SettingsPage = () => {
                                         })}
                                         className={styles.controlMedium}
                                     >
-                                        <option value="80">80x80</option>
-                                        <option value="160">160x160</option>
-                                        <option value="320">320x320</option>
-                                        <option value="640">640x640</option>
-                                        <option value="1280">1280x1280</option>
                                         <option value="origin">Original</option>
+                                        <option value="1200">1200x1200</option>
+                                        <option value="500">500x500</option>
+                                        <option value="250">250x250</option>
                                     </Select>
                                 </div>
                             </>
@@ -2040,19 +2038,19 @@ const SettingsPage = () => {
                                     <div className={styles.rowContent}>
                                         <Text weight="semibold">Resolution</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            Max resolution 750x750
+                                            SkyHook/source images are preferred; provider fallback may use the nearest available size
                                         </Text>
                                     </div>
                                     <Select
-                                        value={metadataSettings?.artist_picture_resolution?.toString() || '750'}
+                                        value={metadataSettings?.artist_picture_resolution?.toString() || 'origin'}
                                         onChange={(_, data) => updateMetadataSettings({
-                                            artist_picture_resolution: Number(data.value) as any
+                                            artist_picture_resolution: (data.value === 'origin' ? 'origin' : Number(data.value)) as any
                                         })}
                                         className={styles.controlMedium}
                                     >
-                                        <option value="160">160x160</option>
-                                        <option value="320">320x320</option>
-                                        <option value="480">480x480</option>
+                                        <option value="origin">Original</option>
+                                        <option value="500">500x500</option>
+                                        <option value="250">250x250</option>
                                         <option value="750">750x750</option>
                                     </Select>
                                 </div>

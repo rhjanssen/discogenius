@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-03-27
+Last updated: 2026-05-25
 
 ## Purpose
 
@@ -68,10 +68,13 @@ Measured 2026-03-13:
 The schema now keeps the Lidarr-style MusicBrainz graph separate from provider availability/actionability:
 
 - `Artists`, `ArtistMetadata`, `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, and `Recordings` are the canonical metadata graph.
+- The canonical MusicBrainz tables now have Lidarr-style local `Id` and `Foreign*Id` columns. Existing snake_case MBID columns still power many read paths until the provider-primary compatibility tables are retired.
+- `Recordings` now covers audio recordings, MusicBrainz video recordings, provider-only provisional video recordings, and spatial/alternate mixes; `RecordingRelations` stores MusicBrainz and inferred recording-to-recording links.
+- Lyrics are sidecar files rather than payload rows. Existing lyric sidecars are tracked in `LyricFiles` and can be reused across stereo/spatial counterpart recordings, with `RecordingRelations` storing only the sharing evidence.
 - `ProviderItems` caches provider availability/offers and match evidence; it is not a catalog truth table.
 - `ReleaseGroupSlots` selects the provider offer that can satisfy a MusicBrainz release group and library slot.
 - `ProviderAlbums` and `ProviderMedia` remain as compatibility tables for provider-primary download/import paths that still need to be retired.
-- `TrackFiles` stores imported file inventory with canonical MBIDs plus provider provenance.
+- `TrackFiles` stores imported playable file inventory with canonical MBIDs plus provider provenance. `MetadataFiles`, `LyricFiles`, and `ExtraFiles` now receive generated/imported sidecar writes using Lidarr-style names and TypeScript service boundaries.
 - API contract normalization is in place for TIDAL entity payloads: `tidal.ts` emits canonical `id` in both search mappers and core getters (`getArtist`, `getTrack`, `getArtistVideos`, `getVideo`) while retaining `tidal_id` as a compatibility field.
 - Import matching candidate identity now uses canonical `id` (including fingerprint-backed candidate paths) instead of `tidal_id` fallback keys.
 
@@ -97,6 +100,17 @@ A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different T
 5. Add pluggable download backend registry (Orpheus and tidal-dl-ng today, others later).
 
 Items 1-2 are the current architecture rule. Item 3 is the remaining breaking cleanup needed to remove the last provider-primary compatibility surfaces.
+
+**Remaining file/sidecar cleanup:**
+
+- Retire current `TrackFiles.file_type IN ('cover', 'nfo', 'lyrics', ...)` sidecar projection rows once file listing, rename, pruning, and all cleanup routes read/write the sidecar tables directly.
+- Add Lidarr-style cleanup tasks for orphaned/duplicate/absolute-path metadata and lyric rows, following `.ref_lidarr` housekeeping naming where practical.
+
+**Remaining video/recording cleanup:**
+
+- Surface MusicBrainz-only video recordings in the UI/library workflow without requiring a connected media provider.
+- Move provider video rows from `ProviderMedia` compatibility reads to `ProviderItems` + `Recordings` read models.
+- Use `RecordingRelations` for conservative music-video-to-audio and stereo/spatial matching before adding broader deduplication across providers.
 
 See also:
 

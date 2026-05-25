@@ -679,18 +679,66 @@ export class CurationService {
 
             const albumId = String(slot.id);
             const albumIds = albumId.split(";").filter(Boolean);
-            let hasImportedTracks = false;
-            if (albumIds.length > 0) {
-                const placeholders = albumIds.map(() => '?').join(', ');
-                hasImportedTracks = Boolean(db.prepare(`
-                    SELECT 1
-                    FROM TrackFiles lf
-                    WHERE lf.album_id IN (${placeholders})
-                      AND lf.file_type = 'track'
-                    LIMIT 1
-                `).get(...albumIds));
+            
+            // Check if all target tracks of the preferred release are imported.
+            // First find the preferred release MBID for this release group
+            const preferredReleaseRow = db.prepare(`
+                SELECT r.mbid FROM AlbumReleases r
+                WHERE r.release_group_mbid = ?
+                ORDER BY
+                    (EXISTS (
+                        SELECT 1 FROM AlbumReleaseMedia m
+                        WHERE m.release_mbid = r.mbid
+                          AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
+                    )) DESC,
+                    CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
+                    COALESCE(r.track_count, 0) DESC,
+                    (r.date IS NULL) ASC,
+                    r.date DESC,
+                    r.mbid ASC
+                LIMIT 1
+            `).get(slot.release_group_mbid) as { mbid: string } | undefined;
+
+            let allTracksImported = false;
+            if (preferredReleaseRow) {
+                const targetTracks = db.prepare(`
+                    SELECT t.mbid as track_mbid, t.recording_mbid
+                    FROM Tracks t
+                    WHERE t.release_mbid = ?
+                `).all(preferredReleaseRow.mbid) as Array<{ track_mbid: string; recording_mbid: string | null }>;
+
+                if (targetTracks.length > 0) {
+                    let importedCount = 0;
+                    for (const track of targetTracks) {
+                        const fileExists = db.prepare(`
+                            SELECT 1 FROM TrackFiles
+                            WHERE (canonical_track_mbid = ? OR (canonical_recording_mbid = ? AND canonical_recording_mbid IS NOT NULL))
+                              AND file_type = 'track'
+                            LIMIT 1
+                        `).get(track.track_mbid, track.recording_mbid);
+                        if (fileExists) {
+                            importedCount++;
+                        }
+                    }
+                    if (importedCount === targetTracks.length) {
+                        allTracksImported = true;
+                    }
+                }
+            } else {
+                // Fallback to basic has-any-imported check if no preferred release exists
+                if (albumIds.length > 0) {
+                    const placeholders = albumIds.map(() => '?').join(', ');
+                    allTracksImported = Boolean(db.prepare(`
+                        SELECT 1
+                        FROM TrackFiles lf
+                        WHERE lf.album_id IN (${placeholders})
+                          AND lf.file_type = 'track'
+                        LIMIT 1
+                    `).get(...albumIds));
+                }
             }
-            if (hasImportedTracks) {
+
+            if (allTracksImported) {
                 continue;
             }
 

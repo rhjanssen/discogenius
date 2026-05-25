@@ -14,6 +14,21 @@ import {
 } from "./library-files.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 
+type TableNameType = "TrackFiles" | "MetadataFiles" | "ExtraFiles" | "LyricFiles";
+
+function decodeSyntheticId(syntheticId: number): { id: number; tableName: TableNameType } {
+  if (syntheticId >= 30000000) {
+    return { id: syntheticId - 30000000, tableName: "LyricFiles" };
+  }
+  if (syntheticId >= 20000000) {
+    return { id: syntheticId - 20000000, tableName: "ExtraFiles" };
+  }
+  if (syntheticId >= 10000000) {
+    return { id: syntheticId - 10000000, tableName: "MetadataFiles" };
+  }
+  return { id: syntheticId, tableName: "TrackFiles" };
+}
+
 type RenameLibraryFileRow = {
   id: number;
   artist_id: number;
@@ -73,33 +88,51 @@ export class RenameTrackFileService {
     const offset = options.offset ?? 0;
 
     const where: string[] = [];
-    const params: unknown[] = [];
+    const params: any[] = [];
 
     if (options.artistId) {
-      where.push("artist_id = ?");
+      where.push("lf.artist_id = ?");
       params.push(options.artistId);
     }
     if (options.albumId) {
-      where.push("album_id = ?");
+      where.push("lf.album_id = ?");
       params.push(options.albumId);
     }
     if (options.libraryRoot) {
       const rootValues = getLibraryRootFilterValues(options.libraryRoot);
       if (rootValues.length > 0) {
-        where.push(`library_root IN (${rootValues.map(() => "?").join(",")})`);
+        where.push(`lf.library_root IN (${rootValues.map(() => "?").join(",")})`);
         params.push(...rootValues);
       }
     }
     if (options.fileTypes && options.fileTypes.length > 0) {
-      where.push(`file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
+      where.push(`lf.file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
       params.push(...options.fileTypes);
     }
 
     const sql = `
       SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-      FROM TrackFiles
+      FROM (
+        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
+        FROM TrackFiles
+
+        UNION ALL
+
+        SELECT Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        FROM MetadataFiles
+
+        UNION ALL
+
+        SELECT Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        FROM ExtraFiles
+
+        UNION ALL
+
+        SELECT Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        FROM LyricFiles
+      ) lf
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY created_at DESC
+      ORDER BY lf.created_at DESC
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
 
@@ -113,13 +146,6 @@ export class RenameTrackFileService {
   private static evaluateRenameRows(rows: RenameLibraryFileRow[]): RenamePreviewItem[] {
     const updates: Array<{ id: number; expectedPath: string | null; needsRename: number }> = [];
     const relativePathUpdates: Array<{ id: number; relativePath: string }> = [];
-    const findConflict = db.prepare(`
-      SELECT id
-      FROM TrackFiles
-      WHERE id != ?
-        AND (file_path = ? OR expected_path = ?)
-      LIMIT 1
-    `);
 
     const results: RenamePreviewItem[] = rows.map((row) => {
       const resolvedFilePath = resolveStoredLibraryPath({
@@ -134,8 +160,22 @@ export class RenameTrackFileService {
 
       let conflict = false;
       if (expectedPath) {
+        const decoded = decodeSyntheticId(row.id);
+        const tableName = decoded.tableName;
+        const idCol = tableName === "TrackFiles" ? "id" : "Id";
+        const filePathCol = tableName === "TrackFiles" ? "file_path" : "FilePath";
+        const expectedPathCol = tableName === "TrackFiles" ? "expected_path" : "ExpectedPath";
+
+        const dbConflict = db.prepare(`
+          SELECT ${idCol} AS id
+          FROM ${tableName}
+          WHERE ${idCol} != ?
+            AND (${filePathCol} = ? OR ${expectedPathCol} = ?)
+          LIMIT 1
+        `).get(decoded.id, expectedPath, expectedPath);
+
         conflict = normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath)
-          && (fs.existsSync(expectedPath) || Boolean(findConflict.get(row.id, expectedPath, expectedPath)));
+          && (fs.existsSync(expectedPath) || Boolean(dbConflict));
       }
 
       updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
@@ -169,18 +209,30 @@ export class RenameTrackFileService {
     });
 
     db.transaction(() => {
-      const update = db.prepare("UPDATE TrackFiles SET expected_path = ?, needs_rename = ? WHERE id = ?");
       for (const row of updates) {
-        update.run(row.expectedPath, row.needsRename, row.id);
+        const decoded = decodeSyntheticId(row.id);
+        const expectedPathCol = decoded.tableName === "TrackFiles" ? "expected_path" : "ExpectedPath";
+        const needsRenameCol = decoded.tableName === "TrackFiles" ? "needs_rename" : "NeedsRename";
+        const idCol = decoded.tableName === "TrackFiles" ? "id" : "Id";
+
+        db.prepare(`
+          UPDATE ${decoded.tableName}
+          SET ${expectedPathCol} = ?,
+              ${needsRenameCol} = ?
+          WHERE ${idCol} = ?
+        `).run(row.expectedPath, row.needsRename, decoded.id);
       }
 
-      const relUpdate = db.prepare(`
-        UPDATE TrackFiles
-        SET relative_path = ?
-        WHERE id = ?
-      `);
       for (const row of relativePathUpdates) {
-        relUpdate.run(row.relativePath, row.id);
+        const decoded = decodeSyntheticId(row.id);
+        const relPathCol = decoded.tableName === "TrackFiles" ? "relative_path" : "RelativePath";
+        const idCol = decoded.tableName === "TrackFiles" ? "id" : "Id";
+
+        db.prepare(`
+          UPDATE ${decoded.tableName}
+          SET ${relPathCol} = ?
+          WHERE ${idCol} = ?
+        `).run(row.relativePath, decoded.id);
       }
     })();
 
@@ -218,21 +270,49 @@ export class RenameTrackFileService {
       return result;
     }
 
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-      FROM TrackFiles
-      WHERE id IN (${placeholders})
-    `).all(...ids) as RenameLibraryFileRow[];
-    const rowMap = new Map(rows.map((row) => [row.id, row]));
+    const rows: RenameLibraryFileRow[] = [];
+    for (const syntheticId of ids) {
+      const decoded = decodeSyntheticId(syntheticId);
+      if (decoded.tableName === "TrackFiles") {
+        const row = db.prepare(`
+          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+          FROM TrackFiles
+          WHERE id = ?
+        `).get(decoded.id) as RenameLibraryFileRow | undefined;
+        if (row) {
+          rows.push({ ...row, id: syntheticId });
+        }
+      } else if (decoded.tableName === "MetadataFiles") {
+        const row = db.prepare(`
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          FROM MetadataFiles
+          WHERE Id = ?
+        `).get(decoded.id) as RenameLibraryFileRow | undefined;
+        if (row) {
+          rows.push({ ...row, id: syntheticId });
+        }
+      } else if (decoded.tableName === "ExtraFiles") {
+        const row = db.prepare(`
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          FROM ExtraFiles
+          WHERE Id = ?
+        `).get(decoded.id) as RenameLibraryFileRow | undefined;
+        if (row) {
+          rows.push({ ...row, id: syntheticId });
+        }
+      } else if (decoded.tableName === "LyricFiles") {
+        const row = db.prepare(`
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          FROM LyricFiles
+          WHERE Id = ?
+        `).get(decoded.id) as RenameLibraryFileRow | undefined;
+        if (row) {
+          rows.push({ ...row, id: syntheticId });
+        }
+      }
+    }
 
-    const findConflict = db.prepare(`
-      SELECT id
-      FROM TrackFiles
-      WHERE id != ?
-        AND (file_path = ? OR expected_path = ?)
-      LIMIT 1
-    `);
+    const rowMap = new Map(rows.map((row) => [row.id, row]));
 
     const dbUpdates: Array<{ sql: string; args: unknown[] }> = [];
     const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
@@ -264,21 +344,35 @@ export class RenameTrackFileService {
         }
 
         const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
+        const decoded = decodeSyntheticId(id);
+        const tableName = decoded.tableName;
+        const idCol = tableName === "TrackFiles" ? "id" : "Id";
+        const expectedPathCol = tableName === "TrackFiles" ? "expected_path" : "ExpectedPath";
+        const needsRenameCol = tableName === "TrackFiles" ? "needs_rename" : "NeedsRename";
+
         if (samePath) {
           dbUpdates.push({
-            sql: "UPDATE TrackFiles SET expected_path = ?, needs_rename = 0, verified_at = CURRENT_TIMESTAMP WHERE id = ?",
-            args: [expectedPath, id],
+            sql: `UPDATE ${tableName} SET ${expectedPathCol} = ?, ${needsRenameCol} = 0, ${tableName === "TrackFiles" ? "verified_at = CURRENT_TIMESTAMP" : "LastUpdated = CURRENT_TIMESTAMP"} WHERE ${idCol} = ?`,
+            args: [expectedPath, decoded.id],
           });
           result.skipped++;
           continue;
         }
 
-        const dbConflict = findConflict.get(id, expectedPath, expectedPath) as { id: number } | undefined;
+        const filePathCol = tableName === "TrackFiles" ? "file_path" : "FilePath";
+        const dbConflict = db.prepare(`
+          SELECT ${idCol} AS id
+          FROM ${tableName}
+          WHERE ${idCol} != ?
+            AND (${filePathCol} = ? OR ${expectedPathCol} = ?)
+          LIMIT 1
+        `).get(decoded.id, expectedPath, expectedPath) as { id: number } | undefined;
+
         const fsConflict = fs.existsSync(expectedPath);
         if (dbConflict || fsConflict) {
           dbUpdates.push({
-            sql: "UPDATE TrackFiles SET expected_path = ?, needs_rename = 1 WHERE id = ?",
-            args: [expectedPath, id],
+            sql: `UPDATE ${tableName} SET ${expectedPathCol} = ?, ${needsRenameCol} = 1 WHERE ${idCol} = ?`,
+            args: [expectedPath, decoded.id],
           });
           result.conflicts++;
           continue;
@@ -293,20 +387,35 @@ export class RenameTrackFileService {
         const extension = path.extname(expectedPath).replace(".", "");
         const stats = fs.statSync(expectedPath);
 
-        dbUpdates.push({
-          sql: `UPDATE TrackFiles
-            SET file_path = ?,
-                relative_path = ?,
-                library_root = ?,
-                filename = ?,
-                extension = ?,
-                expected_path = ?,
-                needs_rename = 0,
-                modified_at = ?,
-                verified_at = CURRENT_TIMESTAMP
-            WHERE id = ?`,
-          args: [expectedPath, relativePath, root, filename, extension, expectedPath, stats.mtime.toISOString(), id],
-        });
+        if (tableName === "TrackFiles") {
+          dbUpdates.push({
+            sql: `UPDATE TrackFiles
+              SET file_path = ?,
+                  relative_path = ?,
+                  library_root = ?,
+                  filename = ?,
+                  extension = ?,
+                  expected_path = ?,
+                  needs_rename = 0,
+                  modified_at = ?,
+                  verified_at = CURRENT_TIMESTAMP
+              WHERE id = ?`,
+            args: [expectedPath, relativePath, root, filename, extension, expectedPath, stats.mtime.toISOString(), decoded.id],
+          });
+        } else {
+          dbUpdates.push({
+            sql: `UPDATE ${tableName}
+              SET FilePath = ?,
+                  RelativePath = ?,
+                  LibraryRoot = ?,
+                  Extension = ?,
+                  ExpectedPath = ?,
+                  NeedsRename = 0,
+                  LastUpdated = CURRENT_TIMESTAMP
+              WHERE Id = ?`,
+            args: [expectedPath, relativePath, root, extension, expectedPath, decoded.id],
+          });
+        }
 
         historyEvents.push({
           artistId: row.artist_id,

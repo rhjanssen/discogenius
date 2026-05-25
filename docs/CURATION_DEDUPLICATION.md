@@ -1,6 +1,6 @@
 # Curation Workflow
 
-Last updated: 2026-05-21
+Last updated: 2026-05-25
 
 Discogenius curation is MusicBrainz release-group based. It no longer runs the old provider-album redundancy engine as a runtime fallback.
 
@@ -18,12 +18,12 @@ Each wanted release group can have independent slots:
 
 - `stereo`: normal audio library target.
 - `spatial`: surround/spatial audio library target. The core uses format-agnostic wording; providers expose native labels such as `DOLBY_ATMOS`.
-- `video`: currently provider-discovered music videos, with MusicBrainz recording links added only when evidence is strong enough.
+- `video`: MusicBrainz video recordings where available, plus provider-only provisional video recordings when a connected provider exposes more videos than MusicBrainz currently knows.
 
 ## Runtime Flow
 
 1. Artist add/search resolves to a MusicBrainz artist MBID through the Lidarr metadata service.
-2. Artist refresh syncs MusicBrainz release groups and release details into `ArtistMetadata`, `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, and `Recordings`.
+2. Artist refresh syncs MusicBrainz release groups, release details, music-video recordings, and recording relationships into `ArtistMetadata`, `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, `Recordings`, and `RecordingRelations`.
 3. The active streaming provider supplies release offers for the artist.
 4. Provider offers are matched to MusicBrainz release groups, and to a specific MusicBrainz release when evidence supports it.
 5. Curation applies MusicBrainz category and redundancy settings to `ReleaseGroupSlots.wanted`.
@@ -58,13 +58,13 @@ Provider matching only fills or clears slot availability fields such as `selecte
 
 - Stereo slots download into the music root.
 - Spatial slots download into the spatial root.
-- Videos download from provider video IDs until MusicBrainz video-recording coverage is strong enough to make videos fully canonical.
+- Videos download from provider video IDs, but provider IDs stay in provider offer/provenance rows. Canonical video identity lives in `Recordings` when MusicBrainz has the video, and in provisional provider-only recording rows otherwise.
 
 Download work stays in `download-processor.ts`; scheduled/non-download work stays in scheduler commands.
 
 ## Remaining Work
 
 - Move manual import and unmapped matching terminology from `tidalId` to provider-neutral IDs.
-- Replace provider-first video rows with canonical MusicBrainz recording links when evidence is strong.
-- Add a central artwork resolver/cache for Lidarr images, Cover Art Archive, provider artwork, and local sidecars.
+- Surface MusicBrainz-only video recordings in the local library UI before provider acquisition is configured.
+- Retire provider-primary video read paths once `ProviderItems` + `Recordings` can fully serve video pages and download queueing.
 - Complete Lidarr-style rename/retag preview and apply flows for all library slots.

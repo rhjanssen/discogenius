@@ -22,6 +22,8 @@ export interface LidarrAlbum {
   Disambiguation?: string;
   Images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
+  Releases?: any[];
+  releases?: any[];
 }
 
 export interface LidarrReleaseGroupDetail {
@@ -305,7 +307,24 @@ export class SkyHookProxy {
           updated_at = CURRENT_TIMESTAMP
       `);
 
+      const selectExisting = db.prepare(`SELECT data FROM Albums WHERE mbid = ?`);
       for (const album of artist.Albums || []) {
+        const existingRow = selectExisting.get(album.Id) as { data: string } | undefined;
+        let mergedData = album;
+        if (existingRow?.data) {
+          try {
+            const existingData = JSON.parse(existingRow.data);
+            if (existingData.images || existingData.Images || existingData.Releases || existingData.releases) {
+              mergedData = {
+                ...album,
+                images: album.images || album.Images || existingData.images || existingData.Images,
+                Releases: album.Releases || album.releases || existingData.Releases || existingData.releases,
+              };
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
         insertRg.run(
           album.Id,
           artist.id,
@@ -314,7 +333,7 @@ export class SkyHookProxy {
           JSON.stringify(album.SecondaryTypes || []),
           album.ReleaseDate || null,
           album.Disambiguation || null,
-          JSON.stringify(album),
+          JSON.stringify(mergedData),
         );
       }
     })();

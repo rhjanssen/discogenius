@@ -1,6 +1,6 @@
 # RFC: Provider-Neutral Internal IDs with Provider Mappings
 
-Last updated: 2026-03-20
+Last updated: 2026-05-25
 Status: Approved direction for phased implementation
 
 ## Why This RFC Exists
@@ -60,7 +60,7 @@ The same assumption flows into:
 - `history_events`
 - provider offer lookups in `ProviderItems`
 
-`ProviderItems` is intentionally a provider-offer cache, not a stable provider-neutral identity table. Stable app-owned IDs still require a future migration away from provider-primary compatibility IDs.
+`ProviderItems` is intentionally a provider-offer cache, not a stable provider-neutral identity table. Canonical MusicBrainz tables now have Lidarr-style `Id` plus `Foreign*Id` columns, but stable app-owned IDs still require a future migration away from provider-primary compatibility IDs in `Artists`, `ProviderAlbums`, and `ProviderMedia`.
 
 ### Queue and status payloads are provider-shaped
 
@@ -106,7 +106,7 @@ For Discogenius, that means:
 
 ### Local IDs
 
-Discogenius should use app-owned UUIDs as the durable IDs for:
+Discogenius should use app-owned local `Id` values as the durable IDs for:
 
 - artists
 - albums
@@ -132,7 +132,7 @@ type EntityType = "artist" | "album" | "media" | "playlist";
 
 interface ProviderMapping {
   entityType: EntityType;
-  entityId: string;      // internal UUID
+  entityId: string;      // internal Discogenius Id
   provider: string;      // "tidal", "apple-music", "musicbrainz", ...
   externalId: string;    // provider-owned identifier
   fetchedAt?: string;
@@ -149,7 +149,7 @@ Canonical matching responsibilities:
 
 | Layer | Key | Purpose |
 |---|---|---|
-| Local app identity | internal UUID | Stable Discogenius entity identity |
+| Local app identity | internal `Id` | Stable Discogenius entity identity |
 | Track matching | `isrc` | Cross-provider recording identity |
 | Album edition matching | `upc` / MB Release ID | Specific pressing/edition |
 | Abstract album linking | `mb_release_group_id` | Cross-provider album concept |
@@ -163,10 +163,10 @@ Important: `mb_release_group_id` remains a linking hint only. It is not a dedup 
 
 The target tables should look like this conceptually:
 
-- `Artists.id TEXT PRIMARY KEY` (internal UUID)
+- `Artists.Id INTEGER PRIMARY KEY` or equivalent Lidarr-style local ID
 - canonical MusicBrainz `Albums` remain release-group MBIDs, matching the Lidarr-style metadata graph
 - `ProviderAlbums.id TEXT PRIMARY KEY` and `ProviderMedia.id TEXT PRIMARY KEY` are replaced by provider offer rows keyed through a provider identity map
-- `playlists.id TEXT PRIMARY KEY` (internal UUID)
+- `playlists.Id INTEGER PRIMARY KEY` or equivalent Lidarr-style local ID
 - provider identity rows reference those internal IDs
 
 Foreign keys in tables like `TrackFiles`, `history_events`, `upgrade_queue`, `ProviderAlbumArtists`, and `ProviderMediaArtists` should all reference internal IDs or canonical MBIDs, not provider IDs.
@@ -177,20 +177,20 @@ SQLite does not support in-place primary-key rewrites cleanly. The safe path is 
 
 Phase A:
 
-- add `uuid` columns to provider-primary compatibility tables where needed
-- backfill UUIDs for all existing rows
+- add local `Id` columns to provider-primary compatibility tables where needed
+- backfill local IDs for all existing rows
 - add provider identity rows for all existing provider-primary compatibility rows
-- add new UUID-based foreign-key columns to dependent tables without removing old INT columns yet
+- add new local-ID foreign-key columns to dependent tables without removing old provider-ID columns yet
 
 Phase B:
 
-- dual-write old ID columns and new UUID columns
+- dual-write old ID columns and new local-ID columns
 - add resolver helpers that can map provider refs to internal IDs
-- move new queue payloads and read paths to UUID-first logic
+- move new queue payloads and read paths to local-ID-first logic
 
 Phase C:
 
-- rebuild the core tables in a versioned SQLite migration so internal UUID columns become the actual primary keys
+- rebuild the core tables in a versioned SQLite migration so internal `Id` columns become the actual primary keys
 - drop legacy TIDAL-primary columns only after the codebase no longer depends on them
 
 ## Proposed Runtime Model
@@ -214,7 +214,7 @@ Queue and history paths should eventually prefer a local entity reference:
 ```ts
 interface LocalEntityRef {
   entityType: "artist" | "album" | "media" | "playlist";
-  id: string; // internal UUID
+  id: string; // internal Discogenius Id
 }
 ```
 
@@ -281,7 +281,7 @@ Playlists need to follow the same pattern eventually:
 
 - add internal `playlists.id`
 - keep remote provider playlist IDs in provider identity rows, not canonical playlist rows
-- stop assuming `uuid === tidal_id`
+- stop assuming the local playlist ID is identical to `tidal_id`
 
 The current playlist table is still useful because it already proves Discogenius can keep a provider-specific identifier alongside a separate local record.
 
@@ -295,21 +295,21 @@ The current playlist table is still useful because it already proves Discogenius
 
 ### Phase 2: additive schema groundwork
 
-- add UUID columns and backfill them
+- add local-ID columns and backfill them
 - add `provider='tidal'` mappings for all current entities
-- add UUID shadow columns to dependent tables
+- add local-ID shadow columns to dependent tables
 - add tests for backfill correctness
 
 ### Phase 3: runtime dual-read/dual-write
 
 - introduce `ProviderRef` and `LocalEntityRef`
-- make queue/status/history payloads UUID-capable
+- make queue/status/history payloads local-ID-capable
 - update read paths to resolve from provider mappings
 - update new writes to persist both old and new columns until cut-over
 
 ### Phase 4: primary-key cut-over
 
-- build new UUID-primary tables in a versioned migration
+- build new local-ID-primary tables in a versioned migration
 - copy rows and dependent relations in one transaction
 - verify row counts, foreign keys, and unique constraints
 - swap tables and preserve a backup copy
@@ -336,10 +336,10 @@ Required safety rules:
 
 ### Automated
 
-- migration smoke test from current TIDAL-primary schema to additive UUID shadow columns
+- migration smoke test from current TIDAL-primary schema to additive local-ID shadow columns
 - provider mapping backfill test for artists/albums/media/playlists
 - queue payload tests covering `entity`, `ref`, and legacy `tidalId`
-- search/history/status contract tests proving UUID-first behavior
+- search/history/status contract tests proving local-ID-first behavior
 
 ### Staging / real-data rehearsal
 
@@ -367,7 +367,7 @@ The implementation order is:
 
 1. approve this RFC
 2. do additive schema groundwork
-3. make runtime payloads/provider resolution UUID-capable
+3. make runtime payloads/provider resolution local-ID-capable
 4. perform the primary-key swap only after dual-read/dual-write has stabilized
 
 This keeps Discogenius aligned with the part of Lidarr's architecture that matters most here: local managed identity is stable, and source/provider identity is attached to it rather than embedded into the app's core primary keys.

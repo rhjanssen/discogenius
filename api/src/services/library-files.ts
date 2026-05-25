@@ -9,6 +9,9 @@ import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
 import { resolveLibraryFileIdentity, type LibrarySlot } from "./library-file-identity.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "./extras/files/extra-file-service.js";
+import { LyricFileService } from "./extras/lyrics/lyric-file-service.js";
+import { MetadataFileService } from "./extras/metadata/files/metadata-file-service.js";
 
 type LibraryFileRow = {
   id: number;
@@ -64,14 +67,6 @@ type AudioMediaLookupRow = {
   track_quality: string | null;
   album_quality: string | null;
 };
-
-const TRACKED_ASSET_FILE_TYPES = new Set([
-  "cover",
-  "video_cover",
-  "video_thumbnail",
-  "nfo",
-  "lyrics",
-] as const);
 
 export type RenamePreviewItem = {
   id: number;
@@ -293,7 +288,7 @@ export class LibraryFilesService {
   }
 
   static isTrackedAssetFileType(fileType: string): boolean {
-    return TRACKED_ASSET_FILE_TYPES.has(fileType as typeof TRACKED_ASSET_FILE_TYPES extends Set<infer T> ? T : never);
+    return isExtraFileType(fileType);
   }
 
   static resolveExistingFiles<T extends ResolvableLibraryFileRow>(rows: T[]): T[] {
@@ -402,6 +397,80 @@ export class LibraryFilesService {
       });
 
       updated += 1;
+    }
+
+    // Rebase sidecar tables
+    const sidecarTables = ["MetadataFiles", "LyricFiles", "ExtraFiles"] as const;
+    for (const table of sidecarTables) {
+      const fileTypeSql = table === "LyricFiles" ? "'lyrics' AS file_type" : "FileType AS file_type";
+      const qualitySql = table === "LyricFiles" ? "Quality AS quality" : "NULL AS quality";
+
+      const sidecarRows = db.prepare(`
+        SELECT
+          Id AS id,
+          ArtistId AS artist_id,
+          AlbumId AS album_id,
+          MediaId AS media_id,
+          FilePath AS file_path,
+          RelativePath AS relative_path,
+          LibraryRoot AS library_root,
+          ${fileTypeSql},
+          ${qualitySql}
+        FROM ${table}
+        WHERE ArtistId = ?
+      `).all(options.artistId) as RebaseLibraryFileRow[];
+
+      const sidecarUpdate = db.prepare(`
+        UPDATE ${table}
+        SET FilePath = ?,
+            RelativePath = ?,
+            ExpectedPath = ?,
+            NeedsRename = 0,
+            LastUpdated = CURRENT_TIMESTAMP
+        WHERE Id = ?
+      `);
+
+      for (const row of sidecarRows) {
+        const currentRoot = resolveLibraryRootPath(row.library_root, row.file_path);
+        if (!currentRoot) {
+          continue;
+        }
+
+        const currentRelativePath = row.relative_path || path.relative(currentRoot, row.file_path);
+        const rebasedRelativePath = rebaseRelativePathPrefix(
+          currentRelativePath,
+          options.sourcePath,
+          options.destinationPath,
+        );
+
+        if (!rebasedRelativePath) {
+          continue;
+        }
+
+        const nextFilePath = path.join(currentRoot, rebasedRelativePath);
+
+        sidecarUpdate.run(
+          nextFilePath,
+          rebasedRelativePath,
+          nextFilePath,
+          row.id,
+        );
+
+        this.emitFileUpgraded({
+          libraryFileId: row.id,
+          artistId: row.artist_id,
+          albumId: row.album_id,
+          mediaId: row.media_id,
+          fileType: row.file_type,
+          filePath: nextFilePath,
+          libraryRoot: row.library_root,
+          quality: row.quality,
+          previousPath: row.file_path,
+          reason: "artist-folder-move",
+        });
+
+        updated += 1;
+      }
     }
 
     return { updated };
@@ -750,40 +819,59 @@ export class LibraryFilesService {
     return { expectedPath: null, reason: `unsupported_file_type:${row.file_type}` };
   }
 
-  private static getTrackedAssetIdentity(params: {
-    artistId: string;
-    albumId?: string | null;
-    mediaId?: string | null;
-    fileType: string;
-    librarySlot?: string | null;
-  }):
-    | { sql: string; values: Array<string | null> }
-    | null {
+  private static getSidecarIdentity(
+    tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles",
+    params: {
+      artistId: string;
+      albumId?: string | null;
+      mediaId?: string | null;
+      fileType: string;
+      librarySlot?: string | null;
+    }
+  ): { sql: string; values: Array<string | null> } | null {
     const { artistId, albumId, mediaId, fileType, librarySlot } = params;
-
-    const hasSlot = librarySlot !== undefined;
-    const slotClause = "AND library_slot = ?";
     const slotValue = librarySlot || "stereo";
 
-    if (mediaId && (fileType === "lyrics" || fileType === "video_thumbnail" || fileType === "nfo")) {
-      return {
-        sql: `media_id = ? AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
-        values: [mediaId, fileType, ...(hasSlot ? [slotValue] : [])],
-      };
+    if (mediaId) {
+      if (tableName === "LyricFiles") {
+        return {
+          sql: "MediaId = ? AND LibrarySlot = ?",
+          values: [mediaId, slotValue],
+        };
+      } else {
+        return {
+          sql: "MediaId = ? AND FileType = ? AND LibrarySlot = ?",
+          values: [mediaId, fileType, slotValue],
+        };
+      }
     }
 
-    if (albumId && !mediaId && (fileType === "cover" || fileType === "video_cover" || fileType === "nfo")) {
-      return {
-        sql: `album_id = ? AND media_id IS NULL AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
-        values: [albumId, fileType, ...(hasSlot ? [slotValue] : [])],
-      };
+    if (albumId && !mediaId) {
+      if (tableName === "LyricFiles") {
+        return {
+          sql: "AlbumId = ? AND MediaId IS NULL AND LibrarySlot = ?",
+          values: [albumId, slotValue],
+        };
+      } else {
+        return {
+          sql: "AlbumId = ? AND MediaId IS NULL AND FileType = ? AND LibrarySlot = ?",
+          values: [albumId, fileType, slotValue],
+        };
+      }
     }
 
-    if (!albumId && !mediaId && (fileType === "cover" || fileType === "nfo")) {
-      return {
-        sql: `artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ?${hasSlot ? ` ${slotClause}` : ""}`,
-        values: [artistId, fileType, ...(hasSlot ? [slotValue] : [])],
-      };
+    if (!albumId && !mediaId) {
+      if (tableName === "LyricFiles") {
+        return {
+          sql: "ArtistId = ? AND AlbumId IS NULL AND MediaId IS NULL AND LibrarySlot = ?",
+          values: [artistId, slotValue],
+        };
+      } else {
+        return {
+          sql: "ArtistId = ? AND AlbumId IS NULL AND MediaId IS NULL AND FileType = ? AND LibrarySlot = ?",
+          values: [artistId, fileType, slotValue],
+        };
+      }
     }
 
     return null;
@@ -797,20 +885,64 @@ export class LibraryFilesService {
     preferredPath?: string | null;
     librarySlot?: string | null;
   }): number | null {
-    const identity = this.getTrackedAssetIdentity(params);
+    const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
+                      isMetadataExtraFileType(params.fileType) ? "MetadataFiles" : "ExtraFiles";
+
+    const identity = this.getSidecarIdentity(tableName, params);
     if (!identity) {
       return null;
     }
 
     const row = db.prepare(`
-      SELECT id
-      FROM TrackFiles
+      SELECT Id
+      FROM ${tableName}
       WHERE ${identity.sql}
-      ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
+      ORDER BY CASE WHEN FilePath = ? THEN 0 ELSE 1 END, LastUpdated DESC, Id DESC
       LIMIT 1
-    `).get(...identity.values, params.preferredPath || "") as { id: number } | undefined;
+    `).get(...identity.values, params.preferredPath || "") as { Id: number } | undefined;
 
-    return row?.id ?? null;
+    return row?.Id ?? null;
+  }
+
+  private static upsertExtraFileRecord(
+    params: LibraryFileUpsertParams,
+    identity: ReturnType<typeof resolveLibraryFileIdentity>,
+  ): void {
+    if (!isExtraFileType(params.fileType)) {
+      return;
+    }
+
+    const input = {
+      artistId: params.artistId,
+      albumId: params.albumId || null,
+      mediaId: params.mediaId || null,
+      filePath: params.filePath,
+      libraryRoot: params.libraryRoot,
+      fileType: params.fileType,
+      provider: identity.provider,
+      providerEntityType: identity.providerEntityType,
+      providerId: identity.providerId,
+      librarySlot: identity.librarySlot,
+      quality: params.quality || null,
+      expectedPath: params.expectedPath || params.filePath,
+      canonicalArtistMbid: identity.canonicalArtistMbid,
+      canonicalReleaseGroupMbid: identity.canonicalReleaseGroupMbid,
+      canonicalReleaseMbid: identity.canonicalReleaseMbid,
+      canonicalTrackMbid: identity.canonicalTrackMbid,
+      canonicalRecordingMbid: identity.canonicalRecordingMbid,
+    };
+
+    if (isLyricExtraFileType(params.fileType)) {
+      LyricFileService.upsert(input);
+      return;
+    }
+
+    if (isMetadataExtraFileType(params.fileType)) {
+      MetadataFileService.upsert(input);
+      return;
+    }
+
+    ExtraFileService.upsert(input);
   }
 
   static upsertLibraryFile(params: LibraryFileUpsertParams) {
@@ -837,6 +969,65 @@ export class LibraryFilesService {
 
     const expectedPath = params.expectedPath || params.filePath;
     const canonicalIdentity = resolveLibraryFileIdentity(params);
+
+    if (this.isTrackedAssetFileType(params.fileType)) {
+      const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
+                        isMetadataExtraFileType(params.fileType) ? "MetadataFiles" : "ExtraFiles";
+      const selectQuality = tableName === "LyricFiles" ? "Quality" : "NULL AS Quality";
+
+      const existingSidecarRow = db.prepare(`
+        SELECT Id, FilePath, LibraryRoot, RelativePath, ${selectQuality}
+        FROM ${tableName}
+        WHERE FilePath = ?
+        LIMIT 1
+      `).get(params.filePath) as { Id: number; FilePath: string; LibraryRoot: string; RelativePath: string; Quality?: string | null } | undefined;
+
+      this.upsertExtraFileRecord(params, canonicalIdentity);
+      const insertedId = ExtraFileService.findIdByPath(tableName, params.filePath) || 0;
+
+      if (params.removeFromUnmapped !== false) {
+        db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
+      }
+
+      this.enforceTrackedAssetIdentity({
+        artistId: params.artistId,
+        albumId: params.albumId || null,
+        mediaId: params.mediaId || null,
+        fileType: params.fileType,
+        librarySlot: canonicalIdentity.librarySlot,
+      });
+
+      if (!existingSidecarRow) {
+        this.emitFileAdded({
+          libraryFileId: insertedId || null,
+          artistId: params.artistId,
+          albumId: params.albumId || null,
+          mediaId: params.mediaId || null,
+          fileType: params.fileType,
+          filePath: params.filePath,
+          libraryRoot: params.libraryRoot,
+          quality: params.quality || null,
+        });
+      } else if (
+        normalizeResolvedPath(existingSidecarRow.FilePath) !== normalizeResolvedPath(params.filePath) ||
+        (existingSidecarRow.Quality ?? null) !== (params.quality ?? null)
+      ) {
+        this.emitFileUpgraded({
+          libraryFileId: insertedId,
+          artistId: params.artistId,
+          albumId: params.albumId || null,
+          mediaId: params.mediaId || null,
+          fileType: params.fileType,
+          filePath: params.filePath,
+          libraryRoot: params.libraryRoot,
+          quality: params.quality || null,
+          previousPath: existingSidecarRow.FilePath,
+          previousQuality: existingSidecarRow.Quality || null,
+        });
+      }
+
+      return insertedId;
+    }
 
     if (params.mediaId && (params.fileType === "track" || params.fileType === "video")) {
       const existingRow = db.prepare(`
@@ -1294,29 +1485,34 @@ export class LibraryFilesService {
     fileType: string;
     librarySlot?: string | null;
   }): { removed: number } {
-    const identity = this.getTrackedAssetIdentity(params);
+    const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
+                      isMetadataExtraFileType(params.fileType) ? "MetadataFiles" : "ExtraFiles";
+
+    const identity = this.getSidecarIdentity(tableName, params);
     if (!identity) {
       return { removed: 0 };
     }
 
+    const fileTypeSelect = tableName === "LyricFiles" ? "'lyrics' AS file_type" : "FileType AS file_type";
+
     const rows = db.prepare(`
       SELECT
-        id,
-        artist_id,
-        album_id,
-        media_id,
-        file_path,
-        relative_path,
-        library_root,
-        file_type,
-        extension,
-        expected_path,
-        verified_at,
-        modified_at,
-        created_at
-      FROM TrackFiles
+        Id AS id,
+        ArtistId AS artist_id,
+        AlbumId AS album_id,
+        MediaId AS media_id,
+        FilePath AS file_path,
+        RelativePath AS relative_path,
+        LibraryRoot AS library_root,
+        ${fileTypeSelect},
+        Extension AS extension,
+        ExpectedPath AS expected_path,
+        LastUpdated AS verified_at,
+        LastUpdated AS modified_at,
+        Added AS created_at
+      FROM ${tableName}
       WHERE ${identity.sql}
-      ORDER BY id DESC
+      ORDER BY Id DESC
     `).all(...identity.values) as TrackedAssetRow[];
 
     if (rows.length <= 1) {
@@ -1348,7 +1544,7 @@ export class LibraryFilesService {
           }
         }
       } catch (error) {
-        console.warn(`[TrackFiles] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
+        console.warn(`[${tableName}] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
       }
 
       idsToDelete.push(row.id);
@@ -1367,40 +1563,90 @@ export class LibraryFilesService {
     }
 
     if (idsToDelete.length > 0) {
-      batchDelete("TrackFiles", idsToDelete);
+      batchDelete(tableName, idsToDelete);
     }
 
     if (removed > 0) {
-      console.log(`[TrackFiles] Removed ${removed} duplicate tracked ${keep.file_type} file(s) for artist ${params.artistId}.`);
+      console.log(`[${tableName}] Removed ${removed} duplicate tracked ${keep.file_type} file(s) for artist ${params.artistId}.`);
     }
 
     return { removed };
   }
 
   static pruneDuplicateTrackedAssets(artistId?: string): { removed: number } {
-    const groups = db.prepare(`
-      SELECT artist_id, album_id, media_id, file_type, library_slot, COUNT(*) AS count
-      FROM TrackFiles
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
-        ${artistId ? "AND artist_id = ?" : ""}
-      GROUP BY artist_id, album_id, media_id, file_type, library_slot
+    let removed = 0;
+    const params = artistId ? [artistId] : [];
+
+    // MetadataFiles duplicates
+    const metadataGroups = db.prepare(`
+      SELECT ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FileType AS file_type, LibrarySlot AS library_slot
+      FROM MetadataFiles
+      ${artistId ? "WHERE ArtistId = ?" : ""}
+      GROUP BY ArtistId, AlbumId, MediaId, FileType, LibrarySlot
       HAVING COUNT(*) > 1
-    `).all(...(artistId ? [artistId] : [])) as Array<{
-      artist_id: number;
-      album_id: number | null;
-      media_id: number | null;
+    `).all(...params) as Array<{
+      artist_id: string;
+      album_id: string | null;
+      media_id: string | null;
       file_type: string;
       library_slot: string;
-      count: number;
     }>;
 
-    let removed = 0;
-    for (const group of groups) {
+    for (const group of metadataGroups) {
       removed += this.enforceTrackedAssetIdentity({
-        artistId: String(group.artist_id),
-        albumId: group.album_id !== null ? String(group.album_id) : null,
-        mediaId: group.media_id !== null ? String(group.media_id) : null,
+        artistId: group.artist_id,
+        albumId: group.album_id,
+        mediaId: group.media_id,
         fileType: group.file_type,
+        librarySlot: group.library_slot,
+      }).removed;
+    }
+
+    // ExtraFiles duplicates
+    const extraGroups = db.prepare(`
+      SELECT ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FileType AS file_type, LibrarySlot AS library_slot
+      FROM ExtraFiles
+      ${artistId ? "WHERE ArtistId = ?" : ""}
+      GROUP BY ArtistId, AlbumId, MediaId, FileType, LibrarySlot
+      HAVING COUNT(*) > 1
+    `).all(...params) as Array<{
+      artist_id: string;
+      album_id: string | null;
+      media_id: string | null;
+      file_type: string;
+      library_slot: string;
+    }>;
+
+    for (const group of extraGroups) {
+      removed += this.enforceTrackedAssetIdentity({
+        artistId: group.artist_id,
+        albumId: group.album_id,
+        mediaId: group.media_id,
+        fileType: group.file_type,
+        librarySlot: group.library_slot,
+      }).removed;
+    }
+
+    // LyricFiles duplicates
+    const lyricGroups = db.prepare(`
+      SELECT ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, LibrarySlot AS library_slot
+      FROM LyricFiles
+      ${artistId ? "WHERE ArtistId = ?" : ""}
+      GROUP BY ArtistId, AlbumId, MediaId, LibrarySlot
+      HAVING COUNT(*) > 1
+    `).all(...params) as Array<{
+      artist_id: string;
+      album_id: string | null;
+      media_id: string | null;
+      library_slot: string;
+    }>;
+
+    for (const group of lyricGroups) {
+      removed += this.enforceTrackedAssetIdentity({
+        artistId: group.artist_id,
+        albumId: group.album_id,
+        mediaId: group.media_id,
+        fileType: "lyrics",
         librarySlot: group.library_slot,
       }).removed;
     }
@@ -1409,58 +1655,78 @@ export class LibraryFilesService {
   }
 
   static pruneStaleTrackedAssets(artistId?: string): { removed: number } {
-    const rows = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
-      FROM TrackFiles
-      WHERE file_type IN ('cover', 'video_cover', 'video_thumbnail', 'nfo', 'lyrics')
-        ${artistId ? "AND artist_id = ?" : ""}
-      ORDER BY id ASC
-    `).all(...(artistId ? [artistId] : [])) as Array<{
-      id: number;
-      artist_id: number;
-      album_id: number | null;
-      media_id: number | null;
-      file_path: string;
-      relative_path: string | null;
-      library_root: string | null;
-      file_type: string;
-      quality: string | null;
-    }>;
+    let totalRemoved = 0;
+    const params = artistId ? [artistId] : [];
 
-    const idsToDelete: number[] = [];
+    const tables = [
+      { name: "MetadataFiles", fileTypeSql: "FileType AS file_type", qualitySql: "NULL AS quality" },
+      { name: "ExtraFiles", fileTypeSql: "FileType AS file_type", qualitySql: "NULL AS quality" },
+      { name: "LyricFiles", fileTypeSql: "'lyrics' AS file_type", qualitySql: "Quality AS quality" },
+    ] as const;
 
-    for (const row of rows) {
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
+    for (const table of tables) {
+      const rows = db.prepare(`
+        SELECT
+          Id AS id,
+          ArtistId AS artist_id,
+          AlbumId AS album_id,
+          MediaId AS media_id,
+          FilePath AS file_path,
+          RelativePath AS relative_path,
+          LibraryRoot AS library_root,
+          ${table.fileTypeSql},
+          ${table.qualitySql}
+        FROM ${table.name}
+        ${artistId ? "WHERE ArtistId = ?" : ""}
+        ORDER BY Id ASC
+      `).all(...params) as Array<{
+        id: number;
+        artist_id: number;
+        album_id: number | null;
+        media_id: number | null;
+        file_path: string;
+        relative_path: string | null;
+        library_root: string | null;
+        file_type: string;
+        quality: string | null;
+      }>;
 
-      if (fs.existsSync(resolvedPath)) {
-        continue;
+      const idsToDelete: number[] = [];
+
+      for (const row of rows) {
+        const resolvedPath = resolveStoredLibraryPath({
+          filePath: row.file_path,
+          libraryRoot: row.library_root,
+          relativePath: row.relative_path,
+        });
+
+        if (fs.existsSync(resolvedPath)) {
+          continue;
+        }
+
+        idsToDelete.push(row.id);
+        this.emitFileDeleted({
+          libraryFileId: row.id,
+          artistId: row.artist_id,
+          albumId: row.album_id,
+          mediaId: row.media_id,
+          fileType: row.file_type,
+          filePath: resolvedPath,
+          libraryRoot: row.library_root,
+          quality: row.quality,
+          reason: "stale-tracked-asset",
+          missing: true,
+        });
       }
 
-      idsToDelete.push(row.id);
-      this.emitFileDeleted({
-        libraryFileId: row.id,
-        artistId: row.artist_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        filePath: resolvedPath,
-        libraryRoot: row.library_root,
-        quality: row.quality,
-        reason: "stale-tracked-asset",
-        missing: true,
-      });
+      if (idsToDelete.length > 0) {
+        batchDelete(table.name, idsToDelete);
+        console.log(`[${table.name}] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
+        totalRemoved += idsToDelete.length;
+      }
     }
 
-    if (idsToDelete.length > 0) {
-      batchDelete("TrackFiles", idsToDelete);
-      console.log(`[TrackFiles] Removed ${idsToDelete.length} stale tracked sidecar row(s).`);
-    }
-
-    return { removed: idsToDelete.length };
+    return { removed: totalRemoved };
   }
 
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
@@ -1593,49 +1859,73 @@ export class LibraryFilesService {
   static pruneDisabledMetadataFiles(artistId: string): { deleted: number; missing: number; errors: number } {
     const metadataConfig = getConfigSection("metadata");
 
-    const selectors: Array<{ sql: string; params: unknown[] }> = [];
+    const rows: Array<{
+      id: number;
+      artist_id: number;
+      album_id: number | null;
+      media_id: number | null;
+      file_type: string;
+      quality: string | null;
+      file_path: string;
+      library_root: string;
+      tableName: "MetadataFiles" | "LyricFiles";
+    }> = [];
+
+    // Check MetadataFiles
+    const metaSelectors: string[] = [];
     if (!metadataConfig.save_album_cover) {
-      selectors.push({
-        sql: "artist_id = ? AND ((file_type = 'cover' AND album_id IS NOT NULL) OR file_type = 'video_cover')",
-        params: [artistId],
-      });
+      metaSelectors.push("(FileType = 'cover' AND AlbumId IS NOT NULL) OR FileType = 'video_cover'");
     }
     if (!metadataConfig.save_artist_picture) {
-      selectors.push({
-        sql: "artist_id = ? AND file_type = 'cover' AND album_id IS NULL AND media_id IS NULL",
-        params: [artistId],
-      });
+      metaSelectors.push("FileType = 'cover' AND AlbumId IS NULL AND MediaId IS NULL");
     }
     if (!metadataConfig.save_video_thumbnail) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'video_thumbnail'", params: [artistId] });
-    }
-    if (!metadataConfig.save_lyrics) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'lyrics'", params: [artistId] });
+      metaSelectors.push("FileType = 'video_thumbnail'");
     }
     if (!metadataConfig.save_nfo) {
-      selectors.push({ sql: "artist_id = ? AND file_type = 'nfo'", params: [artistId] });
+      metaSelectors.push("FileType = 'nfo'");
     }
 
-    if (selectors.length === 0) {
-      return { deleted: 0, missing: 0, errors: 0 };
+    if (metaSelectors.length > 0) {
+      const metaRows = db.prepare(`
+        SELECT
+          Id AS id,
+          ArtistId AS artist_id,
+          AlbumId AS album_id,
+          MediaId AS media_id,
+          FileType AS file_type,
+          NULL AS quality,
+          FilePath AS file_path,
+          LibraryRoot AS library_root
+        FROM MetadataFiles
+        WHERE ArtistId = ? AND (${metaSelectors.join(" OR ")})
+      `).all(artistId) as any[];
+
+      for (const row of metaRows) {
+        rows.push({ ...row, tableName: "MetadataFiles" });
+      }
     }
 
-    const rows = selectors.flatMap(({ sql, params }) =>
-      db.prepare(`
-        SELECT id, artist_id, album_id, media_id, file_type, quality, file_path, library_root
-        FROM TrackFiles
-        WHERE ${sql}
-      `).all(...params) as Array<{
-        id: number;
-        artist_id: number;
-        album_id: number | null;
-        media_id: number | null;
-        file_type: string;
-        quality: string | null;
-        file_path: string;
-        library_root: string;
-      }>
-    );
+    // Check LyricFiles
+    if (!metadataConfig.save_lyrics) {
+      const lyricRows = db.prepare(`
+        SELECT
+          Id AS id,
+          ArtistId AS artist_id,
+          AlbumId AS album_id,
+          MediaId AS media_id,
+          'lyrics' AS file_type,
+          Quality AS quality,
+          FilePath AS file_path,
+          LibraryRoot AS library_root
+        FROM LyricFiles
+        WHERE ArtistId = ?
+      `).all(artistId) as any[];
+
+      for (const row of lyricRows) {
+        rows.push({ ...row, tableName: "LyricFiles" });
+      }
+    }
 
     if (rows.length === 0) {
       return { deleted: 0, missing: 0, errors: 0 };
@@ -1656,7 +1946,7 @@ export class LibraryFilesService {
           fs.rmSync(resolvedFilePath, { force: true });
           deleted++;
         } catch (error) {
-          console.warn(`[TrackFiles] Failed to delete disabled metadata file ${resolvedFilePath}:`, error);
+          console.warn(`[${row.tableName}] Failed to delete disabled metadata file ${resolvedFilePath}:`, error);
           errors++;
           continue;
         }
@@ -1664,7 +1954,7 @@ export class LibraryFilesService {
         missing++;
       }
 
-      db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(row.id);
+      db.prepare(`DELETE FROM ${row.tableName} WHERE Id = ?`).run(row.id);
 
       try {
         recordHistoryEvent({
@@ -1681,7 +1971,7 @@ export class LibraryFilesService {
           },
         });
       } catch (historyError) {
-        console.warn(`[TrackFiles] Failed to record disabled metadata prune history for row ${row.id}:`, historyError);
+        console.warn(`[${row.tableName}] Failed to record disabled metadata prune history for row ${row.id}:`, historyError);
       }
 
       this.emitFileDeleted({
@@ -1705,7 +1995,7 @@ export class LibraryFilesService {
     }
 
     if (deleted > 0 || missing > 0) {
-      console.log(`[TrackFiles] Disabled metadata cleanup for artist ${artistId}: ${deleted} deleted, ${missing} already missing`);
+      console.log(`[Metadata/LyricFiles] Disabled metadata cleanup for artist ${artistId}: ${deleted} deleted, ${missing} already missing`);
     }
 
     return { deleted, missing, errors };

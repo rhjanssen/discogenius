@@ -55,6 +55,9 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
+  db.prepare("DELETE FROM LyricFiles").run();
+  db.prepare("DELETE FROM MetadataFiles").run();
+  db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM ProviderMediaArtists").run();
   db.prepare("DELETE FROM ProviderAlbumArtists").run();
   db.prepare("DELETE FROM TrackFiles").run();
@@ -454,13 +457,12 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
   });
 
   const row = dbModule.db.prepare(`
-    SELECT canonical_artist_mbid, provider, provider_entity_type, provider_id
-    FROM TrackFiles
-    WHERE id = ?
+    SELECT Provider AS provider, ProviderEntityType AS provider_entity_type, ProviderId AS provider_id
+    FROM MetadataFiles
+    WHERE Id = ?
   `).get(id) as Record<string, string | null>;
 
   assert.deepEqual(row, {
-    canonical_artist_mbid: "artist-mbid-1",
     provider: null,
     provider_entity_type: "artist",
     provider_id: null,
@@ -650,13 +652,12 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
   fs.writeFileSync(stalePath, "cover");
 
   dbModule.db.prepare(`
-    INSERT INTO TrackFiles (
-      artist_id, album_id, media_id, file_path, relative_path, library_root,
-      filename, extension, file_size, file_type, quality
-    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL), (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)
+    INSERT INTO MetadataFiles (
+      ArtistId, AlbumId, RelativePath, FilePath, LibraryRoot, Extension, Type, FileType
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "1", "11", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "jpg", 5, "cover",
-    "1", "10", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "jpg", 5, "cover",
+    "1", "11", path.relative(root, targetPath), targetPath, root, "jpg", "AlbumImage", "cover",
+    "1", "10", path.relative(root, stalePath), stalePath, root, "jpg", "AlbumImage", "cover"
   );
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
@@ -670,9 +671,9 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
   });
 
   const rows = dbModule.db.prepare(`
-    SELECT id, album_id, file_type, file_path
-    FROM TrackFiles
-    ORDER BY id
+    SELECT Id AS id, AlbumId AS album_id, FileType AS file_type, FilePath AS file_path
+    FROM MetadataFiles
+    ORDER BY Id
   `).all() as Array<{ id: number; album_id: string; file_type: string; file_path: string }>;
 
   assert.equal(rows.length, 1);
@@ -680,6 +681,24 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
   assert.equal(rows[0]?.album_id, "10");
   assert.equal(rows[0]?.file_type, "cover");
   assert.equal(rows[0]?.file_path, targetPath);
+
+  const metadataFile = dbModule.db.prepare(`
+    SELECT ArtistId, AlbumId, FilePath, FileType, Type
+    FROM MetadataFiles
+    WHERE FilePath = ?
+  `).get(targetPath) as { ArtistId?: string; AlbumId?: string; FilePath?: string; FileType?: string; Type?: string } | undefined;
+
+  assert.equal(metadataFile?.ArtistId, "1");
+  assert.equal(metadataFile?.AlbumId, "10");
+  assert.equal(metadataFile?.FileType, "cover");
+  assert.equal(metadataFile?.Type, "AlbumImage");
+
+  const staleMetadataFile = dbModule.db.prepare(`
+    SELECT Id
+    FROM MetadataFiles
+    WHERE FilePath = ?
+  `).get(stalePath);
+  assert.equal(staleMetadataFile, undefined);
 });
 
 test("computeExpectedPath inline vs separated layouts for video files", () => {
@@ -752,7 +771,7 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   };
 
   const expectedSeparated = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
-  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.mp4");
+  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}.mp4");
   assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
 
   const expectedSeparatedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -763,7 +782,7 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   });
   assert.equal(
     expectedSeparatedThumbnail.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.jpg"),
+    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}.jpg"),
   );
 
   const expectedSeparatedNfo = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -774,7 +793,7 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   });
   assert.equal(
     expectedSeparatedNfo.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.nfo"),
+    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}.nfo"),
   );
 
   config.path.video_folder_layout = "inline";

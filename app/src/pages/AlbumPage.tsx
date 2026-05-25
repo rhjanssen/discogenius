@@ -30,6 +30,7 @@ import {
   Info24Regular,
   MusicNote224Regular,
   ChevronDown16Regular,
+  CheckmarkCircle16Filled,
 } from "@fluentui/react-icons";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
@@ -683,7 +684,24 @@ const AlbumPage = () => {
     const target = options?.to === undefined ? getAlbumPath(item.id) : options.to ?? undefined;
     const hasStereoOffer = Boolean(item.stereo_provider_id);
     const hasSpatialOffer = Boolean(item.spatial_provider_id);
-    const qualityBadges = hasStereoOffer || hasSpatialOffer
+    const isMatched = hasStereoOffer || hasSpatialOffer;
+
+    const statusBadge = isMatched ? (
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: tokens.colorPaletteGreenBackground3,
+        color: tokens.colorPaletteGreenForeground3,
+        borderRadius: tokens.borderRadiusCircular,
+        padding: "2px",
+        boxShadow: tokens.shadow4,
+      }}>
+        <CheckmarkCircle16Filled style={{ width: "12px", height: "12px" }} />
+      </div>
+    ) : undefined;
+
+    const qualityBadges = isMatched
       ? (
         <>
           {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
@@ -705,6 +723,7 @@ const AlbumPage = () => {
         quality={item.quality}
         qualityBadges={qualityBadges}
         mini
+        statusBadge={statusBadge}
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
         downloadError={itemProgress?.statusMessage}
