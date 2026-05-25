@@ -179,7 +179,7 @@ const useStyles = makeStyles({
   },
   metadataBadges: {
     display: "inline-flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: tokens.spacingHorizontalXXS,
     flexWrap: "wrap",
   },
@@ -462,12 +462,12 @@ const AlbumPage = () => {
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
 
-    if (album?.stereo_quality) {
-      badges.push({ key: "stereo", quality: album.stereo_quality });
+    if (album?.spatial_quality) {
+      badges.push({ key: "spatial", quality: album.spatial_quality });
     }
 
-    if (album?.spatial_quality && !badges.some((badge) => badge.quality === album.spatial_quality)) {
-      badges.push({ key: "spatial", quality: album.spatial_quality });
+    if (album?.stereo_quality && !badges.some((badge) => badge.quality === album.stereo_quality)) {
+      badges.push({ key: "stereo", quality: album.stereo_quality });
     }
 
     if (badges.length === 0 && album?.quality) {
@@ -663,13 +663,34 @@ const AlbumPage = () => {
 
 
   const renderMiniAlbumCard = (
-    item: { id: string; title: string; cover_id?: string | null; cover?: string | null; quality?: string | null; explicit?: boolean; },
+    item: {
+      id: string;
+      title: string;
+      cover_id?: string | null;
+      cover?: string | null;
+      quality?: string | null;
+      explicit?: boolean;
+      stereo_provider_id?: string | null;
+      stereo_quality?: string | null;
+      spatial_provider_id?: string | null;
+      spatial_quality?: string | null;
+    },
     subtitle: string,
     itemProgress?: any,
     options?: { to?: string | null }
   ) => {
     const isCurrent = item.id === album?.id;
     const target = options?.to === undefined ? getAlbumPath(item.id) : options.to ?? undefined;
+    const hasStereoOffer = Boolean(item.stereo_provider_id);
+    const hasSpatialOffer = Boolean(item.spatial_provider_id);
+    const qualityBadges = hasStereoOffer || hasSpatialOffer
+      ? (
+        <>
+          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
+          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
+        </>
+      )
+      : undefined;
 
     return (
       <MediaCard
@@ -682,6 +703,7 @@ const AlbumPage = () => {
         subtitle={subtitle}
         explicit={item.explicit}
         quality={item.quality}
+        qualityBadges={qualityBadges}
         mini
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
@@ -910,7 +932,7 @@ const AlbumPage = () => {
           otherVersions.length > 0 && (
             <div className={styles.sectionSpacing}>
               <div className={styles.sectionHeader}>
-                <Title2>Releases</Title2>
+                <Title2>Other releases</Title2>
               </div>
               <div className={styles.carousel}>
                 {otherVersions.map((version) => {

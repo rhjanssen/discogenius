@@ -3,7 +3,7 @@ import path from 'path';
 import axios from 'axios';
 import { type Readable } from 'stream';
 import { Config } from './config.js';
-import { exec, spawn, type ChildProcessByStdio } from 'child_process';
+import { exec, execFile, spawn, type ChildProcessByStdio } from 'child_process';
 import fs from 'fs';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from './provider-client-config.js';
@@ -15,6 +15,7 @@ const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
+const MP4_METADATA_REWRITE_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v"]);
 
 function isSpatialAudioCodec(codec: string | null | undefined): boolean {
     const normalizedCodec = String(codec ?? "")
@@ -57,6 +58,52 @@ function resolveFfprobeBinary(): string {
     }
 
     return override;
+}
+
+export function getMetadataRewriteContainerArgs(filePath: string): string[] {
+    const extension = path.extname(filePath).toLowerCase();
+    if (!MP4_METADATA_REWRITE_EXTENSIONS.has(extension)) {
+        return [];
+    }
+
+    return ['-movflags', 'use_metadata_tags', '-f', 'mp4'];
+}
+
+export async function readFormatTags(filePath: string): Promise<Record<string, string>> {
+    const ffprobeBin = resolveFfprobeBinary();
+
+    return new Promise((resolve) => {
+        execFile(
+            ffprobeBin,
+            ['-v', 'error', '-show_entries', 'format_tags', '-of', 'json', filePath],
+            { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+            (error, stdout) => {
+                if (error || !stdout) {
+                    resolve({});
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(stdout);
+                    const rawTags = parsed?.format?.tags;
+                    if (!rawTags || typeof rawTags !== 'object') {
+                        resolve({});
+                        return;
+                    }
+
+                    const tags: Record<string, string> = {};
+                    for (const [key, value] of Object.entries(rawTags)) {
+                        if (typeof value === 'string' && value.length > 0) {
+                            tags[key] = value;
+                        }
+                    }
+                    resolve(tags);
+                } catch {
+                    resolve({});
+                }
+            },
+        );
+    });
 }
 
 export interface AudioMetrics {
@@ -285,6 +332,7 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
         '-map_metadata', '0',
         ...metadataArgs,
         '-c', 'copy',
+        ...getMetadataRewriteContainerArgs(filePath),
         tempPath
     ];
 
@@ -348,7 +396,7 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
  */
 export async function removeAllTags(filePath: string): Promise<boolean> {
     const tempPath = filePath + '.scrub' + path.extname(filePath);
-    const args = ['-y', '-i', filePath, '-map_metadata', '-1', '-c', 'copy', tempPath];
+    const args = ['-y', '-i', filePath, '-map_metadata', '-1', '-c', 'copy', ...getMetadataRewriteContainerArgs(filePath), tempPath];
 
     return new Promise((resolve) => {
         const ffmpegBin = resolveFfmpegBinary();

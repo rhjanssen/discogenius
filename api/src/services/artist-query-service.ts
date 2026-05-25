@@ -18,7 +18,7 @@ import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
     parseJsonObject,
-} from "./metadata/skyhook-artwork-service.js";
+} from "./metadata/media-cover-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 

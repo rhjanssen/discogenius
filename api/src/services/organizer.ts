@@ -9,7 +9,6 @@ import { streamingProviderManager } from "./providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "./naming.js";
 import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
-import { generateFingerprint, lookupAcoustId } from "./fingerprint.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { getDownloadWorkspacePath } from "./download-routing.js";
@@ -1169,10 +1168,8 @@ export class OrganizerService {
         const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
         this.moveFileCrossDevice(srcFile, destFile);
 
-        // Fingerprinting is skipped during download import (Lidarr pattern:
-        // fingerprint only during identification for manual import with poor
-        // matches, never during routine import).  Enrichment can run later
-        // as a background maintenance task.
+        // Fingerprinting and embedded tags are applied by the post-organize
+        // import finalizer after MusicBrainz identity is resolved.
         const fileFingerprint: string | null = null;
 
         // Batch all per-track DB writes in a single transaction (Lidarr-style).
@@ -1477,6 +1474,8 @@ export class OrganizerService {
         ? naming.album_track_path_multi
         : naming.album_track_path_single;
       const trackNamingTemplate = path.join(artistFolder, trackTemplate);
+      const metrics = await parseAudioFile(src);
+      const derivedQuality = deriveQuality(ext, metrics);
 
       const relativeTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
@@ -1497,16 +1496,19 @@ export class OrganizerService {
         volumeNumber,
         trackVersion: trackRow.version || null,
         explicit: trackRow.explicit === 1,
+        quality: derivedQuality,
+        codec: metrics.codec || null,
+        bitrate: metrics.bitrate || null,
+        sampleRate: metrics.sampleRate || null,
+        bitDepth: metrics.bitDepth || null,
+        channels: metrics.channels || null,
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
       this.moveFileCrossDevice(src, dest);
 
-      // Analyze file quality
-      const metrics = await parseAudioFile(dest);
-      const derivedQuality = deriveQuality(ext, metrics);
-
-      // Fingerprinting is skipped during download import (Lidarr pattern).
+      // Fingerprinting and embedded tags are applied by the post-organize
+      // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
 
       // Batch all per-track DB writes in a single transaction (Lidarr-style).
@@ -1849,13 +1851,23 @@ export class OrganizerService {
       const videoNamingTemplate = path.join(artistFolder, naming.video_file);
 
       const ext = path.extname(src);
+      const sourceMetrics = await parseAudioFile(src);
+      const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? video.quality ?? null;
       const destName = `${renderFileStem(naming.video_file, {
+        provider: "tidal",
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
         trackId: tidalId,
+        videoId: tidalId,
         videoTitle: video.title,
         explicit: video.explicit === 1,
+        quality: sourceVideoQuality,
+        codec: sourceMetrics.codec || null,
+        bitrate: sourceMetrics.bitrate || null,
+        sampleRate: sourceMetrics.sampleRate || null,
+        bitDepth: sourceMetrics.bitDepth || null,
+        channels: sourceMetrics.channels || null,
       })}.mp4`;
       const dest = path.join(targetDir, destName);
 

@@ -40,10 +40,13 @@ export interface AlbumContract {
   stereo_provider_id?: string | null;
   stereo_quality?: string | null;
   stereo_match_status?: string | null;
+  stereo_release_mbid?: string | null;
   spatial_provider_id?: string | null;
   spatial_quality?: string | null;
   spatial_match_status?: string | null;
+  spatial_release_mbid?: string | null;
   selected_provider_id?: string | null;
+  selected_release_mbid?: string | null;
   review?: string | null;
   review_text?: string | null;
   review_source?: string | null;
@@ -188,10 +191,13 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
     stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
+    stereo_release_mbid: expectOptionalString(record.stereo_release_mbid, `${label}.stereo_release_mbid`) ?? null,
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
+    spatial_release_mbid: expectOptionalString(record.spatial_release_mbid, `${label}.spatial_release_mbid`) ?? null,
     selected_provider_id: expectOptionalString(record.selected_provider_id, `${label}.selected_provider_id`) ?? null,
+    selected_release_mbid: expectOptionalString(record.selected_release_mbid, `${label}.selected_release_mbid`) ?? null,
     review: expectNullableString(record.review, `${label}.review`),
     review_text: expectNullableString(record.review_text, `${label}.review_text`),
     review_source: expectNullableString(record.review_source, `${label}.review_source`),

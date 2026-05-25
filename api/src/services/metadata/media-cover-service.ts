@@ -2,7 +2,7 @@ import { getConfigSection } from "../config.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderArtworkEntityType } from "../providers/streaming-provider.js";
 
-type SkyHookImage = {
+export type SkyHookImage = {
   Url?: string | null;
   url?: string | null;
   remoteUrl?: string | null;
@@ -307,4 +307,32 @@ export async function resolveArtistArtwork(options: {
     "artist",
     options.size ?? configuredArtistPictureResolution(),
   );
+}
+
+// MediaCoverService class aligned 1:1 with Lidarr naming and structure
+export class MediaCoverService {
+  static getArtistImageUrl(artist: SkyHookImageContainer, preferredCoverType = "Poster"): string | null {
+    return getSkyHookArtistImageUrl(artist, preferredCoverType);
+  }
+
+  static getAlbumImageUrl(album: SkyHookImageContainer, preferredCoverType = "Cover"): string | null {
+    return getSkyHookAlbumImageUrl(album, preferredCoverType);
+  }
+
+  static getCoverPath(entityId: number, coverEntity: 'Artist' | 'Album', coverType: string, extension: string): string {
+    // Discogenius doesn't use local image paths yet, but we define the method signature for 1:1 parity
+    return `${coverEntity.toLowerCase()}s/${entityId}/${coverType.toLowerCase()}${extension}`;
+  }
+
+  static convertToLocalUrls(entityId: number, coverEntity: 'Artist' | 'Album', covers: SkyHookImage[]): void {
+    // Discogenius uses raw RemoteUrl and resolved URLs directly, signature kept for 1:1 parity
+  }
+
+  static chooseCachedAlbumArtwork = chooseCachedAlbumArtwork;
+  static chooseCachedArtistArtwork = chooseCachedArtistArtwork;
+  static resolveAlbumArtwork = resolveAlbumArtwork;
+  static resolveArtistArtwork = resolveArtistArtwork;
+  static albumProviderArtworkCandidatesFromRow = albumProviderArtworkCandidatesFromRow;
+  static parseJsonObject = parseJsonObject;
+  static normalizeArtworkUrl = normalizeArtworkUrl;
 }

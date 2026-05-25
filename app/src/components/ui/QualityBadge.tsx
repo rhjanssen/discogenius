@@ -93,14 +93,14 @@ const useStyles = makeStyles({
         maskSize: "contain",
     },
     atmosSmall: {
-        height: "18px",
-        minWidth: "42px",
+        height: tokens.lineHeightBase300,
+        minWidth: "46px",
         padding: `0 ${tokens.spacingHorizontalXS}`,
         borderRadius: tokens.borderRadiusMedium,
     },
     atmosMedium: {
-        height: "22px",
-        minWidth: "52px",
+        height: tokens.lineHeightBase400,
+        minWidth: "56px",
         padding: `0 ${tokens.spacingHorizontalSNudge}`,
         borderRadius: tokens.borderRadiusMedium,
     },
@@ -111,12 +111,12 @@ const useStyles = makeStyles({
         borderRadius: tokens.borderRadiusLarge,
     },
     atmosLogoSmall: {
-        width: "32px",
-        height: "12px",
+        width: "36px",
+        height: "14px",
     },
     atmosLogoMedium: {
-        width: "43px",
-        height: "16px",
+        width: "48px",
+        height: "18px",
     },
     atmosLogoLarge: {
         width: "57px",
@@ -181,7 +181,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
 
     return (
         <Badge
-            shape="circular"
+            shape="rounded"
             appearance="tint"
             className={mergeClasses(styles.base, styles.label, badgeClass, sizeClass, className)}
         >

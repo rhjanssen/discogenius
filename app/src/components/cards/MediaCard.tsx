@@ -30,6 +30,8 @@ export interface MediaCardProps {
     explicit?: boolean | number | string | null;
     /** Audio quality for badge overlay */
     quality?: string | null;
+    /** Custom quality badge content, used when multiple provider slots should share the overlay. */
+    qualityBadges?: React.ReactNode;
     /** Is this item monitored? */
     monitored?: boolean;
 
@@ -62,6 +64,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     subtitle,
     explicit,
     quality,
+    qualityBadges,
     monitored,
 
     onMonitorToggle,
@@ -145,9 +148,9 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                     placeholder || <div className={styles.placeholderBg} />
                 )}
 
-                {quality && (
+                {(quality || qualityBadges) && (
                     <div className={styles.qualityBadge}>
-                        <QualityBadge quality={quality} size="small" />
+                        {qualityBadges ?? <QualityBadge quality={quality as string} size="small" />}
                     </div>
                 )}
 

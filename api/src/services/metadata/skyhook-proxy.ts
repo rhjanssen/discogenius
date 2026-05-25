@@ -1,9 +1,6 @@
 import { db } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
-import {
-  getSkyHookAlbumImageUrl,
-  getSkyHookArtistImageUrl,
-} from "./skyhook-artwork-service.js";
+import { MediaCoverService } from "./media-cover-service.js";
 
 export interface LidarrArtist {
   id: string;
@@ -30,7 +27,14 @@ export interface LidarrAlbum {
 export interface LidarrReleaseGroupDetail {
   id: string;
   title: string;
+  Images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
+  images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   Releases: LidarrRelease[];
+  Title?: string;
+  Type?: string;
+  SecondaryTypes?: string[];
+  ReleaseDate?: string;
+  Disambiguation?: string;
 }
 
 export interface LidarrRelease {
@@ -60,7 +64,7 @@ export interface LidarrTrack {
   DurationMs: number;
 }
 
-export class LidarrMetadataService {
+export class SkyHookProxy {
   private readonly baseUrl = "https://api.lidarr.audio/api/v0.4";
 
   private normalizeSearchText(value: string): string {
@@ -107,11 +111,16 @@ export class LidarrMetadataService {
     return res.json() as Promise<T>;
   }
 
-  async getArtist(mbid: string): Promise<LidarrArtist> {
+  async getArtistInfo(mbid: string): Promise<LidarrArtist> {
     return this.fetchJson<LidarrArtist>(`/artist/${encodeURIComponent(mbid)}`);
   }
 
-  async searchArtists(query: string, limit = 20): Promise<LidarrArtist[]> {
+  // Alias for backward compatibility
+  async getArtist(mbid: string): Promise<LidarrArtist> {
+    return this.getArtistInfo(mbid);
+  }
+
+  async searchForNewArtist(query: string, limit = 20): Promise<LidarrArtist[]> {
     const trimmed = query.trim();
     if (!trimmed) {
       return [];
@@ -127,16 +136,26 @@ export class LidarrMetadataService {
       .slice(0, limit);
   }
 
-  async getAlbum(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
+  // Alias for backward compatibility
+  async searchArtists(query: string, limit = 20): Promise<LidarrArtist[]> {
+    return this.searchForNewArtist(query, limit);
+  }
+
+  async getAlbumInfo(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
     return this.fetchJson<LidarrReleaseGroupDetail>(`/album/${encodeURIComponent(releaseGroupMbid)}`);
   }
 
+  // Alias for backward compatibility
+  async getAlbum(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
+    return this.getAlbumInfo(releaseGroupMbid);
+  }
+
   getArtistImageUrl(artist: LidarrArtist, preferredCoverType = "Poster"): string | null {
-    return getSkyHookArtistImageUrl(artist, preferredCoverType);
+    return MediaCoverService.getArtistImageUrl(artist, preferredCoverType);
   }
 
   getAlbumImageUrl(album: LidarrAlbum, preferredCoverType = "Cover"): string | null {
-    return getSkyHookAlbumImageUrl(album, preferredCoverType);
+    return MediaCoverService.getAlbumImageUrl(album, preferredCoverType);
   }
 
   getCachedReleaseGroupsForArtist(artistMbid: string): MusicBrainzReleaseGroupForMatching[] {
@@ -251,7 +270,7 @@ export class LidarrMetadataService {
   }
 
   async syncArtist(mbid: string): Promise<LidarrArtist> {
-    const artist = await this.getArtist(mbid);
+    const artist = await this.getArtistInfo(mbid);
 
     db.transaction(() => {
       db.prepare(`
@@ -304,9 +323,39 @@ export class LidarrMetadataService {
   }
 
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
-    const detail = await this.getAlbum(releaseGroupMbid);
+    const detail = await this.getAlbumInfo(releaseGroupMbid);
 
     db.transaction(() => {
+      const insertRg = db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(mbid) DO UPDATE SET
+          title = excluded.title,
+          primary_type = excluded.primary_type,
+          secondary_types = excluded.secondary_types,
+          first_release_date = excluded.first_release_date,
+          disambiguation = excluded.disambiguation,
+          data = excluded.data,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+
+      const title = detail.title || detail.Title || "";
+      const primaryType = detail.Type || (detail as any).type || null;
+      const secondaryTypes = JSON.stringify(detail.SecondaryTypes || (detail as any).secondaryTypes || []);
+      const firstReleaseDate = detail.ReleaseDate || (detail as any).releaseDate || null;
+      const disambiguation = detail.Disambiguation || (detail as any).disambiguation || null;
+
+      insertRg.run(
+        releaseGroupMbid,
+        artistMbid,
+        title,
+        primaryType,
+        secondaryTypes,
+        firstReleaseDate,
+        disambiguation,
+        JSON.stringify(detail),
+      );
+
       const insertRelease = db.prepare(`
         INSERT INTO AlbumReleases (
           mbid, release_group_mbid, artist_mbid, title, status, country,
@@ -405,4 +454,4 @@ export class LidarrMetadataService {
   }
 }
 
-export const lidarrMetadataService = new LidarrMetadataService();
+export const skyHookProxy = new SkyHookProxy();

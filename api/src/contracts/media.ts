@@ -91,6 +91,10 @@ export interface SimilarAlbumContract {
 
 export interface AlbumVersionContract extends SimilarAlbumContract {
   version?: string | null;
+  stereo_provider_id?: string | null;
+  stereo_quality?: string | null;
+  spatial_provider_id?: string | null;
+  spatial_quality?: string | null;
 }
 
 export interface VideoDetailContract {
@@ -224,6 +228,10 @@ function parseAlbumListItemContract<T extends SimilarAlbumContract | AlbumVersio
     explicit: expectOptionalBoolean(record.explicit, `${label}.explicit`),
     is_monitored: expectOptionalBoolean(record.is_monitored, `${label}.is_monitored`),
     version: expectNullableString(record.version, `${label}.version`),
+    stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
+    stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
+    spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
+    spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
   } as T;
 }
 

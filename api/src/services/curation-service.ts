@@ -2,7 +2,7 @@ import { db } from "../database.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 import { getConfigSection, type FilteringConfig } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
-import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { skyHookProxy } from "./metadata/skyhook-proxy.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "./musicbrainz-release-group-filter.js";
 
@@ -104,7 +104,7 @@ export class CurationService {
         }
 
         try {
-            await lidarrMetadataService.syncReleaseGroup(releaseGroupMbid, artistMbid);
+            await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
         } catch (error) {
             console.warn(`[Curation] Failed to hydrate release-group tracks for ${releaseGroupMbid}:`, error);
         }

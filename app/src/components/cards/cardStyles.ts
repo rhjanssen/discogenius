@@ -152,6 +152,9 @@ export const useCardStyles = makeStyles({
         top: tokens.spacingVerticalS,
         left: tokens.spacingHorizontalS,
         zIndex: 2,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: tokens.spacingHorizontalXS,
     },
 
     // Monitor indicator overlay (bottom-right of preview)

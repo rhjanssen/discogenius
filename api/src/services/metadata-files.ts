@@ -9,7 +9,7 @@ import {
     resolveAlbumArtwork,
     resolveArtistArtwork,
     type ProviderArtworkCandidate,
-} from "./metadata/skyhook-artwork-service.js";
+} from "./metadata/media-cover-service.js";
 
 /**
  * Clean provider text by removing TIDAL-style [wimpLink] tags and normalizing line breaks.

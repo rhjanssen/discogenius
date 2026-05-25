@@ -10,7 +10,7 @@ import { RefreshVideoService } from "./refresh-video-service.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "./metadata-identity-service.js";
-import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { skyHookProxy } from "./metadata/skyhook-proxy.js";
 import {
     matchProviderAlbumsToReleaseGroups,
     type ProviderReleaseGroupMatch,
@@ -24,7 +24,7 @@ import {
     getSkyHookArtistImageUrl,
     resolveArtistArtwork,
     type ProviderArtworkCandidate,
-} from "./metadata/skyhook-artwork-service.js";
+} from "./metadata/media-cover-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -118,7 +118,7 @@ export class RefreshArtistService {
         }
 
         try {
-            await lidarrMetadataService.syncArtist(artistMbid);
+            await skyHookProxy.syncArtist(artistMbid);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to sync Lidarr metadata for artist ${artistId} (${artistMbid}):`, error);
         }
@@ -137,7 +137,7 @@ export class RefreshArtistService {
         const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
         const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitor);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
-        const artistData = await lidarrMetadataService.syncArtist(artistMbid);
+        const artistData = await skyHookProxy.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
             SELECT provider, provider_id, data
@@ -244,7 +244,7 @@ export class RefreshArtistService {
             return new Map();
         }
 
-        const releaseGroups = lidarrMetadataService.getCachedReleaseGroupsForArtist(artistMbid);
+        const releaseGroups = skyHookProxy.getCachedReleaseGroupsForArtist(artistMbid);
         if (releaseGroups.length === 0) {
             return new Map();
         }

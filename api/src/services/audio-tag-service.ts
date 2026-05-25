@@ -4,10 +4,11 @@ import { db } from "../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "./config.js";
 import { writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
+  type AcoustIdLookupResult,
   type MusicBrainzRecording,
   type MusicBrainzRelease,
   generateFingerprint,
-  lookupAcoustId,
+  lookupAcoustIdMatches,
   lookupMusicBrainzRecording,
   lookupMusicBrainzRecordingsByIsrc,
   lookupMusicBrainzReleasesByBarcode,
@@ -121,20 +122,8 @@ function buildFullTitle(title: string | null | undefined, version: string | null
 }
 
 function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
-  const extension = String(row.extension || "").replace(/^\./, "").toLowerCase();
-  const codec = String(row.file_codec || "").toLowerCase();
-  const quality = String(row.file_quality || "").toUpperCase();
-  const libraryRoot = String(row.library_root || "").toLowerCase();
-
-  if (!["m4a", "mp4"].includes(extension)) {
-    return false;
-  }
-
-  if (["eac3", "e-ac-3", "ac3", "ac-3", "ac4", "ac-4"].includes(codec)) {
-    return true;
-  }
-
-  return libraryRoot === "spatial" || quality.includes("ATMOS") || quality.includes("SPATIAL");
+  void row;
+  return false;
 }
 
 /**
@@ -451,30 +440,177 @@ function getLookupValue(lookup: Map<string, string>, aliases: string[]): string 
   return null;
 }
 
+function isNumericMp4NativeId(rawId: string): boolean {
+  return rawId.length === 4 && Array.from(rawId).some((char) => char.charCodeAt(0) < 32);
+}
+
+function hasNumericMp4NativeIds(metadata: mm.IAudioMetadata): boolean {
+  return Object.values(metadata.native || {}).some((tagSet) =>
+    (tagSet as Array<{ id?: string }>).some((tag) => isNumericMp4NativeId(String(tag?.id || ""))),
+  );
+}
+
+function mp4NativeIdForIndex(index: number): string {
+  const id = Buffer.alloc(4);
+  id.writeUInt32BE(index, 0);
+  return id.toString("latin1");
+}
+
+function readMp4MdtaKeyMap(filePath: string): Map<string, string> {
+  const keyMap = new Map<string, string>();
+  let fd: number | null = null;
+
+  try {
+    fd = fs.openSync(filePath, "r");
+    const stat = fs.fstatSync(fd);
+    const header = Buffer.alloc(16);
+
+    const readAtomHeader = (position: number, rangeEnd: number): { size: number; type: string; headerSize: number } | null => {
+      if (position + 8 > rangeEnd) {
+        return null;
+      }
+
+      const read = fs.readSync(fd!, header, 0, 16, position);
+      if (read < 8) {
+        return null;
+      }
+
+      let size = header.readUInt32BE(0);
+      const type = header.toString("latin1", 4, 8);
+      let headerSize = 8;
+      if (size === 1) {
+        if (read < 16) {
+          return null;
+        }
+        size = Number(header.readBigUInt64BE(8));
+        headerSize = 16;
+      } else if (size === 0) {
+        size = rangeEnd - position;
+      }
+
+      if (!Number.isFinite(size) || size < headerSize || position + size > rangeEnd) {
+        return null;
+      }
+
+      return { size, type, headerSize };
+    };
+
+    const parseKeysBox = (payloadStart: number, payloadEnd: number) => {
+      const length = payloadEnd - payloadStart;
+      if (length < 8 || length > 1024 * 1024) {
+        return;
+      }
+
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd!, buffer, 0, length, payloadStart);
+      let offset = 4; // version/flags
+      const count = buffer.readUInt32BE(offset);
+      offset += 4;
+
+      for (let index = 1; index <= count && offset + 8 <= buffer.length; index++) {
+        const keySize = buffer.readUInt32BE(offset);
+        if (keySize < 8 || offset + keySize > buffer.length) {
+          break;
+        }
+
+        const keyName = buffer.toString("utf8", offset + 8, offset + keySize).replace(/\0+$/g, "").trim();
+        if (keyName) {
+          keyMap.set(mp4NativeIdForIndex(index), keyName);
+        }
+        offset += keySize;
+      }
+    };
+
+    const walkAtoms = (start: number, end: number) => {
+      let position = start;
+      while (position + 8 <= end) {
+        const atom = readAtomHeader(position, end);
+        if (!atom) {
+          break;
+        }
+
+        const payloadStart = position + atom.headerSize + (atom.type === "meta" ? 4 : 0);
+        const payloadEnd = position + atom.size;
+        if (atom.type === "keys") {
+          parseKeysBox(position + atom.headerSize, payloadEnd);
+        } else if (atom.type === "moov" || atom.type === "udta" || atom.type === "meta") {
+          walkAtoms(payloadStart, payloadEnd);
+        }
+
+        position += atom.size;
+      }
+    };
+
+    walkAtoms(0, stat.size);
+  } catch {
+    return keyMap;
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+
+  return keyMap;
+}
+
+function mergeMp4KeyedNativeLookup(metadata: mm.IAudioMetadata, lookup: Map<string, string>, filePath: string) {
+  if (!hasNumericMp4NativeIds(metadata)) {
+    return;
+  }
+
+  const keyMap = readMp4MdtaKeyMap(filePath);
+  if (keyMap.size === 0) {
+    return;
+  }
+
+  for (const tagSet of Object.values(metadata.native || {})) {
+    for (const tag of tagSet as Array<{ id?: string; value?: unknown }>) {
+      const keyName = keyMap.get(String(tag?.id || ""));
+      if (!keyName) {
+        continue;
+      }
+
+      const value = normalizeValue(tag?.value);
+      if (!value) {
+        continue;
+      }
+
+      for (const alias of buildNativeTagAliases(keyName)) {
+        lookup.set(alias, value);
+      }
+    }
+  }
+}
+
 function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, string>, tag: ManagedTag): string | null {
   const common = metadata.common as Record<string, any>;
+  const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
 
   switch (tag.key) {
     case "title":
-      return normalizeValue(common.title);
+      return normalizeValue(common.title) || fallback();
     case "artist":
-      return normalizeValue(common.artist || common.artists);
+      return normalizeValue(common.artist || common.artists) || fallback();
     case "album_artist":
-      return normalizeValue(common.albumartist || common.albumartists);
+      return normalizeValue(common.albumartist || common.albumartists) || fallback();
     case "album":
-      return normalizeValue(common.album);
+      return normalizeValue(common.album) || fallback();
     case "track":
-      return formatPosition(common.track?.no ?? null, common.track?.of ?? null);
+      return formatPosition(common.track?.no ?? null, common.track?.of ?? null) || fallback();
     case "disc":
-      return formatPosition(common.disk?.no ?? null, common.disk?.of ?? null);
+      return formatPosition(common.disk?.no ?? null, common.disk?.of ?? null) || fallback();
     case "date":
-      return normalizeReleaseDate(common.date || (common.year ? String(common.year) : null));
+      return normalizeReleaseDate(common.date || (common.year ? String(common.year) : null)) || normalizeReleaseDate(fallback());
     case "isrc":
-      return normalizeValue(common.isrc);
+      return normalizeValue(common.isrc) || fallback();
     case "copyright":
-      return normalizeValue(common.copyright);
+      return normalizeValue(common.copyright) || fallback();
     default:
-      return getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
+      return fallback();
   }
 }
 
@@ -829,7 +965,7 @@ export class AudioTagService {
       }
     }
 
-    if (nextRow.media_mbid || !fingerprint || !fingerprintDuration) {
+    if (!fingerprint || !fingerprintDuration) {
       return {
         ...nextRow,
         file_fingerprint: fingerprint,
@@ -837,21 +973,62 @@ export class AudioTagService {
       };
     }
 
+    let acoustidMatches: AcoustIdLookupResult[] = [];
+    if (!nextRow.media_acoustid_id && !nextRow.file_acoustid_id) {
+      acoustidMatches = await lookupAcoustIdMatches(fingerprint, fingerprintDuration);
+    }
+
+    const matchedKnownAcoustId = nextRow.media_mbid
+      ? acoustidMatches.find((match) => match.id && match.recordingIds.includes(String(nextRow.media_mbid)))
+      : null;
+    const resolvedAcoustId = nextRow.media_acoustid_id || nextRow.file_acoustid_id || matchedKnownAcoustId?.id || null;
+
+    if (nextRow.media_mbid) {
+      db.prepare(`
+        UPDATE ProviderMedia
+        SET acoustid_id = COALESCE(?, acoustid_id),
+            acoustid_fingerprint = COALESCE(acoustid_fingerprint, ?),
+            fingerprint_duration = COALESCE(fingerprint_duration, ?)
+        WHERE id = ?
+      `).run(resolvedAcoustId, fingerprint, fingerprintDuration, nextRow.media_id);
+
+      db.prepare(`
+        UPDATE TrackFiles
+        SET acoustid_id = COALESCE(?, acoustid_id),
+            fingerprint = COALESCE(fingerprint, ?),
+            fingerprint_duration = COALESCE(fingerprint_duration, ?),
+            verified_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(resolvedAcoustId, fingerprint, fingerprintDuration, nextRow.id);
+
+      return {
+        ...nextRow,
+        file_fingerprint: fingerprint,
+        file_acoustid_id: resolvedAcoustId,
+        media_acoustid_id: resolvedAcoustId,
+        media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
+        media_duration: fingerprintDuration ?? nextRow.media_duration,
+      };
+    }
+
     let bestFingerprintMatch: FingerprintRecordingMatch | null = null;
-    const recordingIds = await lookupAcoustId(fingerprint, fingerprintDuration);
-    for (const recordingId of recordingIds.slice(0, 5)) {
-      const recording = await lookupMusicBrainzRecording(recordingId);
-      if (!recording) {
-        continue;
-      }
+    let bestFingerprintAcoustId: string | null = null;
+    for (const acoustid of acoustidMatches) {
+      for (const recordingId of acoustid.recordingIds.slice(0, 5)) {
+        const recording = await lookupMusicBrainzRecording(recordingId);
+        if (!recording) {
+          continue;
+        }
 
-      const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
-      if (!isAcceptableFingerprintMatch(candidate)) {
-        continue;
-      }
+        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
+        if (!isAcceptableFingerprintMatch(candidate)) {
+          continue;
+        }
 
-      if (!bestFingerprintMatch || candidate.score > bestFingerprintMatch.score) {
-        bestFingerprintMatch = candidate;
+        if (!bestFingerprintMatch || candidate.score > bestFingerprintMatch.score) {
+          bestFingerprintMatch = candidate;
+          bestFingerprintAcoustId = acoustid.id || null;
+        }
       }
     }
 
@@ -872,13 +1049,23 @@ export class AudioTagService {
       UPDATE ProviderMedia
       SET mbid = COALESCE(mbid, ?),
           isrc = COALESCE(isrc, ?),
+          acoustid_id = COALESCE(?, acoustid_id),
           acoustid_fingerprint = COALESCE(acoustid_fingerprint, ?),
           fingerprint_duration = COALESCE(fingerprint_duration, ?),
           musicbrainz_status = COALESCE(musicbrainz_status, 'verified'),
           musicbrainz_last_checked = CURRENT_TIMESTAMP,
           musicbrainz_match_method = COALESCE(musicbrainz_match_method, 'acoustid')
       WHERE id = ?
-    `).run(bestFingerprintMatch.recording.id, fallbackIsrc, fingerprint, fingerprintDuration, nextRow.media_id);
+    `).run(bestFingerprintMatch.recording.id, fallbackIsrc, bestFingerprintAcoustId, fingerprint, fingerprintDuration, nextRow.media_id);
+
+    db.prepare(`
+      UPDATE TrackFiles
+      SET acoustid_id = COALESCE(?, acoustid_id),
+          fingerprint = COALESCE(fingerprint, ?),
+          fingerprint_duration = COALESCE(fingerprint_duration, ?),
+          verified_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(bestFingerprintAcoustId, fingerprint, fingerprintDuration, nextRow.id);
 
     if (primaryArtistCredit?.id) {
       db.prepare(`
@@ -892,8 +1079,11 @@ export class AudioTagService {
     return {
       ...nextRow,
       file_fingerprint: fingerprint,
+      file_acoustid_id: bestFingerprintAcoustId || nextRow.file_acoustid_id,
       media_duration: fingerprintDuration ?? nextRow.media_duration,
       media_mbid: bestFingerprintMatch.recording.id,
+      media_acoustid_id: bestFingerprintAcoustId || nextRow.media_acoustid_id,
+      media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
       media_isrc: nextRow.media_isrc || fallbackIsrc,
       artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
     };
@@ -1190,6 +1380,7 @@ export class AudioTagService {
     try {
       const metadata = await mm.parseFile(resolvedPath, { skipCovers: true, duration: false });
       const lookup = buildNativeLookup(metadata);
+      mergeMp4KeyedNativeLookup(metadata, lookup, resolvedPath);
       const changes = desiredTags.reduce<RetagDifference[]>((result, tag) => {
         const currentValue = getCurrentTagValue(metadata, lookup, tag);
         if (normalizeComparableValue(currentValue) !== normalizeComparableValue(tag.targetValue)) {

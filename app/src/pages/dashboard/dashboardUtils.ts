@@ -273,7 +273,13 @@ export function formatJobDescription(job: JobLike): string {
 
 export function formatRelativeTime(value?: number | string | null): string {
     if (!value) return "—";
-    const date = new Date(value);
+    const trimmedValue = typeof value === "string" ? value.trim() : "";
+    const normalizedValue = trimmedValue && /^\d+$/.test(trimmedValue)
+        ? Number(trimmedValue)
+        : trimmedValue && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmedValue)
+            ? trimmedValue.replace(" ", "T") + "Z"
+            : value;
+    const date = new Date(normalizedValue);
     if (Number.isNaN(date.getTime())) return "—";
     const now = Date.now();
     let diffMs = now - date.getTime();

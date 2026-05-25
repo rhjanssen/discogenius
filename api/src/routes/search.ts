@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { db } from "../database.js";
 import { getProviderAuthMode } from "../services/provider-auth-mode.js";
-import { lidarrMetadataService, type LidarrArtist } from "../services/metadata/lidarr-metadata-service.js";
+import { skyHookProxy, type LidarrArtist } from "../services/metadata/skyhook-proxy.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
     parseJsonObject,
-} from "../services/metadata/skyhook-artwork-service.js";
+} from "../services/metadata/media-cover-service.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -69,7 +69,7 @@ function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContr
         name: artist.artistname,
         type: "artist",
         subtitle: details || null,
-        imageId: localArtist?.picture || localArtist?.cover_image_url || lidarrMetadataService.getArtistImageUrl(artist),
+        imageId: localArtist?.picture || localArtist?.cover_image_url || skyHookProxy.getArtistImageUrl(artist),
         monitored: Boolean(localArtist?.monitor),
         in_library: Boolean(localArtist),
         quality: null,
@@ -299,7 +299,7 @@ router.get("/", async (req, res) => {
         // ability to add monitored artists before indexers/download clients exist.
         if (requestedTypeSet.has("artists")) {
             try {
-                const lidarrArtists = await lidarrMetadataService.searchArtists(query, limit);
+                const lidarrArtists = await skyHookProxy.searchForNewArtist(query, limit);
                 const seenArtists = new Set(results.artists.map((artist: SearchResultContract) => String(artist.id)));
                 const seenMbids = new Set(
                     db.prepare("SELECT mbid FROM Artists WHERE mbid IS NOT NULL").all()

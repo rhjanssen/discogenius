@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { lidarrMetadataService, type LidarrArtist } from "./metadata/lidarr-metadata-service.js";
+import { skyHookProxy, type LidarrArtist } from "./metadata/skyhook-proxy.js";
 import type { ProviderArtist } from "./providers/streaming-provider.js";
 
 export type ProviderArtistIdentityInput = {
@@ -119,7 +119,7 @@ export class ProviderArtistIdentityService {
     }
 
     try {
-      const candidates = await lidarrMetadataService.searchArtists(artist.name, 10);
+      const candidates = await skyHookProxy.searchForNewArtist(artist.name, 10);
       const match = bestLidarrArtistMatch(artist, candidates);
       const normalizedName = normalizeSearchText(artist.name);
       const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;

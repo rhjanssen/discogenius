@@ -755,6 +755,28 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.mp4");
   assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
 
+  const expectedSeparatedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...rowVideoSeparated,
+    id: 1001,
+    file_type: "video_thumbnail",
+    extension: "jpg",
+  });
+  assert.equal(
+    expectedSeparatedThumbnail.expectedPath,
+    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.jpg"),
+  );
+
+  const expectedSeparatedNfo = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...rowVideoSeparated,
+    id: 1002,
+    file_type: "nfo",
+    extension: "nfo",
+  });
+  assert.equal(
+    expectedSeparatedNfo.expectedPath,
+    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {tidal-video-inline-test}.nfo"),
+  );
+
   config.path.video_folder_layout = "inline";
   configModule.writeConfig(config);
 

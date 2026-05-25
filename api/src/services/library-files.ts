@@ -549,7 +549,14 @@ export class LibraryFilesService {
         ...contextBase,
         videoTitle: video?.title || "Unknown Video",
         trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
+        videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         explicit: video?.explicit === 1,
+        quality: row.quality || null,
+        codec: row.codec || null,
+        bitrate: row.bitrate || null,
+        sampleRate: row.sample_rate || null,
+        bitDepth: row.bit_depth || null,
+        channels: row.channels || null,
       };
 
       const fileStem = renderFileStem(naming.video_file, context);
@@ -567,7 +574,14 @@ export class LibraryFilesService {
           ...contextBase,
           videoTitle: video.title || "Unknown Video",
           trackId: video.id != null ? String(video.id) : String(row.media_id),
+          videoId: video.id != null ? String(video.id) : String(row.media_id),
           explicit: video.explicit === 1,
+          quality: row.quality || null,
+          codec: row.codec || null,
+          bitrate: row.bitrate || null,
+          sampleRate: row.sample_rate || null,
+          bitDepth: row.bit_depth || null,
+          channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
         return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };

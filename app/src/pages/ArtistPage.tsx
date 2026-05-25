@@ -434,15 +434,16 @@ const useStyles = makeStyles({
   slotBadgeStack: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "flex-end",
+    alignItems: "flex-start",
     gap: tokens.spacingVerticalXXS,
   },
   slotBadgeRow: {
     display: "flex",
+    alignItems: "flex-start",
     flexWrap: "wrap",
-    justifyContent: "flex-end",
-    gap: tokens.spacingHorizontalXXS,
-    maxWidth: "140px",
+    justifyContent: "flex-start",
+    gap: tokens.spacingHorizontalXS,
+    maxWidth: "150px",
   },
   monitorIndicator: {
     position: "absolute",
@@ -846,11 +847,11 @@ const ArtistPage = () => {
     const itemProgress = getProgressByTidalId(String(item.stereo_provider_id || ""))
       || getProgressByTidalId(String(item.spatial_provider_id || ""))
       || getProgressByTidalId(String(tidalId));
-    const releaseGroupSlotBadge = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
+    const releaseGroupSlotBadges = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
       ? (
         <div className={styles.slotBadgeRow}>
-          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
           {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
+          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
         </div>
       )
       : null;
@@ -863,8 +864,8 @@ const ArtistPage = () => {
         Redundant
       </WarningBadge>
     ) : null);
-    const statusBadge = releaseGroupSlotBadge || stateBadge
-      ? <div className={styles.slotBadgeStack}>{releaseGroupSlotBadge}{stateBadge}</div>
+    const statusBadge = stateBadge
+      ? <div className={styles.slotBadgeStack}>{stateBadge}</div>
       : undefined;
 
     return (
@@ -878,6 +879,7 @@ const ArtistPage = () => {
         subtitle={subtitle}
         explicit={item.explicit}
         quality={item.source === "musicbrainz" ? undefined : (quality as any)}
+        qualityBadges={releaseGroupSlotBadges}
         monitored={isAlbumMonitored}
         onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, tidalId, !isAlbumMonitored)}
         statusBadge={statusBadge}

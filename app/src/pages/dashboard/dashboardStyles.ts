@@ -601,8 +601,7 @@ export const useDashboardStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         minWidth: 0,
         "@media (max-width: 699px)": {
-            flexDirection: "column",
-            gap: tokens.spacingVerticalXS,
+            gap: tokens.spacingHorizontalS,
         },
     },
     activityTitleStack: {
@@ -663,8 +662,10 @@ export const useDashboardStyles = makeStyles({
         justifyContent: "flex-end",
         gap: tokens.spacingHorizontalXS,
         flexShrink: 0,
+        marginLeft: "auto",
         "@media (max-width: 699px)": {
-            justifyContent: "flex-start",
+            alignSelf: "flex-start",
+            minWidth: "52px",
         },
     },
     activityTime: {
@@ -698,4 +699,3 @@ export const useDashboardStyles = makeStyles({
         padding: tokens.spacingVerticalM,
     },
 });
-

@@ -1,7 +1,7 @@
 import { db } from "../database.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
 import { resolveArtistFolderForIdentityUpdate } from "./artist-paths.js";
-import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { skyHookProxy } from "./metadata/skyhook-proxy.js";
 import { ProviderArtistIdentityService } from "./provider-artist-identity-service.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderArtist } from "./providers/streaming-provider.js";
@@ -157,7 +157,7 @@ export class FollowedArtistsImportService {
                     artist.match_confidence = mbMatch.confidence;
                     artist.match_method = mbMatch.method;
                     try {
-                        await lidarrMetadataService.syncArtist(mbMatch.mbid);
+                        await skyHookProxy.syncArtist(mbMatch.mbid);
                     } catch (error) {
                         console.warn(`[FollowedArtistsImport] Failed to sync Lidarr metadata for ${artist.name} (${mbMatch.mbid}):`, error);
                     }

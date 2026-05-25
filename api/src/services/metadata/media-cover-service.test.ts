@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import {
   chooseCachedAlbumArtwork,
-} from "./skyhook-artwork-service.js";
+} from "./media-cover-service.js";
 
 test("SkyHook album artwork is preferred over provider snapshots", () => {
   const resolved = chooseCachedAlbumArtwork({

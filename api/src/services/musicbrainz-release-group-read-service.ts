@@ -2,7 +2,7 @@ import { db } from "../database.js";
 import type { AlbumContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../contracts/media.js";
-import { lidarrMetadataService } from "./metadata/lidarr-metadata-service.js";
+import { skyHookProxy } from "./metadata/skyhook-proxy.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderTrack } from "./providers/streaming-provider.js";
@@ -11,7 +11,7 @@ import {
     chooseCachedAlbumArtwork,
     parseJsonObject,
     resolveAlbumArtwork,
-} from "./metadata/skyhook-artwork-service.js";
+} from "./metadata/media-cover-service.js";
 
 function queryReleaseGroup(releaseGroupMbid: string): any | null {
     return db.prepare(`
@@ -25,13 +25,16 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END AS wanted,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+        COALESCE(stereo.selected_release_mbid, spatial.selected_release_mbid) AS selected_release_mbid,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
+        stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
+        spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
         stereo.provider_data AS stereo_provider_data,
@@ -93,6 +96,7 @@ function splitProviderAlbumIds(value: unknown): string[] {
 function formatReleaseVersionLabel(release: any): string | null {
     const country = formatReleaseCountry(release.country);
     const parts = [
+        release.disambiguation ? String(release.disambiguation) : null,
         release.status ? String(release.status) : null,
         country,
         Number(release.media_count || 0) > 1 ? `${Number(release.media_count)} media` : null,
@@ -140,6 +144,7 @@ function listMusicBrainzReleaseVersions(
         r.media_count,
         r.track_count,
         r.barcode,
+        r.disambiguation,
         CASE
           WHEN EXISTS (
             SELECT 1 FROM AlbumReleaseMedia m
@@ -162,18 +167,28 @@ function listMusicBrainzReleaseVersions(
     const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
 
-    return releases.map((release) => ({
-        id: String(release.mbid),
-        title: String(release.title || releaseGroup.title || "Unknown Release"),
-        cover_id: imageUrl,
-        artist_name: artistName,
-        release_date: release.date || releaseGroup.first_release_date || null,
-        popularity: undefined,
-        quality: null,
-        explicit: false,
-        is_monitored: Boolean(releaseGroup.wanted),
-        version: formatReleaseVersionLabel(release),
-    }));
+    return releases.map((release) => {
+        const releaseMbid = String(release.mbid);
+        const isStereoSelected = releaseGroup.stereo_release_mbid === releaseMbid;
+        const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
+
+        return {
+            id: releaseMbid,
+            title: String(release.title || releaseGroup.title || "Unknown Release"),
+            cover_id: imageUrl,
+            artist_name: artistName,
+            release_date: release.date || releaseGroup.first_release_date || null,
+            popularity: undefined,
+            quality: null,
+            explicit: false,
+            is_monitored: Boolean(releaseGroup.wanted),
+            version: formatReleaseVersionLabel(release),
+            stereo_provider_id: isStereoSelected ? releaseGroup.stereo_provider_id || null : null,
+            stereo_quality: isStereoSelected ? releaseGroup.stereo_quality || null : null,
+            spatial_provider_id: isSpatialSelected ? releaseGroup.spatial_provider_id || null : null,
+            spatial_quality: isSpatialSelected ? releaseGroup.spatial_quality || null : null,
+        };
+    });
 }
 
 function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
@@ -247,22 +262,25 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
 
     return {
         id: String(releaseGroup.mbid),
-        title: String(releaseGroup.title || release?.title || "Unknown Album"),
+        title: String(releaseGroup.title || "Unknown Album"),
         cover_id: coverUrl,
         cover: coverUrl,
         cover_art_url: coverUrl,
         vibrant_color: null,
-        release_date: release?.date || releaseGroup.first_release_date || null,
+        release_date: releaseGroup.first_release_date || null,
         type: primaryType === "EP" || primaryType === "SINGLE" ? primaryType : "ALBUM",
         album_type: primaryType === "EP" || primaryType === "SINGLE" ? primaryType : "ALBUM",
         quality: "",
         stereo_provider_id: releaseGroup.stereo_provider_id || null,
         stereo_quality: releaseGroup.stereo_quality || null,
         stereo_match_status: releaseGroup.stereo_match_status || null,
+        stereo_release_mbid: releaseGroup.stereo_release_mbid || null,
         spatial_provider_id: releaseGroup.spatial_provider_id || null,
         spatial_quality: releaseGroup.spatial_quality || null,
         spatial_match_status: releaseGroup.spatial_match_status || null,
+        spatial_release_mbid: releaseGroup.spatial_release_mbid || null,
         selected_provider_id: releaseGroup.selected_provider_id || null,
+        selected_release_mbid: releaseGroup.selected_release_mbid || null,
         source: "musicbrainz",
         is_monitored: Boolean(releaseGroup.wanted),
         is_downloaded: false,
@@ -651,9 +669,12 @@ export class MusicBrainzReleaseGroupReadService {
         const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
             .get(releaseGroupMbid) as { count: number } | undefined;
 
-        if (Number(releaseCount?.count || 0) === 0) {
+        const parsed = parseJsonObject(releaseGroup.data);
+        const isDetailed = parsed && Array.isArray(parsed.Releases || parsed.releases);
+
+        if (Number(releaseCount?.count || 0) === 0 || !isDetailed) {
             try {
-                await lidarrMetadataService.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+                await skyHookProxy.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
             } catch (error) {
                 console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate Lidarr album ${releaseGroupMbid}:`, error);
             }

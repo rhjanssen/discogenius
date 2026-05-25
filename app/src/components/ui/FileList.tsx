@@ -475,6 +475,7 @@ const FileQualityBadge: React.FC<FileQualityBadgeProps> = ({ file, size = "mediu
     return (
         <Badge
             appearance="tint"
+            shape="rounded"
             size={size}
             className={`${styles.qualityBadge} ${className || ""}`}
             style={{
