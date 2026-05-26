@@ -1,7 +1,8 @@
 import path from "path";
 import { Config } from "./config.js";
+import { streamingProviderManager } from "./providers/index.js";
 
-export type StreamingSourceId = "tidal";
+export type StreamingSourceId = string;
 export type DownloadMediaType = "album" | "track" | "video" | "playlist";
 export type DownloadBackendId = "orpheus" | "tidal-dl-ng";
 
@@ -13,7 +14,11 @@ const DOWNLOAD_FOLDERS: Record<DownloadMediaType, string> = {
 };
 
 export function getDefaultStreamingSource(): StreamingSourceId {
-    return "tidal";
+    try {
+        return streamingProviderManager.getDefaultStreamingProvider().id;
+    } catch {
+        return "tidal";
+    }
 }
 
 export function getDownloadBackendForMediaType(type: DownloadMediaType): DownloadBackendId {
@@ -25,7 +30,8 @@ export function getDownloadWorkspacePath(
     sourceId: string,
     streamingSource: StreamingSourceId = getDefaultStreamingSource(),
 ): string {
-    if (streamingSource !== "tidal") {
+    const provider = streamingProviderManager.getStreamingProvider(streamingSource);
+    if (!provider) {
         throw new Error(`Unsupported streaming source: ${streamingSource}`);
     }
 
@@ -37,8 +43,9 @@ export function buildStreamingMediaUrl(
     sourceId: string,
     streamingSource: StreamingSourceId = getDefaultStreamingSource(),
 ): string {
-    if (streamingSource !== "tidal") {
-        throw new Error(`Unsupported streaming source: ${streamingSource}`);
+    const provider = streamingProviderManager.getStreamingProvider(streamingSource);
+    if (provider.getMediaUrl) {
+        return provider.getMediaUrl(type, sourceId);
     }
 
     return `https://tidal.com/browse/${type}/${sourceId}`;
@@ -49,17 +56,19 @@ export function parseStreamingUrl(url: string): {
     type: DownloadMediaType;
     sourceId: string;
 } | null {
-    const match = url.match(
-        /^https?:\/\/(?:listen\.)?tidal\.com\/(?:browse\/)?(track|album|video|playlist)\/([A-Za-z0-9-]+)\/?/i,
-    );
-
-    if (!match) {
-        return null;
+    const providers = streamingProviderManager.getAllStreamingProviders();
+    for (const provider of providers) {
+        if (provider.parseMediaUrl) {
+            const parsed = provider.parseMediaUrl(url);
+            if (parsed) {
+                return {
+                    streamingSource: provider.id,
+                    type: parsed.type as DownloadMediaType,
+                    sourceId: parsed.providerId,
+                };
+            }
+        }
     }
 
-    return {
-        streamingSource: "tidal",
-        type: match[1].toLowerCase() as DownloadMediaType,
-        sourceId: match[2],
-    };
+    return null;
 }

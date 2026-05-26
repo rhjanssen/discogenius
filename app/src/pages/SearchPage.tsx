@@ -30,15 +30,12 @@ const useStyles = makeStyles({
     margin: "0 auto",
   },
 });
-
 const SearchPage = () => {
   const styles = useStyles();
   const [searchParams] = useSearchParams();
-  const { remoteCatalogAvailable, providerAuthMode } = useProviderConnection();
+  const { remoteCatalogAvailable } = useProviderConnection();
   const query = searchParams.get("q")?.trim() ?? "";
-  const localOnlyMessage = providerAuthMode === "mock"
-    ? "Provider auth is mocked in this environment. Artist search still uses MusicBrainz/Lidarr metadata."
-    : "Provider not connected. Artist search uses MusicBrainz/Lidarr metadata; provider availability, previews, followed artists, and downloads require connecting a provider.";
+  const localOnlyMessage = "Provider not connected. Artist search uses MusicBrainz/Lidarr metadata; provider availability, previews, followed artists, and downloads require connecting a provider.";
 
   return (
     <div className={styles.container}>

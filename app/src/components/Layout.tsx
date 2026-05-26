@@ -372,14 +372,12 @@ const Layout = () => {
   const { colors, isDarkMode: ultraBlurIsDarkMode } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
-  const { status } = useProviderConnection();
+  const { status, isConnected, canAccessShell, remoteCatalogAvailable } = useProviderConnection();
   const isAuthRoute = location.pathname === "/auth";
 
-  const showProviderModeBanner = Boolean(status?.canAccessShell && !status?.remoteCatalogAvailable);
-  const providerModeLabel = status?.mode === "mock" ? "Mock auth" : "No provider";
-  const providerModeTitle = status?.mode === "mock"
-    ? "Mock provider auth mode"
-    : "Provider not connected";
+  const showProviderModeBanner = Boolean(canAccessShell && !remoteCatalogAvailable);
+  const providerModeLabel = "No provider";
+  const providerModeTitle = "Provider not connected";
   const providerModeMessage = status?.message
     || "You can add artists from MusicBrainz now. Provider availability, previews, followed artists, lyrics, and downloads require connecting a provider.";
 

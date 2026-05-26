@@ -61,7 +61,7 @@ export function useDashboardInfiniteFeed<TItem>({
         }),
         initialPageParam: 0,
         getNextPageParam: (lastPage) => (
-            lastPage.hasMore && lastPage.items.length > 0
+            lastPage.hasMore
                 ? lastPage.offset + lastPage.items.length
                 : undefined
         ),

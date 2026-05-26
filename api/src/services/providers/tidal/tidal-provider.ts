@@ -9,10 +9,24 @@ import {
   ProviderSearchResults,
   ProviderTrack,
   ProviderVideo,
+  ProviderAuthStatus,
+  ProviderDeviceLoginResult,
+  ProviderDeviceLoginPollResult,
+  ProviderDownloadOptions,
 } from "../streaming-provider.js";
 import * as tidal from "./tidal.js";
 import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "./tidal-playback.js";
 import { hasSpatialAudioQuality } from "../../../utils/spatial-audio.js";
+import { spawn, type ChildProcess } from "child_process";
+import fs from "fs";
+import path from "path";
+import { db } from "../../../database.js";
+import { Config } from "../../config.js";
+import { buildStreamingMediaUrl, getDownloadBackendForMediaType } from "../../download-routing.js";
+import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgCommand, parseProgress } from "./tidal-dl-ng.js";
+import { loadStoredTidalToken } from "./tidal-auth.js";
+import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../orpheus.js";
+import { MediaSeedService } from "../../media-seed-service.js";
 
 export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
@@ -241,6 +255,683 @@ export class TidalProvider implements StreamingProvider {
     return (useV2
       ? tidal.tidalApiRequestV2(normalizedEndpoint, options)
       : tidal.tidalApiRequest(normalizedEndpoint)) as Promise<T>;
+  }
+
+  async getAuthStatus(): Promise<ProviderAuthStatus> {
+    try {
+      let token = tidal.loadToken();
+      let tokenExpired = false;
+      let refreshTokenExpired = false;
+      let hoursUntilExpiry = 0;
+
+      if (!token?.access_token) {
+        return {
+          connected: false,
+          tokenExpired: false,
+          refreshTokenExpired: false,
+          hoursUntilExpiry: 0,
+          canAccessShell: true,
+          canAccessLocalLibrary: true,
+          remoteCatalogAvailable: false,
+          canAuthenticate: true,
+          user: null,
+          message: "Connect your TIDAL account to access remote catalog features.",
+        };
+      }
+
+      if (token.expires_at) {
+        const nowInSeconds = Math.floor(Date.now() / 1000);
+        hoursUntilExpiry = (token.expires_at - nowInSeconds) / 3600;
+        tokenExpired = hoursUntilExpiry < 0;
+
+        if (tokenExpired) {
+          await tidal.refreshTidalToken(true);
+          token = tidal.loadToken();
+
+          if (token?.expires_at && token.access_token) {
+            const newHoursUntilExpiry = (token.expires_at - nowInSeconds) / 3600;
+            if (newHoursUntilExpiry < 0) {
+              refreshTokenExpired = true;
+            } else {
+              tokenExpired = false;
+              hoursUntilExpiry = newHoursUntilExpiry;
+            }
+          } else {
+            refreshTokenExpired = true;
+          }
+        }
+      }
+
+      const connected = Boolean(token?.access_token) && !tokenExpired && !refreshTokenExpired;
+
+      if (connected) {
+        return {
+          connected: true,
+          user: token?.user?.username ? { username: token.user.username } : null,
+          tokenExpired,
+          refreshTokenExpired,
+          hoursUntilExpiry,
+          canAccessShell: true,
+          canAccessLocalLibrary: true,
+          remoteCatalogAvailable: true,
+          canAuthenticate: true,
+        };
+      }
+
+      return {
+        connected: false,
+        tokenExpired,
+        refreshTokenExpired: refreshTokenExpired || !token?.refresh_token,
+        hoursUntilExpiry,
+        canAccessShell: true,
+        canAccessLocalLibrary: true,
+        remoteCatalogAvailable: false,
+        canAuthenticate: true,
+        user: token?.user?.username ? { username: token.user.username } : null,
+        message: refreshTokenExpired || !token?.refresh_token
+          ? "Your TIDAL session has expired. Reconnect to access remote catalog features."
+          : "Connect your TIDAL account to access remote catalog features.",
+      };
+    } catch (error: any) {
+      return {
+        connected: false,
+        tokenExpired: true,
+        refreshTokenExpired: true,
+        hoursUntilExpiry: 0,
+        canAccessShell: true,
+        canAccessLocalLibrary: true,
+        remoteCatalogAvailable: false,
+        canAuthenticate: true,
+        message: "Unable to verify TIDAL authentication status.",
+      };
+    }
+  }
+
+  async startDeviceLogin(): Promise<ProviderDeviceLoginResult> {
+    const { startTidalDeviceLogin } = await import("./tidal-auth.js");
+    return startTidalDeviceLogin();
+  }
+
+  async pollDeviceLogin(): Promise<ProviderDeviceLoginPollResult> {
+    const { pollTidalDeviceLogin } = await import("./tidal-auth.js");
+    const pollResult = await pollTidalDeviceLogin();
+    return {
+      logged_in: pollResult.logged_in,
+      expired: pollResult.expired,
+      remainingSeconds: pollResult.remainingSeconds,
+      user: pollResult.user ? { username: pollResult.user.username } : null,
+    };
+  }
+
+  getMediaUrl(type: string, providerId: string): string {
+    return `https://tidal.com/browse/${type}/${providerId}`;
+  }
+
+  parseMediaUrl(url: string): { type: string; providerId: string } | null {
+    const match = url.match(
+      /^https?:\/\/(?:listen\.)?tidal\.com\/(?:browse\/)?(track|album|video|playlist)\/([A-Za-z0-9-]+)\/?/i,
+    );
+    if (!match) {
+      return null;
+    }
+    return {
+      type: match[1].toLowerCase(),
+      providerId: match[2],
+    };
+  }
+
+  async downloadItem(
+    providerId: string,
+    entityType: "album" | "track" | "video" | "playlist",
+    downloadPath: string,
+    options?: ProviderDownloadOptions
+  ): Promise<void> {
+    // Ensure the target subtree is empty before starting.
+    try {
+      await fs.promises.rm(downloadPath, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    await fs.promises.mkdir(path.dirname(downloadPath), { recursive: true });
+
+    const albumIds = providerId.split(";").filter(Boolean);
+    const backend = getDownloadBackendForMediaType(entityType);
+
+    let lastProgress = 0;
+    let completedTracks = 0;
+    let totalTracks = 0;
+    const trackProgress: Map<string, number> = new Map();
+    let currentTrackName = '';
+    let statusMessage = '';
+
+    type AlbumTrackInfo = { title: string; trackNum: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' };
+    let albumTracks: AlbumTrackInfo[] = [];
+    let currentTrackIndex = -1;
+    if (entityType === 'album') {
+      try {
+        const placeholders = albumIds.map(() => '?').join(', ');
+        const rows = db.prepare(`
+            SELECT m.title,
+                   m.version,
+                   m.track_number as track_num,
+                   COALESCE(m.volume_number, 1) as volume_num,
+                   ar.name as artist_name
+            FROM ProviderMedia m
+            LEFT JOIN Artists ar ON ar.id = m.artist_id
+            WHERE m.album_id IN (${placeholders}) AND m.type != 'Music Video'
+            ORDER BY m.volume_number, m.track_number
+        `).all(...albumIds) as any[];
+        if (rows.length > 0) {
+          totalTracks = rows.length;
+          const hasMultipleVolumes = rows.some((row) => Number(row.volume_num || 1) > 1);
+          albumTracks = rows.map((row) => {
+            const normalizedVersion = String(row.version || '').trim();
+            const baseTitle = normalizedVersion && !row.title?.toLowerCase().includes(normalizedVersion.toLowerCase())
+              ? `${row.title} (${normalizedVersion})`
+              : row.title;
+            return {
+              title: row.artist_name ? `${row.artist_name} - ${baseTitle}` : baseTitle,
+              trackNum: hasMultipleVolumes
+                ? (Number(row.volume_num || 1) * 100) + Number(row.track_num || 0)
+                : Number(row.track_num || 0),
+              status: 'queued' as const,
+            };
+          });
+        }
+      } catch (e) {
+        console.warn(`[TidalProvider] Could not pre-fetch album tracks for ${providerId}:`, e);
+      }
+    }
+
+    const normalizeTrackMatchText = (value: string) => value
+      .toLowerCase()
+      .replace(/^[^-]+\s-\s/, '')
+      .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+    const updateAlbumTrackStatus = (
+      trackTitle: string,
+      status: 'downloading' | 'completed' | 'error' | 'skipped',
+      preferredIndex?: number,
+    ) => {
+      if (albumTracks.length === 0) return;
+
+      if (preferredIndex !== undefined && preferredIndex >= 0 && preferredIndex < albumTracks.length) {
+        albumTracks[preferredIndex].status = status;
+        return;
+      }
+
+      const normalizedIncoming = normalizeTrackMatchText(trackTitle);
+      const idx = albumTracks.findIndex((track) => {
+        if (track.status === 'completed' || track.status === 'error' || track.status === 'skipped') {
+          return false;
+        }
+
+        const normalizedTrack = normalizeTrackMatchText(track.title);
+        return normalizedIncoming === normalizedTrack
+          || normalizedIncoming.includes(normalizedTrack)
+          || normalizedTrack.includes(normalizedIncoming);
+      });
+
+      if (idx >= 0) {
+        albumTracks[idx].status = status;
+      }
+    };
+
+    const emitDownloadProgress = (state: any) => {
+      if (options?.onProgress) {
+        options.onProgress(state);
+      }
+    };
+
+    let currentAlbumIndex = 0;
+    let tracksCompletedInPreviousAlbums = 0;
+    let currentAlbumCompletedTracks = 0;
+
+    const downloadSingleAlbum = (currentAlbumId: string): Promise<void> => {
+      return new Promise(async (resolveSingle, rejectSingle) => {
+        const currentTidalUrl = buildStreamingMediaUrl(entityType, currentAlbumId);
+        let settled = false;
+        let hardTimeout: NodeJS.Timeout | undefined;
+        let idleTimeout: NodeJS.Timeout | undefined;
+
+        const DOWNLOAD_TIMEOUT_MS = Number(process.env.DISCOGENIUS_DOWNLOAD_TIMEOUT_MS || '0');
+        const DOWNLOAD_IDLE_TIMEOUT_MS = Number(process.env.DISCOGENIUS_DOWNLOAD_IDLE_TIMEOUT_MS || '0');
+
+        const clearTimeouts = () => {
+          if (hardTimeout) {
+            clearTimeout(hardTimeout);
+            hardTimeout = undefined;
+          }
+          if (idleTimeout) {
+            clearTimeout(idleTimeout);
+            idleTimeout = undefined;
+          }
+        };
+
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeouts();
+
+          if (error) {
+            try {
+              if (entityType === 'album') {
+                db.prepare(`UPDATE upgrade_queue SET status = 'skipped' WHERE album_id = ? AND status = 'pending'`).run(currentAlbumId);
+              } else {
+                db.prepare(`UPDATE upgrade_queue SET status = 'skipped' WHERE media_id = ? AND status = 'pending'`).run(currentAlbumId);
+              }
+            } catch (e) {
+              console.error(`[TidalProvider] Failed to update upgrade_queue skip-list for ${currentAlbumId}:`, e);
+            }
+            rejectSingle(error);
+          } else {
+            resolveSingle();
+          }
+        };
+
+        try {
+          let downloadProcess: ChildProcess;
+          if (backend === 'tidal-dl-ng') {
+            clearHistory();
+            await syncDiscogeniusSettings(downloadPath);
+            const env = buildTidalDlNgEnv();
+            const args = ['dl', currentTidalUrl];
+            console.log(`[TidalProvider] Running: tidal-dl-ng ${args.join(' ')}`);
+            const cmd = getTidalDlNgCommand();
+            downloadProcess = spawn(cmd.command, [...cmd.args, ...args], { env });
+          } else {
+            const token = loadStoredTidalToken();
+            if (!token?.access_token) {
+              throw new Error('TIDAL authentication is required before starting Orpheus downloads');
+            }
+            await ensureOrpheusRuntime();
+            await syncTokenToOrpheusSession(token);
+            await syncOrpheusSettings(downloadPath);
+            console.log(`[TidalProvider] Running: orpheus.py download tidal ${entityType} ${currentAlbumId}`);
+            downloadProcess = await spawnOrpheusDownload(entityType as 'track' | 'album' | 'playlist', currentAlbumId, downloadPath);
+          }
+
+          if (options?.signal) {
+            const onAbort = () => {
+              if (!settled && !downloadProcess.killed) {
+                console.log(`[TidalProvider] Abort signal received, killing download process...`);
+                downloadProcess.kill('SIGKILL');
+                finish(new Error('Download process aborted'));
+              }
+            };
+            options.signal.addEventListener('abort', onAbort);
+          }
+
+          const resetIdleTimeout = () => {
+            if (DOWNLOAD_IDLE_TIMEOUT_MS <= 0) return;
+            if (idleTimeout) clearTimeout(idleTimeout);
+
+            idleTimeout = setTimeout(() => {
+              if (settled) return;
+              const message = `Download idle timeout (${DOWNLOAD_IDLE_TIMEOUT_MS}ms)`;
+              console.error(`[TidalProvider] ${message}`);
+              if (!downloadProcess.killed) {
+                downloadProcess.kill('SIGKILL');
+              }
+              finish(new Error(message));
+            }, DOWNLOAD_IDLE_TIMEOUT_MS);
+          };
+
+          if (DOWNLOAD_TIMEOUT_MS > 0) {
+            hardTimeout = setTimeout(() => {
+              if (settled) return;
+              const message = `Download timeout (${DOWNLOAD_TIMEOUT_MS}ms)`;
+              console.error(`[TidalProvider] ${message}`);
+              if (!downloadProcess.killed) {
+                downloadProcess.kill('SIGKILL');
+              }
+              finish(new Error(message));
+            }, DOWNLOAD_TIMEOUT_MS);
+          }
+
+          resetIdleTimeout();
+          currentAlbumCompletedTracks = 0;
+
+          const handleOrpheusProgress = (progress: any) => {
+            if (!progress) return false;
+
+            if (progress.statusMessage) {
+              statusMessage = progress.statusMessage;
+            }
+
+            if (progress.currentTrack && progress.totalTracks) {
+              if (albumIds.length <= 1) {
+                totalTracks = progress.totalTracks;
+              }
+              currentAlbumCompletedTracks = Math.max(currentAlbumCompletedTracks, progress.currentTrack - 1);
+              completedTracks = tracksCompletedInPreviousAlbums + currentAlbumCompletedTracks;
+              currentTrackIndex = tracksCompletedInPreviousAlbums + Math.max(0, progress.currentTrack - 1);
+              const overallProgress = Math.round((completedTracks / totalTracks) * 100);
+              lastProgress = Math.max(lastProgress, overallProgress);
+              emitDownloadProgress({
+                progress: overallProgress,
+                currentFileNum: completedTracks,
+                totalFiles: totalTracks,
+                currentTrack: currentTrackName || undefined,
+                state: 'downloading',
+                statusMessage,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.currentTrackName) {
+              currentTrackName = progress.currentTrackName;
+              updateAlbumTrackStatus(progress.currentTrackName, 'downloading', currentTrackIndex);
+              emitDownloadProgress({
+                progress: lastProgress,
+                currentFileNum: totalTracks > 0 ? Math.min(totalTracks, completedTracks + 1) : 1,
+                totalFiles: totalTracks || undefined,
+                currentTrack: currentTrackName,
+                trackStatus: 'downloading',
+                state: 'downloading',
+                statusMessage: progress.statusMessage || statusMessage,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.trackProgress !== undefined) {
+              if (currentTrackName) {
+                trackProgress.set(currentTrackName, progress.trackProgress);
+                updateAlbumTrackStatus(currentTrackName, 'downloading', currentTrackIndex);
+              }
+
+              const currentFileNum = totalTracks > 0 ? Math.min(totalTracks, completedTracks + 1) : 1;
+              const overallProgress = totalTracks > 0
+                ? Math.round(((completedTracks + progress.trackProgress / 100) / totalTracks) * 100)
+                : progress.trackProgress;
+              lastProgress = Math.max(lastProgress, overallProgress);
+              emitDownloadProgress({
+                progress: overallProgress,
+                currentFileNum,
+                totalFiles: totalTracks || undefined,
+                currentTrack: currentTrackName || undefined,
+                trackProgress: progress.trackProgress,
+                trackStatus: currentTrackName ? 'downloading' : undefined,
+                state: 'downloading',
+                statusMessage,
+                speed: progress.speed,
+                eta: progress.eta,
+                size: progress.size,
+                sizeleft: progress.sizeleft,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.isTrackComplete) {
+              currentAlbumCompletedTracks += 1;
+              completedTracks = tracksCompletedInPreviousAlbums + currentAlbumCompletedTracks;
+              if (currentTrackName) {
+                trackProgress.set(currentTrackName, 100);
+                updateAlbumTrackStatus(currentTrackName, 'completed', currentTrackIndex);
+              }
+              const overallProgress = totalTracks > 0
+                ? Math.round((completedTracks / totalTracks) * 100)
+                : 100;
+              lastProgress = Math.max(lastProgress, overallProgress);
+              emitDownloadProgress({
+                progress: overallProgress,
+                currentFileNum: completedTracks,
+                totalFiles: totalTracks || undefined,
+                currentTrack: currentTrackName || undefined,
+                trackProgress: currentTrackName ? 100 : undefined,
+                trackStatus: currentTrackName ? 'completed' : undefined,
+                state: 'downloading',
+                statusMessage: progress.statusMessage || statusMessage,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.isTrackFailed) {
+              if (currentTrackName) {
+                updateAlbumTrackStatus(currentTrackName, 'error', currentTrackIndex);
+              }
+              emitDownloadProgress({
+                progress: lastProgress,
+                currentFileNum: totalTracks > 0 ? Math.min(totalTracks, completedTracks + 1) : 1,
+                totalFiles: totalTracks || undefined,
+                currentTrack: currentTrackName || undefined,
+                trackStatus: currentTrackName ? 'error' : undefined,
+                state: 'downloading',
+                statusMessage: progress.statusMessage || statusMessage,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.isEntityComplete) {
+              const isLastAlbum = currentAlbumIndex === albumIds.length - 1;
+              if (isLastAlbum) {
+                emitDownloadProgress({
+                  progress: 100,
+                  currentFileNum: totalTracks || completedTracks,
+                  totalFiles: totalTracks || completedTracks,
+                  state: 'completed',
+                  statusMessage: progress.statusMessage || statusMessage,
+                  tracks: albumTracks.length > 0 ? albumTracks.map(t => ({
+                    ...t,
+                    status: t.status === 'error' || t.status === 'skipped' ? t.status : 'completed' as const,
+                  })) : undefined,
+                });
+              }
+            }
+
+            return true;
+          };
+
+          const handleTidalDlNgProgress = (progress: any) => {
+            if (!progress) return false;
+
+            const fallbackTrackTitle = currentTrackName || options?.qualityProfile;
+
+            if (progress.statusMessage) {
+              statusMessage = progress.statusMessage;
+            }
+
+            if (progress.totalTracks && progress.currentTrack) {
+              if (albumIds.length <= 1) {
+                totalTracks = progress.totalTracks;
+              }
+              currentAlbumCompletedTracks = Math.max(currentAlbumCompletedTracks, progress.currentTrack - 1);
+              completedTracks = tracksCompletedInPreviousAlbums + currentAlbumCompletedTracks;
+              currentTrackIndex = tracksCompletedInPreviousAlbums + Math.max(0, progress.currentTrack - 1);
+              const overallProgress = Math.round((completedTracks / totalTracks) * 100);
+
+              if (overallProgress !== lastProgress) {
+                lastProgress = overallProgress;
+                emitDownloadProgress({
+                  progress: overallProgress,
+                  currentFileNum: completedTracks,
+                  totalFiles: totalTracks,
+                  currentTrack: progress.listName || currentTrackName,
+                  state: progress.state || 'downloading',
+                  statusMessage,
+                  tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                });
+              }
+            }
+
+            if (progress.isComplete && progress.trackTitle) {
+              currentAlbumCompletedTracks += 1;
+              completedTracks = tracksCompletedInPreviousAlbums + currentAlbumCompletedTracks;
+              trackProgress.set(progress.trackTitle, 100);
+              currentTrackName = progress.trackTitle;
+              updateAlbumTrackStatus(progress.trackTitle, progress.state === 'failed' ? 'error' : 'completed', currentTrackIndex);
+
+              const overallProgress = totalTracks > 0
+                ? Math.round((completedTracks / totalTracks) * 100)
+                : Math.round((completedTracks / Math.max(completedTracks, 1)) * 100);
+
+              emitDownloadProgress({
+                progress: overallProgress,
+                currentFileNum: completedTracks,
+                totalFiles: totalTracks,
+                currentTrack: progress.trackTitle,
+                trackProgress: 100,
+                trackStatus: progress.state === 'failed' ? 'error' : 'completed',
+                state: progress.state || 'downloading',
+                statusMessage: progress.statusMessage || `Downloaded: ${progress.trackTitle}`,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            } else if (progress.progress > 0 && progress.trackTitle) {
+              trackProgress.set(progress.trackTitle, progress.progress);
+              currentTrackName = progress.trackTitle;
+              updateAlbumTrackStatus(progress.trackTitle, 'downloading', currentTrackIndex);
+
+              const overallProgress = totalTracks > 0
+                ? Math.round(((completedTracks + progress.progress / 100) / totalTracks) * 100)
+                : progress.progress;
+
+              if (overallProgress !== lastProgress) {
+                lastProgress = overallProgress;
+                emitDownloadProgress({
+                  progress: overallProgress,
+                  currentFileNum: completedTracks + 1,
+                  totalFiles: totalTracks || undefined,
+                  currentTrack: progress.trackTitle,
+                  trackProgress: progress.progress,
+                  trackStatus: 'downloading',
+                  state: 'downloading',
+                  statusMessage,
+                  tracks: albumTracks.length > 0 ? albumTracks : undefined,
+                });
+              }
+            } else if (progress.progress > lastProgress) {
+              lastProgress = progress.progress;
+              emitDownloadProgress({
+                progress: progress.progress,
+                currentFileNum: totalTracks > 0 ? Math.min(totalTracks, completedTracks + 1) : undefined,
+                totalFiles: totalTracks || undefined,
+                currentTrack: fallbackTrackTitle || undefined,
+                trackProgress: fallbackTrackTitle ? progress.progress : undefined,
+                trackStatus: fallbackTrackTitle ? 'downloading' : undefined,
+                state: progress.state || 'downloading',
+                statusMessage,
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            if (progress.isListComplete && progress.listName) {
+              const isLastAlbum = currentAlbumIndex === albumIds.length - 1;
+              if (isLastAlbum) {
+                totalTracks = completedTracks;
+                emitDownloadProgress({
+                  progress: 100,
+                  currentFileNum: completedTracks,
+                  totalFiles: completedTracks,
+                  state: 'completed',
+                  statusMessage: `Finished: ${progress.listName}`,
+                  tracks: albumTracks.length > 0 ? albumTracks.map(t => ({
+                    ...t,
+                    status: t.status === 'error' || t.status === 'skipped' ? t.status : 'completed' as const,
+                  })) : undefined,
+                });
+              }
+            }
+
+            if (progress.statusMessage && !progress.trackTitle && !progress.totalTracks && !progress.isListComplete) {
+              emitDownloadProgress({
+                progress: lastProgress,
+                currentFileNum: completedTracks > 0 ? completedTracks : undefined,
+                totalFiles: totalTracks || undefined,
+                currentTrack: fallbackTrackTitle || undefined,
+                trackProgress: fallbackTrackTitle
+                  ? (currentTrackName ? trackProgress.get(currentTrackName) : lastProgress)
+                  : undefined,
+                trackStatus: fallbackTrackTitle ? 'downloading' : undefined,
+                statusMessage: progress.statusMessage,
+                state: progress.state || 'downloading',
+                tracks: albumTracks.length > 0 ? albumTracks : undefined,
+              });
+            }
+
+            return true;
+          };
+
+          const handleBackendProgressLine = (line: string) => {
+            if (backend === 'tidal-dl-ng') {
+              return handleTidalDlNgProgress(parseProgress(line));
+            }
+            return handleOrpheusProgress(parseOrpheusProgress(line));
+          };
+
+          downloadProcess.stdout?.on("data", (data: Buffer) => {
+            try {
+              resetIdleTimeout();
+              const output = data.toString();
+              const lines = output.split(/\r?\n|\r/g);
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                console.log(`[${backend}] ${line}`);
+                handleBackendProgressLine(line);
+              }
+            } catch (error: any) {
+              const message = `Failed to parse download output: ${error?.message || 'unknown parser error'}`;
+              console.error(`[TidalProvider] ${message}`);
+              if (!downloadProcess.killed) {
+                downloadProcess.kill('SIGKILL');
+              }
+              finish(new Error(message));
+            }
+          });
+
+          let stderrOutput = '';
+          downloadProcess.stderr?.on("data", (data: Buffer) => {
+            try {
+              resetIdleTimeout();
+              const output = data.toString();
+              stderrOutput += output;
+              const lines = output.split(/\r?\n|\r/g);
+              let handledProgress = false;
+
+              if (backend === 'orpheus' || backend === 'tidal-dl-ng') {
+                for (const line of lines) {
+                  if (!line.trim()) continue;
+                  handledProgress = handleBackendProgressLine(line) || handledProgress;
+                }
+              }
+
+              if (!handledProgress && !output.includes('WARNING') && !output.includes('ffmpeg version')) {
+                console.error(`[${backend} stderr] ${output}`);
+              }
+            } catch (error: any) {
+              const message = `Failed to process stderr: ${error?.message || 'unknown stderr error'}`;
+              console.error(`[TidalProvider] ${message}`);
+              if (!downloadProcess.killed) {
+                downloadProcess.kill('SIGKILL');
+              }
+              finish(new Error(message));
+            }
+          });
+
+          downloadProcess.on("close", (code) => {
+            if (settled) return;
+            if (code === 0) {
+              finish();
+            } else {
+              finish(new Error(`Download process exited with code ${code}. Stderr: ${stderrOutput.slice(-500)}`));
+            }
+          });
+        } catch (error: any) {
+          finish(error);
+        }
+      });
+    };
+
+    for (const albumId of albumIds) {
+      await downloadSingleAlbum(albumId);
+      tracksCompletedInPreviousAlbums = completedTracks;
+      currentAlbumIndex++;
+    }
+  }
+
+  async syncSettings(downloadPath?: string): Promise<void> {
+    await syncDiscogeniusSettings(downloadPath);
   }
 
   private isSpatialQuality(quality?: string | null, tags: string[] = []): boolean {

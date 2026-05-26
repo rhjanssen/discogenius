@@ -8,11 +8,9 @@ const mockConnectedStatus = {
   refreshTokenExpired: false,
   tokenExpired: false,
   hoursUntilExpiry: 24,
-  mode: 'live',
   canAccessShell: true,
   canAccessLocalLibrary: true,
   remoteCatalogAvailable: true,
-  authBypassed: false,
   canAuthenticate: true,
   user: {
     user_id: 'mock-user',
@@ -103,7 +101,7 @@ test.describe('Shell loading states', () => {
     releaseAppAuthCheck?.();
 
     await expect(page.getByRole('status', { name: /loading discogenius/i })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /connect with tidal/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^tidal$/i })).toBeVisible();
   });
 
   test('does not block the shell while provider auth status is loading', async ({ page }) => {

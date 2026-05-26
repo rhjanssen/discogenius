@@ -736,33 +736,7 @@ const Auth = () => {
         </div>
 
         <div className={styles.card}>
-          {!connecting && !userCode && authStatus?.authBypassed && (
-            <div className={styles.content}>
-              <div className={styles.header}>
-                <div className={styles.logoContainer}>
-                  <div aria-hidden="true" className={styles.logoGlow} />
-                  <img src={logo} alt="Discogenius" className={styles.logo} />
-                </div>
-                <Title2>
-                  {authStatus.mode === "mock" ? "Mock provider mode is active" : "Disconnected local-library mode"}
-                </Title2>
-                <Body1 className={styles.centeredBody}>
-                  {authStatus.message || "Discogenius can load the local library without a live TIDAL session."}
-                </Body1>
-              </div>
-
-              <Button
-                appearance="primary"
-                onClick={navigateAfterAuth}
-                size="large"
-                className={styles.fullWidthButton}
-              >
-                Open Discogenius
-              </Button>
-            </div>
-          )}
-
-          {!connecting && !userCode && !authStatus?.authBypassed && refreshing && (
+          {!connecting && !userCode && refreshing && (
             <div className={styles.infoBox}>
               <div className={styles.stateHeader}>
                 <Title3>Refreshing TIDAL session</Title3>
@@ -777,7 +751,7 @@ const Auth = () => {
             </div>
           )}
 
-          {!connecting && !userCode && !authStatus?.authBypassed && !refreshing && (
+          {!connecting && !userCode && !refreshing && (
             <div className={styles.content}>
               <div className={styles.leftColumn}>
                 <div className={styles.logoContainer}>

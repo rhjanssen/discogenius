@@ -188,6 +188,7 @@ test.describe('Playback', () => {
       downloaded: true,
       is_downloaded: true,
       is_monitored: true,
+      preview_provider_track_id: trackId,
       files: [
         {
           id: 654,

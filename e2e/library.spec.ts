@@ -20,13 +20,11 @@ async function stubPopulatedLibraryShell(page: Page) {
         refreshTokenExpired: false,
         tokenExpired: false,
         hoursUntilExpiry: 0,
-        mode: 'mock',
         canAccessShell: true,
         canAccessLocalLibrary: true,
         remoteCatalogAvailable: false,
-        authBypassed: true,
-        canAuthenticate: false,
-        message: 'Mock provider auth mode is active.',
+        canAuthenticate: true,
+        message: 'Connect your TIDAL account to access remote catalog features.',
       }),
     });
   });
@@ -224,13 +222,11 @@ test.describe('Library page tabs & filtering', () => {
           refreshTokenExpired: false,
           tokenExpired: false,
           hoursUntilExpiry: 0,
-          mode: 'mock',
           canAccessShell: true,
           canAccessLocalLibrary: true,
           remoteCatalogAvailable: false,
-          authBypassed: true,
-          canAuthenticate: false,
-          message: 'Mock provider auth mode is active.',
+          canAuthenticate: true,
+          message: 'Connect your TIDAL account to access remote catalog features.',
         }),
       });
     });
@@ -425,13 +421,11 @@ test.describe('Library page tabs & filtering', () => {
           refreshTokenExpired: false,
           tokenExpired: false,
           hoursUntilExpiry: 0,
-          mode: 'mock',
           canAccessShell: true,
           canAccessLocalLibrary: true,
           remoteCatalogAvailable: false,
-          authBypassed: true,
-          canAuthenticate: false,
-          message: 'Mock provider auth mode is active.',
+          canAuthenticate: true,
+          message: 'Connect your TIDAL account to access remote catalog features.',
         }),
       });
     });

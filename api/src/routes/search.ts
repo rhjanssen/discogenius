@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../database.js";
-import { getProviderAuthMode } from "../services/provider-auth-mode.js";
+
 import { skyHookProxy, type LidarrArtist } from "../services/metadata/skyhook-proxy.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import {
@@ -138,9 +138,8 @@ router.get("/", async (req, res) => {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });
         }
 
-        const providerAuthMode = getProviderAuthMode();
         const provider = streamingProviderManager.getDefaultStreamingProvider();
-        const hasRemoteAuth = providerAuthMode === "live" && Boolean(provider.isAuthenticated?.());
+        const hasRemoteAuth = Boolean(provider.isAuthenticated?.());
         const includeProviderCatalog =
             req.query.provider === "true" ||
             req.query.provider === "1" ||
@@ -425,7 +424,6 @@ router.get("/", async (req, res) => {
         const payload: SearchResponseContract = {
             success: true,
             results,
-            mode: providerAuthMode,
             remoteCatalogAvailable: hasRemoteAuth,
         };
         res.json(payload);

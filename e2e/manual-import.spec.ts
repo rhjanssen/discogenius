@@ -110,8 +110,8 @@ test.describe('Manual import flow', () => {
     await page.route('**/api/providers/tidal/albums/555/tracks', async (route) => {
       await route.fulfill({
         json: [
-          { tidal_id: '9001', title: 'First Song', track_number: 1, volume_number: 1, duration: 180 },
-          { tidal_id: '9002', title: 'Second Song', track_number: 2, volume_number: 1, duration: 200 },
+          { providerId: '9001', id: '9001', tidal_id: '9001', title: 'First Song', trackNumber: 1, track_number: 1, volume_number: 1, duration: 180 },
+          { providerId: '9002', id: '9002', tidal_id: '9002', title: 'Second Song', trackNumber: 2, track_number: 2, volume_number: 1, duration: 200 },
         ],
       });
     });

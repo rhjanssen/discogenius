@@ -53,7 +53,7 @@ export interface StreamingProvider {
   getArtworkUrl?(request: ProviderArtworkRequest): Promise<string | null> | string | null;
   getLyrics?(trackId: string | number): Promise<ProviderLyrics | null>;
   
-  logout?(): void | Promise<void>;
+  logout(): void | Promise<void>;
   loadToken?(): any;
   refreshProviderToken?(): Promise<void>;
   shouldRefreshToken?(): boolean;
@@ -61,6 +61,71 @@ export interface StreamingProvider {
   getRateLimitMetrics?(): any;
   getCountryCode?(): string;
   apiRequest?<T = any>(endpoint: string, options?: any): Promise<T>;
+
+  getAuthStatus(): Promise<ProviderAuthStatus>;
+  startDeviceLogin?(): Promise<ProviderDeviceLoginResult>;
+  pollDeviceLogin?(): Promise<ProviderDeviceLoginPollResult>;
+  getMediaUrl?(type: string, providerId: string): string;
+  parseMediaUrl?(url: string): { type: string; providerId: string } | null;
+  downloadItem?(
+    providerId: string,
+    entityType: "album" | "track" | "video" | "playlist",
+    downloadPath: string,
+    options?: ProviderDownloadOptions
+  ): Promise<void>;
+  syncSettings?(downloadPath?: string): Promise<void> | void;
+}
+
+export interface ProviderAuthStatus {
+  connected: boolean;
+  tokenExpired: boolean;
+  refreshTokenExpired: boolean;
+  hoursUntilExpiry: number;
+  canAccessShell: boolean;
+  canAccessLocalLibrary: boolean;
+  remoteCatalogAvailable: boolean;
+  canAuthenticate: boolean;
+  refreshing?: boolean;
+  user?: { username?: string } | null;
+  message?: string;
+}
+
+export interface ProviderDeviceLoginResult {
+  alreadyLoggedIn?: boolean;
+  userCode?: string;
+  verificationUrl?: string;
+  expiresIn?: number;
+  interval?: number;
+}
+
+export interface ProviderDeviceLoginPollResult {
+  logged_in: boolean;
+  expired?: boolean;
+  remainingSeconds?: number;
+  user?: { username?: string } | null;
+}
+
+export interface ProviderDownloadProgress {
+  progress: number;
+  currentFileNum?: number;
+  totalFiles?: number;
+  currentTrack?: string;
+  trackProgress?: number;
+  trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+  statusMessage?: string;
+  state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
+  speed?: string;
+  eta?: string;
+  size?: number;
+  sizeleft?: number;
+  tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+}
+
+export interface ProviderDownloadOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: ProviderDownloadProgress) => void;
+  quality?: string | null;
+  qualityProfile?: string;
 }
 
 export type ProviderPlaybackInfo =

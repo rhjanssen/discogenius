@@ -16,7 +16,7 @@ test.describe('Settings page', () => {
     await expect(page.locator('#video-quality').getByText('Video Quality', { exact: true })).toBeVisible();
     await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
     await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
-    await expect(page.locator('#account').getByText('Account', { exact: true })).toBeVisible();
+    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
     await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
   });
 

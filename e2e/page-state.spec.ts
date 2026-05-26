@@ -7,11 +7,9 @@ const connectedAuthStatus = {
   refreshTokenExpired: false,
   tokenExpired: false,
   hoursUntilExpiry: 24,
-  mode: 'live',
   canAccessShell: true,
   canAccessLocalLibrary: true,
   remoteCatalogAvailable: true,
-  authBypassed: false,
   canAuthenticate: true,
   user: {
     user_id: 'mock-user',

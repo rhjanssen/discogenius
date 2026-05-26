@@ -192,38 +192,19 @@ test("library files response parser keeps list payloads typed", () => {
   });
 });
 
-test("auth status parser validates live and bypassed auth shapes", () => {
+test("auth status parser validates live auth shapes", () => {
   const live = parseAuthStatusContract({
     connected: true,
     tokenExpired: false,
     refreshTokenExpired: false,
     hoursUntilExpiry: 12,
-    mode: "live",
     canAccessShell: true,
     canAccessLocalLibrary: true,
     remoteCatalogAvailable: true,
-    authBypassed: false,
     canAuthenticate: true,
     user: { username: "tester" },
   });
-  assert.equal(live.mode, "live");
   assert.equal(live.user?.username, "tester");
-
-  const bypassed = parseAuthStatusContract({
-    connected: false,
-    tokenExpired: false,
-    refreshTokenExpired: false,
-    hoursUntilExpiry: 0,
-    mode: "disconnected",
-    canAccessShell: true,
-    canAccessLocalLibrary: true,
-    remoteCatalogAvailable: false,
-    authBypassed: true,
-    canAuthenticate: false,
-    message: "Disconnected local-library mode is active.",
-  });
-  assert.equal(bypassed.authBypassed, true);
-  assert.equal(bypassed.canAuthenticate, false);
 });
 
 test("catalog contract parsers validate list, stats, and search payloads", () => {
@@ -259,7 +240,6 @@ test("catalog contract parsers validate list, stats, and search payloads", () =>
 
   const search = parseSearchResponseContract({
     success: true,
-    mode: "mock",
     remoteCatalogAvailable: false,
     results: {
       artists: [
@@ -277,7 +257,6 @@ test("catalog contract parsers validate list, stats, and search payloads", () =>
       videos: [],
     },
   });
-  assert.equal(search.mode, "mock");
   assert.equal(search.results.artists[0].in_library, true);
 
   const videos = parseVideosListResponseContract({

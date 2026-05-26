@@ -343,7 +343,7 @@ const ActivityTab = ({
                 />
             ) : (
                 <div className={styles.queueColumnsWrapper}>
-                    <section className={styles.queueSection} aria-label="Active activity">
+                    <div className={styles.queueSection}>
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
                                 <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
@@ -352,7 +352,7 @@ const ActivityTab = ({
                         {hasActiveOrPendingEntries ? (
                             <div className={styles.activityList}>
                                 {renderSection("Running", runningEntries, "running")}
-                                {renderSection("Pending", queuedEntries, "queued")}
+                                {renderSection("Queued", queuedEntries, "queued")}
                                 {hasMoreInFlightActivity ? (
                                     <div className={styles.loadMoreRow}>
                                         <Button appearance="subtle" onClick={() => void loadMoreInFlightActivity()} disabled={isLoadingMoreInFlightActivity}>
@@ -369,9 +369,9 @@ const ActivityTab = ({
                                 minHeight="220px"
                             />
                         )}
-                    </section>
+                    </div>
 
-                    <section className={styles.queueSection} aria-label="Activity history">
+                    <div className={styles.queueSection}>
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
                                 <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
@@ -379,7 +379,7 @@ const ActivityTab = ({
                         </div>
                         {historyEntries.length > 0 ? (
                             <div className={styles.activityList}>
-                                <section className={styles.activitySection} aria-label="History">
+                                <section className={styles.activitySection} aria-label="Recent">
                                     <div className={styles.activitySectionItems}>
                                         {historyEntries.map((entry) => renderActivityEntry(entry))}
                                         {hasMoreActivity ? (
@@ -400,7 +400,7 @@ const ActivityTab = ({
                                 minHeight="220px"
                             />
                         )}
-                    </section>
+                    </div>
                 </div>
             )}
         </div>

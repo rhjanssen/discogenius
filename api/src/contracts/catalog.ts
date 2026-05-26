@@ -148,7 +148,6 @@ export interface SearchResultsContract {
 export interface SearchResponseContract {
   success: boolean;
   results: SearchResultsContract;
-  mode: "live" | "mock" | "disconnected";
   remoteCatalogAvailable: boolean;
 }
 
@@ -332,11 +331,6 @@ export function parseLibraryStatsContract(value: unknown): LibraryStatsContract 
 export function parseSearchResponseContract(value: unknown): SearchResponseContract {
   const record = expectRecord(value, "search");
   const results = expectRecord(record.results, "search.results");
-  const mode = expectString(record.mode, "search.mode");
-
-  if (mode !== "live" && mode !== "mock" && mode !== "disconnected") {
-    throw new Error("search.mode must be one of: live, mock, disconnected");
-  }
 
   return {
     success: expectBoolean(record.success, "search.success"),
@@ -350,7 +344,6 @@ export function parseSearchResponseContract(value: unknown): SearchResponseContr
       videos: expectArray(results.videos, "search.results.videos", (item, index) =>
         parseSearchResultContract(item, index, "videos")),
     },
-    mode,
     remoteCatalogAvailable: expectBoolean(record.remoteCatalogAvailable, "search.remoteCatalogAvailable"),
   };
 }

@@ -833,7 +833,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.getByRole('tab', { name: /^Activity$/i }).click();
-    await expect(page.getByText('No recent activity')).toBeVisible();
+    await expect(page.getByText('No active jobs')).toBeVisible();
   });
 
   test('dashboard tab switching stays stable', async ({ page }) => {
@@ -846,7 +846,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     const manualImportTab = page.getByRole('tab', { name: /^Unmapped Files$/i });
 
     await activityTab.click();
-    await expect(page.getByText('No recent activity')).toBeVisible();
+    await expect(page.getByText('No active jobs')).toBeVisible();
 
     await manualImportTab.click();
     await expect(page.getByText('There are no files waiting for review in your library folders.')).toBeVisible();

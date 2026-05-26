@@ -7,11 +7,9 @@ export const mockConnectedAuthStatus = {
   refreshTokenExpired: false,
   tokenExpired: false,
   hoursUntilExpiry: 24,
-  mode: 'live',
   canAccessShell: true,
   canAccessLocalLibrary: true,
   remoteCatalogAvailable: true,
-  authBypassed: false,
   canAuthenticate: true,
   user: {
     user_id: 'mock-user',
@@ -250,7 +248,6 @@ export function createSearchResponse(options?: {
       tracks: options?.tracks || [],
       videos: options?.videos || [],
     },
-    mode: 'mock',
     remoteCatalogAvailable: true,
   };
 }
@@ -325,6 +322,7 @@ export async function stubVideoDetail(
         url: null,
         is_monitored: false,
         is_downloaded: false,
+        downloaded: false,
       }),
     });
   });

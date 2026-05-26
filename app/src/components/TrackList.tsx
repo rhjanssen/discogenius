@@ -214,7 +214,7 @@ const TrackList = <T extends TrackListItem>({
           const isPlaying = playingTrackId === track.id;
           const audioFile = getTrackAudioFile(track);
           const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
-          const canPlay = Boolean(audioFile || track.preview_provider_track_id);
+          const canPlay = Boolean(isDownloaded || audioFile || track.preview_provider_track_id);
           const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
           const isMonitored = isTruthy(track.is_monitored ?? track.monitor);
           const isLocked = isTruthy(track.monitor_locked ?? track.monitor_lock);

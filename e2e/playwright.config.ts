@@ -70,8 +70,6 @@ export default defineConfig({
       DB_PATH: path.join(runtimeConfigDir, 'discogenius.e2e.db'),
       DOWNLOAD_PATH: runtimeDownloadDir,
       TIDAL_DL_NG_CONFIG: path.join(runtimeConfigDir, 'tidal_dl_ng-dev'),
-      DISCOGENIUS_PROVIDER_AUTH_MODE: 'mock',
-      DISCOGENIUS_PROVIDER_AUTH_USERNAME: 'discogenius-e2e',
       DISCOGENIUS_DISABLE_DOWNLOADS: '1',
       DISCOGENIUS_DISABLE_MONITORING: '1',
       DISCOGENIUS_DISABLE_SCHEDULER: '1',

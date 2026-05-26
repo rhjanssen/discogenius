@@ -40,7 +40,6 @@ test.describe('App shell & navigation', () => {
 
     // Layout should have nav with logo, search, and action buttons
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.getByText(/mock provider auth mode|disconnected local-library mode/i).first()).toBeVisible();
     const searchBox = page.getByRole('searchbox', { name: /search/i });
     await expect(searchBox).toBeVisible();
 

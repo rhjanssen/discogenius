@@ -152,14 +152,59 @@ async function stubAlbumPageFixtures(page: Page) {
         [relatedAlbumId]: relatedTracks,
     } as const;
 
-    await page.route(/\/api\/albums\/[^/?]+(?:\/(tracks|versions|similar))?$/, async (route) => {
+    await page.route(/\/api\/albums\/[^/?]+(?:\/(tracks|versions|similar|page))?$/, async (route) => {
         const url = new URL(route.request().url());
-        const match = url.pathname.match(/\/api\/albums\/([^/]+)(?:\/(tracks|versions|similar))?$/);
+        const match = url.pathname.match(/\/api\/albums\/([^/]+)(?:\/(tracks|versions|similar|page))?$/);
         const currentAlbumId = match?.[1];
         const endpoint = match?.[2] ?? 'detail';
 
         if (!currentAlbumId || !(currentAlbumId in albums)) {
             await route.fallback();
+            return;
+        }
+
+        if (endpoint === 'page') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    album: {
+                        ...albums[currentAlbumId as keyof typeof albums],
+                        is_monitored: albums[currentAlbumId as keyof typeof albums].is_monitored,
+                        monitor: albums[currentAlbumId as keyof typeof albums].is_monitored ? 1 : 0,
+                        downloaded: 0,
+                        is_downloaded: false,
+                        stereo_provider_id: null,
+                        stereo_quality: null,
+                        stereo_match_status: null,
+                        spatial_provider_id: null,
+                        spatial_quality: null,
+                        spatial_match_status: null,
+                        selected_provider_id: null,
+                        source: 'musicbrainz',
+                        tracks_count: trackLists[currentAlbumId as keyof typeof trackLists].length,
+                        monitored_tracks_count: 0,
+                    },
+                    tracks: trackLists[currentAlbumId as keyof typeof trackLists],
+                    similarAlbums: currentAlbumId === albumId
+                        ? [
+                            {
+                                id: relatedAlbumId,
+                                title: relatedAlbumTitle,
+                                artist_name: artistName,
+                                cover_id: null,
+                                release_date: '2024-02-02',
+                                quality: 'LOSSLESS',
+                                explicit: false,
+                                popularity: 80,
+                            },
+                        ]
+                        : [],
+                    otherVersions: [],
+                    artistPicture: null,
+                    artistCoverImageUrl: null,
+                }),
+            });
             return;
         }
 

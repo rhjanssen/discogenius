@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getConfigSection, updateConfig, CONFIG_FILE, Config } from "../services/config.js";
-import { syncDiscogeniusSettings } from "../services/providers/tidal/tidal-dl-ng.js";
+import { streamingProviderManager } from "../services/providers/index.js";
 import { syncOrpheusSettings } from "../services/orpheus.js";
 import { UpgraderService } from "../services/upgrader.js";
 import { getAppReleaseInfo } from "../services/app-release.js";
@@ -26,7 +26,12 @@ import { previewNamingConfig, validateNamingConfig } from "../services/naming.js
 const router = Router();
 
 async function syncDownloadBackends(): Promise<void> {
-  await syncDiscogeniusSettings();
+  const providers = streamingProviderManager.getAllStreamingProviders();
+  for (const provider of providers) {
+    if (provider.syncSettings) {
+      await provider.syncSettings();
+    }
+  }
   await syncOrpheusSettings();
 }
 

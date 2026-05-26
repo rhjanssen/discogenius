@@ -17,7 +17,6 @@ export function useProviderConnection() {
   const canAccessShell = Boolean(status?.canAccessShell ?? isConnected);
   const canAccessLocalLibrary = Boolean(status?.canAccessLocalLibrary ?? canAccessShell);
   const remoteCatalogAvailable = Boolean(status?.remoteCatalogAvailable ?? isConnected);
-  const providerAuthMode = status?.mode ?? "live";
 
   return {
     ...query,
@@ -26,8 +25,6 @@ export function useProviderConnection() {
     canAccessShell,
     canAccessLocalLibrary,
     remoteCatalogAvailable,
-    providerAuthMode,
-    isAuthBypassed: Boolean(status?.authBypassed),
     canAuthenticate: Boolean(status?.canAuthenticate ?? true),
     isSessionExpired: Boolean(status?.refreshTokenExpired || status?.tokenExpired),
   };
