@@ -1,7 +1,6 @@
-import { Body1, makeStyles, tokens, Title1 } from "@fluentui/react-components";
+import { makeStyles, tokens, Title1 } from "@fluentui/react-components";
 import { useSearchParams } from "react-router-dom";
 import GlobalSearch from "@/components/GlobalSearch";
-import { useProviderConnection } from "@/hooks/useProviderConnection";
 
 const useStyles = makeStyles({
   container: {
@@ -23,27 +22,16 @@ const useStyles = makeStyles({
     maxWidth: "100%",
     margin: "0 auto",
   },
-  note: {
-    textAlign: "center",
-    color: tokens.colorNeutralForeground2,
-    maxWidth: "720px",
-    margin: "0 auto",
-  },
 });
 const SearchPage = () => {
   const styles = useStyles();
   const [searchParams] = useSearchParams();
-  const { remoteCatalogAvailable } = useProviderConnection();
   const query = searchParams.get("q")?.trim() ?? "";
-  const localOnlyMessage = "Provider not connected. Artist search uses MusicBrainz/Lidarr metadata; provider availability, previews, followed artists, and downloads require connecting a provider.";
 
   return (
     <div className={styles.container}>
       <div className={styles.content}>
-        <Title1 align="center">Search</Title1>
-        {!remoteCatalogAvailable ? (
-          <Body1 className={styles.note}>{localOnlyMessage}</Body1>
-        ) : null}
+        <Title1 align="center">Search Library</Title1>
         <div className={styles.searchWrapper}>
           <GlobalSearch key={query} autoFocus initialQuery={query} />
         </div>

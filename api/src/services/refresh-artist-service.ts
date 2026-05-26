@@ -134,7 +134,7 @@ export class RefreshArtistService {
                 console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
             }
         } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to sync Lidarr metadata for artist ${artistId} (${artistMbid}):`, error);
+            console.warn(`[RefreshArtistService] Failed to sync canonical metadata for artist ${artistId} (${artistMbid}):`, error);
         }
 
         return artistMbid;
@@ -192,8 +192,8 @@ export class RefreshArtistService {
                     bio_text, bio_source,
                     monitor, monitored_at, user_date_added, last_scanned, path
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'lidarr-metadata',
-                    ?, 'lidarr', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'musicbrainz-metadata',
+                    ?, 'musicbrainz', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
             `).run(
                 localArtistId,
                 artistName,
@@ -221,9 +221,9 @@ export class RefreshArtistService {
                     mbid = ?,
                     musicbrainz_status = 'verified',
                     musicbrainz_last_checked = CURRENT_TIMESTAMP,
-                    musicbrainz_match_method = 'lidarr-metadata',
+                    musicbrainz_match_method = 'musicbrainz-metadata',
                     bio_text = COALESCE(?, bio_text),
-                    bio_source = CASE WHEN ? IS NOT NULL THEN 'lidarr' ELSE bio_source END,
+                    bio_source = CASE WHEN ? IS NOT NULL THEN 'musicbrainz' ELSE bio_source END,
                     monitor = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
                     last_scanned = CURRENT_TIMESTAMP,

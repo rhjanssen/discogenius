@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
     SearchBox,
     Button,
@@ -329,13 +329,23 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     const [resultsLayout, setResultsLayout] = useState<{ maxHeight: number; top: number; left: number; width: number } | null>(null);
     const searchRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
+    const location = useLocation();
     const { toast } = useToast();
     const { addToQueue } = useQueueStatus();
-    const searchActivityLabel = "Searching catalog...";
+    const searchActivityLabel = "Searching library...";
 
     useEffect(() => {
         setSearchQuery(initialQuery.trim());
     }, [initialQuery]);
+
+    useEffect(() => {
+        if (autoFocus || initialQuery.trim()) {
+            return;
+        }
+
+        setSearchQuery("");
+        setIsOpen(false);
+    }, [autoFocus, initialQuery, location.pathname, location.search]);
 
     useEffect(() => {
         const debounceTimer = setTimeout(() => {
@@ -458,8 +468,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         e.stopPropagation();
         setProcessingItems(prev => new Set(prev).add(item.tidalId));
         try {
-            // This button toggles *monitoring*, not library inclusion.
-            // If the item isn't in the library yet, monitoring it will add it.
+            // This button toggles monitoring for an item already in the library.
             if (item.monitored) await removeItem(item);
             else await addItem(item);
         } finally {
@@ -518,7 +527,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const renderEmpty = () => (
         <div className={styles.noResults}>
-            {`No results found for "${searchQuery}". Try a different search term, MusicBrainz ID, provider URL, or provider ID.`}
+            {`No library results found for "${searchQuery}".`}
         </div>
     );
 
@@ -667,8 +676,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
             }
         };
 
-        // When searching, keep showing the last results and just show a spinner indicator.
-        // This makes the UI feel responsive even if remote (TIDAL) search is slow.
+        // When searching, keep showing the last library results and show a spinner indicator.
         if (!hasResults && isSearching) {
             return renderLoadingResults();
         }
@@ -751,7 +759,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         <div ref={searchRef} className={styles.container}>
             <SearchBox
                 autoFocus={autoFocus}
-                placeholder="Search artists, albums, tracks, videos, MBID, or URL..."
+                placeholder="Search your library..."
                 aria-label="Search artists, albums, tracks, or videos"
                 value={searchQuery}
                 onChange={(_e, data) => setSearchQuery(data.value)}

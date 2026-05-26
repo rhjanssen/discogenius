@@ -32,6 +32,7 @@ export interface AlbumContract {
   cover_id?: string | null;
   cover?: string | null;
   cover_art_url?: string | null;
+  provider_cover_id?: string | null;
   vibrant_color?: string | null;
   release_date?: string | null;
   type?: string;
@@ -182,6 +183,7 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     cover_id: expectNullableString(record.cover_id, `${label}.cover_id`),
     cover: expectNullableString(record.cover, `${label}.cover`),
     cover_art_url: expectNullableString(record.cover_art_url, `${label}.cover_art_url`),
+    provider_cover_id: expectNullableString(record.provider_cover_id, `${label}.provider_cover_id`),
     vibrant_color: expectNullableString(record.vibrant_color, `${label}.vibrant_color`),
     release_date: expectNullableString(record.release_date, `${label}.release_date`),
     type: expectOptionalString(record.type, `${label}.type`),

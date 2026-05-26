@@ -9,9 +9,34 @@ import type { ProviderTrack } from "./providers/streaming-provider.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
+    chooseCachedProviderArtwork,
     parseJsonObject,
+    registerMediaCoverProxyUrl,
     resolveAlbumArtwork,
+    resolveMediaCoverProxyUrl,
 } from "./metadata/media-cover-service.js";
+
+function proxyStoredArtworkUrl(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = value == null ? "" : String(value).trim();
+        if (!text) {
+            continue;
+        }
+
+        const resolved = resolveMediaCoverProxyUrl(text);
+        if (resolved) {
+            return registerMediaCoverProxyUrl(resolved) || resolved;
+        }
+
+        if (/^\/MediaCoverProxy\//i.test(text)) {
+            continue;
+        }
+
+        return registerMediaCoverProxyUrl(text) || text;
+    }
+
+    return null;
+}
 
 function queryReleaseGroup(releaseGroupMbid: string): any | null {
     return db.prepare(`
@@ -165,6 +190,7 @@ function listMusicBrainzReleaseVersions(
     `).all(releaseGroup.mbid) as any[];
 
     const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
+    const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
 
     return releases.map((release) => {
@@ -176,6 +202,7 @@ function listMusicBrainzReleaseVersions(
             id: releaseMbid,
             title: String(release.title || releaseGroup.title || "Unknown Release"),
             cover_id: imageUrl,
+            provider_cover_id: providerCoverUrl,
             artist_name: artistName,
             release_date: release.date || releaseGroup.first_release_date || null,
             popularity: undefined,
@@ -196,6 +223,10 @@ function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
         skyHookData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
+}
+
+function chooseReleaseGroupProviderArtwork(releaseGroup: any): string | null {
+    return chooseCachedProviderArtwork(albumProviderArtworkCandidatesFromRow(releaseGroup), "album");
 }
 
 async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {
@@ -259,6 +290,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         : String(releaseGroup.local_artist_id);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
     const coverUrl = resolvedCoverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
+    const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
 
     return {
         id: String(releaseGroup.mbid),
@@ -266,6 +298,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         cover_id: coverUrl,
         cover: coverUrl,
         cover_art_url: coverUrl,
+        provider_cover_id: providerCoverUrl,
         vibrant_color: null,
         release_date: releaseGroup.first_release_date || null,
         type: primaryType === "EP" || primaryType === "SINGLE" ? primaryType : "ALBUM",
@@ -676,7 +709,7 @@ export class MusicBrainzReleaseGroupReadService {
             try {
                 await skyHookProxy.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
             } catch (error) {
-                console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate Lidarr album ${releaseGroupMbid}:`, error);
+                console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
             }
         }
 
@@ -731,8 +764,8 @@ export class MusicBrainzReleaseGroupReadService {
                 : [],
             similarAlbums: [],
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
-            artistPicture: releaseGroup.artist_picture != null ? String(releaseGroup.artist_picture) : null,
-            artistCoverImageUrl: releaseGroup.artist_cover_image_url ?? null,
+            artistPicture: proxyStoredArtworkUrl(releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
+            artistCoverImageUrl: proxyStoredArtworkUrl(releaseGroup.artist_cover_image_url),
         };
     }
 

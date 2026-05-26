@@ -9,6 +9,7 @@ import {
     parseJsonObject,
     resolveAlbumArtwork,
     resolveArtistArtwork,
+    resolveMediaCoverProxyUrl,
     type ProviderArtworkCandidate,
 } from "./metadata/media-cover-service.js";
 
@@ -254,9 +255,21 @@ async function downloadProviderArtwork(
         return;
     }
 
-    console.log(`📥 [METADATA] Downloading ${label}: ${url}`);
+    const fetchUrl = resolveMediaCoverProxyUrl(url);
+    if (!fetchUrl) {
+        console.log(`⚠️ [METADATA] Invalid ${label} URL: ${url}`);
+        return;
+    }
 
-    const response = await fetch(url);
+    console.log(`📥 [METADATA] Downloading ${label}: ${fetchUrl}`);
+
+    let response: Response;
+    try {
+        response = await fetch(fetchUrl);
+    } catch (error) {
+        console.warn(`⚠️ [METADATA] Failed to download ${label}: ${(error as Error).message}`);
+        return;
+    }
     if (!response.ok) {
         console.log(`⚠️ [METADATA] Failed to download ${label}: ${response.statusText}`);
         return;

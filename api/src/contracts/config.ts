@@ -5,6 +5,7 @@ import {
   expectOneOf,
   expectOptionalBoolean,
   expectOptionalNumber,
+  expectOptionalOneOf,
   expectOptionalString,
   expectRecord,
   expectString,
@@ -21,6 +22,9 @@ export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 
 export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline"] as const;
 export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
+
+export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files"] as const;
+export type WriteAudioTagsPolicyValue = (typeof WRITE_AUDIO_TAGS_POLICY_VALUES)[number];
 
 export const VIDEO_THUMBNAIL_RESOLUTION_VALUES = [
   "origin",
@@ -77,6 +81,7 @@ export interface MetadataConfigContract {
   mark_explicit: boolean;
   upc_target: UpcTargetValue;
   write_audio_metadata?: boolean;
+  write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
 }
 
@@ -103,16 +108,11 @@ export interface FilteringConfigContract {
   include_other: boolean;
   include_compilation: boolean;
   include_soundtrack: boolean;
-  include_spokenword: boolean;
-  include_interview: boolean;
-  include_audiobook: boolean;
-  include_audio_drama: boolean;
   include_live: boolean;
   include_remix: boolean;
   include_dj_mix: boolean;
   include_mixtape_street: boolean;
   include_demo: boolean;
-  include_field_recording: boolean;
   include_spatial: boolean;
   include_videos: boolean;
   prefer_explicit: boolean;
@@ -222,6 +222,7 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     mark_explicit: expectBoolean(record.mark_explicit, "metadata.mark_explicit"),
     upc_target: expectOneOf(record.upc_target, UPC_TARGET_VALUES, "metadata.upc_target"),
     write_audio_metadata: expectOptionalBoolean(record.write_audio_metadata, "metadata.write_audio_metadata"),
+    write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
   };
 }
@@ -259,16 +260,11 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_other: expectBoolean(record.include_other, "curation.include_other"),
     include_compilation: expectBoolean(record.include_compilation, "curation.include_compilation"),
     include_soundtrack: expectBoolean(record.include_soundtrack, "curation.include_soundtrack"),
-    include_spokenword: expectBoolean(record.include_spokenword, "curation.include_spokenword"),
-    include_interview: expectBoolean(record.include_interview, "curation.include_interview"),
-    include_audiobook: expectBoolean(record.include_audiobook, "curation.include_audiobook"),
-    include_audio_drama: expectBoolean(record.include_audio_drama, "curation.include_audio_drama"),
     include_live: expectBoolean(record.include_live, "curation.include_live"),
     include_remix: expectBoolean(record.include_remix, "curation.include_remix"),
     include_dj_mix: expectBoolean(record.include_dj_mix, "curation.include_dj_mix"),
     include_mixtape_street: expectBoolean(record.include_mixtape_street, "curation.include_mixtape_street"),
     include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
-    include_field_recording: expectBoolean(record.include_field_recording, "curation.include_field_recording"),
     include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),

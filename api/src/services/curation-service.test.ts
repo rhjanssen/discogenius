@@ -306,7 +306,6 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
       include_single: false,
       include_broadcast: false,
       include_live: false,
-      include_spokenword: false,
       include_other: false,
       include_demo: false,
     },
@@ -330,7 +329,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
   insertReleaseGroup.run("rg-ep", "artist-mbid-1", "Queen's First EP", "EP", "[]");
   insertReleaseGroup.run("rg-live", "artist-mbid-1", "Live Killers", "Album", JSON.stringify(["Live"]));
   insertReleaseGroup.run("rg-broadcast", "artist-mbid-1", "BBC Session", "Broadcast", "[]");
-  insertReleaseGroup.run("rg-spokenword", "artist-mbid-1", "Interview", "Album", JSON.stringify(["Spokenword"]));
+  insertReleaseGroup.run("rg-unsupported-secondary", "artist-mbid-1", "Interview", "Album", JSON.stringify(["Spokenword"]));
 
   await curationServiceModule.CurationService.processAll("artist-1");
 
@@ -347,7 +346,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
   assert.equal(wantedByReleaseGroup.get("rg-ep"), 1);
   assert.equal(wantedByReleaseGroup.get("rg-live"), 0);
   assert.equal(wantedByReleaseGroup.get("rg-broadcast"), 0);
-  assert.equal(wantedByReleaseGroup.get("rg-spokenword"), 0);
+  assert.equal(wantedByReleaseGroup.get("rg-unsupported-secondary"), 0);
 
   writeTestConfig({
     filtering: {
@@ -355,7 +354,6 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
       include_ep: true,
       include_live: true,
       include_broadcast: true,
-      include_spokenword: false,
     },
   });
 
@@ -372,7 +370,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
 
   assert.equal(updatedWantedByReleaseGroup.get("rg-live"), 1);
   assert.equal(updatedWantedByReleaseGroup.get("rg-broadcast"), 1);
-  assert.equal(updatedWantedByReleaseGroup.get("rg-spokenword"), 0);
+  assert.equal(updatedWantedByReleaseGroup.get("rg-unsupported-secondary"), 0);
 });
 
 test("Album read model does not inherit release-group wanted state from artist monitoring", () => {

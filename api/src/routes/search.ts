@@ -1,8 +1,6 @@
 import { Router } from "express";
 import { db } from "../database.js";
 
-import { skyHookProxy, type LidarrArtist } from "../services/metadata/skyhook-proxy.js";
-import { streamingProviderManager } from "../services/providers/index.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
@@ -22,59 +20,6 @@ function escapeSqlLike(value: string): string {
         .replace(/\\/g, "\\\\")
         .replace(/%/g, "\\%")
         .replace(/_/g, "\\_");
-}
-
-// Helper to check monitored status
-const ALLOWED_TABLES: Record<string, string> = {
-    tracks: 'media',
-    videos: 'media',
-    artists: 'artists',
-    albums: 'albums',
-};
-
-const getMonitoredStatus = (tidalId: string, table: string): boolean => {
-    const actualTable = ALLOWED_TABLES[table];
-    if (!actualTable) return false;
-
-    try {
-        const row = db.prepare(`SELECT monitor FROM ${actualTable} WHERE id = ?`).get(tidalId) as any;
-        return row ? Boolean(row.monitor) : false;
-    } catch {
-        return false;
-    }
-};
-
-const inDb = (tidalId: string, table: string): boolean => {
-    const actualTable = ALLOWED_TABLES[table];
-    if (!actualTable) return false;
-    return !!db.prepare(`SELECT 1 FROM ${actualTable} WHERE id = ?`).get(tidalId);
-};
-
-function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
-    return db.prepare("SELECT id, monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
-        { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
-}
-
-function formatLidarrArtistSearchResult(artist: LidarrArtist): SearchResultContract {
-    const localArtist = loadArtistByMusicBrainzId(artist.id);
-    const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
-    const disambiguation = String(artist.disambiguation || "").trim();
-    const details = [
-        disambiguation || String(artist.type || "").trim(),
-        releaseGroupCount > 0 ? `${releaseGroupCount} release groups` : null,
-    ].filter(Boolean).join(" · ");
-
-    return {
-        id: localArtist?.id != null ? String(localArtist.id) : artist.id,
-        name: artist.artistname,
-        type: "artist",
-        subtitle: details || null,
-        imageId: localArtist?.picture || localArtist?.cover_image_url || skyHookProxy.getArtistImageUrl(artist),
-        monitored: Boolean(localArtist?.monitor),
-        in_library: Boolean(localArtist),
-        quality: null,
-        explicit: undefined,
-    };
 }
 
 function normalizeSearchTypes(input: unknown): SearchType[] {
@@ -138,13 +83,6 @@ router.get("/", async (req, res) => {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });
         }
 
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
-        const hasRemoteAuth = Boolean(provider.isAuthenticated?.());
-        const includeProviderCatalog =
-            req.query.provider === "true" ||
-            req.query.provider === "1" ||
-            String(req.query.scope || "").toLowerCase() === "provider";
-
         const results: any = {
             artists: [],
             albums: [],
@@ -152,7 +90,8 @@ router.get("/", async (req, res) => {
             videos: []
         };
 
-        // LOCAL SEARCH (always included in connected-mode catalog search)
+        // Library search only. New artist lookup lives on /api/artists/lookup,
+        // matching the Lidarr split between library search and add-new lookup.
         {
             const escapedQuery = escapeSqlLike(query);
             const like = `%${escapedQuery}%`;
@@ -293,128 +232,6 @@ router.get("/", async (req, res) => {
             }
         }
 
-        // MUSICBRAINZ / LIDARR ARTIST SEARCH
-        // This is available without a connected provider, mirroring Lidarr's
-        // ability to add monitored artists before indexers/download clients exist.
-        if (requestedTypeSet.has("artists")) {
-            try {
-                const lidarrArtists = await skyHookProxy.searchForNewArtist(query, limit);
-                const seenArtists = new Set(results.artists.map((artist: SearchResultContract) => String(artist.id)));
-                const seenMbids = new Set(
-                    db.prepare("SELECT mbid FROM Artists WHERE mbid IS NOT NULL").all()
-                        .map((row: any) => String(row.mbid))
-                );
-
-                for (const artist of lidarrArtists) {
-                    const formatted = formatLidarrArtistSearchResult(artist);
-                    if (seenArtists.has(String(formatted.id))) {
-                        continue;
-                    }
-                    if (seenMbids.has(artist.id) && !formatted.in_library) {
-                        continue;
-                    }
-                    results.artists.push(formatted);
-                    seenArtists.add(String(formatted.id));
-                }
-            } catch (error: any) {
-                console.warn("[search] Lidarr artist search failed:", error.message);
-            }
-        }
-
-        // Provider catalog search is intentionally opt-in. Global Discogenius
-        // search mirrors Lidarr: search the local library plus MusicBrainz add
-        // results, and use providers later for availability/download searches.
-        if (hasRemoteAuth && includeProviderCatalog) {
-            try {
-                // Keep the UI responsive: remote search can be slow; cap it with a short timeout.
-                const timeoutMs = Math.max(250, Math.min(Number(process.env.DISCOGENIUS_SEARCH_REMOTE_TIMEOUT_MS || 2500), 15000));
-                const remoteResults = await Promise.race([
-                    provider.search(query, { types: requestedTypes, limit }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error(`Remote search timeout after ${timeoutMs}ms`)), timeoutMs)),
-                ]) as any;
-
-
-                const remoteItems = Array.isArray(remoteResults)
-                    ? remoteResults
-                    : [
-                        ...(remoteResults?.artists || []).map((item: any) => ({
-                            id: item.providerId,
-                            type: "artist",
-                            name: item.name,
-                            picture: item.picture,
-                        })),
-                        ...(remoteResults?.albums || []).map((item: any) => ({
-                            id: item.providerId,
-                            type: "album",
-                            name: item.title,
-                            subtitle: item.artist?.name,
-                            cover: item.cover,
-                            release_date: item.releaseDate,
-                            quality: item.quality,
-                            explicit: item.explicit,
-                        })),
-                        ...(remoteResults?.tracks || []).map((item: any) => ({
-                            id: item.providerId,
-                            type: "track",
-                            name: item.title,
-                            subtitle: item.artist?.name,
-                            cover: item.album?.cover,
-                            duration: item.duration,
-                            quality: item.quality,
-                        })),
-                        ...(remoteResults?.videos || []).map((item: any) => ({
-                            id: item.providerId,
-                            type: "video",
-                            name: item.title,
-                            subtitle: item.artist?.name,
-                            imageId: item.cover,
-                            duration: item.duration,
-                            quality: item.quality,
-                            explicit: item.explicit,
-                        })),
-                    ];
-
-                if (remoteItems && Array.isArray(remoteItems)) {
-                    // Normalize all seen IDs to strings for proper comparison
-                    const seen = new Set(
-                        [...results.artists, ...results.albums, ...results.tracks, ...results.videos]
-                            .map((r) => `${String(r.type)}:${String(r.id)}`)
-                    );
-
-                    for (const item of remoteItems) {
-                        if (item.id === null || item.id === undefined) {
-                            continue;
-                        }
-
-                        const normalizedId = String(item.id);
-                        const dedupeKey = `${String(item.type)}:${normalizedId}`;
-                        if (seen.has(dedupeKey)) continue;
-
-                        const table = item.type === 'artist' ? 'artists' :
-                            item.type === 'album' ? 'albums' :
-                                item.type === 'track' ? 'tracks' : 'videos';
-
-                        // Preserve all fields from searchTidal (especially subtitle), then add monitored/in_library
-                        const formatted = formatSearchResult({
-                            ...item, // This includes subtitle, name, artist_name, etc from searchTidal
-                            monitored: getMonitoredStatus(normalizedId, table),
-                            in_library: inDb(normalizedId, table),
-                        }, item.type);
-
-                        if (item.type === 'artist') results.artists.push(formatted);
-                        else if (item.type === 'album') results.albums.push(formatted);
-                        else if (item.type === 'track') results.tracks.push(formatted);
-                        else if (item.type === 'video') results.videos.push(formatted);
-
-                        seen.add(dedupeKey);
-                    }
-                }
-            } catch (error: any) {
-                console.error('[search] Remote search failed:', error.message);
-                // Continue with local results
-            }
-        }
-
         // Limit each category
         results.artists = results.artists.slice(0, limit);
         results.albums = results.albums.slice(0, limit);
@@ -424,7 +241,7 @@ router.get("/", async (req, res) => {
         const payload: SearchResponseContract = {
             success: true,
             results,
-            remoteCatalogAvailable: hasRemoteAuth,
+            remoteCatalogAvailable: false,
         };
         res.json(payload);
     } catch (error: any) {

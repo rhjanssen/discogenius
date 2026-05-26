@@ -13,6 +13,8 @@ import {
 import { MoveArtistService } from "../services/move-artist-service.js";
 import { ArtistQueryService } from "../services/artist-query-service.js";
 import { FollowedArtistsImportService } from "../services/followed-artists-import.js";
+import { skyHookProxy, type LidarrArtist } from "../services/metadata/skyhook-proxy.js";
+import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../services/metadata/media-cover-service.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -26,6 +28,46 @@ const router = Router();
 
 const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
+
+function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
+  return db.prepare("SELECT id, monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
+    { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
+}
+
+function formatArtistLookupResult(artist: LidarrArtist) {
+  const localArtist = loadArtistByMusicBrainzId(artist.id);
+  const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
+  const disambiguation = String(artist.disambiguation || "").trim();
+  const details = [
+    disambiguation || String(artist.type || "").trim(),
+    releaseGroupCount > 0 ? `${releaseGroupCount} release groups` : null,
+  ].filter(Boolean).join(" · ");
+
+  const imageId = [
+    localArtist?.picture,
+    localArtist?.cover_image_url,
+    skyHookProxy.getArtistImageUrl(artist),
+  ].map((value) => {
+    const text = value == null ? "" : String(value).trim();
+    if (!text) return null;
+    const resolved = resolveMediaCoverProxyUrl(text);
+    if (resolved) return resolved;
+    return /^\/MediaCoverProxy\//i.test(text) ? null : text;
+  }).find(Boolean);
+
+  return {
+    id: localArtist?.id != null ? String(localArtist.id) : artist.id,
+    mbid: artist.id,
+    name: artist.artistname,
+    type: "artist",
+    subtitle: details || null,
+    imageId: registerMediaCoverProxyUrl(imageId) || imageId,
+    monitored: Boolean(localArtist?.monitor),
+    in_library: Boolean(localArtist),
+    quality: null,
+    explicit: undefined,
+  };
+}
 
 function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
   if (Array.isArray(value)) {
@@ -70,6 +112,46 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/lookup", async (req, res) => {
+  try {
+    const term = String(req.query.term ?? req.query.query ?? "").trim();
+    const parsedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+    const limit = Number.isNaN(parsedLimit) ? 20 : Math.min(Math.max(parsedLimit, 1), 50);
+
+    if (!term || term.length < 2) {
+      return res.status(400).json({ detail: "Search term must be at least 2 characters" });
+    }
+
+    const metadataArtists = await skyHookProxy.searchForNewArtist(term, limit);
+    const seen = new Set<string>();
+    const artists = metadataArtists
+      .map(formatArtistLookupResult)
+      .filter((artist) => {
+        const key = String((artist as any).mbid || artist.id);
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit);
+
+    res.json({
+      success: true,
+      results: {
+        artists,
+        albums: [],
+        tracks: [],
+        videos: [],
+      },
+      remoteCatalogAvailable: false,
+    });
+  } catch (error: any) {
+    console.error("[artists/lookup] Error:", error);
+    res.status(500).json({ detail: error.message || "Artist lookup failed" });
+  }
+});
+
 // Lightweight import - just adds artist IDs to database
 // NOTE: Must be before /:artistId route to avoid being matched as a dynamic parameter
 router.get("/import-followed-stream", async (req, res) => {
@@ -91,7 +173,13 @@ router.get("/import-followed-stream", async (req, res) => {
     }, 15000);
 
     try {
+      const providerId = typeof req.query.providerId === "string"
+        ? req.query.providerId
+        : typeof req.query.provider === "string"
+          ? req.query.provider
+          : null;
       const summary = await FollowedArtistsImportService.importFollowedArtists({
+        providerId,
         onEvent: (event) => {
           const { type, ...data } = event;
           sendEvent(type, data);
@@ -308,9 +396,14 @@ router.delete("/:artistId", (req, res) => {
   }
 });
 
-router.post("/import-followed", async (_, res) => {
+router.post("/import-followed", async (req, res) => {
   try {
-    res.json(await FollowedArtistsImportService.importFollowedArtists());
+    const providerId = typeof (req.body as any)?.providerId === "string"
+      ? (req.body as any).providerId
+      : typeof (req.body as any)?.provider === "string"
+        ? (req.body as any).provider
+        : null;
+    res.json(await FollowedArtistsImportService.importFollowedArtists({ providerId }));
   } catch (error: any) {
     console.error('Error importing followed artists:', error);
     res.status(500).json({ detail: error.message || 'Failed to import followed artists' });

@@ -764,7 +764,7 @@ const SettingsPage = () => {
         flushNamingSettings,
         accountSettings,
     } = useUserSettings();
-    const { isConnected: providerConnected, isLoading: providerLoading } = useProviderConnection();
+    const { isLoading: providerLoading } = useProviderConnection();
     const {
         data: streamingProviders,
         isLoading: providersLoading,
@@ -795,6 +795,7 @@ const SettingsPage = () => {
     const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
+    const [retagStatusInitialized, setRetagStatusInitialized] = useState(false);
     const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
     const namingPreviewRequestRef = useRef(0);
     const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
@@ -811,9 +812,11 @@ const SettingsPage = () => {
     });
 
     const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
+    const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy
+        ?? (metadataSettings?.write_audio_metadata === true ? "all_files" : "no");
     const audioRetaggingEnabled =
         metadataSettings?.enable_fingerprinting === true
-        || metadataSettings?.write_audio_metadata === true
+        || writeAudioTagsPolicy !== "no"
         || metadataSettings?.embed_replaygain !== false;
 
     useEffect(() => {
@@ -922,6 +925,7 @@ const SettingsPage = () => {
         try {
             const status = await api.getRetagStatus({ sampleLimit: 4 });
             setRetagStatus(status as RetagStatus);
+            setRetagStatusInitialized(true);
         } catch (error: any) {
             toast({
                 title: "Retag preview failed",
@@ -971,7 +975,16 @@ const SettingsPage = () => {
         }
 
         setRetagStatus(null);
+        setRetagStatusInitialized(false);
     }, [audioRetaggingEnabled]);
+
+    useEffect(() => {
+        if (!audioRetaggingEnabled || retagStatus || retagStatusLoading || retagStatusInitialized) {
+            return;
+        }
+
+        loadRetagStatus().catch(() => undefined);
+    }, [audioRetaggingEnabled, loadRetagStatus, retagStatus, retagStatusInitialized, retagStatusLoading]);
 
     useEffect(() => {
         let active = true;
@@ -1057,16 +1070,11 @@ const SettingsPage = () => {
                 include_other: false,
                 include_compilation: false,
                 include_soundtrack: false,
-                include_spokenword: false,
-                include_interview: false,
-                include_audiobook: false,
-                include_audio_drama: false,
                 include_live: false,
                 include_remix: false,
                 include_dj_mix: false,
                 include_mixtape_street: false,
                 include_demo: false,
-                include_field_recording: false,
                 include_spatial: false,
                 include_videos: false,
                 enable_redundancy_filter: true,
@@ -1156,19 +1164,19 @@ const SettingsPage = () => {
         navigate("/login");
     };
 
-    const handleImportFollowed = async () => {
+    const handleImportFollowed = async (provider: StreamingProviderStatus) => {
         setImporting(true);
         try {
-            const result: any = await api.importFollowedArtists();
+            const result: any = await api.importFollowedArtists(provider.id);
             toast({
                 title: "Import Started",
-                description: result.message || "Importing followed artists in background.",
+                description: result.message || `Importing followed artists from ${provider.name}.`,
             });
         } catch (error) {
             console.error("Error importing followed artists:", error);
             toast({
                 title: "Import Failed",
-                description: "Could not import followed artists.",
+                description: error instanceof Error ? error.message : `Could not import followed artists from ${provider.name}.`,
                 variant: "destructive",
             });
         } finally {
@@ -1388,11 +1396,6 @@ const SettingsPage = () => {
         { key: "include_dj_mix", title: "DJ-mix", description: "MusicBrainz secondary type: DJ-mix" },
         { key: "include_mixtape_street", title: "Mixtape/Street", description: "MusicBrainz secondary type: Mixtape/Street" },
         { key: "include_demo", title: "Demo", description: "MusicBrainz secondary type: Demo" },
-        { key: "include_spokenword", title: "Spokenword", description: "MusicBrainz secondary type: Spokenword" },
-        { key: "include_interview", title: "Interview", description: "MusicBrainz secondary type: Interview" },
-        { key: "include_audiobook", title: "Audiobook", description: "MusicBrainz secondary type: Audiobook" },
-        { key: "include_audio_drama", title: "Audio drama", description: "MusicBrainz secondary type: Audio drama" },
-        { key: "include_field_recording", title: "Field recording", description: "MusicBrainz secondary type: Field recording" },
     ] as const;
 
     const getProviderCapabilities = (provider: StreamingProviderStatus) => [
@@ -1421,17 +1424,6 @@ const SettingsPage = () => {
             title="Streaming Providers"
             description="Manage availability, previews, followed-artist import, playlist import, downloads, and provider capabilities."
             className={styles.section}
-            actions={
-                <Button
-                    appearance="outline"
-                    icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
-                    onClick={handleImportFollowed}
-                    disabled={importing || !providerConnected}
-                    className={styles.inlineActionButton}
-                >
-                    {importing ? "Importing..." : "Import followed"}
-                </Button>
-            }
         >
             <div className={styles.card}>
                 {(streamingProviders?.providers ?? []).map((provider) => {
@@ -1489,6 +1481,17 @@ const SettingsPage = () => {
                                             onClick={() => handleDisconnectProvider(provider.id, provider.name)}
                                         >
                                             Disconnect
+                                        </Button>
+                                    ) : null}
+                                    {provider.management.canImportFollowedArtists ? (
+                                        <Button
+                                            appearance="outline"
+                                            className={styles.signOutButton}
+                                            icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
+                                            onClick={() => handleImportFollowed(provider)}
+                                            disabled={importing || !provider.authenticated}
+                                        >
+                                            {importing ? "Importing..." : "Import followed"}
                                         </Button>
                                     ) : null}
                                 </div>
@@ -1898,15 +1901,26 @@ const SettingsPage = () => {
                         {renderToggleRow({
                             title: "Embed Tags",
                             description: "Keep track tags in sync with library metadata (title, artist, album, ISRC, barcode, etc.)",
-                            checked: metadataSettings?.write_audio_metadata === true,
-                            onChange: (checked) => updateMetadataSettings({ write_audio_metadata: checked }),
+                            checked: writeAudioTagsPolicy !== "no",
+                            onChange: (checked) => {
+                                updateMetadataSettings({
+                                    write_audio_metadata: checked,
+                                    write_audio_tags_policy: checked ? "all_files" : "no",
+                                });
+                                setRetagStatus(null);
+                                setRetagStatusInitialized(false);
+                            },
                         })}
 
                         {renderToggleRow({
                             title: "Embed ReplayGain Tags",
                             description: "Write ReplayGain gain and peak values into tags",
                             checked: metadataSettings?.embed_replaygain !== false,
-                            onChange: (checked) => updateMetadataSettings({ embed_replaygain: checked }),
+                            onChange: (checked) => {
+                                updateMetadataSettings({ embed_replaygain: checked });
+                                setRetagStatus(null);
+                                setRetagStatusInitialized(false);
+                            },
                         })}
 
                         {renderToggleRow({
@@ -2111,7 +2125,11 @@ const SettingsPage = () => {
                             title: "Audio Fingerprinting",
                             description: "Generate fpcalc fingerprints and match tracks via AcoustID and MusicBrainz",
                             checked: metadataSettings?.enable_fingerprinting === true,
-                            onChange: (checked) => updateMetadataSettings({ enable_fingerprinting: checked }),
+                            onChange: (checked) => {
+                                updateMetadataSettings({ enable_fingerprinting: checked });
+                                setRetagStatus(null);
+                                setRetagStatusInitialized(false);
+                            },
                         })}
 
                         <div className={styles.row}>
@@ -2254,7 +2272,7 @@ const SettingsPage = () => {
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Create Empty Artist Folders</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Create artist folders in each configured library root during library scans, matching Lidarr&apos;s empty-folder option.
+                                    Create artist folders in each configured library root during library scans.
                                 </Text>
                             </div>
                             <Switch

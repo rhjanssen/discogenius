@@ -3,7 +3,7 @@ import { makeStyles, tokens } from "@fluentui/react-components";
 const messages = [
   "Downloading more RAM",
   "Now in Technicolor",
-  "Previously on Lidarr...",
+  "Previously on Discogenius...",
   "Bleep Bloop.",
   "Locating the required gigapixels to render...",
   "Spinning up the hamster wheel...",

@@ -31,10 +31,12 @@ import {
   ArrowSortUp24Regular,
   ArrowSortDown24Regular,
   ArrowSortDownLines24Regular,
+  ArrowImport24Regular,
   MusicNote224Regular,
   Person24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
+  Add24Regular,
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -50,7 +52,7 @@ import LibraryTrackList from "@/components/LibraryTrackList";
 import VideoGrid from "@/components/VideoGrid";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useLibrary } from "@/hooks/useLibrary";
-import { useTidalSearch } from "@/hooks/useTidalSearch";
+import { useFollowedArtistsImport } from "@/hooks/useFollowedArtistsImport";
 import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
 import { useQueueDetails } from "@/hooks/useQueueDetails";
@@ -60,10 +62,11 @@ import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { api } from "@/services/api";
+import { api, type StreamingProviderStatus } from "@/services/api";
 import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
 import {
   dispatchActivityRefresh,
@@ -346,7 +349,12 @@ const Library = () => {
     albumsHasRefreshError,
     albumsRefreshErrorMessage,
   } = useLibrary({ activeTab: selectedTab as 'artists' | 'albums' | 'tracks' | 'videos' });
-  const { importFollowedArtists } = useTidalSearch();
+  const { importFollowedArtists } = useFollowedArtistsImport();
+  const { data: streamingProviders } = useQuery({
+    queryKey: ["streamingProviders"],
+    queryFn: () => api.getStreamingProviders(),
+    staleTime: 60_000,
+  });
   const { addToQueue, getProgressByTidalId } = useQueueStatus();
   const [importing, setImporting] = useState(false);
   const { setArtwork } = useUltraBlurContext();
@@ -936,16 +944,82 @@ const Library = () => {
     return () => observer.disconnect();
   }, [selectedTab, hasMoreVideos, loadMoreVideos, isFetchingMore.videos, videosLoading, videos.length]);
 
-  const handleImportFollowed = async () => {
+  const importableFollowedProviders = useMemo(
+    () => (streamingProviders?.providers ?? []).filter((provider: StreamingProviderStatus) => (
+      provider.authenticated && provider.capabilities.followedArtists
+    )),
+    [streamingProviders],
+  );
 
+  const handleImportFollowed = async (providerId?: string | null) => {
     setImporting(true);
     try {
-      await importFollowedArtists();
+      await importFollowedArtists(undefined, providerId);
       // Refresh the library to show the new artists and albums
       await fetchLibrary(undefined, { refreshStats: true });
     } finally {
       setImporting(false);
     }
+  };
+
+  const renderEmptyLibraryAction = () => {
+    const addArtistButton = (
+      <Button
+        appearance="primary"
+        icon={<Add24Regular />}
+        onClick={() => navigate("/add/artist")}
+      >
+        Add Artist
+      </Button>
+    );
+
+    const importButton = (() => {
+      if (importableFollowedProviders.length > 1) {
+        return (
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                appearance="secondary"
+                icon={importing ? undefined : <ArrowImport24Regular />}
+                disabled={importing}
+                title="Choose a connected provider to import followed artists"
+              >
+                {importing ? "Importing..." : "Import Followed Artists"}
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {importableFollowedProviders.map((provider) => (
+                  <MenuItem key={provider.id} onClick={() => handleImportFollowed(provider.id)}>
+                    {provider.name}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+        );
+      }
+
+      const provider = importableFollowedProviders[0];
+      return (
+        <Button
+          appearance="secondary"
+          icon={provider ? <ArrowImport24Regular /> : undefined}
+          onClick={() => provider ? handleImportFollowed(provider.id) : navigate("/settings")}
+          disabled={importing}
+          title={provider ? `Import followed artists from ${provider.name}` : "Connect a provider to import followed artists"}
+        >
+          {importing ? "Importing..." : provider ? `Import from ${provider.name}` : "Connect Provider"}
+        </Button>
+      );
+    })();
+
+    return (
+      <>
+        {addArtistButton}
+        {importButton}
+      </>
+    );
   };
 
   // Render a single artist card
@@ -1163,12 +1237,14 @@ const Library = () => {
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
     const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
+    const providerImageUrl = getAlbumCover(album.provider_cover_id, 'small');
     const itemProgress = getProgressByTidalId(String(album.id));
     return (
       <MediaCard
         key={album.id}
         to={`/album/${album.id}`}
         imageUrl={imageUrl}
+        fallbackImageUrl={providerImageUrl}
         alt={album.title}
         title={album.title}
         subtitle={subtitle}
@@ -1202,9 +1278,19 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small');
+        const fallbackSrc = getAlbumCover(album.provider_cover_id, 'small');
+        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || fallbackSrc;
         return src ? (
-          <img src={src} alt={album.title} className={dgCell.thumbnailSquare} />
+          <img
+            src={src}
+            alt={album.title}
+            className={dgCell.thumbnailSquare}
+            onError={(event) => {
+              if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
+                event.currentTarget.src = fallbackSrc;
+              }
+            }}
+          />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>
         );
@@ -1405,20 +1491,10 @@ const Library = () => {
     return (
       <EmptyState
         title="Your library is empty"
-        description="Use search to find artists or import followed artists from TIDAL."
+        description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
         icon={<MusicNote224Regular />}
         minHeight="320px"
-        actions={
-          <Button
-            appearance="primary"
-            icon={<ArrowDownload24Regular />}
-            onClick={handleImportFollowed}
-            disabled={importing}
-            title='Import followed artists from TIDAL'
-          >
-            {importing ? 'Importing...' : 'Import Followed Artists'}
-          </Button>
-        }
+        actions={renderEmptyLibraryAction()}
       />
     );
   }

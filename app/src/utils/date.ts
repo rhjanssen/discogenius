@@ -23,10 +23,16 @@ export function formatMetadataAttribution(
   lastUpdated: string | number | Date | null | undefined
 ): string | null {
   const parts: string[] = [];
-  if (source) parts.push(source);
+  const normalizedSource = source?.trim();
+  const isInternalMetadataSource = normalizedSource
+    ? ["lidarr", "lidarr-metadata", "skyhook"].includes(normalizedSource.toLowerCase())
+    : false;
+  if (normalizedSource && !isInternalMetadataSource) {
+    parts.push(`Source: ${normalizedSource}`);
+  }
 
   const formattedDate = formatDdMonthYyyy(lastUpdated);
-  if (formattedDate) parts.push(formattedDate);
+  if (formattedDate) parts.push(`Updated: ${formattedDate}`);
 
   if (parts.length === 0) return null;
   return parts.join(" · ");

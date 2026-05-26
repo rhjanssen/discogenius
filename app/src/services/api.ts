@@ -120,6 +120,26 @@ type RequestControlOptions = {
   signal?: AbortSignal;
 };
 
+type ManagedEventSource = EventSource & {
+  __discogeniusClosed?: boolean;
+};
+
+function createManagedEventSource(url: string): ManagedEventSource {
+  const eventSource = new EventSource(url, { withCredentials: false }) as ManagedEventSource;
+  const close = eventSource.close.bind(eventSource);
+
+  eventSource.close = () => {
+    eventSource.__discogeniusClosed = true;
+    close();
+  };
+
+  return eventSource;
+}
+
+function isExpectedEventSourceClose(eventSource: ManagedEventSource): boolean {
+  return eventSource.__discogeniusClosed === true || eventSource.readyState === EventSource.CLOSED;
+}
+
 export type StreamingProviderStatus = {
   id: string;
   name: string;
@@ -481,6 +501,18 @@ class ApiClient {
       limit: limit.toString(),
     });
     return this.request(`/search?${params}`, { signal }, parseSearchResponseContract);
+  }
+
+  async lookupArtists(
+    query: string,
+    limit: number = 10,
+    signal?: AbortSignal,
+  ): Promise<SearchResponseContract> {
+    const params = new URLSearchParams({
+      term: query,
+      limit: limit.toString(),
+    });
+    return this.request(`/artists/lookup?${params}`, { signal }, parseSearchResponseContract);
   }
 
   // Artist endpoints
@@ -1012,8 +1044,11 @@ class ApiClient {
     return this.request(`/artists/${artistId}`, { method: 'DELETE' });
   }
 
-  async importFollowedArtists() {
-    return this.request('/artists/import-followed', { method: 'POST' });
+  async importFollowedArtists(providerId?: string | null) {
+    return this.request('/artists/import-followed', {
+      method: 'POST',
+      body: JSON.stringify(providerId ? { providerId } : {}),
+    });
   }
 
   // Download queue endpoints
@@ -1204,16 +1239,26 @@ class ApiClient {
   }
 
   // Streaming endpoints using Server-Sent Events (SSE)
-  createImportFollowedStream(onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
+  createImportFollowedStream(
+    onEvent: (event: string, data: any) => void,
+    onError?: (error: Error) => void,
+    providerId?: string | null,
+  ): EventSource {
     // Add auth token to URL query params since EventSource can't send custom headers
     let url = `${this.baseUrl}${API_PREFIX}/artists/import-followed-stream`;
+    const queryParams = new URLSearchParams();
+    if (providerId) queryParams.set('providerId', providerId);
     if (this.authToken) {
-      url += `?token=${encodeURIComponent(this.authToken)}`;
+      queryParams.set('token', this.authToken);
     }
-    const eventSource = new EventSource(url, { withCredentials: false });
+    const query = queryParams.toString();
+    if (query) {
+      url += `?${query}`;
+    }
+    const eventSource = createManagedEventSource(url);
 
     // Set up event listeners for all event types
-    const eventTypes = ['status', 'total', 'artist-progress', 'artist-added', 'artist-skipped', 'albums-added', 'complete', 'error'];
+    const eventTypes = ['status', 'total', 'artist-progress', 'artist-added', 'artist-updated', 'artist-skipped', 'complete', 'error'];
 
     eventTypes.forEach(eventType => {
       eventSource.addEventListener(eventType, (e: MessageEvent) => {
@@ -1227,6 +1272,10 @@ class ApiClient {
     });
 
     eventSource.onerror = (error) => {
+      if (isExpectedEventSourceClose(eventSource)) {
+        return;
+      }
+
       console.error('SSE error:', error);
       if (onError) {
         onError(new Error('Stream connection failed'));
@@ -1243,7 +1292,7 @@ class ApiClient {
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
-    const eventSource = new EventSource(url, { withCredentials: false });
+    const eventSource = createManagedEventSource(url);
 
     // Set up event listeners for all event types
     const eventTypes = ['status', 'total', 'artist-progress', 'artist-checked', 'artist-complete', 'album-found', 'album-queued', 'complete', 'error'];
@@ -1260,6 +1309,10 @@ class ApiClient {
     });
 
     eventSource.onerror = (error) => {
+      if (isExpectedEventSourceClose(eventSource)) {
+        return;
+      }
+
       console.error('SSE error:', error);
       if (onError) {
         onError(new Error('Stream connection failed'));
@@ -1276,7 +1329,7 @@ class ApiClient {
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
-    const eventSource = new EventSource(url, { withCredentials: false });
+    const eventSource = createManagedEventSource(url);
 
     // Set up event listeners for all event types
     const eventTypes = ['status', 'total', 'album-progress', 'album-added', 'album-skipped', 'complete', 'error'];
@@ -1293,6 +1346,10 @@ class ApiClient {
     });
 
     eventSource.onerror = (error) => {
+      if (isExpectedEventSourceClose(eventSource)) {
+        return;
+      }
+
       console.error('SSE error:', error);
       if (onError) {
         onError(new Error('Stream connection failed'));
@@ -1315,7 +1372,7 @@ class ApiClient {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
 
-    const eventSource = new EventSource(url, { withCredentials: false });
+    const eventSource = createManagedEventSource(url);
 
     const eventTypes = ['status', 'progress', 'progress-batch', 'started', 'completed', 'failed', 'queue-status', 'heartbeat'];
 
@@ -1332,7 +1389,7 @@ class ApiClient {
 
     eventSource.onerror = (error) => {
       // Ignore expected error events from intentionally closed streams.
-      if (eventSource.readyState === EventSource.CLOSED) {
+      if (isExpectedEventSourceClose(eventSource)) {
         return;
       }
 
@@ -1352,7 +1409,7 @@ class ApiClient {
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
-    const eventSource = new EventSource(url, { withCredentials: false });
+    const eventSource = createManagedEventSource(url);
 
     // The backend emits events with names like "job.updated", "file.deleted", etc.
     // EventSource doesn't have a wildcard listener, so we rely on the specific message events.
@@ -1379,7 +1436,7 @@ class ApiClient {
 
     eventSource.onerror = (error) => {
       // Ignore expected abort/error notifications after the client closes the stream.
-      if (eventSource.readyState === EventSource.CLOSED) {
+      if (isExpectedEventSourceClose(eventSource)) {
         return;
       }
 

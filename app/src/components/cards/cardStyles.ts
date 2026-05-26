@@ -86,6 +86,16 @@ export const useCardStyles = makeStyles({
         objectFit: "cover",
         display: "block",
         borderRadius: tokens.borderRadiusNone,
+        transition: `opacity ${tokens.durationNormal} ${tokens.curveEasyEase}`,
+    },
+
+    cardImageLoading: {
+        opacity: 0,
+    },
+
+    imagePlaceholderLayer: {
+        position: "absolute",
+        inset: 0,
     },
 
     // Text content below the preview

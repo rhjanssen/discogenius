@@ -81,6 +81,7 @@ export interface SimilarAlbumContract {
   id: string;
   title: string;
   cover_id?: string | null;
+  provider_cover_id?: string | null;
   artist_name?: string;
   release_date?: string | null;
   popularity?: number;
@@ -221,6 +222,7 @@ function parseAlbumListItemContract<T extends SimilarAlbumContract | AlbumVersio
     id: expectString(record.id, `${label}.id`),
     title: expectString(record.title, `${label}.title`),
     cover_id: expectNullableString(record.cover_id, `${label}.cover_id`),
+    provider_cover_id: expectNullableString(record.provider_cover_id, `${label}.provider_cover_id`),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
     release_date: expectNullableString(record.release_date, `${label}.release_date`),
     popularity: expectOptionalNumber(record.popularity, `${label}.popularity`),

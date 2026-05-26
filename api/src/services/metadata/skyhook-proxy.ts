@@ -29,14 +29,13 @@ export interface LidarrAlbum {
 export interface LidarrReleaseGroupDetail {
   id: string;
   title: string;
+  type?: string;
+  secondarytypes?: string[];
+  releasedate?: string;
+  disambiguation?: string;
   Images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   Releases: LidarrRelease[];
-  Title?: string;
-  Type?: string;
-  SecondaryTypes?: string[];
-  ReleaseDate?: string;
-  Disambiguation?: string;
 }
 
 export interface LidarrRelease {
@@ -108,7 +107,7 @@ export class SkyHookProxy {
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) {
-      throw new Error(`Lidarr metadata API ${path} failed: ${res.status} ${res.statusText}`);
+      throw new Error(`MusicBrainz metadata API ${path} failed: ${res.status} ${res.statusText}`);
     }
     return res.json() as Promise<T>;
   }
@@ -309,6 +308,10 @@ export class SkyHookProxy {
 
       const selectExisting = db.prepare(`SELECT data FROM Albums WHERE mbid = ?`);
       for (const album of artist.Albums || []) {
+        if (!album.Id) {
+          continue;
+        }
+
         const existingRow = selectExisting.get(album.Id) as { data: string } | undefined;
         let mergedData = album;
         if (existingRow?.data) {
@@ -358,11 +361,11 @@ export class SkyHookProxy {
           updated_at = CURRENT_TIMESTAMP
       `);
 
-      const title = detail.title || detail.Title || "";
-      const primaryType = detail.Type || (detail as any).type || null;
-      const secondaryTypes = JSON.stringify(detail.SecondaryTypes || (detail as any).secondaryTypes || []);
-      const firstReleaseDate = detail.ReleaseDate || (detail as any).releaseDate || null;
-      const disambiguation = detail.Disambiguation || (detail as any).disambiguation || null;
+      const title = detail.title || "";
+      const primaryType = detail.type || null;
+      const secondaryTypes = JSON.stringify(detail.secondarytypes || []);
+      const firstReleaseDate = detail.releasedate || null;
+      const disambiguation = detail.disambiguation || null;
 
       insertRg.run(
         releaseGroupMbid,

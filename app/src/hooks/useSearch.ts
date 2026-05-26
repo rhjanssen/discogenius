@@ -93,7 +93,8 @@ export const useSearch = () => {
 
         setIsSearching(true);
         try {
-            // Search for all types
+            // Search the local Discogenius library. New artist lookup is handled
+            // by the explicit Add Artist flow.
             const data: SearchResponseContract = await api.search(
                 query,
                 ['artists', 'albums', 'tracks', 'videos'],
@@ -140,7 +141,7 @@ export const useSearch = () => {
                 };
             };
 
-            // Backend now returns grouped results
+            // Backend returns grouped library results
             const results = data.results;
 
             const artists = (results.artists || []).map((i) => formatItem(i, 'artist'));
@@ -161,10 +162,10 @@ export const useSearch = () => {
                 albums[0];
 
             setSearchResults({
-                artists,  // Keep full list (like tidarr)
-                albums,   // Keep full list
-                tracks,   // Keep full list
-                videos,   // Keep full list
+                artists,
+                albums,
+                tracks,
+                videos,
                 topResult,
             });
         } catch (error: any) {

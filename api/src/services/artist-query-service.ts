@@ -17,10 +17,35 @@ import type { ArtistContract, ArtistsListResponseContract } from "../contracts/c
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
+    chooseCachedProviderArtwork,
     parseJsonObject,
+    registerMediaCoverProxyUrl,
+    resolveMediaCoverProxyUrl,
 } from "./metadata/media-cover-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
+
+function proxyArtistArtworkUrl(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = value == null ? "" : String(value).trim();
+        if (!text) {
+            continue;
+        }
+
+        const resolved = resolveMediaCoverProxyUrl(text);
+        if (resolved) {
+            return registerMediaCoverProxyUrl(resolved) || resolved;
+        }
+
+        if (/^\/MediaCoverProxy\//i.test(text)) {
+            continue;
+        }
+
+        return registerMediaCoverProxyUrl(text) || text;
+    }
+
+    return null;
+}
 
 export interface ArtistListQuery {
     limit: number;
@@ -134,6 +159,8 @@ function normalizeReleaseGroupPrimaryType(value: unknown): string {
     const normalized = String(value || "Album").trim().toUpperCase();
     if (normalized === "EP") return "EP";
     if (normalized === "SINGLE") return "SINGLE";
+    if (normalized === "BROADCAST") return "BROADCAST";
+    if (normalized === "OTHER") return "OTHER";
     return "ALBUM";
 }
 
@@ -143,11 +170,15 @@ function releaseGroupBucket(row: any): keyof typeof RELEASE_GROUP_BUCKETS {
     if (secondaryTypes.includes("compilation")) return "COMPILATION";
     if (secondaryTypes.includes("soundtrack")) return "SOUNDTRACK";
     if (secondaryTypes.includes("remix")) return "REMIX";
+    if (secondaryTypes.includes("dj-mix")) return "DJ_MIX";
+    if (secondaryTypes.includes("mixtape/street")) return "MIXTAPE";
     if (secondaryTypes.includes("demo")) return "DEMO";
 
     const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
     if (primaryType === "EP") return "EP";
     if (primaryType === "SINGLE") return "SINGLE";
+    if (primaryType === "BROADCAST") return "BROADCAST";
+    if (primaryType === "OTHER") return "OTHER";
     return "ALBUM";
 }
 
@@ -160,6 +191,10 @@ const RELEASE_GROUP_BUCKETS = {
     SOUNDTRACK: "ARTIST_SOUNDTRACKS",
     DEMO: "ARTIST_DEMOS",
     REMIX: "ARTIST_REMIXES",
+    DJ_MIX: "ARTIST_DJ_MIXES",
+    MIXTAPE: "ARTIST_MIXTAPES",
+    BROADCAST: "ARTIST_BROADCASTS",
+    OTHER: "ARTIST_OTHER_RELEASES",
 } as const;
 
 const duplicateProviderArtistPredicate = `NOT (
@@ -257,11 +292,12 @@ export class ArtistQueryService {
                 const artistId = String(artist.id);
                 const albumCounts = albumCountsByArtistId.get(artistId);
                 const trackCounts = trackCountsByArtistId.get(artistId);
-                const resolvedArtistPicture = artist.picture || artist.cover_image_url || null;
+                const resolvedArtistPicture = proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
 
                 return {
                     ...artist,
                     picture: resolvedArtistPicture,
+                    cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
                     album_count: Math.max(
                         Number(albumCounts?.cnt || 0),
                         artist.mbid ? Number(releaseGroupCountsByMbid.get(String(artist.mbid)) || 0) : 0,
@@ -310,10 +346,8 @@ export class ArtistQueryService {
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
-            picture: artist.picture != null
-                ? String(artist.picture)
-                : (artist.cover_image_url == null ? null : String(artist.cover_image_url)),
-            cover_image_url: artist.cover_image_url == null ? null : String(artist.cover_image_url),
+            picture: proxyArtistArtworkUrl(artist.picture, artist.cover_image_url),
+            cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
             bio: biography,
             biography,
@@ -628,6 +662,10 @@ export class ArtistQueryService {
             ARTIST_REMIXES: [],
             ARTIST_SOUNDTRACKS: [],
             ARTIST_DEMOS: [],
+            ARTIST_DJ_MIXES: [],
+            ARTIST_MIXTAPES: [],
+            ARTIST_BROADCASTS: [],
+            ARTIST_OTHER_RELEASES: [],
         };
 
         const moduleToBucket: Record<string, string> = {
@@ -640,6 +678,10 @@ export class ArtistQueryService {
             REMIX: "ARTIST_REMIXES",
             SOUNDTRACK: "ARTIST_SOUNDTRACKS",
             DEMO: "ARTIST_DEMOS",
+            DJ_MIX: "ARTIST_DJ_MIXES",
+            MIXTAPE: "ARTIST_MIXTAPES",
+            BROADCAST: "ARTIST_BROADCASTS",
+            OTHER: "ARTIST_OTHER_RELEASES",
         };
 
         transformedAlbums.filter(a => !a.redundant_of).forEach((album) => {
@@ -689,7 +731,9 @@ export class ArtistQueryService {
                     return null;
                 }
             })() as { cover?: string | null; explicit?: boolean | number | null } | null;
-            const providerCover = selectedProviderData?.cover || null;
+            const providerCover = chooseCachedProviderArtwork(albumProviderArtworkCandidatesFromRow(row), "album")
+                || selectedProviderData?.cover
+                || null;
             const coverUrl = chooseCachedAlbumArtwork({
                 skyHookData: parseJsonObject(row.data),
                 providerCandidates: albumProviderArtworkCandidatesFromRow(row),
@@ -700,6 +744,7 @@ export class ArtistQueryService {
                 title: row.title,
                 cover: coverUrl,
                 cover_id: coverUrl,
+                cover_art_url: coverUrl,
                 provider_cover_id: providerCover,
                 release_date: row.first_release_date || null,
                 type: primaryType,
@@ -772,8 +817,12 @@ export class ArtistQueryService {
         pushAlbumModule("Live Albums", modules.ARTIST_LIVE_ALBUMS, "LIVE");
         pushAlbumModule("Compilations", modules.ARTIST_COMPILATIONS, "COMPILATION");
         pushAlbumModule("Soundtracks", modules.ARTIST_SOUNDTRACKS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "SOUNDTRACK");
-        pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "DEMO");
         pushAlbumModule("Remixes", modules.ARTIST_REMIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "REMIX");
+        pushAlbumModule("DJ Mixes", modules.ARTIST_DJ_MIXES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "DJ_MIX");
+        pushAlbumModule("Mixtapes", modules.ARTIST_MIXTAPES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "MIXTAPE");
+        pushAlbumModule("Demos", modules.ARTIST_DEMOS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "DEMO");
+        pushAlbumModule("Broadcasts", modules.ARTIST_BROADCASTS.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "BROADCAST");
+        pushAlbumModule("Other Releases", modules.ARTIST_OTHER_RELEASES.sort((a, b) => (b.release_date || "").localeCompare(a.release_date || "")), "OTHER");
         pushAlbumModule("Appears On", modules.ARTIST_APPEARS_ON, "APPEARS_ON");
 
         if (videos.length > 0) {
@@ -857,9 +906,8 @@ export class ArtistQueryService {
         return {
             artist: {
                 ...artist,
-                picture: artist.picture != null
-                    ? String(artist.picture)
-                    : (artist.cover_image_url == null ? null : String(artist.cover_image_url)),
+                picture: proxyArtistArtworkUrl(artist.picture, artist.cover_image_url),
+                cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
                 bio,
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,

@@ -40,7 +40,7 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
-function bestLidarrArtistMatch(providerArtist: ProviderArtistIdentityInput, candidates: LidarrArtist[]): {
+function bestCanonicalArtistMatch(providerArtist: ProviderArtistIdentityInput, candidates: LidarrArtist[]): {
   artist: LidarrArtist;
   status: "verified" | "probable";
   confidence: number;
@@ -60,7 +60,7 @@ function bestLidarrArtistMatch(providerArtist: ProviderArtistIdentityInput, cand
       artist: exactMatches[0],
       status: "verified",
       confidence: 1,
-      method: "lidarr-artist-name-exact",
+      method: "musicbrainz-artist-name-exact",
     };
   }
 
@@ -75,7 +75,7 @@ function bestLidarrArtistMatch(providerArtist: ProviderArtistIdentityInput, cand
       artist: best,
       status: "probable",
       confidence: 0.78,
-      method: "lidarr-artist-name-discography-weight",
+      method: "musicbrainz-artist-name-discography-weight",
     };
   }
 
@@ -120,7 +120,7 @@ export class ProviderArtistIdentityService {
 
     try {
       const candidates = await skyHookProxy.searchForNewArtist(artist.name, 10);
-      const match = bestLidarrArtistMatch(artist, candidates);
+      const match = bestCanonicalArtistMatch(artist, candidates);
       const normalizedName = normalizeSearchText(artist.name);
       const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;
 
@@ -129,7 +129,7 @@ export class ProviderArtistIdentityService {
           mbid: null,
           status: "ambiguous",
           confidence: 0,
-          method: "lidarr-artist-name-ambiguous",
+          method: "musicbrainz-artist-name-ambiguous",
           reason: "musicbrainz_ambiguous",
         };
       }
@@ -143,7 +143,7 @@ export class ProviderArtistIdentityService {
         };
       }
     } catch (error) {
-      console.warn(`[ProviderArtistIdentityService] Failed to match ${artist.name} to Lidarr metadata:`, error);
+      console.warn(`[ProviderArtistIdentityService] Failed to match ${artist.name} to canonical metadata:`, error);
     }
 
     return {

@@ -83,10 +83,12 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const showExplicitBadge = explicit === true || explicit === 1 || explicit === "1" || explicit === "true";
     const [imageFailed, setImageFailed] = React.useState(false);
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
+    const [imageLoaded, setImageLoaded] = React.useState(false);
     const isClickable = Boolean(onClick || to);
     React.useEffect(() => {
         setImageFailed(false);
         setFallbackFailed(false);
+        setImageLoaded(false);
     }, [imageUrl, fallbackImageUrl]);
 
     const handleClick = useCallback(() => {
@@ -117,6 +119,14 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     );
 
     const previewClass = videoAspect ? styles.videoPreview : styles.cardPreview;
+    const primaryImageUrl = imageUrl || null;
+    const fallbackUrl = fallbackImageUrl && fallbackImageUrl !== primaryImageUrl ? fallbackImageUrl : null;
+    const activeImageUrl = primaryImageUrl && !imageFailed
+        ? primaryImageUrl
+        : fallbackUrl && !fallbackFailed
+            ? fallbackUrl
+            : null;
+    const placeholderContent = placeholder || <div className={styles.placeholderBg} />;
 
     return (
         <Card
@@ -129,14 +139,24 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
             aria-label={title}
         >
             <div className={previewClass}>
-                {(imageFailed ? (!fallbackFailed ? fallbackImageUrl : null) : imageUrl) ? (
+                {(!activeImageUrl || !imageLoaded) && (
+                    <div className={styles.imagePlaceholderLayer}>
+                        {placeholderContent}
+                    </div>
+                )}
+
+                {activeImageUrl ? (
                     <img
-                        src={(imageFailed ? fallbackImageUrl : imageUrl) as string}
+                        key={activeImageUrl}
+                        src={activeImageUrl}
                         alt={alt}
-                        className={styles.cardImage}
+                        className={mergeClasses(styles.cardImage, !imageLoaded && styles.cardImageLoading)}
                         loading="lazy"
+                        decoding="async"
+                        onLoad={() => setImageLoaded(true)}
                         onError={() => {
-                            if (!imageFailed && fallbackImageUrl) {
+                            setImageLoaded(false);
+                            if (primaryImageUrl && !imageFailed && fallbackUrl) {
                                 setImageFailed(true);
                             } else {
                                 setImageFailed(true);
@@ -144,9 +164,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                             }
                         }}
                     />
-                ) : (
-                    placeholder || <div className={styles.placeholderBg} />
-                )}
+                ) : null}
 
                 {(quality || qualityBadges) && (
                     <div className={styles.qualityBadge}>

@@ -95,16 +95,11 @@ export interface FilteringConfig {
   // MusicBrainz release-group secondary types
   include_compilation: boolean;        // Secondary type: Compilation
   include_soundtrack: boolean;         // Secondary type: Soundtrack
-  include_spokenword: boolean;         // Secondary type: Spokenword
-  include_interview: boolean;          // Secondary type: Interview
-  include_audiobook: boolean;          // Secondary type: Audiobook
-  include_audio_drama: boolean;        // Secondary type: Audio drama
   include_live: boolean;               // Secondary type: Live
   include_remix: boolean;              // Secondary type: Remix
   include_dj_mix: boolean;             // Secondary type: DJ-mix
   include_mixtape_street: boolean;     // Secondary type: Mixtape/Street
   include_demo: boolean;               // Secondary type: Demo
-  include_field_recording: boolean;    // Secondary type: Field recording
 
   include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
@@ -231,16 +226,11 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_other: false,
     include_compilation: false,
     include_soundtrack: false,
-    include_spokenword: false,
-    include_interview: false,
-    include_audiobook: false,
-    include_audio_drama: false,
     include_live: false,
     include_remix: false,
     include_dj_mix: false,
     include_mixtape_street: false,
     include_demo: false,
-    include_field_recording: false,
     include_spatial: false,
     include_videos: false,
     require_provider_availability: false,
@@ -286,14 +276,9 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
 const MUSICBRAINZ_FILTER_KEYS: Array<keyof FilteringConfig> = [
   "include_broadcast",
   "include_other",
-  "include_spokenword",
-  "include_interview",
-  "include_audiobook",
-  "include_audio_drama",
   "include_dj_mix",
   "include_mixtape_street",
   "include_demo",
-  "include_field_recording",
 ];
 
 function isLegacyFilteringConfig(raw?: Partial<FilteringConfig>): boolean {
@@ -305,6 +290,16 @@ function isLegacyFilteringConfig(raw?: Partial<FilteringConfig>): boolean {
 }
 
 function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConfig {
+  const {
+    include_spokenword: _includeSpokenword,
+    include_interview: _includeInterview,
+    include_audiobook: _includeAudiobook,
+    include_audio_drama: _includeAudioDrama,
+    include_field_recording: _includeFieldRecording,
+    ...supportedRaw
+  } = (raw || {}) as Partial<FilteringConfig> & Record<string, unknown>;
+  const supportedFiltering = supportedRaw as Partial<FilteringConfig>;
+
   if (isLegacyFilteringConfig(raw)) {
     return {
       ...DEFAULT_CONFIG.filtering,
@@ -318,8 +313,8 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
 
   return {
     ...DEFAULT_CONFIG.filtering,
-    ...(raw || {}),
-    require_provider_availability: raw?.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
+    ...supportedFiltering,
+    require_provider_availability: supportedFiltering.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
   };
 }
 

@@ -17,6 +17,7 @@ import { normalizeComparableText, stringSimilarity } from "./import-matching-uti
 import { shouldReapplyArtistPathTemplate } from "./artist-paths.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 
 type RetagTrackRow = {
   id: number;
@@ -30,6 +31,8 @@ type RetagTrackRow = {
   file_quality: string | null;
   file_codec: string | null;
   file_channels: number | null;
+  file_provider: string | null;
+  file_provider_id: string | null;
   file_fingerprint: string | null;
   file_acoustid_id: string | null;
   file_fingerprint_duration: number | null;
@@ -61,12 +64,13 @@ type RetagTrackRow = {
   artist_mbid: string | null;
 };
 
-type ManagedTag = {
+export type ManagedTag = {
   key: string;
   label: string;
   ffmpegKey: string;
   targetValue: string;
   aliases?: string[];
+  writeAliases?: string[];
 };
 
 export type RetagDifference = {
@@ -119,6 +123,17 @@ function buildFullTitle(title: string | null | undefined, version: string | null
   return baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())
     ? baseTitle
     : `${baseTitle} (${normalizedVersion})`;
+}
+
+function buildProviderTrackUrl(row: RetagTrackRow): string {
+  const provider = String(row.file_provider || "tidal").trim() || "tidal";
+  const providerTrackId = String(row.file_provider_id || row.media_id || "").trim();
+
+  try {
+    return buildStreamingMediaUrl("track", providerTrackId, provider);
+  } catch {
+    return `https://tidal.com/browse/track/${providerTrackId}`;
+  }
 }
 
 function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
@@ -214,6 +229,11 @@ function formatPosition(no: number | null | undefined, of: number | null | undef
   }
 
   return String(position);
+}
+
+function formatPositiveNumber(value: number | null | undefined): string | null {
+  const numeric = Number(value || 0);
+  return numeric > 0 ? String(numeric) : null;
 }
 
 function formatReplayGain(value: number | null | undefined): string | null {
@@ -601,8 +621,16 @@ function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, str
       return normalizeValue(common.album) || fallback();
     case "track":
       return formatPosition(common.track?.no ?? null, common.track?.of ?? null) || fallback();
+    case "track_number":
+      return formatPositiveNumber(common.track?.no ?? null) || fallback();
+    case "track_count":
+      return formatPositiveNumber(common.track?.of ?? null) || fallback();
     case "disc":
       return formatPosition(common.disk?.no ?? null, common.disk?.of ?? null) || fallback();
+    case "disc_number":
+      return formatPositiveNumber(common.disk?.no ?? null) || fallback();
+    case "disc_count":
+      return formatPositiveNumber(common.disk?.of ?? null) || fallback();
     case "date":
       return normalizeReleaseDate(common.date || (common.year ? String(common.year) : null)) || normalizeReleaseDate(fallback());
     case "isrc":
@@ -697,6 +725,8 @@ export class AudioTagService {
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
+        lf.provider AS file_provider,
+        lf.provider_id AS file_provider_id,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
@@ -761,6 +791,8 @@ export class AudioTagService {
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
+        lf.provider AS file_provider,
+        lf.provider_id AS file_provider_id,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
@@ -843,7 +875,29 @@ export class AudioTagService {
     `).get(albumId, volumeNumber) as { count?: number } | undefined;
 
     const count = Number(row?.count || 0);
-    return count > 0 ? count : null;
+  return count > 0 ? count : null;
+  }
+
+  static buildAudioTagWriteMap(tags: ManagedTag[]): Record<string, string> {
+    const output: Record<string, string> = {};
+
+    for (const tag of tags) {
+      const value = normalizeComparableValue(tag.targetValue);
+      if (!value) {
+        continue;
+      }
+
+      output[tag.ffmpegKey] = value;
+
+      for (const alias of tag.writeAliases || []) {
+        const key = String(alias || "").trim();
+        if (key) {
+          output[key] = value;
+        }
+      }
+    }
+
+    return output;
   }
 
   private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {
@@ -1137,6 +1191,28 @@ export class AudioTagService {
           targetValue: trackPosition,
         });
       }
+      const trackNumber = formatPositiveNumber(row.media_track_number);
+      if (trackNumber) {
+        tags.push({
+          key: "track_number",
+          label: "Track Number",
+          ffmpegKey: "TRACKNUMBER",
+          targetValue: trackNumber,
+          aliases: ["tracknumber"],
+          writeAliases: ["tracknumber"],
+        });
+      }
+      const trackTotal = formatPositiveNumber(trackCount);
+      if (trackTotal) {
+        tags.push({
+          key: "track_count",
+          label: "Track Count",
+          ffmpegKey: "TRACKTOTAL",
+          targetValue: trackTotal,
+          aliases: ["tracktotal", "totaltracks"],
+          writeAliases: ["TOTALTRACKS", "totaltracks"],
+        });
+      }
 
       const discPosition = formatPosition(discNumber, discCount);
       if (discPosition) {
@@ -1145,6 +1221,28 @@ export class AudioTagService {
           label: "Disc",
           ffmpegKey: "disc",
           targetValue: discPosition,
+        });
+      }
+      const discNumberValue = formatPositiveNumber(discNumber);
+      if (discNumberValue) {
+        tags.push({
+          key: "disc_number",
+          label: "Disc Number",
+          ffmpegKey: "DISCNUMBER",
+          targetValue: discNumberValue,
+          aliases: ["discnumber"],
+          writeAliases: ["discnumber"],
+        });
+      }
+      const discTotal = formatPositiveNumber(discCount);
+      if (discTotal) {
+        tags.push({
+          key: "disc_count",
+          label: "Disc Count",
+          ffmpegKey: "DISCTOTAL",
+          targetValue: discTotal,
+          aliases: ["disctotal", "totaldiscs"],
+          writeAliases: ["TOTALDISCS", "totaldiscs"],
         });
       }
 
@@ -1187,11 +1285,11 @@ export class AudioTagService {
 
       if (config.write_tidal_url) {
         tags.push({
-          key: "tidal_url",
-          label: "TIDAL URL",
-          ffmpegKey: "TIDAL_URL",
-          targetValue: `https://listen.tidal.com/track/${row.media_id}`,
-          aliases: ["tidal_url", "url", "purl"],
+          key: "provider_url",
+          label: "Provider URL",
+          ffmpegKey: "PROVIDER_URL",
+          targetValue: buildProviderTrackUrl(row),
+          aliases: ["provider_url", "tidal_url", "url", "purl"],
         });
       }
 
@@ -1519,9 +1617,7 @@ export class AudioTagService {
         continue;
       }
 
-      const desiredTags = Object.fromEntries(
-        this.buildDesiredTags(enrichedRow, config).map((tag) => [tag.ffmpegKey, tag.targetValue]),
-      );
+      const desiredTags = this.buildAudioTagWriteMap(this.buildDesiredTags(enrichedRow, config));
 
       if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
         console.warn(`[Retag] Skipping embedded tag rewrite for ${resolvedPath}; ${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "spatial"} is not safely writable with ffmpeg stream copy.`);

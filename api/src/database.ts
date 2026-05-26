@@ -1074,6 +1074,13 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       `);
     },
   },
+  {
+    version: 17,
+    description: "normalize legacy metadata source labels",
+    up: () => {
+      normalizeLegacyMetadataSourceLabels();
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -1082,6 +1089,68 @@ function addColumnIfMissing(tableName: string, columnName: string, columnDefinit
   }
 
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+}
+
+function normalizeLegacyMetadataSourceLabels(): void {
+  if (tableExists("Artists")) {
+    if (columnExists("Artists", "musicbrainz_match_method")) {
+      db.prepare(`
+        UPDATE Artists
+        SET musicbrainz_match_method = 'musicbrainz-metadata'
+        WHERE musicbrainz_match_method = 'lidarr-metadata'
+      `).run();
+    }
+
+    if (columnExists("Artists", "bio_source")) {
+      db.prepare(`
+        UPDATE Artists
+        SET bio_source = 'musicbrainz'
+        WHERE bio_source = 'lidarr'
+      `).run();
+    }
+  }
+
+  if (tableExists("ProviderAlbums") && columnExists("ProviderAlbums", "musicbrainz_match_method")) {
+    db.prepare(`
+      UPDATE ProviderAlbums
+      SET musicbrainz_match_method = CASE
+        WHEN musicbrainz_match_method = 'lidarr-metadata' THEN 'musicbrainz-metadata'
+        WHEN musicbrainz_match_method = 'lidarr-release-group-title-year-type' THEN 'musicbrainz-release-group-title-year-type'
+        ELSE musicbrainz_match_method
+      END
+      WHERE musicbrainz_match_method IN ('lidarr-metadata', 'lidarr-release-group-title-year-type')
+    `).run();
+  }
+
+  const normalizeMatchMethod = (tableName: string, columnName: string) => {
+    if (!tableExists(tableName) || !columnExists(tableName, columnName)) {
+      return;
+    }
+
+    db.prepare(`
+      UPDATE ${tableName}
+      SET ${columnName} = CASE
+        WHEN ${columnName} = 'lidarr-artist-name-exact' THEN 'musicbrainz-artist-name-exact'
+        WHEN ${columnName} = 'lidarr-artist-name-discography-weight' THEN 'musicbrainz-artist-name-discography-weight'
+        WHEN ${columnName} = 'lidarr-artist-name-ambiguous' THEN 'musicbrainz-artist-name-ambiguous'
+        WHEN ${columnName} = 'lidarr-release-group-title' THEN 'musicbrainz-release-group-title'
+        WHEN ${columnName} = 'lidarr-release-group-title-year-type' THEN 'musicbrainz-release-group-title-year-type'
+        WHEN ${columnName} = 'lidarr-release-group-title-year-type-track-count' THEN 'musicbrainz-release-group-title-year-type-track-count'
+        ELSE ${columnName}
+      END
+      WHERE ${columnName} IN (
+        'lidarr-artist-name-exact',
+        'lidarr-artist-name-discography-weight',
+        'lidarr-artist-name-ambiguous',
+        'lidarr-release-group-title',
+        'lidarr-release-group-title-year-type',
+        'lidarr-release-group-title-year-type-track-count'
+      )
+    `).run();
+  };
+
+  normalizeMatchMethod("ProviderItems", "match_method");
+  normalizeMatchMethod("ReleaseGroupSlots", "match_method");
 }
 
 function ensureLidarrStyleCanonicalIdentityColumns(): void {

@@ -19,6 +19,7 @@ import historyRouter from "./routes/history.js";
 import libraryFilesRouter from "./routes/library-files.js";
 import libraryBulkRouter from "./routes/library-bulk.js";
 import logRouter from "./routes/log.js";
+import mediaCoverProxyRouter from "./routes/media-cover-proxy.js";
 import metadataRouter from "./routes/metadata.js";
 import monitoringRouter from "./routes/monitoring.js";
 import playbackRouter from "./routes/playback.js";
@@ -183,6 +184,7 @@ app.use((req, res, next) => {
 app.use("/app-auth", appAuthRouter);
 app.use("/api/app-auth", appAuthRouter);
 app.use("/services/ultrablur", ultraBlurRouter);
+app.use("/MediaCoverProxy", mediaCoverProxyRouter);
 
 app.use("/api/auth", authMiddleware, authRouter);
 app.use("/api/config", authMiddleware, configRouter);

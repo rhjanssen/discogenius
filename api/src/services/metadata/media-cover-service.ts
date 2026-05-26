@@ -1,4 +1,6 @@
 import { getConfigSection } from "../config.js";
+import crypto from "crypto";
+import path from "path";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderArtworkEntityType } from "../providers/streaming-provider.js";
 
@@ -25,6 +27,76 @@ export type ProviderArtworkCandidate = {
   imageId?: string | null;
   data?: unknown;
 };
+
+type MediaCoverProxyEntry = {
+  url: string;
+  expiresAt: number;
+};
+
+const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
+const mediaCoverProxyCache = new Map<string, MediaCoverProxyEntry>();
+
+function clearExpiredMediaCoverProxyEntries(now = Date.now()): void {
+  for (const [hash, entry] of mediaCoverProxyCache.entries()) {
+    if (entry.expiresAt <= now) {
+      mediaCoverProxyCache.delete(hash);
+    }
+  }
+}
+
+function getSafeMediaCoverFilename(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const basename = path.basename(parsed.pathname) || "cover.jpg";
+    const safe = basename.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(safe)) {
+      return safe;
+    }
+
+    return `${safe || "cover"}.jpg`;
+  } catch {
+    return "cover.jpg";
+  }
+}
+
+export function registerMediaCoverProxyUrl(value: unknown): string | null {
+  const url = normalizeArtworkUrl(value);
+  if (!url) {
+    return null;
+  }
+
+  const now = Date.now();
+  clearExpiredMediaCoverProxyEntries(now);
+
+  const hash = crypto.createHash("sha256").update(url).digest("hex");
+  mediaCoverProxyCache.set(hash, {
+    url,
+    expiresAt: now + MEDIA_COVER_PROXY_TTL_MS,
+  });
+
+  return `/MediaCoverProxy/${hash}/${getSafeMediaCoverFilename(url)}`;
+}
+
+export function getRegisteredMediaCoverProxyUrl(hash: string): string | null {
+  clearExpiredMediaCoverProxyEntries();
+  const entry = mediaCoverProxyCache.get(hash);
+  return entry?.url ?? null;
+}
+
+export function resolveMediaCoverProxyUrl(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/^\/MediaCoverProxy\/([a-f0-9]{64})\//i);
+  if (match) {
+    return getRegisteredMediaCoverProxyUrl(match[1]);
+  }
+
+  return normalizeArtworkUrl(text);
+}
 
 export function parseJsonObject(value: unknown): Record<string, any> | null {
   if (!value) {
@@ -118,7 +190,8 @@ export function getSkyHookImageUrl(
     }
   }
 
-  return imageUrl(images.sort((left, right) => imageArea(right) - imageArea(left))[0]);
+  const fallbackUrl = imageUrl(images.sort((left, right) => imageArea(right) - imageArea(left))[0]);
+  return fallbackUrl || null;
 }
 
 export function getSkyHookArtistImageUrl(
@@ -210,11 +283,11 @@ export function chooseCachedAlbumArtwork(options: {
   providerCandidates?: ProviderArtworkCandidate[];
 }): string | null {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
-  const images = getSkyHookImages(options.skyHookData);
-  if (images.length > 0) {
-    return skyHookUrl;
+  if (skyHookUrl) {
+    return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
   }
-  return chooseCachedProviderArtwork(options.providerCandidates || [], "album");
+  const providerUrl = chooseCachedProviderArtwork(options.providerCandidates || [], "album");
+  return registerMediaCoverProxyUrl(providerUrl) || providerUrl;
 }
 
 export function chooseCachedArtistArtwork(options: {
@@ -223,11 +296,11 @@ export function chooseCachedArtistArtwork(options: {
   preferredCoverTypes?: string | string[];
 }): string | null {
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
-  const images = getSkyHookImages(options.skyHookData);
-  if (images.length > 0) {
-    return skyHookUrl;
+  if (skyHookUrl) {
+    return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
   }
-  return chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
+  const providerUrl = chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
+  return registerMediaCoverProxyUrl(providerUrl) || providerUrl;
 }
 
 function configuredArtistPictureResolution(): number {
@@ -283,8 +356,7 @@ export async function resolveAlbumArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
-  const images = getSkyHookImages(options.skyHookData);
-  if (images.length > 0) {
+  if (skyHookUrl) {
     return skyHookUrl;
   }
 
@@ -307,8 +379,7 @@ export async function resolveArtistArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
-  const images = getSkyHookImages(options.skyHookData);
-  if (images.length > 0) {
+  if (skyHookUrl) {
     return skyHookUrl;
   }
 
@@ -345,4 +416,7 @@ export class MediaCoverService {
   static albumProviderArtworkCandidatesFromRow = albumProviderArtworkCandidatesFromRow;
   static parseJsonObject = parseJsonObject;
   static normalizeArtworkUrl = normalizeArtworkUrl;
+  static registerUrl = registerMediaCoverProxyUrl;
+  static getUrl = getRegisteredMediaCoverProxyUrl;
+  static resolveProxyUrl = resolveMediaCoverProxyUrl;
 }

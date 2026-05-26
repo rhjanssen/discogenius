@@ -1,41 +1,73 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import test from "node:test";
 
 import {
   chooseCachedAlbumArtwork,
+  getSkyHookAlbumImageUrl,
+  getRegisteredMediaCoverProxyUrl,
+  resolveMediaCoverProxyUrl,
 } from "./media-cover-service.js";
 
-test("SkyHook album artwork is preferred over provider snapshots", () => {
-  const resolved = chooseCachedAlbumArtwork({
+test("SkyHook album artwork is registered through the media cover proxy", () => {
+  const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/cover.jpg";
+  const artworkUrl = chooseCachedAlbumArtwork({
     skyHookData: {
       Images: [
-        { CoverType: "Cover", Url: "https://skyhook.example/cover.jpg", Width: 1000, Height: 1000 },
+        {
+          CoverType: "Cover",
+          Url: remoteUrl,
+          Width: 1200,
+          Height: 1200,
+        },
       ],
     },
     providerCandidates: [
-      { provider: "tidal", entityId: "provider-album-1", imageId: "provider-cover-id" },
+      {
+        provider: "tidal",
+        imageId: "00000000-0000-0000-0000-000000000000",
+      },
     ],
   });
 
-  assert.equal(resolved, "https://skyhook.example/cover.jpg");
+  assert.match(artworkUrl ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/cover\.jpg$/);
+
+  const hash = artworkUrl?.split("/")[2] ?? "";
+  assert.equal(getRegisteredMediaCoverProxyUrl(hash), remoteUrl);
+  assert.equal(resolveMediaCoverProxyUrl(artworkUrl), remoteUrl);
 });
 
-test("provider artwork is used when SkyHook has no image", () => {
-  const resolved = chooseCachedAlbumArtwork({
-    skyHookData: { Images: [] },
+test("SkyHook selectors return raw URLs for durable storage", () => {
+  const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/storage-cover.jpg";
+
+  assert.equal(getSkyHookAlbumImageUrl({
+    Images: [
+      {
+        CoverType: "Cover",
+        Url: remoteUrl,
+        Width: 1200,
+        Height: 1200,
+      },
+    ],
+  }), remoteUrl);
+});
+
+test("provider artwork is used when SkyHook has no usable image URL", () => {
+  const artworkUrl = chooseCachedAlbumArtwork({
+    skyHookData: {
+      Images: [
+        {
+          CoverType: "Cover",
+          Url: null,
+        },
+      ],
+    },
     providerCandidates: [
-      { provider: "tidal", entityId: "provider-album-1", data: JSON.stringify({ cover: "provider-cover-id" }) },
+      {
+        provider: "tidal",
+        imageId: "11111111-1111-1111-1111-111111111111",
+      },
     ],
   });
 
-  assert.equal(resolved, "provider-cover-id");
-});
-
-test("missing SkyHook and provider artwork resolves to null instead of a direct archive guess", () => {
-  const resolved = chooseCachedAlbumArtwork({
-    skyHookData: { Images: [] },
-    providerCandidates: [],
-  });
-
-  assert.equal(resolved, null);
+  assert.equal(artworkUrl, "11111111-1111-1111-1111-111111111111");
 });

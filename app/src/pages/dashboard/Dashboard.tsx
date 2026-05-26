@@ -7,8 +7,6 @@ import {
     MenuList,
     MenuPopover,
     MenuTrigger,
-    Overflow,
-    OverflowItem,
     Tab,
     TabList,
     Text,
@@ -49,7 +47,7 @@ import ManualImportTab from "./ManualImportTab";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 import { formatCompactNumber } from "@/utils/format";
 import { useSystemTasks } from "@/hooks/useSystemTasks";
-import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import type { OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import {
     compactDetailActionButtonStyles,
     detailActionGlassButtonStyles,
@@ -114,7 +112,7 @@ const useStyles = makeStyles({
             display: "flex",
             flex: "1 1 520px",
             justifyContent: "flex-end",
-            overflow: "hidden",
+            overflow: "visible",
         },
     },
     statsGrid: {
@@ -191,7 +189,7 @@ const useStyles = makeStyles({
         justifyContent: "center",
         width: "100%",
         minWidth: 0,
-        overflow: "hidden",
+        overflow: "visible",
         "@media (min-width: 768px)": {
             justifyContent: "flex-end",
             gap: tokens.spacingHorizontalM,
@@ -455,6 +453,8 @@ const Dashboard = () => {
     const hasMobileOverflowActions = actions.length > 4;
     const mobileVisibleActions = actions.slice(0, hasMobileOverflowActions ? 3 : 4);
     const mobileOverflowActions = hasMobileOverflowActions ? actions.slice(3) : [];
+    const desktopVisibleActions = actions.slice(0, 4);
+    const desktopOverflowActions = actions.slice(4);
 
     return (
         <div className={styles.container}>
@@ -470,18 +470,38 @@ const Dashboard = () => {
                     </div>
                 </div>
                 <div className={styles.desktopActions}>
-                    <Overflow minimumVisible={2}>
-                        <div className={styles.headerActionRow}>
-                            {actions.map((action) => (
-                                <OverflowItem key={action.key} id={action.key} priority={actions.length - (action.priority ?? 0)}>
-                                    <Button appearance="subtle" icon={action.icon} onClick={action.onClick} disabled={action.disabled} className={styles.headerActionButton}>
-                                        {action.label}
+                    <div className={styles.headerActionRow}>
+                        {desktopVisibleActions.map((action) => (
+                            <Button
+                                key={action.key}
+                                appearance="subtle"
+                                icon={action.icon}
+                                onClick={action.onClick}
+                                disabled={action.disabled}
+                                className={styles.headerActionButton}
+                            >
+                                {action.label}
+                            </Button>
+                        ))}
+                        {desktopOverflowActions.length > 0 ? (
+                            <Menu>
+                                <MenuTrigger disableButtonEnhancement>
+                                    <Button appearance="subtle" icon={<MoreHorizontal24Regular />} className={styles.headerActionButton}>
+                                        More
                                     </Button>
-                                </OverflowItem>
-                            ))}
-                            <ActionOverflowMenu actions={actions} className={styles.headerActionButton} />
-                        </div>
-                    </Overflow>
+                                </MenuTrigger>
+                                <MenuPopover>
+                                    <MenuList>
+                                        {desktopOverflowActions.map((action) => (
+                                            <MenuItem key={action.key} disabled={action.disabled} onClick={action.onClick}>
+                                                {action.label}
+                                            </MenuItem>
+                                        ))}
+                                    </MenuList>
+                                </MenuPopover>
+                            </Menu>
+                        ) : null}
+                    </div>
                 </div>
                 <div className={styles.mobileOnly}>
                     <div className={styles.headerActionRow}>
@@ -629,10 +649,5 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
-
-
-
-
 
 

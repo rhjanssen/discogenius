@@ -24,6 +24,9 @@ type BrowseRecordingsResponse = {
 const MUSICBRAINZ_BASE_URL = "https://musicbrainz.org/ws/2";
 const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.6 (https://github.com/discogenius/discogenius)";
 const MUSICBRAINZ_PAGE_SIZE = 100;
+const MUSICBRAINZ_FETCH_ATTEMPTS = 2;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function nullableText(value: unknown): string | null {
   const text = String(value ?? "").trim();
@@ -41,20 +44,81 @@ function artistCredit(recording: MusicBrainzRecording): string | null {
   return names.length > 0 ? names.join(", ") : null;
 }
 
-async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${MUSICBRAINZ_BASE_URL}${path}`, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": MUSICBRAINZ_USER_AGENT,
-    },
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`MusicBrainz request failed (${response.status} ${response.statusText}): ${path}`);
+function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artistMbid: string | null): number | null {
+  const normalizedArtistMbid = nullableText(artistMbid);
+  if (!normalizedArtistMbid) {
+    return null;
   }
 
-  return response.json() as Promise<T>;
+  const existing = db.prepare(`
+    SELECT Id
+    FROM ArtistMetadata
+    WHERE ForeignArtistId = ? OR mbid = ?
+    LIMIT 1
+  `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
+  if (existing?.Id != null) {
+    return Number(existing.Id);
+  }
+
+  const matchingCredit = (recording["artist-credit"] || [])
+    .find((credit) => nullableText(credit.artist?.id) === normalizedArtistMbid);
+  const fallbackCredit = recording["artist-credit"]?.[0];
+  const artistName =
+    nullableText(matchingCredit?.artist?.name) ??
+    nullableText(matchingCredit?.name) ??
+    nullableText(fallbackCredit?.artist?.name) ??
+    nullableText(fallbackCredit?.name) ??
+    normalizedArtistMbid;
+
+  db.prepare(`
+    INSERT OR IGNORE INTO ArtistMetadata (
+      ForeignArtistId, mbid, name, data, updated_at
+    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(
+    normalizedArtistMbid,
+    normalizedArtistMbid,
+    artistName,
+    JSON.stringify(matchingCredit?.artist || fallbackCredit?.artist || { id: normalizedArtistMbid, name: artistName }),
+  );
+
+  const row = db.prepare(`
+    SELECT Id
+    FROM ArtistMetadata
+    WHERE ForeignArtistId = ? OR mbid = ?
+    LIMIT 1
+  `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
+
+  return row?.Id == null ? null : Number(row.Id);
+}
+
+async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MUSICBRAINZ_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(`${MUSICBRAINZ_BASE_URL}${path}`, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": MUSICBRAINZ_USER_AGENT,
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+
+      if (!response.ok) {
+        throw new Error(`MusicBrainz request failed (${response.status} ${response.statusText}): ${path}`);
+      }
+
+      return response.json() as Promise<T>;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= MUSICBRAINZ_FETCH_ATTEMPTS) {
+        break;
+      }
+      await sleep(1000 * attempt);
+    }
+  }
+
+  throw lastError;
 }
 
 function upsertRecording(recording: MusicBrainzRecording, options: {
@@ -68,14 +132,8 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
 
   const title = nullableText(recording.title) ?? recordingMbid;
   const artistMbid = nullableText(options.artistMbid);
-  const artistMetadataId = artistMbid
-    ? (db.prepare(`
-        SELECT Id
-        FROM ArtistMetadata
-        WHERE ForeignArtistId = ? OR mbid = ?
-        LIMIT 1
-      `).get(artistMbid, artistMbid) as { Id?: number | null } | undefined)?.Id ?? null
-    : null;
+  const artistMetadataId = upsertArtistMetadataForRecording(recording, artistMbid);
+  const recordingArtistMbid = artistMetadataId == null ? null : artistMbid;
 
   db.prepare(`
     INSERT OR IGNORE INTO Recordings (
@@ -86,7 +144,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     recordingMbid,
     recordingMbid,
     artistMetadataId,
-    artistMbid,
+    recordingArtistMbid,
     title,
     artistCredit(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
@@ -111,7 +169,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     WHERE ForeignRecordingId = ? OR mbid = ?
   `).run(
     artistMetadataId,
-    artistMbid,
+    recordingArtistMbid,
     title,
     artistCredit(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,

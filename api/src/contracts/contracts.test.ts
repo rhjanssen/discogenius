@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { parseAuthStatusContract } from "./auth.js";
 import {
+  parseAlbumsListResponseContract,
   parseArtistsListResponseContract,
   parseLibraryStatsContract,
   parseSearchResponseContract,
@@ -77,16 +78,11 @@ test("config contract parsers normalize expected public settings shapes", () => 
     include_other: false,
     include_compilation: true,
     include_soundtrack: true,
-    include_spokenword: false,
-    include_interview: false,
-    include_audiobook: false,
-    include_audio_drama: false,
     include_live: true,
     include_remix: false,
     include_dj_mix: false,
     include_mixtape_street: false,
     include_demo: false,
-    include_field_recording: false,
     include_spatial: false,
     include_videos: true,
     prefer_explicit: true,
@@ -228,6 +224,26 @@ test("catalog contract parsers validate list, stats, and search payloads", () =>
   });
   assert.equal(artists.items[0].id, "10");
   assert.equal(artists.items[0].is_monitored, true);
+
+  const albums = parseAlbumsListResponseContract({
+    items: [
+      {
+        id: "release-group-1",
+        title: "Give Me the Future",
+        cover_art_url: "/MediaCoverProxy/example/cover.jpg",
+        provider_cover_id: "11111111-1111-1111-1111-111111111111",
+        is_monitored: true,
+        is_downloaded: false,
+        artist_id: "10",
+        artist_name: "Bastille",
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+  });
+  assert.equal(albums.items[0].provider_cover_id, "11111111-1111-1111-1111-111111111111");
 
   const stats = parseLibraryStatsContract({
     artists: { total: 1, monitored: 1, downloaded: 0 },

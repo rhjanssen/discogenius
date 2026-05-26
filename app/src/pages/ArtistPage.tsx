@@ -839,7 +839,9 @@ const ArtistPage = () => {
     if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const imageUrl = item.cover_art_url || getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
+    const skyHookImageUrl = item.cover_art_url || item.cover || item.cover_id || null;
+    const providerImageUrl = getAlbumCover(item.provider_cover_id, "medium");
+    const imageUrl = getAlbumCover(skyHookImageUrl, "medium") || skyHookImageUrl;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
@@ -873,6 +875,7 @@ const ArtistPage = () => {
         key={tidalId}
         to={getAlbumPath(tidalId)}
         imageUrl={imageUrl}
+        fallbackImageUrl={providerImageUrl}
         alt={albumTitle}
         title={albumTitle}
         subtitle={subtitle}

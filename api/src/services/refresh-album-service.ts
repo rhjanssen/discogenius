@@ -786,7 +786,7 @@ export class RefreshAlbumService {
                 primaryTypeFromProviderMatch(releaseGroupMatch),
                 secondaryTypeFromProviderMatch(releaseGroupMatch),
                 getAlbumIdentityStatusFromProviderMatch(releaseGroupMatch),
-                releaseGroupMatch?.method || "lidarr-release-group-title-year-type",
+                releaseGroupMatch?.method || "musicbrainz-release-group-title-year-type",
                 album.tidal_id,
             );
         }

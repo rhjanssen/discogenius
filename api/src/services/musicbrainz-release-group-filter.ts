@@ -15,19 +15,14 @@ type IncludeDecision = {
 const SECONDARY_TYPE_CONFIG_KEYS: Record<string, keyof FilteringConfig> = {
     compilation: "include_compilation",
     soundtrack: "include_soundtrack",
-    spokenword: "include_spokenword",
-    interview: "include_interview",
-    audiobook: "include_audiobook",
-    "audio-drama": "include_audio_drama",
     live: "include_live",
     remix: "include_remix",
     "dj-mix": "include_dj_mix",
     "mixtape/street": "include_mixtape_street",
     demo: "include_demo",
-    "field-recording": "include_field_recording",
 };
 
-function normalizeMusicBrainzType(value: unknown): string {
+export function normalizeMusicBrainzType(value: unknown): string {
     const normalized = String(value || "")
         .trim()
         .toLowerCase()
@@ -60,13 +55,21 @@ export function parseMusicBrainzSecondaryTypes(value: unknown): string[] {
         return value.map(normalizeMusicBrainzType).filter(Boolean);
     }
 
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return [];
+    }
+
     try {
-        const parsed = JSON.parse(String(value || "[]"));
+        const parsed = JSON.parse(raw);
         return Array.isArray(parsed)
             ? parsed.map(normalizeMusicBrainzType).filter(Boolean)
             : [];
     } catch {
-        return [];
+        return raw
+            .split(/[;,]/)
+            .map(normalizeMusicBrainzType)
+            .filter(Boolean);
     }
 }
 
@@ -123,8 +126,8 @@ function getSecondaryIncludeDecision(secondaryType: string, filteringConfig: Fil
     const configKey = SECONDARY_TYPE_CONFIG_KEYS[secondaryType];
     if (!configKey) {
         return {
-            include: filteringConfig.include_other === true,
-            reason: filteringConfig.include_other === true ? null : "secondary_other_excluded",
+            include: false,
+            reason: `${secondaryType.replace(/\W+/g, "_") || "secondary_type"}_unsupported`,
         };
     }
 

@@ -18,6 +18,8 @@ export type FollowedArtistsImportEvent =
 
 export interface FollowedArtistsImportSummary {
     success: boolean;
+    providerId: string;
+    providerName: string;
     added: number;
     updated: number;
     skipped: number;
@@ -97,10 +99,14 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
 
 export class FollowedArtistsImportService {
     static async importFollowedArtists(options?: {
+        providerId?: string | null;
         onEvent?: (event: FollowedArtistsImportEvent) => void;
     }): Promise<FollowedArtistsImportSummary> {
         const emit = options?.onEvent;
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        const providerId = String(options?.providerId || "").trim();
+        const provider = providerId
+            ? streamingProviderManager.getStreamingProvider(providerId)
+            : streamingProviderManager.getDefaultStreamingProvider();
         if (!provider.getFollowedArtists) {
             throw new Error(`${provider.name} does not support followed artist import`);
         }
@@ -115,6 +121,8 @@ export class FollowedArtistsImportService {
         if (!followedArtists || followedArtists.length === 0) {
             return {
                 success: true,
+                providerId: provider.id,
+                providerName: provider.name,
                 added: 0,
                 updated: 0,
                 skipped: 0,
@@ -159,7 +167,7 @@ export class FollowedArtistsImportService {
                     try {
                         await skyHookProxy.syncArtist(mbMatch.mbid);
                     } catch (error) {
-                        console.warn(`[FollowedArtistsImport] Failed to sync Lidarr metadata for ${artist.name} (${mbMatch.mbid}):`, error);
+                        console.warn(`[FollowedArtistsImport] Failed to sync canonical metadata for ${artist.name} (${mbMatch.mbid}):`, error);
                     }
                 } else if (mbMatch?.reason === "musicbrainz_ambiguous") {
                     artist.match_status = "ambiguous";
@@ -243,6 +251,8 @@ export class FollowedArtistsImportService {
         const totalMonitored = addedCount + updatedCount;
         return {
             success: true,
+            providerId: provider.id,
+            providerName: provider.name,
             added: addedCount,
             updated: updatedCount,
             skipped: skippedCount,

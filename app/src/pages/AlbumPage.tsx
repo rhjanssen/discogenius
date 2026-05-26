@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useLayoutEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useLayoutEffect, useRef, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
@@ -125,6 +125,25 @@ const useStyles = makeStyles({
       width: "220px",
       height: "220px",
       boxShadow: tokens.shadow64,
+    },
+  },
+  coverPlaceholder: {
+    width: "140px",
+    height: "140px",
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    color: tokens.colorNeutralForeground4,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    "@media (min-width: 480px)": {
+      width: "180px",
+      height: "180px",
+    },
+    "@media (min-width: 768px)": {
+      width: "220px",
+      height: "220px",
     },
   },
   albumInfo: {
@@ -423,6 +442,8 @@ const AlbumPage = () => {
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
+  const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [providerCoverImageFailed, setProviderCoverImageFailed] = useState(false);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
@@ -449,11 +470,36 @@ const AlbumPage = () => {
   }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
   const artistImage = pageData?.artistImage ?? undefined;
-  const albumArtworkUrl = album ? (album.cover_art_url || getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null) : undefined;
+  const albumSkyHookArtworkUrl = album ? (album.cover_art_url || null) : null;
+  const albumProviderArtworkUrl = album
+    ? getAlbumCover((album as any).provider_cover_id, "large")
+    : null;
+  const albumStoredArtworkUrl = album
+    ? (getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
+    : null;
+  const albumStoredFallbackUrl = albumStoredArtworkUrl
+    && albumStoredArtworkUrl !== albumSkyHookArtworkUrl
+    && albumStoredArtworkUrl !== albumProviderArtworkUrl
+    ? albumStoredArtworkUrl
+    : null;
+  const albumArtworkUrl = album
+    ? (
+      albumSkyHookArtworkUrl && !coverImageFailed
+        ? albumSkyHookArtworkUrl
+        : albumProviderArtworkUrl && !providerCoverImageFailed
+          ? albumProviderArtworkUrl
+          : albumStoredFallbackUrl
+    )
+    : undefined;
   const albumBrandColor = useArtworkBrandColor({
     artworkUrl: albumArtworkUrl,
     brandKeyColor: album?.vibrant_color ?? null,
   });
+
+  useEffect(() => {
+    setCoverImageFailed(false);
+    setProviderCoverImageFailed(false);
+  }, [albumSkyHookArtworkUrl, albumProviderArtworkUrl]);
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!((album as any)?.monitor_locked ?? (album as any)?.monitor_lock);
@@ -675,6 +721,7 @@ const AlbumPage = () => {
       stereo_quality?: string | null;
       spatial_provider_id?: string | null;
       spatial_quality?: string | null;
+      provider_cover_id?: string | null;
     },
     subtitle: string,
     itemProgress?: any,
@@ -716,6 +763,7 @@ const AlbumPage = () => {
         className={mergeClasses(styles.albumCard, isCurrent && styles.albumCard)}
         to={target}
         imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
+        fallbackImageUrl={getAlbumCover(item.provider_cover_id, "medium")}
         alt={item.title}
         title={item.title}
         subtitle={subtitle}
@@ -744,11 +792,26 @@ const AlbumPage = () => {
               const hasCoverFile = coverFiles.length > 0;
               return (
                 <div className={styles.coverContainer}>
-                  <img
-                    src={albumArtworkUrl || "/placeholder-album.png"}
-                    alt={album.title}
-                    className={styles.coverArt}
-                  />
+                  {albumArtworkUrl ? (
+                    <img
+                      key={albumArtworkUrl}
+                      src={albumArtworkUrl}
+                      alt={album.title}
+                      className={styles.coverArt}
+                      decoding="async"
+                      onError={() => {
+                        if (albumSkyHookArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
+                          setCoverImageFailed(true);
+                        } else {
+                          setProviderCoverImageFailed(true);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div className={styles.coverPlaceholder}>
+                      <MusicNote224Regular />
+                    </div>
+                  )}
                   {hasCoverFile && (
                     <div
                       className={styles.coverOverlay}

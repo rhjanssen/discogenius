@@ -254,7 +254,7 @@ export function matchProviderAlbumToReleaseGroup(
             providerId: album.providerId,
             status: "unmatched",
             confidence: 0,
-            method: "lidarr-release-group-title",
+            method: "musicbrainz-release-group-title",
             releaseMbid: null,
             evidence: {
                 providerTitle: album.title,
@@ -282,7 +282,7 @@ export function matchProviderAlbumToReleaseGroup(
         ? "musicbrainz-release-upc"
         : best.isrcOverlap >= 2
             ? "musicbrainz-recording-isrc"
-            : "lidarr-release-group-title-year-type-track-count";
+            : "musicbrainz-release-group-title-year-type-track-count";
 
     return {
         providerId: album.providerId,
