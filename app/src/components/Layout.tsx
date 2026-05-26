@@ -374,6 +374,7 @@ const Layout = () => {
   const { stats } = useQueueStatus();
   const { status, isConnected, canAccessShell, remoteCatalogAvailable } = useProviderConnection();
   const isAuthRoute = location.pathname === "/auth";
+  const showNavSearch = !isAuthRoute && location.pathname !== "/search";
 
   const showProviderModeBanner = Boolean(canAccessShell && !remoteCatalogAvailable);
   const providerModeLabel = "No provider";
@@ -434,7 +435,7 @@ const Layout = () => {
 
               <div className={styles.searchSection}>
                 <div className={styles.searchContainer}>
-                  <GlobalSearch />
+                  {showNavSearch ? <GlobalSearch /> : null}
                 </div>
               </div>
 

@@ -575,8 +575,7 @@ export class DownloadProcessor {
 
         // Initialize download backends with current settings
         try {
-            await initializeTidalDlNgSettings();
-            await syncOrpheusSettings();
+            await streamingProviderManager.syncProviderSettings();
             console.log('[DOWNLOAD-PROCESSOR] Download backend settings initialized');
         } catch (error) {
             console.warn('[DOWNLOAD-PROCESSOR] Could not initialize download backend settings:', error);

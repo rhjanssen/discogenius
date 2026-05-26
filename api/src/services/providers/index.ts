@@ -24,6 +24,14 @@ class StreamingProviderManager {
     return Array.from(this.providers.values());
   }
 
+  async syncProviderSettings(downloadPath?: string): Promise<void> {
+    for (const provider of this.providers.values()) {
+      if (provider.syncSettings) {
+        await provider.syncSettings(downloadPath);
+      }
+    }
+  }
+
   getDefaultStreamingProvider(): StreamingProvider {
     return this.getStreamingProvider("tidal");
   }

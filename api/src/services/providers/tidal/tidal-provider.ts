@@ -932,6 +932,7 @@ export class TidalProvider implements StreamingProvider {
 
   async syncSettings(downloadPath?: string): Promise<void> {
     await syncDiscogeniusSettings(downloadPath);
+    await syncOrpheusSettings(downloadPath);
   }
 
   private isSpatialQuality(quality?: string | null, tags: string[] = []): boolean {

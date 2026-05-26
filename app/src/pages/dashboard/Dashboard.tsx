@@ -99,9 +99,22 @@ const useStyles = makeStyles({
         justifyContent: "space-between",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
+        minWidth: 0,
+        flexWrap: "wrap",
         "@media (max-width: 639px)": {
             flexDirection: "column",
             textAlign: "center",
+        },
+    },
+    desktopActions: {
+        display: "none",
+        minWidth: 0,
+        maxWidth: "100%",
+        "@media (min-width: 640px)": {
+            display: "flex",
+            flex: "1 1 520px",
+            justifyContent: "flex-end",
+            overflow: "hidden",
         },
     },
     statsGrid: {
@@ -177,10 +190,11 @@ const useStyles = makeStyles({
         flexWrap: "nowrap",
         justifyContent: "center",
         width: "100%",
+        minWidth: 0,
+        overflow: "hidden",
         "@media (min-width: 768px)": {
-            justifyContent: "flex-start",
+            justifyContent: "flex-end",
             gap: tokens.spacingHorizontalM,
-            width: "auto",
         },
     },
     viewTabs: {
@@ -455,7 +469,7 @@ const Dashboard = () => {
                         <Title1 className={styles.brandTitle}>Discogenius</Title1>
                     </div>
                 </div>
-                <div className={styles.desktopOnly}>
+                <div className={styles.desktopActions}>
                     <Overflow minimumVisible={2}>
                         <div className={styles.headerActionRow}>
                             {actions.map((action) => (
@@ -615,7 +629,6 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
 
 
 

@@ -92,6 +92,14 @@ const App = () => {
                           }
                         />
                         <Route
+                          path="/library"
+                          element={
+                            <SuspendedPage pageName="Library">
+                              <Library />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
                           path="/artist/:artistId"
                           element={
                             <SuspendedPage pageName="Artist">

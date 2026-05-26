@@ -261,6 +261,51 @@ const LIBRARY_TABS = [
   { key: "videos", label: "Videos" },
 ] as const;
 
+const LIBRARY_SETTINGS_STORAGE_KEY = "discogenius_library_settings";
+const LIBRARY_SETTINGS_VERSION = 2;
+
+function isLegacyMonitoredOnlyDefault(statusFilters: unknown): statusFilters is StatusFilters {
+  if (!statusFilters || typeof statusFilters !== "object") {
+    return false;
+  }
+
+  const filters = statusFilters as StatusFilters;
+  return filters.onlyMonitored === true
+    && filters.onlyUnmonitored === false
+    && filters.onlyLocked === false
+    && filters.onlyUnlocked === false
+    && filters.onlyDownloaded === false
+    && filters.onlyNotDownloaded === false
+    && filters.onlyPrimary === false
+    && filters.onlyRedundant === false;
+}
+
+function loadPersistedLibrarySettings() {
+  try {
+    const saved = localStorage.getItem(LIBRARY_SETTINGS_STORAGE_KEY);
+    if (!saved) {
+      return null;
+    }
+
+    const parsed = JSON.parse(saved);
+    if (
+      parsed?.settingsVersion == null
+      && isLegacyMonitoredOnlyDefault(parsed?.statusFilters)
+    ) {
+      return {
+        ...parsed,
+        statusFilters: defaultStatusFilters,
+        settingsVersion: LIBRARY_SETTINGS_VERSION,
+      };
+    }
+
+    return parsed;
+  } catch (e) {
+    console.warn('Failed to load library settings from localStorage:', e);
+    return null;
+  }
+}
+
 const Library = () => {
   const styles = useStyles();
   const responsiveTabsStyles = useResponsiveTabsStyles();
@@ -269,20 +314,7 @@ const Library = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Load persisted settings from localStorage
-  const loadPersistedSettings = () => {
-    try {
-      const saved = localStorage.getItem('discogenius_library_settings');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.warn('Failed to load library settings from localStorage:', e);
-    }
-    return null;
-  };
-
-  const persistedSettings = loadPersistedSettings();
+  const persistedSettings = loadPersistedLibrarySettings();
   const [selectedTab, setSelectedTab] = useState<string>(
     persistedSettings?.selectedTab ?? "artists"
   );
@@ -338,10 +370,8 @@ const Library = () => {
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>(
     persistedSettings?.libraryFilter ?? 'all'
   );
-  // Default: show only monitored items for new users
-  const monitoredDefaultFilters: StatusFilters = { ...defaultStatusFilters, onlyMonitored: true };
   const [statusFilters, setStatusFilters] = useState<StatusFilters>(
-    persistedSettings?.statusFilters ?? monitoredDefaultFilters
+    persistedSettings?.statusFilters ?? defaultStatusFilters
   );
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
     persistedSettings?.viewMode ?? 'grid'
@@ -371,6 +401,7 @@ const Library = () => {
   // Persist settings to localStorage whenever they change
   useEffect(() => {
     const settings = {
+      settingsVersion: LIBRARY_SETTINGS_VERSION,
       selectedTab,
       libraryFilter,
       statusFilters,
@@ -379,7 +410,7 @@ const Library = () => {
       sortDirection,
     };
     try {
-      localStorage.setItem('discogenius_library_settings', JSON.stringify(settings));
+      localStorage.setItem(LIBRARY_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
       console.warn('Failed to save library settings to localStorage:', e);
     }

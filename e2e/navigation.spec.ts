@@ -103,6 +103,7 @@ test.describe('App shell & navigation', () => {
     const failures = watchRouteFailures(page);
     const routes: Array<{ path: string; text: string | RegExp }> = [
       { path: '/', text: /Artists|Albums|Tracks|Videos|Your library is empty/i },
+      { path: '/library', text: /Artists|Albums|Tracks|Videos|Your library is empty/i },
       { path: '/dashboard', text: 'Dashboard' },
       { path: '/settings', text: 'Settings' },
       { path: '/search', text: 'Search' },
