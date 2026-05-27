@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useLayoutEffect, useRef, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
 import {
   Button,
@@ -449,6 +449,17 @@ const AlbumPage = () => {
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
+
+  const { data: activity } = useQuery({
+    queryKey: ['artist-activity', album?.artist_id],
+    queryFn: ({ signal }) => album?.artist_id
+      ? api.getArtistActivity(album.artist_id, { signal, timeoutMs: 8_000 })
+      : null,
+    enabled: Boolean(album?.artist_id) && !loading && !error,
+    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    retry: 1,
+  }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
   const showTrackArtists = useMemo(
     () => tracks.some((track) => Boolean(track.artist_name) && track.artist_name !== album?.artist_name),
     [tracks, album?.artist_name],
@@ -670,14 +681,16 @@ const AlbumPage = () => {
   ];
 
   /** Open track info dialog */
-  if (loading) {
+  const showIngestSkeleton = Boolean(activity?.scanning) && tracks.length === 0;
+
+  if (loading || showIngestSkeleton) {
     return (
       <DetailPageSkeleton
         artShape="rounded"
         content="tracks"
         rows={8}
         className={styles.container}
-        label="Loading album details..."
+        label={showIngestSkeleton ? "Syncing album tracks from MusicBrainz..." : "Loading album details..."}
       />
     );
   }

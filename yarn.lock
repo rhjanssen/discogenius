@@ -1716,14 +1716,6 @@
   resolved "https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz"
   integrity sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==
 
-"@types/apicache@^1.6.8":
-  version "1.6.8"
-  resolved "https://registry.npmjs.org/@types/apicache/-/apicache-1.6.8.tgz"
-  integrity sha512-PDBHDA9p/YEYRLL2KN2kr2UXRAWvZq/WM+GBN94MwPQRZORUnoazd1A1plZXWDOvCvGTgcKriRIIECnRpHhC/g==
-  dependencies:
-    "@types/express" "*"
-    "@types/redis" "^2.8.0"
-
 "@types/better-sqlite3@^7.6.12":
   version "7.6.13"
   resolved "https://registry.npmjs.org/@types/better-sqlite3/-/better-sqlite3-7.6.13.tgz"
@@ -1848,13 +1840,6 @@
   dependencies:
     "@types/prop-types" "*"
     csstype "^3.2.2"
-
-"@types/redis@^2.8.0":
-  version "2.8.32"
-  resolved "https://registry.npmjs.org/@types/redis/-/redis-2.8.32.tgz"
-  integrity sha512-7jkMKxcGq9p242exlbsVzuJb57KqHRhNl4dHoQu2Y5v9bCAbtIXXH0R3HleSQW4CTOqpHIYUW3t6tpUj4BVQ+w==
-  dependencies:
-    "@types/node" "*"
 
 "@types/send@*":
   version "1.2.1"
@@ -2014,11 +1999,6 @@ ansi-styles@^4.0.0, ansi-styles@^4.1.0:
   integrity sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==
   dependencies:
     color-convert "^2.0.1"
-
-apicache@^1.6.3:
-  version "1.6.3"
-  resolved "https://registry.npmjs.org/apicache/-/apicache-1.6.3.tgz"
-  integrity sha512-jS3VfUFpQ9BesFQZcdd1vVYg3ZsO2kGPmTJHqycIYPAQs54r74CRiyj8DuzJpwzLwIfCBYzh4dy9Jt8xYbo27w==
 
 argparse@^2.0.1:
   version "2.0.1"

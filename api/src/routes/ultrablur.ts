@@ -1,10 +1,8 @@
-import apicache from "apicache";
 import express from "express";
 import * as jpeg from "jpeg-js";
 import * as pngjs from "pngjs";
 
 const router = express.Router();
-const cache = apicache.middleware;
 
 type UltraBlurColors = {
   topLeft: string;
@@ -687,7 +685,7 @@ async function extractUltraBlurColorsFromUrl(imageUrl: string): Promise<UltraBlu
  * Plex-style endpoint: returns 4 representative colors extracted from the image.
  * Query: ?url=<http(s)://...>
  */
-router.get("/colors", cache("6 hours"), async (req, res) => {
+router.get("/colors", async (req, res) => {
   const url = req.query.url as string | undefined;
   if (!url) {
     res.status(400).json({ detail: "Missing url param" });
@@ -695,7 +693,11 @@ router.get("/colors", cache("6 hours"), async (req, res) => {
   }
 
   try {
-    const safeUrl = ensureHttpUrl(url);
+    let resolvedUrl = url;
+    if (url.startsWith("/")) {
+      resolvedUrl = `${req.protocol}://${req.get("host")}${url}`;
+    }
+    const safeUrl = ensureHttpUrl(resolvedUrl);
     const colors = await extractUltraBlurColorsFromUrl(safeUrl.toString());
     res.json(colors);
   } catch (error: any) {

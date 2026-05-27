@@ -16,20 +16,19 @@ export interface UltraBlurColors {
  * @param _isDarkMode - Whether the active Fluent theme is dark
  * @returns UltraBlurColors based on the brand seed colors
  */
-export function getThemeDefaultColors(_isDarkMode: boolean): UltraBlurColors {
-  // Same colors for both themes - the overlay layer handles light/dark adaptation.
-  if (_isDarkMode) {
+export function getThemeDefaultColors(isDarkMode: boolean): UltraBlurColors {
+  if (isDarkMode) {
     return {
-      topLeft: "#20125f",
-      topRight: "#071f3d",
-      bottomLeft: "#1238e8",
-      bottomRight: "#8f243d",
+      topLeft: "#0a0c10",
+      topRight: "#12141a",
+      bottomLeft: "#08090c",
+      bottomRight: "#15181e",
     };
   }
   return {
-    topLeft: "#d9ccff",
-    topRight: "#b8f0ff",
-    bottomLeft: "#6f8dff",
-    bottomRight: "#ffc0a0",
+    topLeft: "#e0e3e8",
+    topRight: "#ebedf0",
+    bottomLeft: "#d8dce2",
+    bottomRight: "#f4f5f7",
   };
 }

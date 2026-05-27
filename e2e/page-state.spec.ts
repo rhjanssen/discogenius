@@ -89,6 +89,36 @@ async function stubShellApis(page: Page) {
       body: JSON.stringify({ running: false, checking: false, config: {} }),
     });
   });
+
+  await page.route('**/api/providers', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        providers: [
+          {
+            id: 'tidal',
+            name: 'TIDAL',
+            isDefault: true,
+            authenticated: true,
+            remoteCatalogAvailable: true,
+            capabilities: { followedArtists: true },
+            management: {},
+          },
+          {
+            id: 'spotify',
+            name: 'Spotify',
+            isDefault: false,
+            authenticated: true,
+            remoteCatalogAvailable: true,
+            capabilities: { followedArtists: true },
+            management: {},
+          },
+        ],
+        defaultProviderId: 'tidal',
+      }),
+    });
+  });
 }
 
 test.describe('Content state surfaces', () => {

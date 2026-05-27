@@ -19,7 +19,7 @@ const Library = lazy(() => import("@/pages/Library"));
 const ArtistPage = lazy(() => import("@/pages/ArtistPage"));
 const AlbumPage = lazy(() => import("@/pages/AlbumPage"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
-const AddArtistPage = lazy(() => import("@/pages/AddArtistPage"));
+
 const SearchPage = lazy(() => import("@/pages/SearchPage"));
 const VideoPage = lazy(() => import("@/pages/VideoPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
@@ -124,14 +124,7 @@ const App = () => {
                             </SuspendedPage>
                           }
                         />
-                        <Route
-                          path="/add/artist"
-                          element={
-                            <SuspendedPage pageName="Add Artist">
-                              <AddArtistPage />
-                            </SuspendedPage>
-                          }
-                        />
+
                         <Route
                           path="/search"
                           element={

@@ -1233,7 +1233,9 @@ const ArtistPage = () => {
     ))
   )), [modules]);
 
-  if (pageLoading) {
+  const showIngestSkeleton = Boolean(activity?.scanning) && (modules.length === 0 || !pageData?.artist?.last_scanned);
+
+  if (pageLoading || showIngestSkeleton) {
     return (
       <DetailPageSkeleton
         artShape="circle"
@@ -1241,7 +1243,7 @@ const ArtistPage = () => {
         cards={6}
         className={styles.container}
         cardsClassName={styles.grid}
-        label="Loading artist details..."
+        label={showIngestSkeleton ? "Syncing artist details from MusicBrainz..." : "Loading artist details..."}
       />
     );
   }

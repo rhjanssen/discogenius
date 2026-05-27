@@ -142,6 +142,24 @@ export class SkyHookProxy {
     return this.searchForNewArtist(query, limit);
   }
 
+  async searchAll(query: string, limit = 40): Promise<any[]> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return [];
+    }
+    try {
+      const results = await this.fetchJson<any[]>(
+        `/search?type=all&query=${encodeURIComponent(trimmed)}`
+      );
+      if (Array.isArray(results)) {
+        return results.slice(0, limit);
+      }
+    } catch (e) {
+      console.error("Skyhook searchAll failed:", e);
+    }
+    return [];
+  }
+
   async getAlbumInfo(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
     return this.fetchJson<LidarrReleaseGroupDetail>(`/album/${encodeURIComponent(releaseGroupMbid)}`);
   }

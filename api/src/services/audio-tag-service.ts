@@ -1152,6 +1152,37 @@ export class AudioTagService {
     const trackCount = this.getTrackCountForDisc(row.album_id, discNumber);
     const releaseDate = normalizeReleaseDate(row.media_release_date || row.album_release_date);
 
+    // Resolve the MusicBrainz release track ID from the canonical Tracks table
+    let releaseTrackMbid: string | null = null;
+    if (row.album_mbid && row.media_mbid) {
+      const trackRow = db.prepare(`
+        SELECT mbid FROM Tracks
+        WHERE release_mbid = ?
+          AND recording_mbid = ?
+          AND medium_position = COALESCE(?, 1)
+          AND position = COALESCE(?, 1)
+        LIMIT 1
+      `).get(
+        row.album_mbid,
+        row.media_mbid,
+        row.media_volume_number,
+        row.media_track_number
+      ) as { mbid: string } | undefined;
+
+      if (trackRow) {
+        releaseTrackMbid = trackRow.mbid;
+      } else {
+        const fallbackRow = db.prepare(`
+          SELECT mbid FROM Tracks
+          WHERE release_mbid = ? AND recording_mbid = ?
+          LIMIT 1
+        `).get(row.album_mbid, row.media_mbid) as { mbid: string } | undefined;
+        if (fallbackRow) {
+          releaseTrackMbid = fallbackRow.mbid;
+        }
+      }
+    }
+
     const tags: ManagedTag[] = [];
 
     if (resolveTagPolicy(config) !== "no") {
@@ -1343,6 +1374,26 @@ export class AudioTagService {
           ffmpegKey: "musicbrainz_releasegroupid",
           targetValue: String(row.album_mb_release_group_id),
           aliases: ["musicbrainz_releasegroupid", "musicbrainzreleasegroupid", "musicbrainz release group id"],
+        });
+      }
+
+      if (releaseTrackMbid) {
+        tags.push({
+          key: "musicbrainz_releasetrackid",
+          label: "MusicBrainz Release Track ID",
+          ffmpegKey: "MUSICBRAINZ_RELEASETRACKID",
+          targetValue: String(releaseTrackMbid),
+          aliases: [
+            "musicbrainz_releasetrackid",
+            "musicbrainzreleasetrackid",
+            "musicbrainz release track id",
+            "MusicBrainz Release Track Id",
+          ],
+          writeAliases: [
+            "musicbrainz_releasetrackid",
+            "musicbrainzreleasetrackid",
+            "MusicBrainz Release Track Id",
+          ],
         });
       }
 

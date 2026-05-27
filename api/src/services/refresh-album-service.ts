@@ -32,7 +32,9 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
         tidal_id: providerAlbum.providerId,
         artist_id: providerAlbum.artist?.providerId || null,
         artist_name: providerAlbum.artist?.name || "Unknown Artist",
-        artists: providerAlbum.artist ? [{ id: providerAlbum.artist.providerId, name: providerAlbum.artist.name }] : [],
+        artists: Array.isArray(providerAlbum.artists)
+            ? providerAlbum.artists.map(a => ({ id: a.providerId, name: a.name }))
+            : (providerAlbum.artist ? [{ id: providerAlbum.artist.providerId, name: providerAlbum.artist.name }] : []),
         title: providerAlbum.title,
         release_date: providerAlbum.releaseDate || null,
         cover: providerAlbum.cover || null,
@@ -70,7 +72,9 @@ function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
         copyright: null,
         artist_id: providerTrack.artist?.providerId || null,
         artist_name: providerTrack.artist?.name || "Unknown Artist",
-        artists: providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : [],
+        artists: Array.isArray(providerTrack.artists)
+            ? providerTrack.artists.map(a => ({ id: a.providerId, name: a.name }))
+            : (providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : []),
         url: providerTrack.url,
         popularity: 0,
         release_date: null,
@@ -494,6 +498,52 @@ export class RefreshAlbumService {
             return;
         }
 
+        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        const providerId = provider.id;
+
+        // Collect all guest artists
+        const guestArtistsMap = new Map<string, { id: string, name: string }>();
+        for (const track of tracks) {
+            const trackArtistId = track.artist_id || album.artist_id;
+            if (Array.isArray(track.artists)) {
+                for (const a of track.artists) {
+                    if (a.id && a.id !== trackArtistId) {
+                        guestArtistsMap.set(a.id, a);
+                    }
+                }
+            }
+        }
+
+        // Asynchronously resolve guest artists before transaction
+        const resolvedGuestsMap = new Map<string, string>();
+        const { RefreshArtistService } = await import("./refresh-artist-service.js");
+
+        await Promise.all(
+            Array.from(guestArtistsMap.values()).map(async (guest) => {
+                try {
+                    const artistIdentity: ProviderArtistIdentityInput = {
+                        providerId: guest.id,
+                        name: guest.name,
+                        raw: {
+                            id: guest.id,
+                            name: guest.name,
+                        },
+                    };
+                    const resolution = await ProviderArtistIdentityService.resolve(providerId, artistIdentity);
+                    if (resolution.mbid) {
+                        // Check if they exist in Artists
+                        const artistExists = db.prepare("SELECT id FROM Artists WHERE mbid = ? LIMIT 1").get(resolution.mbid);
+                        if (!artistExists) {
+                            await RefreshArtistService.scanBasic(resolution.mbid, { monitorArtist: false });
+                        }
+                        resolvedGuestsMap.set(guest.id, resolution.mbid);
+                    }
+                } catch (e) {
+                    console.warn(`[RefreshAlbumService] Failed to resolve guest artist ${guest.name} (${guest.id}):`, e);
+                }
+            })
+        );
+
         const trackInsert = db.prepare(`
             INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date, type, explicit, quality,
@@ -583,7 +633,7 @@ export class RefreshAlbumService {
                             );
                         }
 
-                        this.storeTrackArtists(currentTrack, currentTrackArtistId);
+                        this.storeTrackArtists(currentTrack, currentTrackArtistId, resolvedGuestsMap);
                     }
                 })();
                 trackBatch.length = 0;
@@ -866,7 +916,7 @@ export class RefreshAlbumService {
         return [];
     }
 
-    private static storeTrackArtists(track: any, canonicalArtistId: string): void {
+    private static storeTrackArtists(track: any, canonicalArtistId: string, resolvedGuestsMap?: Map<string, string>): void {
         const mediaId = track?.tidal_id?.toString?.() ?? String(track?.tidal_id ?? "");
         if (!mediaId) return;
 
@@ -877,6 +927,17 @@ export class RefreshAlbumService {
         `);
 
         insertMediaArtist.run(mediaId, canonicalArtistId, "MAIN");
+
+        if (resolvedGuestsMap && Array.isArray(track.artists)) {
+            for (const a of track.artists) {
+                if (a.id && a.id !== track.artist_id) {
+                    const guestMbid = resolvedGuestsMap.get(a.id);
+                    if (guestMbid) {
+                        insertMediaArtist.run(mediaId, guestMbid, "CONTRIBUTOR");
+                    }
+                }
+            }
+        }
     }
 
     private static getMusicBrainzPrimary(tidalType: string | undefined, module: string | undefined, title: string = ""): string {

@@ -520,7 +520,20 @@ test.describe('Library page tabs & filtering', () => {
     });
 
     await page.addInitScript(() => {
-      localStorage.removeItem('discogenius_library_settings');
+      localStorage.setItem('discogenius_library_settings', JSON.stringify({
+        settingsVersion: 2,
+        selectedTab: 'artists',
+        statusFilters: {
+          onlyMonitored: true,
+          onlyUnmonitored: false,
+          onlyLocked: false,
+          onlyUnlocked: false,
+          onlyDownloaded: false,
+          onlyNotDownloaded: false,
+          onlyPrimary: false,
+          onlyRedundant: false,
+        }
+      }));
     });
 
     await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });

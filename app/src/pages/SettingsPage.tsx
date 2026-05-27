@@ -1361,7 +1361,7 @@ const SettingsPage = () => {
         noDivider = false,
     }: {
         title: string;
-        description: React.ReactNode;
+        description?: React.ReactNode;
         checked: boolean;
         onChange: (checked: boolean) => void;
         noDivider?: boolean;
@@ -1372,30 +1372,32 @@ const SettingsPage = () => {
                 onChange={(_, data) => onChange(Boolean(data.checked))}
                 label={<>
                     <Text weight="semibold">{title}</Text>
-                    <Text size={200} className={styles.mutedTextBlock}>
-                        {description}
-                    </Text>
+                    {description && (
+                        <Text size={200} className={styles.mutedTextBlock}>
+                            {description}
+                        </Text>
+                    )}
                 </>}
             />
         </div>
     );
 
     const primaryReleaseTypeRows = [
-        { key: "include_album", title: "Albums", description: "MusicBrainz primary type: Album" },
-        { key: "include_ep", title: "EPs", description: "MusicBrainz primary type: EP" },
-        { key: "include_single", title: "Singles", description: "MusicBrainz primary type: Single" },
-        { key: "include_broadcast", title: "Broadcasts", description: "MusicBrainz primary type: Broadcast" },
-        { key: "include_other", title: "Other primary types", description: "MusicBrainz primary type: Other or unknown" },
+        { key: "include_album", title: "Albums" },
+        { key: "include_ep", title: "EPs" },
+        { key: "include_single", title: "Singles" },
+        { key: "include_broadcast", title: "Broadcasts" },
+        { key: "include_other", title: "Other primary types" },
     ] as const;
 
     const secondaryReleaseTypeRows = [
-        { key: "include_compilation", title: "Compilations", description: "MusicBrainz secondary type: Compilation" },
-        { key: "include_soundtrack", title: "Soundtracks", description: "MusicBrainz secondary type: Soundtrack" },
-        { key: "include_live", title: "Live", description: "MusicBrainz secondary type: Live" },
-        { key: "include_remix", title: "Remix", description: "MusicBrainz secondary type: Remix" },
-        { key: "include_dj_mix", title: "DJ-mix", description: "MusicBrainz secondary type: DJ-mix" },
-        { key: "include_mixtape_street", title: "Mixtape/Street", description: "MusicBrainz secondary type: Mixtape/Street" },
-        { key: "include_demo", title: "Demo", description: "MusicBrainz secondary type: Demo" },
+        { key: "include_compilation", title: "Compilations" },
+        { key: "include_soundtrack", title: "Soundtracks" },
+        { key: "include_live", title: "Live" },
+        { key: "include_remix", title: "Remix" },
+        { key: "include_dj_mix", title: "DJ-mix" },
+        { key: "include_mixtape_street", title: "Mixtape/Street" },
+        { key: "include_demo", title: "Demo" },
     ] as const;
 
     const getProviderCapabilities = (provider: StreamingProviderStatus) => [
@@ -1647,24 +1649,20 @@ const SettingsPage = () => {
                 >
                     <div className={styles.card}>
                         <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">MusicBrainz primary types</Text>
-                            <Text size={200} className={styles.mutedText}>Release-group primary categories.</Text>
+                            <Text weight="semibold">Primary release types</Text>
                         </div>
                         {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
                             title: row.title,
-                            description: row.description,
                             checked: curationConfig?.[row.key] !== false,
                             onChange: (checked) => updateCuration({ [row.key]: checked }),
                             noDivider: true,
                         }))}
                         <Divider className={styles.divider} />
                         <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">MusicBrainz secondary types</Text>
-                            <Text size={200} className={styles.mutedText}>Additional release-group tags applied by MusicBrainz.</Text>
+                            <Text weight="semibold">Secondary release types</Text>
                         </div>
                         {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
                             title: row.title,
-                            description: row.description,
                             checked: curationConfig?.[row.key] === true,
                             onChange: (checked) => updateCuration({ [row.key]: checked }),
                             noDivider: true,

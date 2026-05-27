@@ -15,7 +15,7 @@ export interface StatusFilters {
 
 // Default: no active filters = show everything except hidden
 export const defaultStatusFilters: StatusFilters = {
-  onlyMonitored: false,
+  onlyMonitored: true,
   onlyUnmonitored: false,
   onlyLocked: false,
   onlyUnlocked: false,

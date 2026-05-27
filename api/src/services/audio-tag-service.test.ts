@@ -30,3 +30,33 @@ test("audio tag writer expands Lidarr-compatible total aliases", () => {
     totaldiscs: "3",
   });
 });
+
+test("audio tag writer maps musicbrainz_releasetrackid and writeAliases correctly", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_releasetrackid",
+      label: "MusicBrainz Release Track ID",
+      ffmpegKey: "MUSICBRAINZ_RELEASETRACKID",
+      targetValue: "d9b23b3f-1d42-4f7f-a5b6-6e54580bfb9f",
+      aliases: [
+        "musicbrainz_releasetrackid",
+        "musicbrainzreleasetrackid",
+        "musicbrainz release track id",
+        "MusicBrainz Release Track Id",
+      ],
+      writeAliases: [
+        "musicbrainz_releasetrackid",
+        "musicbrainzreleasetrackid",
+        "MusicBrainz Release Track Id",
+      ],
+    },
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags), {
+    MUSICBRAINZ_RELEASETRACKID: "d9b23b3f-1d42-4f7f-a5b6-6e54580bfb9f",
+    musicbrainz_releasetrackid: "d9b23b3f-1d42-4f7f-a5b6-6e54580bfb9f",
+    musicbrainzreleasetrackid: "d9b23b3f-1d42-4f7f-a5b6-6e54580bfb9f",
+    "MusicBrainz Release Track Id": "d9b23b3f-1d42-4f7f-a5b6-6e54580bfb9f",
+  });
+});
+

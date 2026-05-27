@@ -6,7 +6,6 @@ import {
   Button,
   Spinner,
   Text,
-  Title2,
   Title3,
   Body1,
   makeStyles,

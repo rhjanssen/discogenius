@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Badge, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { tidalBadgeColor } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
@@ -16,7 +16,7 @@ interface QualityBadgeProps {
 const useStyles = makeStyles({
     base: {
         fontWeight: tokens.fontWeightBold,
-        border: "none",
+        ...shorthands.border("none"),
         "::after": {
             display: "none",
         },
@@ -48,35 +48,35 @@ const useStyles = makeStyles({
     small: {
         height: "16px",
         fontSize: tokens.fontSizeBase100,
-        padding: `0 ${tokens.spacingHorizontalXS}`,
+        ...shorthands.padding(0, tokens.spacingHorizontalXS),
     },
     medium: {
         height: "20px",
         fontSize: tokens.fontSizeBase100,
-        padding: `0 ${tokens.spacingHorizontalSNudge}`,
+        ...shorthands.padding(0, tokens.spacingHorizontalSNudge),
     },
     large: {
         height: "24px",
         fontSize: tokens.fontSizeBase200,
-        padding: `0 ${tokens.spacingHorizontalS}`,
+        ...shorthands.padding(0, tokens.spacingHorizontalS),
     },
     atmosBadge: {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        borderStyle: "solid",
-        borderWidth: tokens.strokeWidthThin,
+        ...shorthands.borderStyle("solid"),
+        ...shorthands.borderWidth(tokens.strokeWidthThin),
         lineHeight: 0,
         textTransform: "none",
     },
     atmosBadgeDark: {
         backgroundColor: "#ffffff",
-        borderColor: "rgba(255, 255, 255, 0.82)",
+        ...shorthands.borderColor("rgba(255, 255, 255, 0.82)"),
         color: "#020202",
     },
     atmosBadgeLight: {
         backgroundColor: "#111111",
-        borderColor: "rgba(0, 0, 0, 0.72)",
+        ...shorthands.borderColor("rgba(0, 0, 0, 0.72)"),
         color: "#ffffff",
     },
     atmosLogo: {

@@ -967,7 +967,7 @@ const Library = () => {
       <Button
         appearance="primary"
         icon={<Add24Regular />}
-        onClick={() => navigate("/add/artist")}
+        onClick={() => navigate("/search")}
       >
         Add Artist
       </Button>

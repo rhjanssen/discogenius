@@ -1,7 +1,6 @@
 import {
   expectBoolean,
   expectNumber,
-  expectOneOf,
   expectOptionalBoolean,
   expectOptionalString,
   expectRecord,

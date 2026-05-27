@@ -166,6 +166,7 @@ export interface ProviderAlbum {
   providerId: string;
   title: string;
   artist: ProviderArtist;
+  artists?: ProviderArtist[];
   cover?: string | null;
   releaseDate?: string | null;
   trackCount?: number | null;
@@ -185,6 +186,7 @@ export interface ProviderTrack {
   providerId: string;
   title: string;
   artist: ProviderArtist;
+  artists?: ProviderArtist[];
   album: ProviderAlbum;
   duration: number;
   trackNumber: number;

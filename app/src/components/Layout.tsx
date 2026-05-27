@@ -372,7 +372,7 @@ const Layout = () => {
   const { colors, isDarkMode: ultraBlurIsDarkMode } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
-  const { status, isConnected, canAccessShell, remoteCatalogAvailable } = useProviderConnection();
+  const { status, canAccessShell, remoteCatalogAvailable } = useProviderConnection();
   const isAuthRoute = location.pathname === "/auth";
   const showNavSearch = !isAuthRoute && location.pathname !== "/search";
 

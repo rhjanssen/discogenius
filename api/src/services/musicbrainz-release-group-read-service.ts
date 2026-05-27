@@ -694,7 +694,26 @@ export class MusicBrainzReleaseGroupReadService {
     }
 
     private static async loadReleaseGroup(releaseGroupMbid: string): Promise<any | null> {
-        const releaseGroup = queryReleaseGroup(releaseGroupMbid);
+        let releaseGroup = queryReleaseGroup(releaseGroupMbid);
+        if (!releaseGroup) {
+            try {
+                const detail = await skyHookProxy.getAlbumInfo(releaseGroupMbid);
+                if (detail) {
+                    const artistMbid = (detail as any).artistid || (detail as any).artistId || (detail as any).ArtistId || (detail as any).Artist?.Id || (detail as any).Artist?.id || (detail as any).artists?.[0]?.id || (detail as any).artists?.[0]?.Id;
+                    if (artistMbid) {
+                        const artistExists = db.prepare("SELECT 1 FROM Artists WHERE mbid = ? LIMIT 1").get(artistMbid);
+                        if (!artistExists) {
+                            await skyHookProxy.syncArtist(artistMbid);
+                        }
+                        await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
+                        releaseGroup = queryReleaseGroup(releaseGroupMbid);
+                    }
+                }
+            } catch (error) {
+                console.warn(`[MusicBrainzReleaseGroupReadService] Failed to load remote MusicBrainz release group ${releaseGroupMbid}:`, error);
+            }
+        }
+
         if (!releaseGroup) {
             return null;
         }
