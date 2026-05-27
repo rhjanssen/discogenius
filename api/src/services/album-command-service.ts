@@ -109,11 +109,25 @@ export class AlbumCommandService {
 
     /** Set release-group slot wanted state. Provider albums are selected offers, not catalog identity. */
     static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
-        if (this.setReleaseGroupWanted(albumId, monitored)) {
+        let targetMbid = albumId;
+        const providerAlbum = db.prepare("SELECT mb_release_group_id FROM ProviderAlbums WHERE id = ?").get(albumId) as { mb_release_group_id?: string | null } | undefined;
+        if (providerAlbum?.mb_release_group_id) {
+            targetMbid = providerAlbum.mb_release_group_id;
+        }
+
+        if (this.setReleaseGroupWanted(targetMbid, monitored)) {
             return { success: true, albumId, monitored };
         }
 
-        return { success: false, albumId, monitored, message: 'Release group not found', status: 404 };
+        const localProviderAlbum = db.prepare("SELECT id FROM ProviderAlbums WHERE id = ?").get(albumId);
+        if (localProviderAlbum) {
+            const wantedInt = monitored ? 1 : 0;
+            db.prepare("UPDATE ProviderAlbums SET monitor = ? WHERE id = ?").run(wantedInt, albumId);
+            db.prepare("UPDATE ProviderMedia SET monitor = ? WHERE album_id = ? AND type != 'Music Video'").run(wantedInt, albumId);
+            return { success: true, albumId, monitored };
+        }
+
+        return { success: false, albumId, monitored, message: 'Album or Release group not found', status: 404 };
     }
 
     /** Monitor + lock a single track, optionally queue download */

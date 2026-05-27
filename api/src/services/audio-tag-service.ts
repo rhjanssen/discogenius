@@ -835,7 +835,7 @@ export class AudioTagService {
     const rows = db.prepare(`
       SELECT DISTINCT artist.name
       FROM ProviderMediaArtists ma
-      JOIN Artists artist ON artist.id = ma.artist_id
+      JOIN ArtistMetadata artist ON artist.mbid = ma.artist_id
       WHERE ma.media_id = ?
       ORDER BY CASE ma.type WHEN 'MAIN' THEN 0 WHEN 'ARTIST' THEN 0 WHEN 'FEATURED' THEN 1 ELSE 2 END, artist.name
     `).all(mediaId) as Array<{ name?: string }>;
@@ -852,7 +852,7 @@ export class AudioTagService {
     const rows = db.prepare(`
       SELECT DISTINCT artist.name
       FROM ProviderAlbumArtists aa
-      JOIN Artists artist ON artist.id = aa.artist_id
+      JOIN ArtistMetadata artist ON artist.mbid = aa.artist_id
       WHERE aa.album_id = ?
       ORDER BY COALESCE(aa.ord, 9999), artist.name
     `).all(albumId) as Array<{ name?: string }>;

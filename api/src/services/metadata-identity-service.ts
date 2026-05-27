@@ -522,6 +522,20 @@ export class MetadataIdentityService {
             });
             recordIdentityStatus(result);
             updateAlbumIdentityColumns(albumId, result, { id: album.mbid, releaseGroupId: album.mb_release_group_id });
+
+            const releaseGroupId = album.mb_release_group_id;
+            if (releaseGroupId) {
+                const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(releaseGroupId);
+                if (!rgExists) {
+                    try {
+                        const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
+                        await MusicBrainzReleaseGroupReadService.getAlbum(releaseGroupId);
+                    } catch (err) {
+                        console.warn(`[MetadataIdentity] Failed to auto-sync release group ${releaseGroupId} for provider album ${albumId}:`, err);
+                    }
+                }
+            }
+
             if (options.includeTracks) {
                 await this.resolveAlbumTracks(albumId, { force: false });
             }
@@ -573,6 +587,19 @@ export class MetadataIdentityService {
             });
             recordIdentityStatus(result);
             updateAlbumIdentityColumns(albumId, result, best.release);
+
+            const releaseGroupId = best.release.releaseGroupId;
+            if (releaseGroupId) {
+                const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(releaseGroupId);
+                if (!rgExists) {
+                    try {
+                        const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
+                        await MusicBrainzReleaseGroupReadService.getAlbum(releaseGroupId);
+                    } catch (err) {
+                        console.warn(`[MetadataIdentity] Failed to auto-sync release group ${releaseGroupId} for provider album ${albumId}:`, err);
+                    }
+                }
+            }
 
             if (options.includeTracks) {
                 await this.resolveAlbumTracks(albumId, { force: false, releaseId: best.release.id });

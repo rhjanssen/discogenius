@@ -73,7 +73,7 @@ function seedLibrary() {
     dbModule.db.prepare(`
         INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run("10", "1", "Artist One", 0, "main", "ALBUMS", "ALBUM");
+    `).run("10", "artist-mbid-1", "Artist One", 0, "main", "ALBUMS", "ALBUM");
 
     dbModule.db.prepare(`
         INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)

@@ -1081,6 +1081,108 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       normalizeLegacyMetadataSourceLabels();
     },
   },
+  {
+    version: 18,
+    description: "redirect guest and similar artists foreign keys to ArtistMetadata",
+    up: () => {
+      addColumnIfMissing("ArtistMetadata", "picture", "TEXT");
+      addColumnIfMissing("ArtistMetadata", "cover_image_url", "TEXT");
+      addColumnIfMissing("ArtistMetadata", "popularity", "INT");
+
+      db.exec(`
+        INSERT OR IGNORE INTO ArtistMetadata (mbid, name, picture, cover_image_url, popularity)
+        SELECT mbid, name, picture, cover_image_url, popularity FROM Artists WHERE mbid IS NOT NULL AND mbid != '';
+      `);
+
+      db.pragma("foreign_keys = OFF");
+      try {
+        db.exec("BEGIN TRANSACTION");
+
+        if (tableExists("ProviderMediaArtists")) {
+          db.exec(`
+            ALTER TABLE ProviderMediaArtists RENAME TO ProviderMediaArtists_old;
+
+            CREATE TABLE ProviderMediaArtists (
+              media_id TEXT NOT NULL,
+              artist_id TEXT NOT NULL,
+              type TEXT NOT NULL,
+              PRIMARY KEY (media_id, artist_id),
+              FOREIGN KEY (media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
+              FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
+            );
+
+            INSERT OR IGNORE INTO ProviderMediaArtists (media_id, artist_id, type)
+            SELECT media_id, artist_id, type FROM ProviderMediaArtists_old
+            WHERE artist_id IN (SELECT mbid FROM ArtistMetadata);
+
+            DROP TABLE ProviderMediaArtists_old;
+          `);
+        }
+
+        if (tableExists("ProviderAlbumArtists")) {
+          db.exec(`
+            ALTER TABLE ProviderAlbumArtists RENAME TO ProviderAlbumArtists_old;
+
+            CREATE TABLE ProviderAlbumArtists (
+              album_id TEXT NOT NULL,
+              artist_id TEXT NOT NULL,
+              artist_name TEXT,
+              ord INT,
+              type TEXT NOT NULL,
+              group_type TEXT,
+              version_group_id INT,
+              version_group_name TEXT,
+              module TEXT,
+              PRIMARY KEY (artist_id, album_id),
+              FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+              FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
+            );
+
+            INSERT OR IGNORE INTO ProviderAlbumArtists (
+              album_id, artist_id, artist_name, ord, type, group_type,
+              version_group_id, version_group_name, module
+            )
+            SELECT
+              album_id, artist_id, artist_name, ord, type, group_type,
+              version_group_id, version_group_name, module
+            FROM ProviderAlbumArtists_old
+            WHERE artist_id IN (SELECT mbid FROM ArtistMetadata);
+
+            DROP TABLE ProviderAlbumArtists_old;
+          `);
+        }
+
+        if (tableExists("ProviderSimilarArtists")) {
+          db.exec(`
+            ALTER TABLE ProviderSimilarArtists RENAME TO ProviderSimilarArtists_old;
+
+            CREATE TABLE ProviderSimilarArtists (
+              artist_id TEXT NOT NULL,
+              similar_artist_id TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (artist_id, similar_artist_id),
+              FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+              FOREIGN KEY (similar_artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
+            );
+
+            INSERT OR IGNORE INTO ProviderSimilarArtists (artist_id, similar_artist_id, created_at)
+            SELECT CAST(artist_id AS TEXT), CAST(similar_artist_id AS TEXT), created_at FROM ProviderSimilarArtists_old
+            WHERE CAST(artist_id AS TEXT) IN (SELECT mbid FROM ArtistMetadata)
+              AND CAST(similar_artist_id AS TEXT) IN (SELECT mbid FROM ArtistMetadata);
+
+            DROP TABLE ProviderSimilarArtists_old;
+          `);
+        }
+
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      } finally {
+        db.pragma("foreign_keys = ON");
+      }
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -1438,6 +1540,9 @@ function ensureMusicBrainzProviderSchema(): void {
       country TEXT,
       begin_date TEXT,
       end_date TEXT,
+      picture TEXT,
+      cover_image_url TEXT,
+      popularity INT,
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -2054,7 +2159,7 @@ export function initDatabase() {
       version_group_name TEXT,           -- Group name for related album versions ("Album Name")
       module TEXT,                       -- derived from release type and page module ALBUM, EP, SINGLE, COMPILATIONS, LIVE, REMIX, APPEARS_ON
       PRIMARY KEY (artist_id, album_id),
-      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
       FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
@@ -2067,7 +2172,7 @@ export function initDatabase() {
       type TEXT NOT NULL,                -- contribution type
       PRIMARY KEY (media_id, artist_id),
       FOREIGN KEY (media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
-      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE
+      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     )
   `);
 
@@ -2078,12 +2183,12 @@ export function initDatabase() {
   // Similar artists relationship (junction table)
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProviderSimilarArtists (
-      artist_id INT NOT NULL,              -- Source artist
-      similar_artist_id INT NOT NULL,      -- Similar artist
+      artist_id TEXT NOT NULL,              -- Source artist
+      similar_artist_id TEXT NOT NULL,      -- Similar artist
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (artist_id, similar_artist_id),
-      FOREIGN KEY (artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
-      FOREIGN KEY (similar_artist_id) REFERENCES Artists(id) ON DELETE CASCADE
+      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+      FOREIGN KEY (similar_artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     )
   `);
 

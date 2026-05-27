@@ -359,13 +359,15 @@ export class ArtistQueryService {
     }
 
     static getArtistAlbums(artistId: string): any[] {
+        const artist = loadArtistWithEffectiveMonitor(artistId);
+        const queryId = artist?.mbid || artistId;
         const albums = db.prepare(`
       SELECT a.*, aa.type as relationship_type, aa.group_type as group_type
       FROM ProviderAlbums a
       JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
       WHERE aa.artist_id = ?
       ORDER BY a.release_date DESC
-    `).all(artistId) as any[];
+    `).all(queryId) as any[];
         const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
 
         return albums.map((album) => ({
@@ -534,8 +536,6 @@ export class ArtistQueryService {
         }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
-        const albums: any[] = [];
-
         const videos = db.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
@@ -572,24 +572,46 @@ export class ArtistQueryService {
           ON spatial.release_group_mbid = rg.mbid
          AND spatial.slot = 'spatial'
         WHERE rg.artist_mbid = ?
+           OR rg.mbid IN (
+             SELECT DISTINCT mb_release_group_id
+             FROM ProviderAlbums
+             WHERE (artist_id = ? OR id IN (SELECT album_id FROM ProviderAlbumArtists WHERE artist_id = ?))
+               AND mb_release_group_id IS NOT NULL
+           )
         ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-      `).all(artist.mbid) as any[]
+      `).all(artist.mbid, artist.mbid || artistId, artist.mbid || artistId) as any[]
             : [];
+
+        const allProviderAlbums = db.prepare(`
+            SELECT DISTINCT
+                pa.*,
+                paa.type AS relationship_type,
+                paa.group_type AS group_type,
+                paa.module AS aa_module
+            FROM ProviderAlbums pa
+            JOIN ProviderAlbumArtists paa ON pa.id = paa.album_id
+            WHERE paa.artist_id = ?
+        `).all(artist.mbid || artistId) as any[];
+
+        const mbReleaseGroupMbids = new Set(musicBrainzReleaseGroups.map(rg => String(rg.mbid)));
+        const albums = allProviderAlbums.filter(pa => 
+            !pa.mb_release_group_id || !mbReleaseGroupMbids.has(String(pa.mb_release_group_id))
+        );
 
         let similarArtists: any[] = [];
         try {
             const similarRows = db.prepare(`
         SELECT
-          a.id,
+          a.mbid as id,
           a.name,
           a.picture,
           COALESCE(a.popularity, 0) as popularity
         FROM ProviderSimilarArtists sa
-        JOIN Artists a ON sa.similar_artist_id = a.id
+        JOIN ArtistMetadata a ON sa.similar_artist_id = a.mbid
         WHERE sa.artist_id = ?
-        ORDER BY COALESCE(a.popularity, 0) DESC, sa.created_at ASC, a.id ASC
+        ORDER BY COALESCE(a.popularity, 0) DESC, sa.created_at ASC, a.mbid ASC
         LIMIT 10
-      `).all(artistId) as any[];
+      `).all(artist.mbid || artistId) as any[];
 
             similarArtists = similarRows.map((row) => ({
                 id: row.id,
@@ -614,7 +636,7 @@ export class ArtistQueryService {
         t.quality,
         t.monitor,
         t.monitor_lock,
-        t.popularity,
+        MAX(COALESCE(t.popularity, 0)) as popularity,
         a.title as album_title,
         a.cover as album_cover,
         a.id as album_id,
@@ -622,13 +644,14 @@ export class ArtistQueryService {
       FROM ProviderMedia t
       JOIN ProviderAlbums a ON t.album_id = a.id
       JOIN ProviderMediaArtists ma ON t.id = ma.media_id
-      LEFT JOIN Artists ta ON ta.id = t.artist_id
+      LEFT JOIN ArtistMetadata ta ON ta.mbid = ma.artist_id
       WHERE t.album_id IS NOT NULL
         AND t.type <> 'Music Video'
         AND ma.artist_id = ?
         AND ma.type = 'MAIN'
-      ORDER BY COALESCE(t.popularity, 0) DESC, t.id ASC
-    `).all(artistId) as any[];
+      GROUP BY COALESCE(t.mbid, t.id)
+      ORDER BY popularity DESC, t.id ASC
+    `).all(artist.mbid || artistId) as any[];
 
         const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
         const videoDownloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
@@ -684,38 +707,7 @@ export class ArtistQueryService {
             OTHER: "ARTIST_OTHER_RELEASES",
         };
 
-        transformedAlbums.filter(a => !a.redundant_of).forEach((album) => {
-            const moduleValue = album.aa_module?.toUpperCase();
-            if (moduleValue && moduleToBucket[moduleValue]) {
-                modules[moduleToBucket[moduleValue]].push(album);
-                return;
-            }
-
-            const groupType = album.group_type?.toUpperCase();
-            const albumType = (album.type || "ALBUM").toUpperCase();
-
-            if (groupType === "COMPILATIONS") {
-                modules.ARTIST_APPEARS_ON.push(album);
-                return;
-            }
-
-            if (groupType === "EPSANDSINGLES") {
-                if (albumType === "EP") {
-                    modules.ARTIST_EPS.push(album);
-                } else {
-                    modules.ARTIST_SINGLES.push(album);
-                }
-                return;
-            }
-
-            if (albumType === "EP") {
-                modules.ARTIST_EPS.push(album);
-            } else if (albumType === "SINGLE") {
-                modules.ARTIST_SINGLES.push(album);
-            } else {
-                modules.ARTIST_ALBUMS.push(album);
-            }
-        });
+        // Exclude raw provider albums from modules to restrict discography entirely to MusicBrainz release groups.
 
         const releaseGroupCards = musicBrainzReleaseGroups.map((row) => {
             const bucketKey = releaseGroupBucket(row);
@@ -916,11 +908,8 @@ export class ArtistQueryService {
             },
             rows,
             needs_scan: !artist.last_scanned || needsEnrichment,
-            album_count: transformedAlbums.length + releaseGroupCards.length,
-            monitored_album_count: [
-                ...transformedAlbums,
-                ...releaseGroupCards,
-            ].filter((album) => album.is_monitored).length,
+            album_count: releaseGroupCards.length,
+            monitored_album_count: releaseGroupCards.filter((album) => album.is_monitored).length,
         };
     }
 }

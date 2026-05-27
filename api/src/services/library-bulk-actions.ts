@@ -299,7 +299,7 @@ function queueAlbumDownloads(albumIds: string[]): number[] {
         const albumArtists = db.prepare(`
             SELECT a.name
             FROM ProviderAlbumArtists aa
-            JOIN Artists a ON a.id = aa.artist_id
+            JOIN ArtistMetadata a ON a.mbid = aa.artist_id
             WHERE aa.album_id = ?
         `).all(albumId) as Array<{ name?: string | null }>;
         const artistNames = albumArtists.map((row) => String(row.name || "").trim()).filter(Boolean);

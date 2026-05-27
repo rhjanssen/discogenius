@@ -160,6 +160,21 @@ export class RefreshArtistService {
               AND artist_mbid = ?
             ORDER BY updated_at DESC
         `).all(artistMbid) as Array<{ provider: string; provider_id: string; data?: string | null }>;
+
+        let maxPopularity = 0;
+        for (const row of providerArtworkRows) {
+            if (row.data) {
+                try {
+                    const parsed = JSON.parse(row.data);
+                    if (typeof parsed.popularity === "number" && parsed.popularity > maxPopularity) {
+                        maxPopularity = parsed.popularity;
+                    }
+                } catch {
+                    // Ignore JSON parsing errors
+                }
+            }
+        }
+
         const providerCandidates: ProviderArtworkCandidate[] = providerArtworkRows.map((row) => ({
             provider: row.provider,
             entityId: row.provider_id,
@@ -199,7 +214,7 @@ export class RefreshArtistService {
                 artistName,
                 posterUrl,
                 fanartUrl,
-                0,
+                maxPopularity,
                 JSON.stringify([artistData.type || "Artist"]),
                 JSON.stringify([]),
                 artistMbid,
@@ -215,7 +230,7 @@ export class RefreshArtistService {
                     name = ?,
                     picture = COALESCE(?, picture),
                     cover_image_url = COALESCE(?, cover_image_url),
-                    popularity = COALESCE(popularity, 0),
+                    popularity = ?,
                     artist_types = ?,
                     artist_roles = COALESCE(artist_roles, ?),
                     mbid = ?,
@@ -233,6 +248,7 @@ export class RefreshArtistService {
                 artistName,
                 posterUrl,
                 fanartUrl,
+                maxPopularity,
                 JSON.stringify([artistData.type || "Artist"]),
                 JSON.stringify([]),
                 artistMbid,
@@ -246,6 +262,14 @@ export class RefreshArtistService {
                 localArtistId,
             );
         }
+
+        db.prepare(`
+            UPDATE ArtistMetadata SET
+                picture = COALESCE(?, picture),
+                cover_image_url = COALESCE(?, cover_image_url),
+                popularity = ?
+            WHERE mbid = ?
+        `).run(posterUrl, fanartUrl, maxPopularity, artistMbid);
 
         return localArtistId;
     }
@@ -381,14 +405,22 @@ export class RefreshArtistService {
             providerArtistArtworkSnapshot(artist),
         );
 
-        if (artist.picture) {
-            db.prepare(`
-                UPDATE Artists
-                SET picture = COALESCE(picture, ?),
-                    cover_image_url = COALESCE(cover_image_url, ?)
-                WHERE mbid = ?
-            `).run(artist.picture, artist.picture, artistMbid);
-        }
+        const updatePopularity = artist.popularity ?? 0;
+        db.prepare(`
+            UPDATE Artists
+            SET picture = COALESCE(?, picture),
+                cover_image_url = COALESCE(?, cover_image_url),
+                popularity = MAX(COALESCE(popularity, 0), ?)
+            WHERE mbid = ?
+        `).run(artist.picture || null, artist.picture || null, updatePopularity, artistMbid);
+
+        db.prepare(`
+            UPDATE ArtistMetadata
+            SET picture = COALESCE(?, picture),
+                cover_image_url = COALESCE(?, cover_image_url),
+                popularity = MAX(COALESCE(popularity, 0), ?)
+            WHERE mbid = ?
+        `).run(artist.picture || null, artist.picture || null, updatePopularity, artistMbid);
     }
 
     private static async resolveProviderArtistId(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string | null> {
@@ -477,7 +509,7 @@ export class RefreshArtistService {
             const provider = streamingProviderManager.getDefaultStreamingProvider();
             const artistMbid = this.getArtistMusicBrainzId(artistId);
             const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
-            if (!providerArtistId) {
+            if (!providerArtistId || !artistMbid) {
                 return [];
             }
 
@@ -488,11 +520,11 @@ export class RefreshArtistService {
 
             const deleteRelations = db.prepare("DELETE FROM ProviderSimilarArtists WHERE artist_id = ?");
             const insertRelation = db.prepare(`
-                INSERT OR IGNORE INTO similar_artists (artist_id, similar_artist_id)
+                INSERT OR IGNORE INTO ProviderSimilarArtists (artist_id, similar_artist_id)
                 VALUES (?, ?)
             `);
 
-            deleteRelations.run(artistId);
+            deleteRelations.run(artistMbid);
             for (const similarArtist of similarArtists || []) {
                 const providerIdentity = normalizeProviderArtist(similarArtist);
                 if (!providerIdentity.providerId || providerIdentity.providerId === providerArtistId) {
@@ -505,16 +537,20 @@ export class RefreshArtistService {
                     continue;
                 }
 
-                const similarArtistId = await this.upsertMusicBrainzArtist(musicBrainzIdentity.mbid, {
-                    monitorArtist: false,
-                    includeSimilarArtists: false,
-                    seedSimilarArtists: false,
-                    forceUpdate,
-                });
-                ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, similarArtistId);
-                if (similarArtistId && similarArtistId !== String(artistId)) {
-                    ids.add(similarArtistId);
-                    insertRelation.run(artistId, similarArtistId);
+                // Check if they exist in ArtistMetadata
+                const similarArtistExists = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(musicBrainzIdentity.mbid);
+                if (!similarArtistExists) {
+                    const pictureUrl = similarArtist.picture || null;
+                    db.prepare(`
+                        INSERT OR IGNORE INTO ArtistMetadata (mbid, name, picture, updated_at)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    `).run(musicBrainzIdentity.mbid, providerIdentity.name, pictureUrl);
+                }
+
+                ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, musicBrainzIdentity.mbid);
+                if (musicBrainzIdentity.mbid && musicBrainzIdentity.mbid !== artistMbid) {
+                    ids.add(musicBrainzIdentity.mbid);
+                    insertRelation.run(artistMbid, musicBrainzIdentity.mbid);
                 }
             }
 
@@ -608,9 +644,10 @@ export class RefreshArtistService {
 
             const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
             if (includeSimilar) {
+                const queryId = existing?.mbid || artistId;
                 const hasSimilar = db.prepare(
                     "SELECT 1 FROM ProviderSimilarArtists WHERE artist_id = ? LIMIT 1",
-                ).get(artistId) as any;
+                ).get(queryId) as any;
                 const shouldFetchSimilar = options.seedSimilarArtists === true || !hasSimilar;
 
                 if (shouldFetchSimilar) {

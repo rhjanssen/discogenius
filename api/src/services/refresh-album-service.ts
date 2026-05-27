@@ -531,10 +531,14 @@ export class RefreshAlbumService {
                     };
                     const resolution = await ProviderArtistIdentityService.resolve(providerId, artistIdentity);
                     if (resolution.mbid) {
-                        // Check if they exist in Artists
-                        const artistExists = db.prepare("SELECT id FROM Artists WHERE mbid = ? LIMIT 1").get(resolution.mbid);
+                        // Check if they exist in ArtistMetadata
+                        const artistExists = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(resolution.mbid);
                         if (!artistExists) {
-                            await RefreshArtistService.scanBasic(resolution.mbid, { monitorArtist: false });
+                            const pictureUrl = (guest as any).picture || (guest as any).pictureUrl || null;
+                            db.prepare(`
+                                INSERT OR IGNORE INTO ArtistMetadata (mbid, name, picture, updated_at)
+                                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                            `).run(resolution.mbid, guest.name, pictureUrl);
                         }
                         resolvedGuestsMap.set(guest.id, resolution.mbid);
                     }
