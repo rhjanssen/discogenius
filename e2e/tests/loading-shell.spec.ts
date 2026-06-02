@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { stubShellApis } from './utils/mockShell';
+import { stubShellApis } from '../utils/mockShell';
 
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 

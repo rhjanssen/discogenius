@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { baseURL, stubShellApis } from './utils/mockShell';
+import { baseURL, stubShellApis } from '../utils/mockShell';
 
 const artistId = 'playback-artist-1';
 const artistName = 'Playback Artist';

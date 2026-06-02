@@ -159,10 +159,6 @@ export class SkyHookProxy {
     return this.fetchJson<LidarrArtist>(`/artist/${encodeURIComponent(mbid)}`);
   }
 
-  // Alias for backward compatibility
-  async getArtist(mbid: string): Promise<LidarrArtist> {
-    return this.getArtistInfo(mbid);
-  }
 
   async searchForNewArtist(query: string, limit = 20): Promise<LidarrArtist[]> {
     const trimmed = query.trim();
@@ -180,10 +176,6 @@ export class SkyHookProxy {
       .slice(0, limit);
   }
 
-  // Alias for backward compatibility
-  async searchArtists(query: string, limit = 20): Promise<LidarrArtist[]> {
-    return this.searchForNewArtist(query, limit);
-  }
 
   async searchAll(query: string, limit = 40): Promise<any[]> {
     const trimmed = query.trim();
@@ -216,10 +208,6 @@ export class SkyHookProxy {
     return this.fetchJson<LidarrReleaseGroupDetail>(`/album/${encodeURIComponent(releaseGroupMbid)}`);
   }
 
-  // Alias for backward compatibility
-  async getAlbum(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
-    return this.getAlbumInfo(releaseGroupMbid);
-  }
 
   getArtistImageUrl(artist: LidarrArtist, preferredCoverType = "Poster"): string | null {
     return MediaCoverService.getArtistImageUrl(artist, preferredCoverType);

@@ -491,8 +491,9 @@ export class TidalProvider implements StreamingProvider {
     let currentAlbumCompletedTracks = 0;
 
     const downloadSingleAlbum = (currentAlbumId: string): Promise<void> => {
-      return new Promise(async (resolveSingle, rejectSingle) => {
-        const currentTidalUrl = buildStreamingMediaUrl(entityType, currentAlbumId);
+      return new Promise((resolveSingle, rejectSingle) => {
+        (async () => {
+          const currentTidalUrl = buildStreamingMediaUrl(entityType, currentAlbumId);
         let settled = false;
         let hardTimeout: NodeJS.Timeout | undefined;
         let idleTimeout: NodeJS.Timeout | undefined;
@@ -921,8 +922,9 @@ export class TidalProvider implements StreamingProvider {
         } catch (error: any) {
           finish(error);
         }
-      });
-    };
+      })().catch(rejectSingle);
+    });
+  };
 
     for (const albumId of albumIds) {
       await downloadSingleAlbum(albumId);

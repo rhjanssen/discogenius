@@ -1433,7 +1433,9 @@ export class OrganizerService {
         const placeholders = albumIds.map(() => '?').join(', ');
         try {
           expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || expectedTracks);
-        } catch {}
+        } catch (error) {
+          console.warn("[Organizer] Failed to query expected track count from DB, falling back to metadata count:", error);
+        }
       }
 
       return {

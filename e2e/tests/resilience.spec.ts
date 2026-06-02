@@ -4,7 +4,7 @@ import {
   baseURL,
   createSearchResponse,
   stubShellApis,
-} from './utils/mockShell';
+} from '../utils/mockShell';
 
 test.describe('Restart resilience', () => {
   test('app recovers from temporary API unavailability', async ({ page }) => {

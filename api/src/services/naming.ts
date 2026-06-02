@@ -49,7 +49,7 @@ export type NamingContext = {
 
 const TitlePrefixRegex = /^(The|An|A)\s+(.*?)((?: *\([^)]+\))*)$/i;
 const ScenifyReplaceChars = /\//g;
-const ScenifyRemoveChars = /(?<=\s)([,<>\/\\;:'"|`~!@$%^*_=\-?])(?=\s)|([':?,])(?=(?:[sm]\s)|\s|$)|([()\[\]{}])/gi;
+const ScenifyRemoveChars = /(?<=\s)([,<>/\\;:'"|`~!@$%^*_=\-?])(?=\s)|([':?,])(?=(?:[sm]\s)|\s|$)|([()[\]{}])/gi;
 const FileNameCleanupRegex = /([- ._])\1+/g;
 const TrimSeparatorsRegex = /[- ._]+$/;
 
@@ -568,7 +568,7 @@ function renderTokens(template: string, context: NamingContext): string {
   });
 
   // 3. Align with Lidarr's TitleRegex and ReplaceToken behavior (allowing colons in customFormat)
-  const TitleRegex = /(\{\{|\}\})|\{([- ._\[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
+  const TitleRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
 
   const rendered = processedTemplate.replace(TitleRegex, (
     match: string,

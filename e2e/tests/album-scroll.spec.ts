@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { baseURL, createSearchResponse, stubShellApis } from './utils/mockShell';
+import { baseURL, createSearchResponse, stubShellApis } from '../utils/mockShell';
 
 const artistId = 'artist-scroll';
 const artistName = 'Scroll Artist';

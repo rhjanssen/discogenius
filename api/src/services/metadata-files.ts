@@ -217,7 +217,9 @@ async function getVideoForNfo(videoId: string) {
                 try {
                     const credits = JSON.parse(row.credits || "[]");
                     if (Array.isArray(credits) && credits.length > 0) return credits;
-                } catch {}
+                } catch {
+                    // Ignore JSON parsing errors and fall back to single artist
+                }
                 return artistId && artistName ? [{ id: artistId, name: artistName }] : [];
             })(),
             album_id: row.album_id ? String(row.album_id) : null,

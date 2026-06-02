@@ -5,7 +5,7 @@ import {
   createSearchResponse,
   stubArtistPage,
   stubShellApis,
-} from './utils/mockShell';
+} from '../utils/mockShell';
 
 const artistId = '777';
 const artistName = 'Deterministic Artist';

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { baseURL, stubShellApis } from './utils/mockShell';
+import { baseURL, stubShellApis } from '../utils/mockShell';
 
 type DashboardStubOptions = {
   stats?: Record<string, unknown>;

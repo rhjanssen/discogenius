@@ -594,7 +594,7 @@ export class LibraryFilesService {
       const mediaRow = db.prepare("SELECT type, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as VideoMediaLookupRow | undefined;
       if (mediaRow && mediaRow.type === "Music Video") {
         const recordingMbid = mediaRow.mbid || null;
-        let audioTrack = recordingMbid
+        const audioTrack = recordingMbid
           ? db.prepare(`
             SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
             FROM TrackFiles

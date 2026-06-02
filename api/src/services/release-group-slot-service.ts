@@ -329,7 +329,7 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        let targetTrackList: TargetTrack[] = [];
+        const targetTrackList: TargetTrack[] = [];
         if (preferredReleaseRow) {
             const targetTracks = db.prepare(`
                 SELECT t.recording_mbid, r.isrcs, t.title, t.position, t.medium_position, t.length_ms

@@ -182,45 +182,11 @@ function tableHasRows(tableName: string): boolean {
   return row?.present === 1;
 }
 
-const LEGACY_LIBRARY_FILE_INDEXES = [
-  "idx_library_files_artist_album_media",
-  "idx_library_files_artist_id",
-  "idx_library_files_album_id",
-  "idx_library_files_media_id",
-  "idx_library_files_file_type",
-  "idx_library_files_library_root",
-  "idx_library_files_needs_rename",
-  "idx_library_files_quality",
-  "idx_library_files_path",
-  "idx_library_files_fingerprint",
-  "idx_library_files_acoustid_id",
-  "idx_library_files_media_id_file_type",
-  "idx_library_files_canonical_artist",
-  "idx_library_files_canonical_release_group",
-  "idx_library_files_canonical_release",
-  "idx_library_files_canonical_track",
-  "idx_library_files_canonical_recording",
-  "idx_library_files_provider_resource",
-  "idx_library_files_slot_type",
-  "idx_library_files_media_identity",
-  "idx_library_files_media_sidecar_identity",
-  "idx_library_files_album_sidecar_identity",
-  "idx_library_files_artist_sidecar_identity",
-];
+const LEGACY_LIBRARY_FILE_INDEXES: string[] = [];
 
-function dropLegacyLibraryFileIndexes(): void {
-  for (const indexName of LEGACY_LIBRARY_FILE_INDEXES) {
-    db.exec(`DROP INDEX IF EXISTS ${indexName}`);
-  }
-}
+function dropLegacyLibraryFileIndexes(): void {}
 
-function ensureTrackFilesTableName(): void {
-  if (tableExists("LibraryFiles") && !tableExists("TrackFiles")) {
-    db.exec("ALTER TABLE LibraryFiles RENAME TO TrackFiles");
-  }
-
-  dropLegacyLibraryFileIndexes();
-}
+function ensureTrackFilesTableName(): void {}
 
 function withForeignKeysDisabled(action: () => void): void {
   db.pragma("foreign_keys = OFF");
@@ -231,364 +197,27 @@ function withForeignKeysDisabled(action: () => void): void {
   }
 }
 
-function copyCommonColumns(sourceTable: string, targetTable: string, whereClause = ""): void {
-  if (!exactTableExists(sourceTable) || !exactTableExists(targetTable)) {
-    return;
-  }
+function copyCommonColumns(sourceTable: string, targetTable: string, whereClause = ""): void {}
 
-  const targetColumns = new Set(getTableColumns(targetTable));
-  const commonColumns = getTableColumns(sourceTable).filter((column) => targetColumns.has(column));
-  if (commonColumns.length === 0) {
-    return;
-  }
+function mergeAndDropLegacyTable(sourceTable: string, targetTable: string, whereClause = ""): void {}
 
-  const columnSql = commonColumns.map(quoteIdentifier).join(", ");
-  db.exec(`
-    INSERT OR IGNORE INTO ${quoteIdentifier(targetTable)} (${columnSql})
-    SELECT ${columnSql}
-    FROM ${quoteIdentifier(sourceTable)}
-    ${whereClause}
-  `);
-}
+function normalizeTableNameCase(tableName: string): void {}
 
-function mergeAndDropLegacyTable(sourceTable: string, targetTable: string, whereClause = ""): void {
-  if (!exactTableExists(sourceTable)) {
-    return;
-  }
+function rebuildUpgradeQueueWithProviderReferences(): void {}
 
-  if (exactTableExists(targetTable)) {
-    copyCommonColumns(sourceTable, targetTable, whereClause);
-    db.exec(`DROP TABLE ${quoteIdentifier(sourceTable)}`);
-    return;
-  }
+function rebuildPlaylistTracksWithProviderReferences(): void {}
 
-  db.exec(`ALTER TABLE ${quoteIdentifier(sourceTable)} RENAME TO ${quoteIdentifier(targetTable)}`);
-}
+function ensureProviderCompatibilityTablesUseCurrentNames(): void {}
 
-function normalizeTableNameCase(tableName: string): void {
-  const actualTableName = findTableNameCaseInsensitive(tableName);
-  if (!actualTableName || actualTableName === tableName) {
-    return;
-  }
-
-  const temporaryName = `__discogenius_rename_${tableName}`;
-  if (exactTableExists(temporaryName)) {
-    db.exec(`DROP TABLE ${quoteIdentifier(temporaryName)}`);
-  }
-
-  db.exec(`ALTER TABLE ${quoteIdentifier(actualTableName)} RENAME TO ${quoteIdentifier(temporaryName)}`);
-  db.exec(`ALTER TABLE ${quoteIdentifier(temporaryName)} RENAME TO ${quoteIdentifier(tableName)}`);
-}
-
-function rebuildUpgradeQueueWithProviderReferences(): void {
-  if (!exactTableExists("upgrade_queue")) {
-    return;
-  }
-
-  const foreignKeys = db.prepare("PRAGMA foreign_key_list(upgrade_queue)").all() as Array<{ table: string }>;
-  const hasCurrentReferences = foreignKeys.some((foreignKey) => foreignKey.table === "ProviderMedia")
-    && foreignKeys.some((foreignKey) => foreignKey.table === "ProviderAlbums");
-  if (hasCurrentReferences) {
-    return;
-  }
-
-  db.exec(`
-    ALTER TABLE upgrade_queue RENAME TO upgrade_queue_legacy;
-
-    CREATE TABLE upgrade_queue (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      media_id INT NOT NULL,
-      album_id INT,
-      current_quality TEXT NOT NULL,
-      target_quality TEXT NOT NULL,
-      reason TEXT,
-      status TEXT DEFAULT 'pending',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      processed_at DATETIME,
-      UNIQUE(media_id),
-      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
-    );
-
-    INSERT OR IGNORE INTO upgrade_queue (
-      id, media_id, album_id, current_quality, target_quality,
-      reason, status, created_at, processed_at
-    )
-    SELECT
-      id, media_id, NULLIF(album_id, 0), current_quality, target_quality,
-      reason, status, created_at, processed_at
-    FROM upgrade_queue_legacy
-    WHERE EXISTS (
-      SELECT 1 FROM ProviderMedia
-      WHERE CAST(ProviderMedia.id AS TEXT) = CAST(upgrade_queue_legacy.media_id AS TEXT)
-    )
-      AND (
-        album_id IS NULL
-        OR album_id = 0
-        OR EXISTS (
-          SELECT 1 FROM ProviderAlbums
-          WHERE CAST(ProviderAlbums.id AS TEXT) = CAST(upgrade_queue_legacy.album_id AS TEXT)
-        )
-      );
-
-    DROP TABLE upgrade_queue_legacy;
-  `);
-}
-
-function rebuildPlaylistTracksWithProviderReferences(): void {
-  if (!exactTableExists("playlist_tracks") || !exactTableExists("playlists")) {
-    return;
-  }
-
-  const foreignKeys = db.prepare("PRAGMA foreign_key_list(playlist_tracks)").all() as Array<{ table: string }>;
-  if (foreignKeys.some((foreignKey) => foreignKey.table === "ProviderMedia")) {
-    return;
-  }
-
-  db.exec(`
-    ALTER TABLE playlist_tracks RENAME TO playlist_tracks_legacy;
-
-    CREATE TABLE playlist_tracks (
-      playlist_uuid TEXT NOT NULL,
-      track_id INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      PRIMARY KEY (playlist_uuid, position),
-      FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-      FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
-    );
-
-    INSERT OR IGNORE INTO playlist_tracks (playlist_uuid, track_id, position)
-    SELECT playlist_uuid, track_id, position
-    FROM playlist_tracks_legacy
-    WHERE EXISTS (
-      SELECT 1 FROM playlists
-      WHERE playlists.uuid = playlist_tracks_legacy.playlist_uuid
-    )
-      AND EXISTS (
-        SELECT 1 FROM ProviderMedia
-        WHERE CAST(ProviderMedia.id AS TEXT) = CAST(playlist_tracks_legacy.track_id AS TEXT)
-      );
-
-    DROP TABLE playlist_tracks_legacy;
-  `);
-}
-
-function ensureProviderCompatibilityTablesUseCurrentNames(): void {
-  withForeignKeysDisabled(() => {
-    normalizeTableNameCase("Artists");
-    mergeAndDropLegacyTable("albums", "ProviderAlbums");
-    mergeAndDropLegacyTable("media", "ProviderMedia");
-    mergeAndDropLegacyTable("album_artists", "ProviderAlbumArtists");
-    mergeAndDropLegacyTable("media_artists", "ProviderMediaArtists");
-    mergeAndDropLegacyTable("similar_albums", "ProviderSimilarAlbums");
-    mergeAndDropLegacyTable("similar_artists", "ProviderSimilarArtists");
-    mergeAndDropLegacyTable("library_files", "TrackFiles");
-    rebuildUpgradeQueueWithProviderReferences();
-  });
-}
-
-function ensureProviderIdentityTablesUseCurrentNames(): void {
-  withForeignKeysDisabled(() => {
-    mergeAndDropLegacyTable("provider_items", "ProviderItems");
-    mergeAndDropLegacyTable("release_group_slots", "ReleaseGroupSlots");
-  });
-}
+function ensureProviderIdentityTablesUseCurrentNames(): void {}
 
 function hasCanonicalAlbumsShape(): boolean {
-  const tableName = findTableNameCaseInsensitive("Albums");
-  return tableName
-    ? hasColumns(tableName, ["mbid", "artist_mbid", "title", "primary_type", "first_release_date"])
-    : false;
+  return false;
 }
 
-function ensureCanonicalMusicBrainzTableShapes(): void {
-  const existingAlbumsTable = findTableNameCaseInsensitive("Albums");
-  if (existingAlbumsTable && !hasCanonicalAlbumsShape()) {
-    withForeignKeysDisabled(() => {
-      if (!tableExists("ProviderAlbums")) {
-        db.exec(`ALTER TABLE ${quoteIdentifier(existingAlbumsTable)} RENAME TO ProviderAlbums`);
-      } else {
-        copyCommonColumns(existingAlbumsTable, "ProviderAlbums");
-        db.exec(`DROP TABLE ${quoteIdentifier(existingAlbumsTable)}`);
-      }
-    });
-  }
-}
+function ensureCanonicalMusicBrainzTableShapes(): void {}
 
-function backfillCanonicalMusicBrainzTablesFromLegacy(): void {
-  if (tableExists("mb_artists") && hasColumns("mb_artists", ["mbid", "name"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO ArtistMetadata (
-        mbid, name, sort_name, disambiguation, type, country, begin_date, end_date, data, updated_at
-      )
-      SELECT
-        mbid,
-        COALESCE(NULLIF(name, ''), mbid),
-        sort_name,
-        disambiguation,
-        type,
-        country,
-        begin_date,
-        end_date,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_artists
-      WHERE mbid IS NOT NULL AND mbid != ''
-    `);
-  }
-
-  if (tableExists("mb_release_groups") && hasColumns("mb_release_groups", ["mbid", "artist_mbid", "title"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO ArtistMetadata (mbid, name, updated_at)
-      SELECT DISTINCT artist_mbid, artist_mbid, CURRENT_TIMESTAMP
-      FROM mb_release_groups
-      WHERE artist_mbid IS NOT NULL AND artist_mbid != ''
-    `);
-
-    db.exec(`
-      INSERT OR IGNORE INTO Albums (
-        mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at
-      )
-      SELECT
-        mbid,
-        artist_mbid,
-        COALESCE(NULLIF(title, ''), mbid),
-        primary_type,
-        secondary_types,
-        first_release_date,
-        disambiguation,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_release_groups
-      WHERE mbid IS NOT NULL
-        AND mbid != ''
-        AND artist_mbid IS NOT NULL
-        AND artist_mbid != ''
-    `);
-  }
-
-  if (tableExists("mb_releases") && hasColumns("mb_releases", ["mbid", "release_group_mbid", "artist_mbid", "title"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO ArtistMetadata (mbid, name, updated_at)
-      SELECT DISTINCT artist_mbid, artist_mbid, CURRENT_TIMESTAMP
-      FROM mb_releases
-      WHERE artist_mbid IS NOT NULL AND artist_mbid != ''
-    `);
-
-    db.exec(`
-      INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, updated_at)
-      SELECT DISTINCT
-        release_group_mbid,
-        artist_mbid,
-        COALESCE(NULLIF(title, ''), release_group_mbid),
-        CURRENT_TIMESTAMP
-      FROM mb_releases
-      WHERE release_group_mbid IS NOT NULL
-        AND release_group_mbid != ''
-        AND artist_mbid IS NOT NULL
-        AND artist_mbid != ''
-    `);
-
-    db.exec(`
-      INSERT OR IGNORE INTO AlbumReleases (
-        mbid, release_group_mbid, artist_mbid, title, status, country, date,
-        barcode, disambiguation, media_count, track_count, data, updated_at
-      )
-      SELECT
-        mbid,
-        release_group_mbid,
-        artist_mbid,
-        COALESCE(NULLIF(title, ''), mbid),
-        status,
-        country,
-        date,
-        barcode,
-        disambiguation,
-        media_count,
-        track_count,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_releases
-      WHERE mbid IS NOT NULL
-        AND mbid != ''
-        AND release_group_mbid IS NOT NULL
-        AND release_group_mbid != ''
-        AND artist_mbid IS NOT NULL
-        AND artist_mbid != ''
-    `);
-  }
-
-  if (tableExists("mb_mediums") && hasColumns("mb_mediums", ["release_mbid", "position"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO AlbumReleaseMedia (
-        id, release_mbid, position, format, title, track_count, data, updated_at
-      )
-      SELECT
-        id,
-        release_mbid,
-        position,
-        format,
-        title,
-        track_count,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_mediums
-      WHERE EXISTS (
-        SELECT 1 FROM AlbumReleases
-        WHERE AlbumReleases.mbid = mb_mediums.release_mbid
-      )
-    `);
-  }
-
-  if (tableExists("mb_recordings") && hasColumns("mb_recordings", ["mbid", "title"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO Recordings (
-        mbid, title, artist_credit, length_ms, isrcs, data, updated_at
-      )
-      SELECT
-        mbid,
-        COALESCE(NULLIF(title, ''), mbid),
-        artist_credit,
-        length_ms,
-        isrcs,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_recordings
-      WHERE mbid IS NOT NULL AND mbid != ''
-    `);
-  }
-
-  if (tableExists("mb_tracks") && hasColumns("mb_tracks", ["mbid", "release_mbid", "recording_mbid"])) {
-    db.exec(`
-      INSERT OR IGNORE INTO Tracks (
-        mbid, release_mbid, recording_mbid, medium_position, position, number,
-        title, length_ms, data, updated_at
-      )
-      SELECT
-        mbid,
-        release_mbid,
-        recording_mbid,
-        medium_position,
-        position,
-        number,
-        COALESCE(NULLIF(title, ''), mbid),
-        length_ms,
-        data,
-        COALESCE(updated_at, CURRENT_TIMESTAMP)
-      FROM mb_tracks
-      WHERE mbid IS NOT NULL
-        AND mbid != ''
-        AND EXISTS (
-          SELECT 1 FROM AlbumReleases
-          WHERE AlbumReleases.mbid = mb_tracks.release_mbid
-        )
-        AND EXISTS (
-          SELECT 1 FROM Recordings
-          WHERE Recordings.mbid = mb_tracks.recording_mbid
-        )
-    `);
-  }
-}
+function backfillCanonicalMusicBrainzTablesFromLegacy(): void {}
 
 function getConfigValue(key: string): string | undefined {
   if (!tableExists("config")) {
@@ -1772,9 +1401,6 @@ function ensureMusicBrainzProviderSchema(): void {
   `);
 
   ensureLidarrStyleCanonicalIdentityColumns();
-  backfillCanonicalMusicBrainzTablesFromLegacy();
-  ensureLidarrStyleCanonicalIdentityColumns();
-  ensureProviderIdentityTablesUseCurrentNames();
 
   addColumnIfMissing("ProviderItems", "library_slot", "TEXT NOT NULL DEFAULT 'stereo'");
   addColumnIfMissing("ProviderItems", "artist_metadata_id", "INTEGER");
@@ -2077,7 +1703,6 @@ export function initDatabase() {
       downloaded INT DEFAULT 0         -- number between 0 and 100 representing percentage of artist's monitored media downloaded
     )
   `);
-  withForeignKeysDisabled(() => normalizeTableNameCase("Artists"));
 
   // ====================================================================
   // ALBUMS TABLE
@@ -2268,7 +1893,6 @@ export function initDatabase() {
     )
   `);
 
-  ensureTrackFilesTableName();
 
   // ====================================================================
   // TRACKFILES TABLE (Local file tracking; Lidarr-aligned file inventory)
@@ -2339,7 +1963,6 @@ export function initDatabase() {
       FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE SET NULL
     )
   `);
-  ensureProviderCompatibilityTablesUseCurrentNames();
 
   db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_insert`);
   db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_delete`);
@@ -2383,7 +2006,6 @@ export function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  withForeignKeysDisabled(() => mergeAndDropLegacyTable("unmapped_files", "UnmappedFiles"));
 
   ensureUnmappedFilesAudioMetadataColumns();
 
@@ -2470,7 +2092,6 @@ export function initDatabase() {
       FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
     )
   `);
-  withForeignKeysDisabled(() => rebuildUpgradeQueueWithProviderReferences());
   // ====================================================================
   // CONFIG TABLE (Application settings)
   // ====================================================================
@@ -2550,7 +2171,6 @@ export function initDatabase() {
         FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
       )
     `);
-  withForeignKeysDisabled(() => rebuildPlaylistTracksWithProviderReferences());
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)`);
 

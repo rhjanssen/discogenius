@@ -85,7 +85,7 @@ export class CurationService {
     private static normalizeTrackTitle(title: string): string {
         return String(title || "")
             .toLowerCase()
-            .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?'"’…]/g, "")
+            .replace(/[.,/#!$%^&*;:{}=\-_`~()?'"’…]/g, "")
             .replace(/\s+/g, "")
             .trim();
     }

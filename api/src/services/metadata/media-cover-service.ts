@@ -325,7 +325,9 @@ export function chooseCachedAlbumArtwork(options: {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to query or parse cached album artwork:", error);
+    }
   }
 
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
@@ -363,7 +365,9 @@ export function chooseCachedArtistArtwork(options: {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to query or parse cached artist artwork:", error);
+    }
   }
 
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
@@ -448,7 +452,9 @@ export async function resolveAlbumArtwork(options: {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to resolve album artwork from database:", error);
+    }
   }
 
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
@@ -496,7 +502,9 @@ export async function resolveArtistArtwork(options: {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to resolve artist artwork from database:", error);
+    }
   }
 
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
