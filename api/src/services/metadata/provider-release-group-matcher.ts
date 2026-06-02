@@ -58,6 +58,7 @@ export type ProviderReleaseGroupMatch = {
         providerVolumeCount?: number | null;
         targetVolumeCount?: number | null;
         matchedReleaseMbid?: string | null;
+        availableReleaseMbids?: string[];
         ambiguousWith?: string[];
     };
 };
@@ -178,6 +179,14 @@ function scoreAlbumAgainstReleaseGroup(
     const volumeCountEvidence = nearestNumericMatch(album.volumeCount, releases.map((release) => release.mediaCount));
     const trackCountMatched = trackCountEvidence.matched;
     const volumeCountMatched = volumeCountEvidence.matched;
+    const availableReleases = matchedReleaseByUpc
+        ? [matchedReleaseByUpc]
+        : releases.filter((release) => {
+            const trackCount = Number(release.trackCount || 0);
+            const mediaCount = Number(release.mediaCount || 0);
+            return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
+                && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
+        });
     const releaseGroupTitleCandidates = titleCandidatesForReleaseGroup(releaseGroup);
     const titleScores = providerTitleCandidates(album)
         .flatMap((candidateTitle) => releaseGroupTitleCandidates.map((releaseGroupTitle) => ({
@@ -236,6 +245,7 @@ function scoreAlbumAgainstReleaseGroup(
         providerVolumeCount: album.volumeCount ?? null,
         targetVolumeCount: volumeCountEvidence.target,
         matchedReleaseMbid: matchedReleaseByUpc?.mbid ?? null,
+        availableReleaseMbids: availableReleases.map((release) => release.mbid),
     };
 }
 
@@ -309,6 +319,7 @@ export function matchProviderAlbumToReleaseGroup(
             providerVolumeCount: best.providerVolumeCount,
             targetVolumeCount: best.targetVolumeCount,
             matchedReleaseMbid: best.matchedReleaseMbid,
+            availableReleaseMbids: best.availableReleaseMbids,
             ambiguousWith: ambiguousWith.length > 0 ? ambiguousWith : undefined,
         },
     };

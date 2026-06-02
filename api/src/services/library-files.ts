@@ -9,6 +9,7 @@ import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
 import { resolveLibraryFileIdentity, type LibrarySlot } from "./library-file-identity.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "./extras/files/extra-file-service.js";
 import { LyricFileService } from "./extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "./extras/metadata/files/metadata-file-service.js";
@@ -256,6 +257,115 @@ function getAudioRoot(quality: string | null | undefined): "music" | "spatial" {
   return "music";
 }
 
+function normalizeInlineVideoTitle(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b(?:official|music|lyric|lyrics|visualizer|visualiser|video|hd|4k)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: string): string | null {
+  if (!videoTitle) return null;
+
+  const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
+  if (!artist) return null;
+  const artistMbId = artist.mbid ? String(artist.mbid) : String(artistId);
+
+  const tracks = db.prepare(`
+    SELECT t.title,
+           t.position,
+           t.number,
+           t.medium_position,
+           ar.mbid AS release_mbid,
+           ar.release_group_mbid,
+           a.title AS album_title,
+           a.primary_type,
+           a.first_release_date,
+           COALESCE(rgs.wanted, 0) AS wanted,
+           COALESCE(c.included, 0) AS included,
+           CASE WHEN rgs.selected_release_mbid = ar.mbid THEN 1 ELSE 0 END AS selected_release
+    FROM Tracks t
+    JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+    JOIN Albums a ON a.mbid = ar.release_group_mbid
+    LEFT JOIN ReleaseGroupSlots rgs
+      ON rgs.artist_mbid = ?
+     AND rgs.release_group_mbid = ar.release_group_mbid
+     AND rgs.slot = 'stereo'
+    LEFT JOIN ArtistReleaseGroupCuration c
+      ON c.source_artist_mbid = ?
+     AND c.release_group_mbid = ar.release_group_mbid
+    WHERE a.artist_mbid = ?
+    ORDER BY included DESC,
+             wanted DESC,
+             CASE a.primary_type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
+             selected_release DESC,
+             a.first_release_date ASC,
+             ar.mbid ASC,
+             t.position ASC
+  `).all(artistMbId, artistMbId, artistMbId) as Array<{
+    title?: string | null;
+    position?: number | null;
+    number?: string | null;
+    medium_position?: number | null;
+    album_title?: string | null;
+    primary_type?: string | null;
+    first_release_date?: string | null;
+    release_group_mbid?: string | null;
+  }>;
+  const track = tracks.find((candidate) => normalizeInlineVideoTitle(candidate.title) === videoTitle);
+  if (!track?.album_title) return null;
+
+  const naming = getNamingConfig();
+  const artistName = String(artist.name || "Unknown Artist");
+  const artistFolder = resolveArtistFolderFromRecord({
+    name: artistName,
+    mbid: artistMbId,
+    path: artist.path || null,
+  });
+  const renderedTrackPath = renderRelativePath(naming.album_track_path_single, {
+    artistName,
+    artistId: String(artistId),
+    artistMbId,
+    albumTitle: track.album_title,
+    albumMbId: track.release_group_mbid || null,
+    albumType: track.primary_type || null,
+    releaseYear: getReleaseYear(track.first_release_date),
+    trackTitle: track.title || "Unknown Track",
+    trackNumber: Number(track.position || track.number || 0),
+    volumeNumber: Number(track.medium_position || 1),
+  });
+  return path.join(getCurrentLibraryRootPath("music"), artistFolder, `${renderedTrackPath}.flac`);
+}
+
+function resolveExpectedLibraryRootKey(row: LibraryFileRow): LibraryRoot | null {
+  const resolved = resolveLibraryRootKey(row.library_root, row.file_path);
+  if (resolved) {
+    return resolved;
+  }
+
+  const slot = String(row.library_slot || "").trim().toLowerCase();
+  if (slot === "video" || row.file_type === "video" || row.file_type === "video_thumbnail") {
+    return "videos";
+  }
+  if (slot === "spatial" || isSpatialAudioQuality(row.quality)) {
+    return "spatial";
+  }
+  if (slot === "stereo" || row.file_type === "track" || row.file_type === "lyrics") {
+    return "music";
+  }
+
+  if (row.media_id) {
+    const media = db.prepare("SELECT type FROM ProviderMedia WHERE id = ?").get(row.media_id) as { type?: string | null } | undefined;
+    if (media?.type === "Music Video") {
+      return "videos";
+    }
+  }
+
+  return null;
+}
+
 export class LibraryFilesService {
   private static buildFileEventPayload(input: LibraryFileEventInput) {
     return {
@@ -484,29 +594,27 @@ export class LibraryFilesService {
       const mediaRow = db.prepare("SELECT type, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as VideoMediaLookupRow | undefined;
       if (mediaRow && mediaRow.type === "Music Video") {
         const recordingMbid = mediaRow.mbid || null;
-        if (recordingMbid) {
-          const audioTrack = db.prepare(`
+        let audioTrack = recordingMbid
+          ? db.prepare(`
             SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
             FROM TrackFiles
             WHERE canonical_recording_mbid = ? AND file_type = 'track'
             LIMIT 1
-          `).get(recordingMbid) as LibraryFileRow | undefined;
+          `).get(recordingMbid) as LibraryFileRow | undefined
+          : undefined;
 
-          let audioExpectedPath: string | null = null;
-          if (audioTrack) {
-            const result = LibraryFilesService.computeExpectedPath(audioTrack);
-            audioExpectedPath = result.expectedPath;
-          } else {
-            let mediaAudioTrack = db.prepare(`
+        let mediaAudioTrack = recordingMbid
+          ? db.prepare(`
               SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
               FROM ProviderMedia m
               LEFT JOIN ProviderAlbums a ON a.id = m.album_id
               WHERE m.mbid = ? AND m.type = 'Track' AND m.monitor = 1
               LIMIT 1
-            `).get(recordingMbid) as AudioMediaLookupRow | undefined;
+            `).get(recordingMbid) as AudioMediaLookupRow | undefined
+          : undefined;
 
-            if (!mediaAudioTrack) {
-              mediaAudioTrack = db.prepare(`
+        if (!mediaAudioTrack && recordingMbid) {
+          mediaAudioTrack = db.prepare(`
                 SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
                 FROM ProviderMedia m
                 JOIN Tracks t ON t.mbid = m.mbid
@@ -514,29 +622,64 @@ export class LibraryFilesService {
                 WHERE t.recording_mbid = ? AND m.type = 'Track' AND m.monitor = 1
                 LIMIT 1
               `).get(recordingMbid) as AudioMediaLookupRow | undefined;
-            }
+        }
 
-            if (mediaAudioTrack) {
-              const trackQuality = mediaAudioTrack.track_quality || mediaAudioTrack.album_quality || null;
-              const rootKey = getAudioRoot(trackQuality);
-              const mockAudioRow: LibraryFileRow = {
-                id: -1,
-                artist_id: mediaAudioTrack.artist_id,
-                album_id: mediaAudioTrack.album_id,
-                media_id: mediaAudioTrack.id,
-                file_path: "",
-                relative_path: null,
-                library_root: rootKey,
-                file_type: "track",
-                extension: "flac",
-                quality: trackQuality,
-              };
-              const result = LibraryFilesService.computeExpectedPath(mockAudioRow);
-              audioExpectedPath = result.expectedPath;
-            }
+        let inlineVideoTitle = "";
+        if (!mediaAudioTrack) {
+          const video = db.prepare("SELECT album_id, artist_id, title FROM ProviderMedia WHERE id = ? AND type = 'Music Video'")
+            .get(row.media_id) as { album_id?: number | null; artist_id?: number | null; title?: string | null } | undefined;
+          const videoTitle = normalizeInlineVideoTitle(video?.title);
+          inlineVideoTitle = videoTitle;
+          const albumTracks = video?.album_id
+            ? db.prepare(`
+                SELECT m.id, m.artist_id, m.album_id, m.title, m.quality as track_quality, a.quality as album_quality
+                FROM ProviderMedia m
+                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
+                WHERE m.album_id = ? AND m.type = 'Track'
+              `).all(video.album_id) as Array<AudioMediaLookupRow & { title?: string | null }>
+            : [];
+          mediaAudioTrack = albumTracks.find((track) =>
+            Boolean(videoTitle) && normalizeInlineVideoTitle(track.title) === videoTitle
+          );
+
+          if (!mediaAudioTrack && video?.artist_id && videoTitle) {
+            const artistTracks = db.prepare(`
+              SELECT m.id, m.artist_id, m.album_id, m.title, m.quality as track_quality, a.quality as album_quality
+              FROM ProviderMedia m
+              JOIN ProviderAlbums a ON a.id = m.album_id
+              WHERE m.artist_id = ? AND m.type = 'Track'
+              ORDER BY m.monitor DESC,
+                       a.monitor DESC,
+                       CASE a.type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
+                       a.release_date ASC,
+                       a.id ASC,
+                       m.id ASC
+            `).all(video.artist_id) as Array<AudioMediaLookupRow & { title?: string | null }>;
+            mediaAudioTrack = artistTracks.find((track) => normalizeInlineVideoTitle(track.title) === videoTitle);
           }
+        }
 
-          if (audioExpectedPath) {
+        let audioExpectedPath: string | null = null;
+        if (audioTrack) {
+          audioExpectedPath = LibraryFilesService.computeExpectedPath(audioTrack).expectedPath;
+        } else if (mediaAudioTrack) {
+          const trackQuality = mediaAudioTrack.track_quality || mediaAudioTrack.album_quality || null;
+          audioExpectedPath = LibraryFilesService.computeExpectedPath({
+            id: -1,
+            artist_id: mediaAudioTrack.artist_id,
+            album_id: mediaAudioTrack.album_id,
+            media_id: mediaAudioTrack.id,
+            file_path: "",
+            relative_path: null,
+            library_root: getAudioRoot(trackQuality),
+            file_type: "track",
+            extension: "flac",
+            quality: trackQuality,
+          }).expectedPath;
+        }
+        audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
+
+        if (audioExpectedPath) {
             const audioExpectedDir = path.dirname(audioExpectedPath);
             const audioExpectedStem = path.parse(audioExpectedPath).name;
             let ext = row.extension || "";
@@ -549,15 +692,36 @@ export class LibraryFilesService {
                 ext = "nfo";
               }
             }
-            return {
-              expectedPath: path.join(audioExpectedDir, `${audioExpectedStem}-video.${ext}`),
-            };
+          const trackedVideo = row.file_type !== "video"
+            ? db.prepare(`
+                SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+                FROM TrackFiles
+                WHERE media_id = ? AND file_type = 'video'
+                LIMIT 1
+              `).get(row.media_id) as LibraryFileRow | undefined
+            : undefined;
+          const trackedVideoExpected = trackedVideo
+            ? LibraryFilesService.computeExpectedPath(trackedVideo).expectedPath
+            : null;
+          if (trackedVideoExpected) {
+            return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
           }
+
+          const baseExpectedPath = path.join(audioExpectedDir, `${audioExpectedStem}-video.${ext}`);
+          const conflict = row.file_type === "video"
+            ? db.prepare("SELECT id FROM TrackFiles WHERE file_type = 'video' AND file_path = ? AND id != ? LIMIT 1")
+              .get(baseExpectedPath, row.id)
+            : null;
+          return {
+            expectedPath: conflict
+              ? path.join(audioExpectedDir, `${audioExpectedStem}-video {TIDAL-${row.media_id}}.${ext}`)
+              : baseExpectedPath,
+          };
         }
       }
     }
 
-    const libraryRootKey = resolveLibraryRootKey(row.library_root, row.file_path);
+    const libraryRootKey = resolveExpectedLibraryRootKey(row);
     if (!libraryRootKey) return { expectedPath: null, reason: `unsupported_library_root:${row.library_root}` };
 
     const libraryRootPath = getCurrentLibraryRootPath(libraryRootKey);
@@ -759,7 +923,19 @@ export class LibraryFilesService {
       };
 
       const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
-      const relativeTrackPath = renderRelativePath(trackTemplate, trackContext);
+      const renderedTrackPath = renderRelativePath(trackTemplate, trackContext);
+      const baseExpectedPath = path.join(libraryRootPath, artistFolder, `${renderedTrackPath}.${ext}`);
+      const relativeTrackPath = renderAudioRelativePathForLibrary({
+        relativePath: renderedTrackPath,
+        quality: row.quality,
+        musicRoot: getCurrentLibraryRootPath("music"),
+        spatialRoot: getCurrentLibraryRootPath("spatial"),
+        mustDisambiguate: Boolean(db.prepare(`
+          SELECT id FROM TrackFiles
+          WHERE file_type = 'track' AND file_path = ? AND id != ?
+          LIMIT 1
+        `).get(baseExpectedPath, row.id)),
+      });
       const fileName = `${relativeTrackPath}.${ext}`;
 
       return {
@@ -810,7 +986,12 @@ export class LibraryFilesService {
       };
 
       const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
-      const relativeTrackPath = renderRelativePath(trackTemplate, trackContext);
+      const relativeTrackPath = renderAudioRelativePathForLibrary({
+        relativePath: renderRelativePath(trackTemplate, trackContext),
+        quality: row.quality,
+        musicRoot: getCurrentLibraryRootPath("music"),
+        spatialRoot: getCurrentLibraryRootPath("spatial"),
+      });
       const trackPath = path.join(libraryRootPath, artistFolder, `${relativeTrackPath}.${ext}`);
       const lrcPath = trackPath.replace(new RegExp(`${path.extname(trackPath)}$`), ".lrc");
       return { expectedPath: lrcPath };

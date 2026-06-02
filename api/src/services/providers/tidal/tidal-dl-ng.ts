@@ -666,7 +666,7 @@ function buildDiscogeniusSettings(
         metadata_cover_dimension: resolveCoverDimension(metadataConfig.album_cover_resolution),
         metadata_replay_gain: metadataConfig.embed_replaygain !== false,
         metadata_write_url: metadataConfig.write_tidal_url ?? true,
-        metadata_target_upc: metadataConfig.upc_target || "UPC",
+        metadata_target_upc: "BARCODE",
         mark_explicit: metadataConfig.mark_explicit ?? false,
         lyrics_embed: qualityConfig.embed_lyrics ?? false,
         format_album: "{track_id}",

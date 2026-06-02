@@ -132,6 +132,42 @@ test("provider slot clearing preserves MusicBrainz wanted state", () => {
   assert.equal(slot.match_status, "unmatched");
 });
 
+test("provider slot clearing preserves selections for providers that were not refreshed", () => {
+  const { db } = dbModule;
+  insertReleaseGroup("rg-mbid-apple");
+  insertReleaseGroup("rg-mbid-tidal");
+
+  const insertSlot = db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertSlot.run("artist-mbid-1", "rg-mbid-apple", "stereo", 0, "apple-music", "apple-album", "verified");
+  insertSlot.run("artist-mbid-1", "rg-mbid-tidal", "stereo", 0, "tidal", "tidal-album", "verified");
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    artistMbid: "artist-mbid-1",
+    candidates: [],
+    clearProviders: ["tidal"],
+  });
+
+  const appleSlot = db.prepare(`
+    SELECT selected_provider, selected_provider_id
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get("rg-mbid-apple") as { selected_provider: string | null; selected_provider_id: string | null };
+  const tidalSlot = db.prepare(`
+    SELECT selected_provider, selected_provider_id
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get("rg-mbid-tidal") as { selected_provider: string | null; selected_provider_id: string | null };
+
+  assert.equal(appleSlot.selected_provider, "apple-music");
+  assert.equal(appleSlot.selected_provider_id, "apple-album");
+  assert.equal(tidalSlot.selected_provider, null);
+  assert.equal(tidalSlot.selected_provider_id, null);
+});
+
 test("provider slot selection stores a compact provider snapshot instead of raw payloads", () => {
   const { db } = dbModule;
   insertReleaseGroup("rg-mbid-1");
@@ -169,6 +205,161 @@ test("provider slot selection stores a compact provider snapshot instead of raw 
   assert.equal(providerData.quality, "LOSSLESS");
   assert.equal(providerData.artist?.name, "Queen");
   assert.equal("providerSecret" in providerData, false);
+});
+
+test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz release while preferring hi-res stereo", () => {
+  const releaseGroupMbid = "rg-mbid-quality-variants";
+  const releaseMbid = "release-mbid-quality-variants";
+  const match = {
+    ...buildMatch(releaseGroupMbid, "provider-album-lossless"),
+    releaseMbid,
+  };
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-album-lossless",
+        title: "A Night at the Opera",
+        quality: "LOSSLESS",
+        trackCount: 12,
+        volumeCount: 1,
+      },
+      match,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-album-hires",
+        title: "A Night at the Opera",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 12,
+        volumeCount: 1,
+      },
+      match: {
+        ...match,
+        providerId: "provider-album-hires",
+      },
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-album-atmos",
+        title: "A Night at the Opera",
+        quality: "DOLBY_ATMOS",
+        trackCount: 12,
+        volumeCount: 1,
+      },
+      match: {
+        ...match,
+        providerId: "provider-album-atmos",
+      },
+    },
+  ], {
+    includeSpatial: true,
+  });
+
+  assert.deepEqual(
+    selections.map((selection) => ({
+      slot: selection.slot,
+      providerId: selection.album.providerId,
+      releaseGroupMbid: selection.releaseGroupMbid,
+      releaseMbid: selection.match.releaseMbid,
+    })),
+    [
+      {
+        slot: "spatial",
+        providerId: "provider-album-atmos",
+        releaseGroupMbid,
+        releaseMbid,
+      },
+      {
+        slot: "stereo",
+        providerId: "provider-album-hires",
+        releaseGroupMbid,
+        releaseMbid,
+      },
+    ],
+  );
+});
+
+test("provider sync retains Atmos matches while spatial downloads are disabled", () => {
+  const { db } = dbModule;
+  insertReleaseGroup("rg-mbid-hidden-atmos");
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "provider-album-atmos",
+      title: "A Night at the Opera",
+      quality: "DOLBY_ATMOS",
+      trackCount: 12,
+      volumeCount: 1,
+    }],
+    matches: new Map([["provider-album-atmos", buildMatch("rg-mbid-hidden-atmos", "provider-album-atmos")]]),
+  });
+
+  const slot = db.prepare(`
+    SELECT wanted, selected_provider_id
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'spatial'
+  `).get("rg-mbid-hidden-atmos") as { wanted: number; selected_provider_id: string };
+
+  assert.equal(slot.wanted, 0);
+  assert.equal(slot.selected_provider_id, "provider-album-atmos");
+});
+
+test("provider slot selection prefers an offer compatible with the Lidarr-like representative release", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-provider-shape";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES
+      ('release-single', ?, 'artist-mbid-1', 'Release', 1, 1),
+      ('release-complete', ?, 'artist-mbid-1', 'Release', 3, 1)
+  `).run(releaseGroupMbid, releaseGroupMbid);
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-single",
+        title: "Release",
+        quality: "LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+      },
+      match: {
+        ...buildMatch(releaseGroupMbid, "provider-single"),
+        evidence: {
+          ...buildMatch(releaseGroupMbid, "provider-single").evidence,
+          availableReleaseMbids: ["release-single"],
+        },
+      },
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-complete",
+        title: "Release",
+        quality: "LOSSLESS",
+        trackCount: 3,
+        volumeCount: 1,
+      },
+      match: {
+        ...buildMatch(releaseGroupMbid, "provider-complete"),
+        evidence: {
+          ...buildMatch(releaseGroupMbid, "provider-complete").evidence,
+          availableReleaseMbids: ["release-complete"],
+        },
+      },
+    },
+  ]);
+
+  assert.equal(selections[0]?.album.providerId, "provider-complete");
+  assert.equal(selections[0]?.match.releaseMbid, "release-complete");
 });
 
 test("provider slot selection matches multiple provider releases to cover a MusicBrainz release", () => {
@@ -358,4 +549,58 @@ test("provider slot selection skips partial provider releases unless they comple
   `).get(releaseGroupMbid) as { selected_provider_id: string | null } | undefined;
 
   assert.equal(slot, undefined);
+});
+
+test("provider slot selection falls back to metadata matching when track details are missing", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-fallback";
+  insertReleaseGroup(releaseGroupMbid);
+
+  // Insert preferred MusicBrainz release
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-fallback", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 3, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-fb-1", "Death on Two Legs");
+  insertRecording.run("rec-fb-2", "Lazing on a Sunday Afternoon");
+  insertRecording.run("rec-fb-3", "I'm in Love with My Car");
+
+  // Insert Tracks (3 tracks, so it won't be considered empty)
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-fb-1", "release-mbid-fallback", "rec-fb-1", "Death on Two Legs", 1, 1);
+  insertTrack.run("track-fb-2", "release-mbid-fallback", "rec-fb-2", "Lazing on a Sunday Afternoon", 2, 1);
+  insertTrack.run("track-fb-3", "release-mbid-fallback", "rec-fb-3", "I'm in Love with My Car", 3, 1);
+
+  const match = buildMatch(releaseGroupMbid, "provider-album-fallback");
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "provider-album-fallback",
+      title: "A Night at the Opera",
+      quality: "LOSSLESS",
+      trackCount: 3,
+      volumeCount: 1,
+    }],
+    matches: new Map([["provider-album-fallback", match]]),
+  });
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(releaseGroupMbid) as { selected_provider_id: string | null } | undefined;
+
+  assert.ok(slot);
+  assert.equal(slot.selected_provider_id, "provider-album-fallback");
 });

@@ -21,6 +21,7 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
+    DialogActions,
     Link,
 } from "@fluentui/react-components";
 import {
@@ -430,6 +431,30 @@ const useStyles = makeStyles({
         color: tokens.colorPaletteYellowForeground1,
         fontSize: tokens.fontSizeBase100,
     },
+    maintenanceDialog: {
+        width: 'min(860px, calc(100vw - 32px))',
+        maxWidth: '860px',
+    },
+    maintenanceDialogList: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXS,
+        maxHeight: '56vh',
+        overflowY: 'auto',
+        marginTop: tokens.spacingVerticalM,
+    },
+    maintenanceDialogRow: {
+        display: 'grid',
+        gridTemplateColumns: '32px minmax(0, 1fr)',
+        gap: tokens.spacingHorizontalS,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+    maintenanceDialogSummary: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: tokens.spacingHorizontalXS,
+    },
     namingActionGroup: {
         display: 'flex',
         flexDirection: 'column',
@@ -710,6 +735,7 @@ interface NamingRenameSample {
     file_type: string;
     file_path: string;
     expected_path: string | null;
+    needs_rename: boolean;
     missing: boolean;
     conflict: boolean;
 }
@@ -720,6 +746,10 @@ interface NamingRenameStatus {
     conflicts: number;
     missing: number;
     sample: NamingRenameSample[];
+}
+
+interface NamingRenamePreviewResponse {
+    items: NamingRenameSample[];
 }
 
 interface RetagSampleChange {
@@ -742,6 +772,10 @@ interface RetagStatus {
     retagNeeded: number;
     missing: number;
     sample: RetagStatusSample[];
+}
+
+interface RetagPreviewResponse {
+    items: RetagStatusSample[];
 }
 
 type NamingPreviewResponse = Awaited<ReturnType<typeof api.previewNamingConfig>>;
@@ -792,10 +826,16 @@ const SettingsPage = () => {
     const [renameStatusLoading, setRenameStatusLoading] = useState(false);
     const [renameApplying, setRenameApplying] = useState(false);
     const [renameStatusInitialized, setRenameStatusInitialized] = useState(false);
+    const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
+    const [renamePreviewItems, setRenamePreviewItems] = useState<NamingRenameSample[]>([]);
+    const [selectedRenameIds, setSelectedRenameIds] = useState<Set<number>>(new Set());
     const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
     const [retagStatusInitialized, setRetagStatusInitialized] = useState(false);
+    const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
+    const [retagPreviewItems, setRetagPreviewItems] = useState<RetagStatusSample[]>([]);
+    const [selectedRetagIds, setSelectedRetagIds] = useState<Set<number>>(new Set());
     const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
     const namingPreviewRequestRef = useRef(0);
     const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
@@ -859,6 +899,14 @@ const SettingsPage = () => {
         }
     };
 
+    const getCurrentNamingSettings = useCallback((): Partial<NamingConfigContract> => ({
+        ...localNaming,
+        artist_folder: namingInputRefs.current.artist_folder?.value ?? localNaming.artist_folder,
+        album_track_path_single: namingInputRefs.current.album_track_path_single?.value ?? localNaming.album_track_path_single,
+        album_track_path_multi: namingInputRefs.current.album_track_path_multi?.value ?? localNaming.album_track_path_multi,
+        video_file: namingInputRefs.current.video_file?.value ?? localNaming.video_file,
+    }), [localNaming]);
+
     const loadRenameStatus = useCallback(async () => {
         if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
             toast({
@@ -873,7 +921,7 @@ const SettingsPage = () => {
 
         setRenameStatusLoading(true);
         try {
-            await flushNamingSettings();
+            await flushNamingSettings(getCurrentNamingSettings());
             const status = await api.getLibraryRenameStatus({ sampleLimit: 4 });
             setRenameStatus(status as NamingRenameStatus);
         } catch (error: any) {
@@ -886,9 +934,41 @@ const SettingsPage = () => {
             setRenameStatusLoading(false);
             setRenameStatusInitialized(true);
         }
-    }, [flushNamingSettings, namingPreviewResponse, toast]);
+    }, [flushNamingSettings, getCurrentNamingSettings, namingPreviewResponse, toast]);
 
-    const handleApplyLibraryNaming = async () => {
+    const openRenamePreview = async () => {
+        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
+            toast({
+                title: "Rename preview blocked",
+                description: namingPreviewResponse
+                    ? "Fix the naming template errors before previewing naming changes."
+                    : "Wait for the backend naming preview before previewing naming changes.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setRenameStatusLoading(true);
+        try {
+            await flushNamingSettings(getCurrentNamingSettings());
+            const response = await api.getLibraryRenamePreview({ limit: 1000 }) as NamingRenamePreviewResponse;
+            const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
+            setRenamePreviewItems(items);
+            setSelectedRenameIds(new Set(items.filter((item) => !item.missing && !item.conflict).map((item) => item.id)));
+            setRenamePreviewOpen(true);
+            await loadRenameStatus();
+        } catch (error: any) {
+            toast({
+                title: "Rename preview failed",
+                description: error.message || "Could not load the rename preview.",
+                variant: "destructive",
+            });
+        } finally {
+            setRenameStatusLoading(false);
+        }
+    };
+
+    const handleApplyLibraryNaming = async (ids?: number[]) => {
         if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
             toast({
                 title: "Rename blocked",
@@ -902,13 +982,16 @@ const SettingsPage = () => {
 
         setRenameApplying(true);
         try {
-            await flushNamingSettings();
-            const result: any = await api.applyLibraryRenames({ applyAll: true });
+            await flushNamingSettings(getCurrentNamingSettings());
+            const result: any = await api.applyLibraryRenames(ids ? { ids } : { applyAll: true });
             toast({
                 title: "Rename queued",
                 description: result?.message || "Queued the library rename task.",
             });
             dispatchActivityRefresh();
+            setRenamePreviewOpen(false);
+            window.setTimeout(() => void loadRenameStatus(), 1500);
+            window.setTimeout(() => void loadRenameStatus(), 5000);
         } catch (error: any) {
             toast({
                 title: "Failed to queue rename",
@@ -937,15 +1020,35 @@ const SettingsPage = () => {
         }
     }, [toast]);
 
-    const handleApplyRetags = async () => {
+    const openRetagPreview = async () => {
+        setRetagStatusLoading(true);
+        try {
+            const response = await api.getRetagPreview({ limit: 1000 }) as RetagPreviewResponse;
+            setRetagPreviewItems(response.items);
+            setSelectedRetagIds(new Set(response.items.filter((item) => !item.missing).map((item) => item.id)));
+            setRetagPreviewOpen(true);
+            await loadRetagStatus();
+        } catch (error: any) {
+            toast({
+                title: "Retag preview failed",
+                description: error.message || "Could not load the retag preview.",
+                variant: "destructive",
+            });
+        } finally {
+            setRetagStatusLoading(false);
+        }
+    };
+
+    const handleApplyRetags = async (ids?: number[]) => {
         setRetagApplying(true);
         try {
-            const result: any = await api.applyRetags({ applyAll: true });
+            const result: any = await api.applyRetags(ids ? { ids } : { applyAll: true });
             toast({
                 title: "Retag queued",
                 description: result?.message || "Queued the audio retag task.",
             });
             dispatchActivityRefresh();
+            setRetagPreviewOpen(false);
         } catch (error: any) {
             toast({
                 title: "Failed to queue retag",
@@ -1064,17 +1167,17 @@ const SettingsPage = () => {
             setMonitoringStatus({ running: false, checking: false });
             setCurationConfig({
                 include_album: true,
-                include_single: false,
+                include_single: true,
                 include_ep: true,
-                include_broadcast: false,
-                include_other: false,
-                include_compilation: false,
-                include_soundtrack: false,
-                include_live: false,
-                include_remix: false,
-                include_dj_mix: false,
-                include_mixtape_street: false,
-                include_demo: false,
+                include_broadcast: true,
+                include_other: true,
+                include_compilation: true,
+                include_soundtrack: true,
+                include_live: true,
+                include_remix: true,
+                include_dj_mix: true,
+                include_mixtape_street: true,
+                include_demo: true,
                 include_spatial: false,
                 include_videos: false,
                 enable_redundancy_filter: true,
@@ -1430,6 +1533,14 @@ const SettingsPage = () => {
             <div className={styles.card}>
                 {(streamingProviders?.providers ?? []).map((provider) => {
                     const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
+                    const publiclyAvailable = provider.authenticated
+                        && !provider.management.canAuthenticate
+                        && !provider.management.canDisconnect;
+                    const statusLabel = publiclyAvailable
+                        ? "Available"
+                        : provider.authenticated
+                            ? "Connected"
+                            : "Not connected";
 
                     return (
                         <React.Fragment key={provider.id}>
@@ -1446,7 +1557,7 @@ const SettingsPage = () => {
                                         <div className={styles.optionIconRow}>
                                             <Text weight="semibold" size={400}>{provider.name}</Text>
                                             <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
-                                                {provider.authenticated ? "Connected" : "Not connected"}
+                                                {statusLabel}
                                             </Badge>
                                             {provider.isDefault ? (
                                                 <Badge appearance="tint" color="informative">Default</Badge>
@@ -1459,7 +1570,9 @@ const SettingsPage = () => {
                                         ) : (
                                             <Caption1 className={styles.mutedText}>
                                                 {provider.authenticated
-                                                    ? "Provider features are available."
+                                                    ? publiclyAvailable
+                                                        ? "Public catalog features are available."
+                                                        : "Provider features are available."
                                                     : "Connect this provider to enable provider-backed features."}
                                             </Caption1>
                                         )}
@@ -1591,7 +1704,7 @@ const SettingsPage = () => {
                         <Divider className={styles.divider} />
                         {renderToggleRow({
                             title: "Spatial audio",
-                            description: "Download spatial or surround versions alongside stereo. Disabling unmonitors spatial releases on next curation.",
+                            description: "Download spatial or surround versions alongside stereo. Changes update wanted releases immediately.",
                             checked: curationConfig?.include_spatial === true,
                             onChange: (checked) => updateCuration({ include_spatial: checked }),
                         })}
@@ -1986,8 +2099,8 @@ const SettingsPage = () => {
                         })}
 
                         {renderToggleRow({
-                            title: "Save Jellyfin NFO Files",
-                            description: "Save artist.nfo, album.nfo, and music-video sidecar NFO files with MusicBrainz IDs",
+                            title: "Save Jellyfin / Kodi NFO Files",
+                            description: "Save artist.nfo, album.nfo, and per-video NFO sidecars with MusicBrainz IDs. Plex music libraries ignore NFO files.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
@@ -2101,24 +2214,6 @@ const SettingsPage = () => {
                             </div>
                         )}
 
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">UPC Target Tag</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Choose the field name Discogenius uses when it writes album barcodes.
-                                </Text>
-                            </div>
-                            <Select
-                                value={metadataSettings?.upc_target || 'BARCODE'}
-                                onChange={(_, data) => updateMetadataSettings({ upc_target: data.value as any })}
-                                className={styles.controlMedium}
-                            >
-                                <option value="UPC">UPC</option>
-                                <option value="EAN">EAN</option>
-                                <option value="BARCODE">Barcode</option>
-                            </Select>
-                        </div>
-
                         {renderToggleRow({
                             title: "Audio Fingerprinting",
                             description: "Generate fpcalc fingerprints and match tracks via AcoustID and MusicBrainz",
@@ -2147,26 +2242,7 @@ const SettingsPage = () => {
                                         {retagStatus?.missing ?? 0} missing
                                     </Badge>
                                 </div>
-                                {retagStatus?.sample?.length ? (
-                                    <div className={styles.previewList}>
-                                        {retagStatus.sample.map((sample) => {
-                                            const name = sample.path.split(/[\\/]/).pop() || sample.path;
-                                            return (
-                                                <div key={sample.id} className={styles.previewItem}>
-                                                    <span className={styles.previewFilename}>{name}</span>
-                                                    {sample.missing ? (
-                                                        <span className={styles.previewOld}>— missing on disk</span>
-                                                    ) : sample.changes.map((change) => (
-                                                        <React.Fragment key={change.field}>
-                                                            <span className={styles.previewOld}>- {change.field}: {change.oldValue ?? "(empty)"}</span>
-                                                            <span className={styles.previewNew}>+ {change.field}: {change.newValue ?? "(empty)"}</span>
-                                                        </React.Fragment>
-                                                    ))}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                ) : retagStatus && !retagStatusLoading && audioRetaggingEnabled ? (
+                                {retagStatus && !retagStatusLoading && audioRetaggingEnabled && (retagStatus.retagNeeded ?? 0) === 0 ? (
                                     <Text size={200} className={styles.mutedText}>No retag work detected.</Text>
                                 ) : !audioRetaggingEnabled ? (
                                     <Text size={200} className={styles.mutedText}>Enable fingerprinting, audio tag correction, or ReplayGain to generate a retag plan.</Text>
@@ -2176,23 +2252,10 @@ const SettingsPage = () => {
                                 <Button
                                     appearance="outline"
                                     icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                                    onClick={() => loadRetagStatus()}
+                                    onClick={() => openRetagPreview()}
                                     disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
                                 >
-                                    Refresh plan
-                                </Button>
-                                <Button
-                                    appearance="primary"
-                                    icon={retagApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                    onClick={() => handleApplyRetags()}
-                                    disabled={
-                                        retagStatusLoading
-                                        || retagApplying
-                                        || !audioRetaggingEnabled
-                                        || (retagStatus?.retagNeeded ?? 0) === 0
-                                    }
-                                >
-                                    Apply to library
+                                    Preview changes
                                 </Button>
                             </div>
                         </div>
@@ -2461,31 +2524,7 @@ const SettingsPage = () => {
                                         {renameStatus?.missing ?? 0} missing
                                     </Badge>
                                 </div>
-                                {renameStatus?.sample?.length ? (
-                                    <div className={styles.previewList}>
-                                        {renameStatus.sample.map((sample) => {
-                                            const name = sample.file_path.split(/[\\/]/).pop() || sample.file_path;
-                                            return (
-                                                <div key={sample.id} className={styles.previewItem}>
-                                                    <span className={styles.previewFilename}>{name}</span>
-                                                    {sample.missing ? (
-                                                        <span className={styles.previewOld}>— missing on disk</span>
-                                                    ) : sample.conflict ? (
-                                                        <>
-                                                            <span className={styles.previewOld}>- {sample.file_path}</span>
-                                                            <span className={styles.previewConflict}>⚠ {sample.expected_path ?? "conflict"}</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <span className={styles.previewOld}>- {sample.file_path}</span>
-                                                            <span className={styles.previewNew}>+ {sample.expected_path ?? "—"}</span>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                ) : renameStatus && !renameStatusLoading ? (
+                                {renameStatus && !renameStatusLoading && (renameStatus.renameNeeded ?? 0) === 0 ? (
                                     <Text size={200} className={styles.mutedText}>No rename work detected for the current naming templates.</Text>
                                 ) : null}
                             </div>
@@ -2493,24 +2532,10 @@ const SettingsPage = () => {
                                 <Button
                                     appearance="outline"
 	                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-	                                    onClick={() => loadRenameStatus()}
+	                                    onClick={() => openRenamePreview()}
 	                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
 	                                >
-                                    Refresh plan
-                                </Button>
-                                <Button
-                                    appearance="primary"
-                                    icon={renameApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                    onClick={() => handleApplyLibraryNaming()}
-                                    disabled={
-	                                        renameStatusLoading
-	                                        || renameApplying
-	                                        || !namingSettings
-	                                        || namingActionsDisabled
-	                                        || (renameStatus?.renameNeeded ?? 0) === 0
-	                                    }
-                                >
-                                    Apply to library
+                                    Preview changes
                                 </Button>
                             </div>
                         </div>
@@ -2661,6 +2686,158 @@ const SettingsPage = () => {
                         </div>
                     </div>
                 </SettingsSection>
+
+                <Dialog open={renamePreviewOpen} onOpenChange={(_, data) => setRenamePreviewOpen(data.open)}>
+                    <DialogSurface className={styles.maintenanceDialog}>
+                        <DialogBody>
+                            <DialogTitle
+                                action={
+                                    <Button
+                                        appearance="subtle"
+                                        aria-label="Close rename preview"
+                                        icon={<Dismiss24Regular />}
+                                        onClick={() => setRenamePreviewOpen(false)}
+                                    />
+                                }
+                            >
+                                Preview Rename
+                            </DialogTitle>
+                            <DialogContent>
+                                <div className={styles.maintenanceDialogSummary}>
+                                    <Badge appearance="outline" color="brand">{renamePreviewItems.length} changes</Badge>
+                                    <Badge appearance="outline" color="warning">{renamePreviewItems.filter((item) => item.conflict).length} conflicts</Badge>
+                                    <Badge appearance="outline" color="informative">{renamePreviewItems.filter((item) => item.missing).length} missing</Badge>
+                                </div>
+                                {renamePreviewItems.length > 0 ? (
+                                    <div className={styles.maintenanceDialogList}>
+                                        <Checkbox
+                                            label="Select all available changes"
+                                            checked={selectedRenameIds.size > 0 && selectedRenameIds.size === renamePreviewItems.filter((item) => !item.missing && !item.conflict).length}
+                                            onChange={(_, data) => setSelectedRenameIds(data.checked
+                                                ? new Set(renamePreviewItems.filter((item) => !item.missing && !item.conflict).map((item) => item.id))
+                                                : new Set())}
+                                        />
+                                        {renamePreviewItems.map((item) => (
+                                            <div key={item.id} className={styles.maintenanceDialogRow}>
+                                                <Checkbox
+                                                    aria-label={`Rename ${item.file_path}`}
+                                                    checked={selectedRenameIds.has(item.id)}
+                                                    disabled={item.missing || item.conflict}
+                                                    onChange={(_, data) => setSelectedRenameIds((current) => {
+                                                        const next = new Set(current);
+                                                        if (data.checked) next.add(item.id);
+                                                        else next.delete(item.id);
+                                                        return next;
+                                                    })}
+                                                />
+                                                <div className={styles.previewItem}>
+                                                    <span className={styles.previewFilename}>{item.file_type}</span>
+                                                    <span className={styles.previewOld}>- {item.file_path}</span>
+                                                    {item.missing ? (
+                                                        <span className={styles.previewConflict}>Missing on disk</span>
+                                                    ) : item.conflict ? (
+                                                        <span className={styles.previewConflict}>Conflict: {item.expected_path ?? "target path unavailable"}</span>
+                                                    ) : (
+                                                        <span className={styles.previewNew}>+ {item.expected_path ?? "target path unavailable"}</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <Text>No files need renaming.</Text>
+                                )}
+                            </DialogContent>
+                            <DialogActions>
+                                <Button appearance="secondary" onClick={() => setRenamePreviewOpen(false)}>Cancel</Button>
+                                <Button
+                                    appearance="primary"
+                                    icon={renameApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                                    disabled={renameApplying || selectedRenameIds.size === 0}
+                                    onClick={() => handleApplyLibraryNaming(Array.from(selectedRenameIds))}
+                                >
+                                    Rename selected files
+                                </Button>
+                            </DialogActions>
+                        </DialogBody>
+                    </DialogSurface>
+                </Dialog>
+
+                <Dialog open={retagPreviewOpen} onOpenChange={(_, data) => setRetagPreviewOpen(data.open)}>
+                    <DialogSurface className={styles.maintenanceDialog}>
+                        <DialogBody>
+                            <DialogTitle
+                                action={
+                                    <Button
+                                        appearance="subtle"
+                                        aria-label="Close retag preview"
+                                        icon={<Dismiss24Regular />}
+                                        onClick={() => setRetagPreviewOpen(false)}
+                                    />
+                                }
+                            >
+                                Write Metadata Tags
+                            </DialogTitle>
+                            <DialogContent>
+                                <div className={styles.previewList}>
+                                    <Text size={200} className={styles.mutedText}>
+                                        MusicBrainz identifiers are written alongside these changes. Compatible spatial files may be skipped when embedded tag rewriting is unsafe.
+                                    </Text>
+                                    {retagPreviewItems.length > 0 ? (
+                                        <div className={styles.maintenanceDialogList}>
+                                        <Checkbox
+                                            label="Select all available changes"
+                                            checked={selectedRetagIds.size > 0 && selectedRetagIds.size === retagPreviewItems.filter((item) => !item.missing).length}
+                                            onChange={(_, data) => setSelectedRetagIds(data.checked
+                                                ? new Set(retagPreviewItems.filter((item) => !item.missing).map((item) => item.id))
+                                                : new Set())}
+                                        />
+                                        {retagPreviewItems.map((item) => (
+                                            <div key={item.id} className={styles.maintenanceDialogRow}>
+                                                <Checkbox
+                                                    aria-label={`Retag ${item.path}`}
+                                                    checked={selectedRetagIds.has(item.id)}
+                                                    disabled={item.missing}
+                                                    onChange={(_, data) => setSelectedRetagIds((current) => {
+                                                        const next = new Set(current);
+                                                        if (data.checked) next.add(item.id);
+                                                        else next.delete(item.id);
+                                                        return next;
+                                                    })}
+                                                />
+                                                <div className={styles.previewItem}>
+                                                    <span className={styles.previewFilename}>{item.path}</span>
+                                                    {item.missing ? (
+                                                        <span className={styles.previewConflict}>Missing on disk</span>
+                                                    ) : item.changes.map((change) => (
+                                                        <React.Fragment key={change.field}>
+                                                            <span className={styles.previewOld}>- {change.field}: {change.oldValue ?? "(empty)"}</span>
+                                                            <span className={styles.previewNew}>+ {change.field}: {change.newValue ?? "(empty)"}</span>
+                                                        </React.Fragment>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        </div>
+                                    ) : (
+                                        <Text>No files need retagging.</Text>
+                                    )}
+                                </div>
+                            </DialogContent>
+                            <DialogActions>
+                                <Button appearance="secondary" onClick={() => setRetagPreviewOpen(false)}>Cancel</Button>
+                                <Button
+                                    appearance="primary"
+                                    icon={retagApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                                    disabled={retagApplying || selectedRetagIds.size === 0}
+                                    onClick={() => handleApplyRetags(Array.from(selectedRetagIds))}
+                                >
+                                    Retag selected files
+                                </Button>
+                            </DialogActions>
+                        </DialogBody>
+                    </DialogSurface>
+                </Dialog>
             </div >
         </div >
     );

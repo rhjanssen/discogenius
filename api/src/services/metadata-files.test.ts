@@ -87,11 +87,32 @@ function seedMusicBrainzMetadata() {
     );
 
     dbModule.db.prepare(`
+        INSERT INTO ArtistMetadata(mbid, name)
+        VALUES(?, ?)
+    `).run("artist-mbid-100", "The Example Artist");
+    dbModule.db.prepare(`
+        INSERT INTO Albums(mbid, artist_mbid, title)
+        VALUES(?, ?, ?)
+    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album");
+    dbModule.db.prepare(`
+        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title)
+        VALUES(?, ?, ?, ?)
+    `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album");
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, title)
+        VALUES(?, ?)
+    `).run("recording-mbid-300", "Example Track");
+    dbModule.db.prepare(`
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title)
+        VALUES(?, ?, ?, ?, ?, ?)
+    `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track");
+
+    dbModule.db.prepare(`
         INSERT INTO ProviderMedia(
             id, artist_id, album_id, title, release_date, type, explicit,
-            quality, track_number, volume_number, duration
+            quality, track_number, volume_number, duration, credits
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "400",
         "100",
@@ -104,6 +125,7 @@ function seedMusicBrainzMetadata() {
         null,
         null,
         210,
+        JSON.stringify([{ name: "The Example Artist" }, { name: "Guest Artist" }]),
     );
 }
 
@@ -128,7 +150,8 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(albumNfo, /<musicbrainzalbumid>album-mbid-200<\/musicbrainzalbumid>/);
     assert.match(albumNfo, /<musicbrainzreleasegroupid>release-group-mbid-200<\/musicbrainzreleasegroupid>/);
     assert.match(albumNfo, /<musicbrainzalbumartistid>artist-mbid-100<\/musicbrainzalbumartistid>/);
-    assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">recording-mbid-300<\/uniqueid>/);
+    assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-300<\/uniqueid>/);
+    assert.match(albumNfo, /<uniqueid type="MusicBrainzRecording" default="false">recording-mbid-300<\/uniqueid>/);
     assert.match(albumNfo, /Album review with &lt;markup&gt;/);
 
     const videoNfo = fs.readFileSync(videoPath, "utf-8");
@@ -136,6 +159,8 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(videoNfo, /<musicbrainzartistid>artist-mbid-100<\/musicbrainzartistid>/);
     assert.match(videoNfo, /<musicbrainzalbumid>album-mbid-200<\/musicbrainzalbumid>/);
     assert.match(videoNfo, /<uniqueid type="tidalVideo" default="true">400<\/uniqueid>/);
+    assert.match(videoNfo, /<artist>The Example Artist<\/artist>/);
+    assert.match(videoNfo, /<artist>Guest Artist<\/artist>/);
 });
 
 test("lyrics cached for a stereo provider item are shared with a spatial counterpart", async () => {

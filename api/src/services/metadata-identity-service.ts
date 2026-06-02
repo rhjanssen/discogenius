@@ -4,12 +4,10 @@ import {
     type AcoustIdLookupResult,
     type MusicBrainzArtistCredit,
     type MusicBrainzRecording,
-    type MusicBrainzRelease,
     generateFingerprint,
     lookupAcoustIdMatches,
     lookupMusicBrainzRecording,
     lookupMusicBrainzRecordingsByIsrc,
-    lookupMusicBrainzReleasesByBarcode,
     requestMusicBrainzJson,
 } from "./fingerprint.js";
 import { getConfigSection } from "./config.js";
@@ -100,17 +98,6 @@ function normalizeText(value: unknown): string {
     return normalizeComparableText(String(value || ""));
 }
 
-function yearOf(value: string | null | undefined): string | null {
-    const match = String(value || "").match(/^\d{4}/);
-    return match ? match[0] : null;
-}
-
-function isSameYear(left: string | null | undefined, right: string | null | undefined): boolean {
-    const leftYear = yearOf(left);
-    const rightYear = yearOf(right);
-    return Boolean(leftYear && rightYear && leftYear === rightYear);
-}
-
 function durationScore(leftSeconds: number | null | undefined, rightSeconds: number | null | undefined): number {
     const left = Number(leftSeconds);
     const right = Number(rightSeconds);
@@ -127,23 +114,6 @@ function durationScore(leftSeconds: number | null | undefined, rightSeconds: num
 
 function artistCreditNames(credits: MusicBrainzArtistCredit[]): string {
     return credits.map((credit) => credit.name).filter(Boolean).join(" ");
-}
-
-function getReleaseGroupPrimaryType(release: any): string | null {
-    return String(release?.["release-group"]?.["primary-type"] || "")
-        .trim()
-        .toLowerCase() || null;
-}
-
-function getReleaseGroupSecondaryTypes(release: any): string[] {
-    const rawSecondaryTypes = release?.["release-group"]?.["secondary-types"];
-    if (!Array.isArray(rawSecondaryTypes)) {
-        return [];
-    }
-
-    return rawSecondaryTypes
-        .map((type) => String(type || "").trim().toLowerCase())
-        .filter(Boolean);
 }
 
 function recordIdentityStatus(result: MetadataIdentityResult): void {
@@ -281,50 +251,6 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
         })
         .filter((artist: MusicBrainzArtistCandidate) => Boolean(artist.id && artist.name))
         .sort((left: MusicBrainzArtistCandidate, right: MusicBrainzArtistCandidate) => right.score - left.score);
-}
-
-function scoreReleaseCandidate(album: AlbumRow, release: MusicBrainzRelease, method: string): number {
-    const titleScore = stringSimilarity(normalizeText(album.title), normalizeText(release.title));
-    const artistScore = stringSimilarity(normalizeText(album.artist_name), normalizeText(artistCreditNames(release.artistCredits)));
-    const barcodeScore = album.upc && release.barcode && album.upc.replace(/\D/g, "") === release.barcode.replace(/\D/g, "") ? 1 : 0;
-    const dateScore = isSameYear(album.release_date, release.date) ? 1 : 0;
-
-    if (method === "barcode") {
-        return clampConfidence((barcodeScore * 0.55) + (titleScore * 0.3) + (artistScore * 0.1) + (dateScore * 0.05));
-    }
-
-    return clampConfidence((titleScore * 0.55) + (artistScore * 0.3) + (dateScore * 0.15));
-}
-
-async function searchMusicBrainzReleases(album: AlbumRow): Promise<MusicBrainzRelease[]> {
-    const artistName = String(album.artist_name || "").trim();
-    const title = String(album.title || "").trim();
-    if (!artistName || !title) return [];
-
-    const dateYear = yearOf(album.release_date);
-    const queryParts = [`release:"${title.replace(/"/g, "")}"`, `artist:"${artistName.replace(/"/g, "")}"`];
-    if (dateYear) queryParts.push(`date:${dateYear}`);
-    const url = `https://musicbrainz.org/ws/2/release?fmt=json&limit=10&query=${encodeURIComponent(queryParts.join(" AND "))}`;
-    const data = await requestMusicBrainzJson<any>(url);
-    const releases = Array.isArray(data?.releases) ? data.releases : [];
-
-    return releases.map((release: any) => ({
-        id: String(release?.id || "").trim(),
-        title: String(release?.title || "").trim(),
-        barcode: String(release?.barcode || "").trim() || null,
-        date: String(release?.date || "").trim() || null,
-        country: String(release?.country || "").trim() || null,
-        status: String(release?.status || "").trim() || null,
-        releaseGroupId: String(release?.["release-group"]?.id || "").trim() || null,
-        releaseGroupPrimaryType: getReleaseGroupPrimaryType(release),
-        releaseGroupSecondaryTypes: getReleaseGroupSecondaryTypes(release),
-        artistCredits: Array.isArray(release?.["artist-credit"])
-            ? release["artist-credit"].map((credit: any) => ({
-                id: String(credit?.artist?.id || "").trim(),
-                name: String(credit?.name || credit?.artist?.name || "").trim(),
-            })).filter((credit: MusicBrainzArtistCredit) => Boolean(credit.id && credit.name))
-            : [],
-    })).filter((release: MusicBrainzRelease) => Boolean(release.id && release.title));
 }
 
 async function lookupReleaseTracks(releaseId: string): Promise<ReleaseTrackCandidate[]> {
@@ -515,7 +441,7 @@ export class MetadataIdentityService {
             await this.resolveArtist(String(album.artist_id), { force: false });
         }
 
-        if (album.mbid && album.mb_release_group_id && !options.force) {
+        if (album.mbid && album.mb_release_group_id) {
             const result = this.result("album", albumId, "verified", 1, "existing-mbid", undefined, {
                 releaseId: album.mbid,
                 releaseGroupId: album.mb_release_group_id,
@@ -542,76 +468,17 @@ export class MetadataIdentityService {
             return result;
         }
 
-        try {
-            const barcodeCandidates = album.upc ? await lookupMusicBrainzReleasesByBarcode(album.upc) : [];
-            const barcodeScored = barcodeCandidates
-                .map((release) => ({ release, score: scoreReleaseCandidate(album, release, "barcode") }))
-                .sort((left, right) => right.score - left.score);
-            let method = "barcode";
-            let best = barcodeScored[0];
-
-            if (!best || best.score < 0.78) {
-                method = "release-search";
-                best = (await searchMusicBrainzReleases(album))
-                    .map((release) => ({ release, score: scoreReleaseCandidate(album, release, "search") }))
-                    .sort((left, right) => right.score - left.score)[0];
-            }
-
-            if (!best) {
-                const result = this.result("album", albumId, "unmatched", 0, method, "No MusicBrainz release candidate found");
-                recordIdentityStatus(result);
-                updateAlbumIdentityColumns(albumId, result);
-                return result;
-            }
-
-            if (best.score < 0.78) {
-                const result = this.result("album", albumId, "ambiguous", best.score, method, "MusicBrainz release match is below confidence threshold", {
-                    releaseId: best.release.id,
-                    title: best.release.title,
-                    releaseGroupId: best.release.releaseGroupId,
-                    releaseGroupPrimaryType: best.release.releaseGroupPrimaryType,
-                    releaseGroupSecondaryTypes: best.release.releaseGroupSecondaryTypes,
-                });
-                recordIdentityStatus(result);
-                updateAlbumIdentityColumns(albumId, result);
-                return result;
-            }
-
-            const result = this.result("album", albumId, "verified", best.score, method, undefined, {
-                releaseId: best.release.id,
-                releaseGroupId: best.release.releaseGroupId,
-                releaseGroupPrimaryType: best.release.releaseGroupPrimaryType,
-                releaseGroupSecondaryTypes: best.release.releaseGroupSecondaryTypes,
-                title: best.release.title,
-                barcode: best.release.barcode,
-            });
-            recordIdentityStatus(result);
-            updateAlbumIdentityColumns(albumId, result, best.release);
-
-            const releaseGroupId = best.release.releaseGroupId;
-            if (releaseGroupId) {
-                const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(releaseGroupId);
-                if (!rgExists) {
-                    try {
-                        const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
-                        await MusicBrainzReleaseGroupReadService.getAlbum(releaseGroupId);
-                    } catch (err) {
-                        console.warn(`[MetadataIdentity] Failed to auto-sync release group ${releaseGroupId} for provider album ${albumId}:`, err);
-                    }
-                }
-            }
-
-            if (options.includeTracks) {
-                await this.resolveAlbumTracks(albumId, { force: false, releaseId: best.release.id });
-            }
-
-            return result;
-        } catch (error) {
-            const result = this.result("album", albumId, "error", 0, "release-lookup", error instanceof Error ? error.message : String(error));
-            recordIdentityStatus(result);
-            updateAlbumIdentityColumns(albumId, result);
-            return result;
-        }
+        const result = this.result(
+            "album",
+            albumId,
+            "unmatched",
+            0,
+            "canonical-catalog-only",
+            "Provider offer has not been matched to the canonical MusicBrainz catalog",
+        );
+        recordIdentityStatus(result);
+        updateAlbumIdentityColumns(albumId, result);
+        return result;
     }
 
     static async resolveAlbumTracks(

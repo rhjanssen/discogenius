@@ -274,10 +274,14 @@ export class ArtistQueryService {
         if (artistMbids.length > 0) {
             const placeholders = artistMbids.map(() => "?").join(",");
             const rows = db.prepare(`
-                SELECT artist_mbid, COUNT(*) AS cnt
-                FROM Albums
-                WHERE artist_mbid IN (${placeholders})
-                GROUP BY artist_mbid
+                SELECT scope.artist_mbid, COUNT(DISTINCT scope.release_group_mbid) AS cnt
+                FROM (
+                    SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
+                    UNION
+                    SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
+                ) scope
+                WHERE scope.artist_mbid IN (${placeholders})
+                GROUP BY scope.artist_mbid
             `).all(...artistMbids) as Array<{ artist_mbid: string; cnt: number }>;
             for (const row of rows) {
                 releaseGroupCountsByMbid.set(String(row.artist_mbid), Number(row.cnt || 0));
@@ -536,50 +540,50 @@ export class ArtistQueryService {
         }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
-        const videos = db.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' AND artist_id = ? ORDER BY release_date DESC").all(artistId) as any[];
+        const videos = db.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' AND artist_id = ? ORDER BY (release_date IS NULL) ASC, release_date DESC, popularity DESC, title ASC, id ASC").all(artistId) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
-        SELECT
-	          rg.*,
-	          COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
-	          COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-	          COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-	          stereo.selected_provider AS stereo_provider,
-	          stereo.selected_provider_id AS stereo_provider_id,
-	          stereo.selected_release_mbid AS stereo_release_mbid,
-          stereo.quality AS stereo_quality,
-          stereo.match_status AS stereo_match_status,
-	          stereo.match_method AS stereo_match_method,
-	          stereo.provider_data AS stereo_provider_data,
-	          spatial.selected_provider AS spatial_provider,
-	          spatial.selected_provider_id AS spatial_provider_id,
-          spatial.selected_release_mbid AS spatial_release_mbid,
-          spatial.quality AS spatial_quality,
-          spatial.match_status AS spatial_match_status,
-          spatial.match_method AS spatial_match_method,
-          spatial.provider_data AS spatial_provider_data,
-          CASE
-            WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-            WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
-            ELSE 0
-          END AS wanted,
-          rg.data
-        FROM Albums rg
-        LEFT JOIN ReleaseGroupSlots stereo
-          ON stereo.release_group_mbid = rg.mbid
-         AND stereo.slot = 'stereo'
-        LEFT JOIN ReleaseGroupSlots spatial
-          ON spatial.release_group_mbid = rg.mbid
-         AND spatial.slot = 'spatial'
-        WHERE rg.artist_mbid = ?
-           OR rg.mbid IN (
-             SELECT DISTINCT mb_release_group_id
-             FROM ProviderAlbums
-             WHERE (artist_id = ? OR id IN (SELECT album_id FROM ProviderAlbumArtists WHERE artist_id = ?))
-               AND mb_release_group_id IS NOT NULL
-           )
-        ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-      `).all(artist.mbid, artist.mbid || artistId, artist.mbid || artistId) as any[]
+         SELECT
+           rg.*,
+           COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
+           COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+           COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+           stereo.selected_provider AS stereo_provider,
+           stereo.selected_provider_id AS stereo_provider_id,
+           stereo.selected_release_mbid AS stereo_release_mbid,
+           stereo.quality AS stereo_quality,
+           stereo.match_status AS stereo_match_status,
+           stereo.match_method AS stereo_match_method,
+           stereo.provider_data AS stereo_provider_data,
+           spatial.selected_provider AS spatial_provider,
+           spatial.selected_provider_id AS spatial_provider_id,
+           spatial.selected_release_mbid AS spatial_release_mbid,
+           spatial.quality AS spatial_quality,
+           spatial.match_status AS spatial_match_status,
+           spatial.match_method AS spatial_match_method,
+           spatial.provider_data AS spatial_provider_data,
+           CASE
+             WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
+             WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
+             ELSE 0
+           END AS wanted,
+           rg.data
+         FROM Albums rg
+         LEFT JOIN ReleaseGroupSlots stereo
+           ON stereo.release_group_mbid = rg.mbid
+          AND stereo.slot = 'stereo'
+         LEFT JOIN ReleaseGroupSlots spatial
+           ON spatial.release_group_mbid = rg.mbid
+          AND spatial.slot = 'spatial'
+         WHERE rg.artist_mbid = ?
+            OR EXISTS (
+              SELECT 1
+              FROM ArtistReleaseGroups scope
+              WHERE scope.release_group_mbid = rg.mbid
+                AND scope.artist_mbid = ?
+            )
+         ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+       `).all(artist.mbid, artist.mbid) as any[]
             : [];
 
         const allProviderAlbums = db.prepare(`
@@ -650,7 +654,7 @@ export class ArtistQueryService {
         AND ma.artist_id = ?
         AND ma.type = 'MAIN'
       GROUP BY COALESCE(t.mbid, t.id)
-      ORDER BY popularity DESC, t.id ASC
+      ORDER BY popularity DESC, a.release_date DESC, t.id ASC
     `).all(artist.mbid || artistId) as any[];
 
         const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));

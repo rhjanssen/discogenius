@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
+import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 
 export interface LidarrArtist {
   id: string;
@@ -28,6 +29,8 @@ export interface LidarrAlbum {
 
 export interface LidarrReleaseGroupDetail {
   id: string;
+  artistid?: string;
+  artistId?: string;
   title: string;
   type?: string;
   secondarytypes?: string[];
@@ -63,6 +66,46 @@ export interface LidarrTrack {
   TrackPosition: number;
   MediumNumber: number;
   DurationMs: number;
+}
+
+export interface MediaCover {
+  url: string;
+  coverType: string;
+  remoteUrl: string;
+  extension?: string;
+}
+
+export function mapSkyHookImages(images?: any[] | null): MediaCover[] {
+  if (!images || !Array.isArray(images)) {
+    return [];
+  }
+  return images.map((img: any) => {
+    const rawUrl = img.url || img.Url || img.remoteUrl || "";
+    const coverType = img.coverType || img.CoverType || "unknown";
+
+    let extension = "";
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        const pathname = parsed.pathname;
+        const lastDot = pathname.lastIndexOf(".");
+        if (lastDot !== -1 && pathname.length - lastDot <= 5) {
+          extension = pathname.slice(lastDot);
+        }
+      } catch {
+        extension = "";
+      }
+    }
+
+    const normalizedType = coverType.charAt(0).toUpperCase() + coverType.slice(1).toLowerCase();
+
+    return {
+      url: rawUrl,
+      coverType: normalizedType,
+      remoteUrl: rawUrl,
+      ...(extension ? { extension } : {}),
+    };
+  });
 }
 
 export class SkyHookProxy {
@@ -152,7 +195,16 @@ export class SkyHookProxy {
         `/search?type=all&query=${encodeURIComponent(trimmed)}`
       );
       if (Array.isArray(results)) {
-        return results.slice(0, limit);
+        return results
+          .sort((left, right) => {
+            if (left?.artist && right?.artist) {
+              return this.rankSearchArtist(trimmed, right.artist) - this.rankSearchArtist(trimmed, left.artist);
+            }
+            if (left?.artist) return -1;
+            if (right?.artist) return 1;
+            return 0;
+          })
+          .slice(0, limit);
       }
     } catch (e) {
       console.error("Skyhook searchAll failed:", e);
@@ -179,10 +231,11 @@ export class SkyHookProxy {
 
   getCachedReleaseGroupsForArtist(artistMbid: string): MusicBrainzReleaseGroupForMatching[] {
     const rows = db.prepare(`
-      SELECT mbid, title, primary_type, secondary_types, first_release_date, disambiguation
-      FROM Albums
-      WHERE artist_mbid = ?
-    `).all(artistMbid) as Array<{
+      SELECT DISTINCT rg.mbid, rg.title, rg.primary_type, rg.secondary_types, rg.first_release_date, rg.disambiguation
+      FROM Albums rg
+      LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+      WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+    `).all(artistMbid, artistMbid) as Array<{
       mbid: string;
       title: string;
       primary_type: string | null;
@@ -292,15 +345,18 @@ export class SkyHookProxy {
     const artist = await this.getArtistInfo(mbid);
 
     db.transaction(() => {
+      const imagesList = mapSkyHookImages(artist.images);
+
       db.prepare(`
-        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, data, images, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           name = excluded.name,
           sort_name = excluded.sort_name,
           disambiguation = excluded.disambiguation,
           type = excluded.type,
           data = excluded.data,
+          images = excluded.images,
           updated_at = CURRENT_TIMESTAMP
       `).run(
         artist.id,
@@ -309,11 +365,12 @@ export class SkyHookProxy {
         artist.disambiguation || null,
         artist.type || null,
         JSON.stringify(artist),
+        JSON.stringify(imagesList),
       );
 
       const insertRg = db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
           primary_type = excluded.primary_type,
@@ -321,6 +378,7 @@ export class SkyHookProxy {
           first_release_date = excluded.first_release_date,
           disambiguation = excluded.disambiguation,
           data = excluded.data,
+          images = excluded.images,
           updated_at = CURRENT_TIMESTAMP
       `);
 
@@ -346,6 +404,9 @@ export class SkyHookProxy {
             // Ignore parse errors
           }
         }
+
+        const albumImages = mapSkyHookImages(album.images || album.Images);
+
         insertRg.run(
           album.Id,
           artist.id,
@@ -355,7 +416,9 @@ export class SkyHookProxy {
           album.ReleaseDate || null,
           album.Disambiguation || null,
           JSON.stringify(mergedData),
+          JSON.stringify(albumImages),
         );
+        MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
       }
     })();
 
@@ -364,11 +427,13 @@ export class SkyHookProxy {
 
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
     const detail = await this.getAlbumInfo(releaseGroupMbid);
+    const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
     db.transaction(() => {
+      MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
       const insertRg = db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
           primary_type = excluded.primary_type,
@@ -376,6 +441,7 @@ export class SkyHookProxy {
           first_release_date = excluded.first_release_date,
           disambiguation = excluded.disambiguation,
           data = excluded.data,
+          images = excluded.images,
           updated_at = CURRENT_TIMESTAMP
       `);
 
@@ -385,16 +451,20 @@ export class SkyHookProxy {
       const firstReleaseDate = detail.releasedate || null;
       const disambiguation = detail.disambiguation || null;
 
+      const albumImages = mapSkyHookImages(detail.images || detail.Images);
+
       insertRg.run(
         releaseGroupMbid,
-        artistMbid,
+        ownerArtistMbid,
         title,
         primaryType,
         secondaryTypes,
         firstReleaseDate,
         disambiguation,
         JSON.stringify(detail),
+        JSON.stringify(albumImages),
       );
+      MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
 
       const insertRelease = db.prepare(`
         INSERT INTO AlbumReleases (
@@ -452,7 +522,7 @@ export class SkyHookProxy {
         insertRelease.run(
           release.Id,
           releaseGroupMbid,
-          artistMbid,
+          ownerArtistMbid,
           release.Title,
           release.Status || null,
           JSON.stringify(release.Country || []),

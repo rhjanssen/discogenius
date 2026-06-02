@@ -25,6 +25,7 @@ import {
 import {
     matchTrackForFile,
 } from "./import-matching-utils.js";
+import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 import type {
     AutoImportedGroupSummary,
@@ -414,6 +415,41 @@ export class ImportService {
             DELETE FROM TrackFiles
             WHERE media_id = ? AND file_type = ? AND id != ?
         `);
+        const updateImportedLibraryFileIdentity = db.prepare(`
+            UPDATE TrackFiles
+            SET canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
+                canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
+                canonical_release_mbid = COALESCE(?, canonical_release_mbid),
+                canonical_track_mbid = COALESCE(?, canonical_track_mbid),
+                canonical_recording_mbid = COALESCE(?, canonical_recording_mbid),
+                provider = COALESCE(?, provider),
+                provider_entity_type = COALESCE(?, provider_entity_type),
+                provider_id = COALESCE(?, provider_id),
+                library_slot = COALESCE(?, library_slot)
+            WHERE id = ?
+        `);
+        const enrichImportedLibraryFileIdentity = (libraryFileId: number, params: Record<string, unknown>) => {
+            const identity = resolveLibraryFileIdentity({
+                artistId: String(params.artistId || ""),
+                albumId: String(params.albumId || ""),
+                mediaId: String(params.mediaId || ""),
+                fileType: String(params.fileType || ""),
+                quality: params.quality == null ? null : String(params.quality),
+                libraryRoot: params.libraryRoot == null ? null : String(params.libraryRoot),
+            });
+            updateImportedLibraryFileIdentity.run(
+                identity.canonicalArtistMbid,
+                identity.canonicalReleaseGroupMbid,
+                identity.canonicalReleaseMbid,
+                identity.canonicalTrackMbid,
+                identity.canonicalRecordingMbid,
+                identity.provider,
+                identity.providerEntityType,
+                identity.providerId,
+                identity.librarySlot,
+                libraryFileId,
+            );
+        };
         const upsertImportedLibraryFile = (params: Record<string, unknown>) => {
             const mediaId = String(params.mediaId || "");
             const fileType = String(params.fileType || "");
@@ -423,11 +459,17 @@ export class ImportService {
                 if (existingRow) {
                     updateExistingLibraryFile.run({ ...params, id: existingRow.id });
                     deleteDuplicateMediaLibraryFiles.run(mediaId, fileType, existingRow.id);
+                    enrichImportedLibraryFileIdentity(existingRow.id, params);
                     return;
                 }
             }
 
             insertLibraryFile.run(params);
+            const insertedRow = db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?")
+                .get(filePath) as { id?: number } | undefined;
+            if (insertedRow?.id != null) {
+                enrichImportedLibraryFileIdentity(insertedRow.id, params);
+            }
         };
 
         for (const candidate of candidates) {

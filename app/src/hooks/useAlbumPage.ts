@@ -49,7 +49,7 @@ export function useAlbumPage(albumId: string | undefined) {
                 timeoutMs: 15_000,
             });
 
-            const artistImage = response.artistCoverImageUrl ?? response.artistPicture ?? null;
+            const artistImage = response.artistPicture ?? response.artistCoverImageUrl ?? null;
 
             return {
                 album: response.album as Album,

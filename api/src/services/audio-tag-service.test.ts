@@ -60,3 +60,123 @@ test("audio tag writer maps musicbrainz_releasetrackid and writeAliases correctl
   });
 });
 
+test("disabled ReplayGain embedding plans removal of managed ReplayGain tags", () => {
+  assert.deepEqual(
+    AudioTagService.buildManagedTagRemovals({ embed_replaygain: false } as any)
+      .map((tag: any) => tag.ffmpegKey),
+    ["UPC", "EAN", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK"],
+  );
+});
+
+test("audio tag removal keys use format-specific metadata fields", () => {
+  const tags: ManagedTag[] = [{
+    key: "replaygain_track_gain",
+    label: "ReplayGain Track Gain",
+    ffmpegKey: "REPLAYGAIN_TRACK_GAIN",
+    targetValue: "",
+  }];
+
+  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".flac"), ["REPLAYGAIN_TRACK_GAIN"]);
+  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".mp3"), ["TXXX:REPLAYGAIN_TRACK_GAIN"]);
+  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".m4a"), ["----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN"]);
+});
+
+test("audio tag writer emits Picard canonical barcode fields", () => {
+  const tags: ManagedTag[] = [{
+    key: "barcode",
+    label: "Barcode",
+    ffmpegKey: "BARCODE",
+    targetValue: "123456789012",
+  }];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), { BARCODE: "123456789012" });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), { "TXXX:Barcode": "123456789012" });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), { "----:com.apple.iTunes:Barcode": "123456789012" });
+});
+
+test("buildAudioTagWriteMap maps tags correctly for FLAC (.flac)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
+    MUSICBRAINZ_TRACKID: "rec-id",
+    RELEASETYPE: "album; compilation",
+    RELEASECOUNTRY: "US",
+  });
+});
+
+test("buildAudioTagWriteMap maps tags correctly for MP3 (.mp3)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
+    "TXXX:MusicBrainz Track Id": "rec-id",
+    "TXXX:MusicBrainz Album Type": "album; compilation",
+    "TXXX:MusicBrainz Album Release Country": "US",
+  });
+});
+
+test("buildAudioTagWriteMap maps tags correctly for M4A (.m4a)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), {
+    "----:com.apple.iTunes:MusicBrainz Track Id": "rec-id",
+    "----:com.apple.iTunes:MusicBrainz Album Type": "album; compilation",
+    "----:com.apple.iTunes:MusicBrainz Album Release Country": "US",
+  });
+});

@@ -136,7 +136,11 @@ test.describe('API health & key endpoints', () => {
       expect(item).toHaveProperty('progress');
 
       if (item.stage === 'import') {
-        expect(item.status === 'pending' || item.status === 'processing').toBeTruthy();
+        expect(['pending', 'processing', 'failed']).toContain(item.status);
+        if (item.status === 'failed') {
+          expect(item.state).toBe('importFailed');
+          expect(typeof item.error === 'string' && item.error.length > 0).toBeTruthy();
+        }
       }
     }
   });

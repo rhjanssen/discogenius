@@ -1183,6 +1183,28 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       }
     },
   },
+  {
+    version: 19,
+    description: "create persistent MediaCoverProxyCache table for remote artwork proxy",
+    up: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS MediaCoverProxyCache (
+          hash TEXT PRIMARY KEY,
+          url TEXT NOT NULL,
+          expires_at INTEGER NOT NULL
+        )
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_media_cover_proxy_expires ON MediaCoverProxyCache(expires_at)");
+    },
+  },
+  {
+    version: 20,
+    description: "add serialized images columns to ArtistMetadata and Albums tables aligned with Lidarr schema",
+    up: () => {
+      addColumnIfMissing("ArtistMetadata", "images", "TEXT");
+      addColumnIfMissing("Albums", "images", "TEXT");
+    },
+  },
 ];
 
 function addColumnIfMissing(tableName: string, columnName: string, columnDefinition: string): void {
@@ -1527,6 +1549,7 @@ function ensureExtraFileSchema(): void {
 function ensureMusicBrainzProviderSchema(): void {
   ensureCanonicalMusicBrainzTableShapes();
   addColumnIfMissing("Artists", "cover_image_url", "TEXT");
+  addColumnIfMissing("Artists", "library_origin", "TEXT NOT NULL DEFAULT 'user'");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS ArtistMetadata (
@@ -1544,6 +1567,7 @@ function ensureMusicBrainzProviderSchema(): void {
       cover_image_url TEXT,
       popularity INT,
       data TEXT,
+      images TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -1558,6 +1582,7 @@ function ensureMusicBrainzProviderSchema(): void {
       first_release_date TEXT,
       disambiguation TEXT,
       data TEXT,
+      images TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     );
@@ -1580,6 +1605,42 @@ function ensureMusicBrainzProviderSchema(): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS AlbumArtists (
+      release_group_mbid TEXT NOT NULL,
+      artist_mbid TEXT NOT NULL,
+      ord INT NOT NULL,
+      credited_name TEXT NOT NULL,
+      join_phrase TEXT NOT NULL DEFAULT '',
+      is_primary BOOLEAN NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(release_group_mbid, ord),
+      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ArtistReleaseGroups (
+      artist_mbid TEXT NOT NULL,
+      release_group_mbid TEXT NOT NULL,
+      relationship TEXT NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(artist_mbid, release_group_mbid, relationship),
+      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ArtistReleaseGroupCuration (
+      source_artist_mbid TEXT NOT NULL,
+      release_group_mbid TEXT NOT NULL,
+      included BOOLEAN NOT NULL DEFAULT 0,
+      reason TEXT,
+      redundant_to_release_group_mbid TEXT,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(source_artist_mbid, release_group_mbid),
+      FOREIGN KEY(source_artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(redundant_to_release_group_mbid) REFERENCES Albums(mbid) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS AlbumReleaseMedia (
@@ -1734,6 +1795,9 @@ function ensureMusicBrainzProviderSchema(): void {
   `);
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist ON Albums(artist_mbid, first_release_date)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_artist ON AlbumArtists(artist_mbid, release_group_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_groups_group ON ArtistReleaseGroups(release_group_mbid, artist_mbid)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_group_curation_group ON ArtistReleaseGroupCuration(release_group_mbid, included)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_group ON AlbumReleases(release_group_mbid, date)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_release_position ON Tracks(release_mbid, medium_position, position)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_mb_artist ON ProviderItems(provider, artist_mbid, entity_type)");

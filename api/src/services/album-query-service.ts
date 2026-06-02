@@ -7,9 +7,6 @@ import {
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
-import { buildManagedArtistPredicate } from "./managed-artists.js";
-
-const managedArtistPredicate = buildManagedArtistPredicate("a");
 const releaseGroupWantedExpression = `
         CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
 `;
@@ -46,7 +43,13 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
       AND NOT EXISTS (
         SELECT 1
         FROM TrackFiles lf
-        WHERE lf.canonical_track_mbid = t.mbid
+        WHERE (
+            lf.canonical_track_mbid = t.mbid
+            OR (
+              lf.canonical_track_mbid IS NULL
+              AND lf.canonical_recording_mbid = t.recording_mbid
+            )
+          )
           AND lf.file_type = 'track'
           ${slotFilter}
       )
@@ -153,7 +156,17 @@ export class AlbumQueryService {
         const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
-        const where: string[] = ["a.id IS NOT NULL", managedArtistPredicate];
+        const where: string[] = [
+            "a.id IS NOT NULL",
+            `EXISTS (
+                SELECT 1
+                FROM ArtistReleaseGroupCuration context
+                JOIN Artists managed_artist ON managed_artist.mbid = context.source_artist_mbid
+                WHERE context.release_group_mbid = rg.mbid
+                  AND context.included = 1
+                  AND managed_artist.monitor = 1
+            )`,
+        ];
 
         if (search) {
             where.push("(rg.title LIKE ? OR a.name LIKE ?)");

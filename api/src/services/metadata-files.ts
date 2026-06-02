@@ -185,7 +185,8 @@ async function getVideoForNfo(videoId: string) {
         warnNfoFallback("video", videoId, error);
         const row = db.prepare(`
             SELECT m.id, m.title, m.artist_id, ar.name AS artist_name, m.album_id,
-                   m.duration, m.release_date, m.cover, m.quality, m.explicit, m.popularity
+                   m.duration, m.release_date, m.cover, m.quality, m.explicit, m.popularity,
+                   m.credits
             FROM ProviderMedia m
             LEFT JOIN Artists ar ON ar.id = m.artist_id
             WHERE m.id = ?
@@ -201,6 +202,7 @@ async function getVideoForNfo(videoId: string) {
             quality?: string | null;
             explicit?: number | boolean | null;
             popularity?: number | null;
+            credits?: string | null;
         } | undefined;
 
         if (!row) throw error;
@@ -211,7 +213,13 @@ async function getVideoForNfo(videoId: string) {
             title: row.title || "Unknown Video",
             artist_id: artistId,
             artist_name: artistName,
-            artists: artistId && artistName ? [{ id: artistId, name: artistName }] : [],
+            artists: (() => {
+                try {
+                    const credits = JSON.parse(row.credits || "[]");
+                    if (Array.isArray(credits) && credits.length > 0) return credits;
+                } catch {}
+                return artistId && artistName ? [{ id: artistId, name: artistName }] : [];
+            })(),
             album_id: row.album_id ? String(row.album_id) : null,
             duration: row.duration || 0,
             release_date: row.release_date || null,
@@ -617,16 +625,32 @@ export async function saveAlbumNfoFile(
         WHERE a.id = ?
     `).get(albumId) as { mbid?: string | null; mb_release_group_id?: string | null; artist_mbid?: string | null } | undefined;
     const tracks = db.prepare(`
-        SELECT title, duration, track_number, volume_number, mbid
-        FROM ProviderMedia
-        WHERE album_id = ? AND type != 'Music Video'
-        ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0), id
+        SELECT
+            media.title,
+            media.duration,
+            media.track_number,
+            media.volume_number,
+            media.mbid AS recording_mbid,
+            (
+                SELECT track.mbid
+                FROM Tracks track
+                WHERE track.release_mbid = album.mbid
+                  AND track.recording_mbid = media.mbid
+                  AND track.medium_position = COALESCE(media.volume_number, 1)
+                  AND track.position = COALESCE(media.track_number, 1)
+                LIMIT 1
+            ) AS track_mbid
+        FROM ProviderMedia media
+        JOIN ProviderAlbums album ON album.id = media.album_id
+        WHERE media.album_id = ? AND media.type != 'Music Video'
+        ORDER BY COALESCE(media.volume_number, 1), COALESCE(media.track_number, 0), media.id
     `).all(albumId) as Array<{
         title: string;
         duration: number | null;
         track_number: number | null;
         volume_number: number | null;
-        mbid: string | null;
+        recording_mbid: string | null;
+        track_mbid: string | null;
     }>;
     const year = album.releaseDate ? album.releaseDate.substring(0, 4) : "";
     const albumRecord = album as any;
@@ -655,7 +679,8 @@ export async function saveAlbumNfoFile(
                 xmlElement("position", track.track_number),
                 xmlElement("title", track.title),
                 xmlElement("duration", track.duration),
-                xmlUniqueId("MusicBrainzTrack", track.mbid),
+                xmlUniqueId("MusicBrainzTrack", track.track_mbid),
+                xmlUniqueId("MusicBrainzRecording", track.recording_mbid),
             ].filter((element): element is string => Boolean(element));
             return `  <track>\n${trackElements.map((element) => `  ${element}`).join("\n")}\n  </track>`;
         }),
@@ -691,8 +716,11 @@ export async function saveVideoNfoFile(
         } | undefined
         : undefined;
     const year = String(videoReleaseDate || "").match(/^\d{4}/)?.[0] || "";
-    const artistNames = Array.isArray(videoRecord.artists) && videoRecord.artists.length > 0
-        ? videoRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
+    const videoArtists = Array.isArray(videoRecord.artists) && videoRecord.artists.length > 0
+        ? videoRecord.artists
+        : Array.isArray(videoRecord.raw?.artists) ? videoRecord.raw.artists : [];
+    const artistNames = videoArtists.length > 0
+        ? videoArtists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
         : [videoArtistName || "Unknown Artist"];
 
     const elements = [

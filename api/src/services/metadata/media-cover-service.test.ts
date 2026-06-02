@@ -1,16 +1,30 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, before, test } from "node:test";
 
-import {
-  chooseCachedAlbumArtwork,
-  getSkyHookAlbumImageUrl,
-  getRegisteredMediaCoverProxyUrl,
-  resolveMediaCoverProxyUrl,
-} from "./media-cover-service.js";
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-media-cover-"));
+process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
+process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+
+let dbModule: typeof import("../../database.js");
+let mediaCoverServiceModule: typeof import("./media-cover-service.js");
+
+before(async () => {
+  dbModule = await import("../../database.js");
+  dbModule.initDatabase();
+  mediaCoverServiceModule = await import("./media-cover-service.js");
+});
+
+after(() => {
+  dbModule.closeDatabase();
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 test("SkyHook album artwork is registered through the media cover proxy", () => {
   const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/cover.jpg";
-  const artworkUrl = chooseCachedAlbumArtwork({
+  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
     skyHookData: {
       Images: [
         {
@@ -32,14 +46,14 @@ test("SkyHook album artwork is registered through the media cover proxy", () => 
   assert.match(artworkUrl ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/cover\.jpg$/);
 
   const hash = artworkUrl?.split("/")[2] ?? "";
-  assert.equal(getRegisteredMediaCoverProxyUrl(hash), remoteUrl);
-  assert.equal(resolveMediaCoverProxyUrl(artworkUrl), remoteUrl);
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), remoteUrl);
+  assert.equal(mediaCoverServiceModule.resolveMediaCoverProxyUrl(artworkUrl), remoteUrl);
 });
 
 test("SkyHook selectors return raw URLs for durable storage", () => {
   const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/storage-cover.jpg";
 
-  assert.equal(getSkyHookAlbumImageUrl({
+  assert.equal(mediaCoverServiceModule.getSkyHookAlbumImageUrl({
     Images: [
       {
         CoverType: "Cover",
@@ -52,7 +66,7 @@ test("SkyHook selectors return raw URLs for durable storage", () => {
 });
 
 test("provider artwork is used when SkyHook has no usable image URL", () => {
-  const artworkUrl = chooseCachedAlbumArtwork({
+  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
     skyHookData: {
       Images: [
         {
@@ -69,5 +83,5 @@ test("provider artwork is used when SkyHook has no usable image URL", () => {
     ],
   });
 
-  assert.equal(artworkUrl, "11111111-1111-1111-1111-111111111111");
+  assert.match(artworkUrl ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/750x750\.jpg$/);
 });

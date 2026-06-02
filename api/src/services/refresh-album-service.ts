@@ -102,6 +102,32 @@ function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null
 }
 
 export class RefreshAlbumService {
+    private static resolveProviderForAlbum(albumId: string): any {
+        const itemRow = db.prepare(`
+            SELECT provider
+            FROM ProviderItems
+            WHERE entity_type = 'album' AND provider_id = ?
+            LIMIT 1
+        `).get(albumId) as { provider?: string } | undefined;
+        if (itemRow?.provider) {
+            return streamingProviderManager.getStreamingProvider(itemRow.provider);
+        }
+
+        const slotRow = db.prepare(`
+            SELECT selected_provider
+            FROM ReleaseGroupSlots
+            WHERE selected_provider_id = ?
+               OR selected_provider_id LIKE ?
+               OR selected_provider_id LIKE ?
+               OR selected_provider_id LIKE ?
+            LIMIT 1
+        `).get(albumId, `${albumId};%`, `%;${albumId}`, `%;${albumId};%`) as { selected_provider?: string } | undefined;
+        if (slotRow?.selected_provider) {
+            return streamingProviderManager.getStreamingProvider(slotRow.selected_provider);
+        }
+
+        return streamingProviderManager.getDefaultStreamingProvider();
+    }
     private static getArtistMbidForReleaseGroup(releaseGroupMbid?: string | null): string | null {
         if (!releaseGroupMbid) {
             return null;
@@ -261,7 +287,7 @@ export class RefreshAlbumService {
             return;
         }
 
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
+        const provider = this.resolveProviderForAlbum(albumId);
         const albumData = providerAlbumToAlbumMetadataRow(await provider.getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
 
@@ -414,7 +440,7 @@ export class RefreshAlbumService {
 
         if (shouldRefreshReview) {
             try {
-                const provider = streamingProviderManager.getDefaultStreamingProvider();
+                const provider = this.resolveProviderForAlbum(albumId);
                 const reviewText = await provider.getAlbumReview?.(albumId);
 
                 if (reviewText !== null && reviewText !== undefined) {
@@ -450,7 +476,7 @@ export class RefreshAlbumService {
         }
 
         try {
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const provider = this.resolveProviderForAlbum(albumId);
             const credits = provider.getAlbumCredits
                 ? await provider.getAlbumCredits(albumId)
                 : [];
@@ -463,7 +489,7 @@ export class RefreshAlbumService {
         }
 
         try {
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const provider = this.resolveProviderForAlbum(albumId);
             const trackCreditsMap = provider.getAlbumTrackCredits
                 ? await provider.getAlbumTrackCredits(albumId)
                 : new Map<string, any[]>();
@@ -488,7 +514,8 @@ export class RefreshAlbumService {
         albumId: string,
         options: { resolveMusicBrainz?: boolean } = {},
     ): Promise<void> {
-        const tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(albumId))
+        const provider = this.resolveProviderForAlbum(albumId);
+        const tracks = (await provider.getAlbumTracks(albumId))
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
@@ -498,7 +525,6 @@ export class RefreshAlbumService {
             return;
         }
 
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
         const providerId = provider.id;
 
         // Collect all guest artists
@@ -927,17 +953,19 @@ export class RefreshAlbumService {
         db.prepare("DELETE FROM ProviderMediaArtists WHERE media_id = ?").run(mediaId);
 
         const insertMediaArtist = db.prepare(`
-            INSERT INTO ProviderMediaArtists (media_id, artist_id, type) VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO ProviderMediaArtists (media_id, artist_id, type) VALUES (?, ?, ?)
         `);
 
         insertMediaArtist.run(mediaId, canonicalArtistId, "MAIN");
 
         if (resolvedGuestsMap && Array.isArray(track.artists)) {
+            const storedArtistIds = new Set([canonicalArtistId]);
             for (const a of track.artists) {
                 if (a.id && a.id !== track.artist_id) {
                     const guestMbid = resolvedGuestsMap.get(a.id);
-                    if (guestMbid) {
+                    if (guestMbid && !storedArtistIds.has(guestMbid)) {
                         insertMediaArtist.run(mediaId, guestMbid, "CONTRIBUTOR");
+                        storedArtistIds.add(guestMbid);
                     }
                 }
             }

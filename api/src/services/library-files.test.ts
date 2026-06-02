@@ -14,6 +14,8 @@ let libraryFilesModule: typeof import("./library-files.js");
 let artistPathsModule: typeof import("./artist-paths.js");
 let downloadStateModule: typeof import("./download-state.js");
 let libraryStatsModule: typeof import("./library-stats-query-service.js");
+let libraryScanModule: typeof import("./library-scan.js");
+let audioLibraryPathModule: typeof import("./audio-library-path.js");
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -49,6 +51,8 @@ before(async () => {
   artistPathsModule = await import("./artist-paths.js");
   downloadStateModule = await import("./download-state.js");
   libraryStatsModule = await import("./library-stats-query-service.js");
+  libraryScanModule = await import("./library-scan.js");
+  audioLibraryPathModule = await import("./audio-library-path.js");
 
   writeTestConfig();
 });
@@ -124,6 +128,41 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   assert.ok(expected.expectedPath);
   assert.ok(expected.expectedPath?.startsWith(expectedRoot));
   assert.ok(!expected.expectedPath?.includes("Queen [artist-mbid-1]"));
+});
+
+test("unified audio roots allow different extensions and disambiguate only real spatial conflicts", () => {
+  const unifiedRoot = path.join(tempDir, "library", "unified");
+
+  assert.equal(
+    audioLibraryPathModule.renderAudioRelativePathForLibrary({
+      relativePath: path.join("Album", "01 - Example Track"),
+      quality: "DOLBY_ATMOS",
+      musicRoot: unifiedRoot,
+      spatialRoot: unifiedRoot,
+    }),
+    path.join("Album", "01 - Example Track"),
+  );
+
+  assert.equal(
+    audioLibraryPathModule.renderAudioRelativePathForLibrary({
+      relativePath: path.join("Album", "01 - Example Track"),
+      quality: "DOLBY_ATMOS",
+      musicRoot: unifiedRoot,
+      spatialRoot: unifiedRoot,
+      mustDisambiguate: true,
+    }),
+    path.join("Album", "01 - Example Track [DOLBY_ATMOS]"),
+  );
+
+  assert.equal(
+    audioLibraryPathModule.renderAudioRelativePathForLibrary({
+      relativePath: path.join("Album", "01 - Example Track"),
+      quality: "LOSSLESS",
+      musicRoot: unifiedRoot,
+      spatialRoot: unifiedRoot,
+    }),
+    path.join("Album", "01 - Example Track"),
+  );
 });
 
 test("resolveArtistFolderForPersistence disambiguates same-name artists with numeric suffixes outside the repository layer", () => {
@@ -466,6 +505,57 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
     provider: null,
     provider_entity_type: "artist",
     provider_id: null,
+  });
+});
+
+test("disk scan relinks Lidarr-style album covers and renamed lyrics to their provider album and track", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-album-1", "artist-local", "SAVE MY SOUL", "SINGLE", 0, "LOSSLESS", 1, 1, 0, 237, 1);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-track-1", "artist-local", "provider-album-1", "SAVE MY SOUL", "Track", 0, "LOSSLESS", 1, 1, 237, 1);
+
+  const root = configModule.Config.getMusicPath();
+  const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
+  const audioPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.flac");
+  const lyricPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.lrc");
+  const coverPath = path.join(albumDir, "cover.jpg");
+  fs.mkdirSync(albumDir, { recursive: true });
+  fs.writeFileSync(audioPath, "audio");
+  fs.writeFileSync(lyricPath, "lyrics");
+  fs.writeFileSync(coverPath, "cover");
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "artist-local",
+    albumId: "provider-album-1",
+    mediaId: "provider-track-1",
+    filePath: audioPath,
+    libraryRoot: root,
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+
+  const matchFileToMedia = (libraryScanModule.DiskScanService as any).matchFileToMedia.bind(libraryScanModule.DiskScanService);
+  assert.deepEqual(matchFileToMedia(coverPath, "artist-local", "music"), {
+    albumId: "provider-album-1",
+    mediaId: null,
+    fileType: "cover",
+    quality: null,
+  });
+  assert.deepEqual(matchFileToMedia(lyricPath, "artist-local", "music"), {
+    albumId: "provider-album-1",
+    mediaId: "provider-track-1",
+    fileType: "lyrics",
+    quality: null,
   });
 });
 
@@ -850,6 +940,65 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
 
   dbModule.db.prepare("UPDATE ProviderMedia SET mbid = 'non-existent-recording' WHERE id = 'video-inline-test'").run();
 
-  const expectedFallback = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
-  assert.equal(expectedFallback.expectedPath, expectedSeparatedPath);
+  const expectedAlbumLinkedFallback = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
+  assert.equal(expectedAlbumLinkedFallback.expectedPath, expectedInlineMonitoredPath);
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("video-inline-duplicate", "artist-inline-test", "album-inline-test", "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      id, artist_id, album_id, media_id, file_path, relative_path, library_root,
+      filename, extension, file_size, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    2001, "artist-inline-test", "album-inline-test", "video-inline-test",
+    expectedInlineMonitoredPath,
+    path.relative(configModule.Config.getMusicPath(), expectedInlineMonitoredPath),
+    "music", path.basename(expectedInlineMonitoredPath), "mp4", 100, "video", "MP4_1080P",
+  );
+
+  const expectedDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...rowVideoSeparated,
+    id: 1003,
+    media_id: "video-inline-duplicate",
+  });
+  assert.equal(
+    expectedDuplicate.expectedPath,
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-duplicate}.mp4"),
+  );
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("video-inline-unlinked", "artist-inline-test", null, "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
+
+  const expectedUnlinkedDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...rowVideoSeparated,
+    id: 1004,
+    album_id: null,
+    media_id: "video-inline-unlinked",
+  });
+  assert.equal(
+    expectedUnlinkedDuplicate.expectedPath,
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
+  );
+
+  dbModule.db.prepare("DELETE FROM ProviderMedia WHERE id = 'track-inline-test'").run();
+  const expectedCanonicalOnlyDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...rowVideoSeparated,
+    id: 1005,
+    album_id: null,
+    media_id: "video-inline-unlinked",
+  });
+  assert.equal(
+    expectedCanonicalOnlyDuplicate.expectedPath,
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
+  );
 });

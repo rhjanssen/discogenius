@@ -46,6 +46,8 @@ type MediaRow = {
   mbid: string | null;
   type: string | null;
   quality: string | null;
+  track_number: number | null;
+  volume_number: number | null;
 };
 type MbTrackRow = { mbid: string; release_mbid: string; recording_mbid: string };
 type MbReleaseRow = { mbid: string; release_group_mbid: string };
@@ -59,6 +61,12 @@ type ProviderItemRow = {
   track_mbid: string | null;
   recording_mbid: string | null;
   library_slot: LibrarySlot | string | null;
+};
+type ReleaseGroupSlotRow = {
+  release_group_mbid: string;
+  selected_release_mbid: string | null;
+  selected_provider: string | null;
+  slot: LibrarySlot | string | null;
 };
 
 function nullableText(value: unknown): string | null {
@@ -160,7 +168,7 @@ function getProviderItem(provider: string | null, entityType: string, providerId
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
   const media = getRow<MediaRow>(
-    "SELECT artist_id, album_id, mbid, type, quality FROM ProviderMedia WHERE CAST(id AS TEXT) = ? LIMIT 1",
+    "SELECT artist_id, album_id, mbid, type, quality, track_number, volume_number FROM ProviderMedia WHERE CAST(id AS TEXT) = ? LIMIT 1",
     input.mediaId
   );
   const albumId = nullableText(input.albumId) ?? nullableText(media?.album_id);
@@ -198,6 +206,41 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
   const providerMedia = providerEntityType
     ? getProviderItem(provider, providerEntityType, providerId)
     : null;
+  const preferredSlot = inferLibrarySlot({
+    ...input,
+    librarySlot: input.librarySlot ?? providerMedia?.library_slot ?? providerAlbum?.library_slot,
+    quality: input.quality ?? media?.quality ?? album?.quality,
+  });
+  const releaseGroupSlot = albumId
+    ? (db.prepare(`
+        SELECT release_group_mbid, selected_release_mbid, selected_provider, slot
+        FROM ReleaseGroupSlots
+        WHERE selected_provider_id = ?
+           OR selected_provider_id LIKE ?
+           OR selected_provider_id LIKE ?
+           OR selected_provider_id LIKE ?
+        ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
+        LIMIT 1
+      `).get(albumId, `${albumId};%`, `%;${albumId};%`, `%;${albumId}`, preferredSlot) as ReleaseGroupSlotRow | undefined) ?? null
+    : null;
+  const selectedTrack = releaseGroupSlot?.selected_release_mbid && media?.mbid
+    ? (db.prepare(`
+        SELECT mbid, release_mbid, recording_mbid
+        FROM Tracks
+        WHERE release_mbid = ?
+          AND recording_mbid = ?
+        ORDER BY
+          CASE WHEN position = ? THEN 0 ELSE 1 END,
+          CASE WHEN medium_position = ? THEN 0 ELSE 1 END,
+          mbid ASC
+        LIMIT 1
+      `).get(
+        releaseGroupSlot.selected_release_mbid,
+        media.mbid,
+        media.track_number ?? 0,
+        media.volume_number ?? 1,
+      ) as MbTrackRow | undefined) ?? null
+    : null;
 
   return {
     canonicalArtistMbid:
@@ -211,6 +254,7 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ?? nullableText(album?.mb_release_group_id)
       ?? nullableText(providerMedia?.release_group_mbid)
       ?? nullableText(providerAlbum?.release_group_mbid)
+      ?? nullableText(releaseGroupSlot?.release_group_mbid)
       ?? nullableText(albumRelease?.release_group_mbid)
       ?? nullableText(trackRelease?.release_group_mbid)
       ?? null,
@@ -220,11 +264,13 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ?? nullableText(mediaTrack?.release_mbid)
       ?? nullableText(providerMedia?.release_mbid)
       ?? nullableText(providerAlbum?.release_mbid)
+      ?? nullableText(releaseGroupSlot?.selected_release_mbid)
       ?? null,
     canonicalTrackMbid:
       nullableText(input.canonicalTrackMbid)
       ?? nullableText(mediaTrack?.mbid)
       ?? nullableText(providerMedia?.track_mbid)
+      ?? nullableText(selectedTrack?.mbid)
       ?? null,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
@@ -235,10 +281,6 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
     provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider,
     providerEntityType,
     providerId,
-    librarySlot: inferLibrarySlot({
-      ...input,
-      librarySlot: input.librarySlot ?? providerMedia?.library_slot ?? providerAlbum?.library_slot,
-      quality: input.quality ?? media?.quality ?? album?.quality,
-    }),
+    librarySlot: preferredSlot,
   };
 }

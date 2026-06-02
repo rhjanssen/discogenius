@@ -15,6 +15,8 @@ import {
     resolveAlbumArtwork,
     resolveMediaCoverProxyUrl,
 } from "./metadata/media-cover-service.js";
+import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
+import { MusicBrainzArtistCreditService } from "./metadata/musicbrainz-artist-credit-service.js";
 
 function proxyStoredArtworkUrl(...values: unknown[]): string | null {
     for (const value of values) {
@@ -77,27 +79,26 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
 }
 
 function selectPreferredRelease(releaseGroupMbid: string): any | null {
-    return db.prepare(`
-      SELECT
-        r.*,
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM AlbumReleaseMedia m
-            WHERE m.release_mbid = r.mbid
-              AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
-          ) THEN 1 ELSE 0
-        END AS digital_score
-      FROM AlbumReleases r
-      WHERE r.release_group_mbid = ?
-      ORDER BY
-        digital_score DESC,
-        CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
-        COALESCE(r.track_count, 0) DESC,
-        (r.date IS NULL) ASC,
-        r.date DESC,
-        r.mbid ASC
-      LIMIT 1
-    `).get(releaseGroupMbid) as any | null;
+    const selectedSlot = db.prepare(`
+        SELECT selected_release_mbid
+        FROM ReleaseGroupSlots
+        WHERE release_group_mbid = ?
+          AND selected_release_mbid IS NOT NULL
+        ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
+        LIMIT 1
+    `).get(releaseGroupMbid) as { selected_release_mbid?: string | null } | undefined;
+    if (selectedSlot?.selected_release_mbid) {
+        const selectedRelease = db.prepare("SELECT * FROM AlbumReleases WHERE mbid = ?")
+            .get(selectedSlot.selected_release_mbid) as any | null;
+        if (selectedRelease) {
+            return selectedRelease;
+        }
+    }
+
+    const selected = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid);
+    return selected
+        ? db.prepare("SELECT * FROM AlbumReleases WHERE mbid = ?").get(selected.mbid) as any | null
+        : null;
 }
 
 function parseProviderData(value: unknown): any | null {
@@ -220,6 +221,7 @@ function listMusicBrainzReleaseVersions(
 
 function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
     return chooseCachedAlbumArtwork({
+        albumMbid: releaseGroup.mbid,
         skyHookData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
@@ -231,6 +233,7 @@ function chooseReleaseGroupProviderArtwork(releaseGroup: any): string | null {
 
 async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {
     return resolveAlbumArtwork({
+        albumMbid: releaseGroup.mbid,
         skyHookData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
@@ -285,10 +288,21 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     resolvedCoverUrl?: string | null,
 ): AlbumContract {
     const primaryType = String(releaseGroup.primary_type || "Album").trim().toUpperCase();
-    const artistId = releaseGroup.local_artist_id == null
+    const fallbackArtistId = releaseGroup.local_artist_id == null
         ? String(releaseGroup.artist_mbid)
         : String(releaseGroup.local_artist_id);
-    const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
+    const albumArtists = MusicBrainzArtistCreditService.getAlbumArtists(String(releaseGroup.mbid))
+        .map((artist) => ({
+            id: artist.artistId,
+            name: artist.name,
+            join_phrase: artist.joinPhrase,
+            picture: proxyStoredArtworkUrl(artist.picture, artist.coverImageUrl),
+            cover_image_url: proxyStoredArtworkUrl(artist.coverImageUrl),
+        }));
+    const artistId = albumArtists[0]?.id || fallbackArtistId;
+    const artistName = albumArtists.length > 0
+        ? albumArtists.map((artist) => `${artist.name}${artist.join_phrase}`).join("")
+        : String(releaseGroup.local_artist_name || "Unknown Artist");
     const coverUrl = resolvedCoverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
     const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
 
@@ -320,6 +334,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         downloaded: 0,
         artist_id: artistId,
         artist_name: artistName,
+        album_artists: albumArtists,
         include_in_monitoring: 1,
         excluded_reason: null,
         filtered_out: 0,
@@ -783,8 +798,8 @@ export class MusicBrainzReleaseGroupReadService {
                 : [],
             similarAlbums: [],
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
-            artistPicture: proxyStoredArtworkUrl(releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
-            artistCoverImageUrl: proxyStoredArtworkUrl(releaseGroup.artist_cover_image_url),
+            artistPicture: album.album_artists?.[0]?.picture || proxyStoredArtworkUrl(releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
+            artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || proxyStoredArtworkUrl(releaseGroup.artist_cover_image_url),
         };
     }
 

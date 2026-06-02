@@ -1,4 +1,5 @@
 import { getConfigSection } from "../config.js";
+import { db } from "../../database.js";
 import crypto from "crypto";
 import path from "path";
 import { streamingProviderManager } from "../providers/index.js";
@@ -34,13 +35,12 @@ type MediaCoverProxyEntry = {
 };
 
 const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
-const mediaCoverProxyCache = new Map<string, MediaCoverProxyEntry>();
 
 function clearExpiredMediaCoverProxyEntries(now = Date.now()): void {
-  for (const [hash, entry] of mediaCoverProxyCache.entries()) {
-    if (entry.expiresAt <= now) {
-      mediaCoverProxyCache.delete(hash);
-    }
+  try {
+    db.prepare("DELETE FROM MediaCoverProxyCache WHERE expires_at <= ?").run(now);
+  } catch (error) {
+    console.warn("Failed to clear expired media cover proxy entries:", error);
   }
 }
 
@@ -70,18 +70,29 @@ export function registerMediaCoverProxyUrl(value: unknown): string | null {
   clearExpiredMediaCoverProxyEntries(now);
 
   const hash = crypto.createHash("sha256").update(url).digest("hex");
-  mediaCoverProxyCache.set(hash, {
-    url,
-    expiresAt: now + MEDIA_COVER_PROXY_TTL_MS,
-  });
+  try {
+    db.prepare(`
+      INSERT INTO MediaCoverProxyCache (hash, url, expires_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(hash) DO UPDATE SET
+        expires_at = excluded.expires_at
+    `).run(hash, url, now + MEDIA_COVER_PROXY_TTL_MS);
+  } catch (error) {
+    console.warn("Failed to register media cover proxy URL in DB:", error);
+  }
 
   return `/MediaCoverProxy/${hash}/${getSafeMediaCoverFilename(url)}`;
 }
 
 export function getRegisteredMediaCoverProxyUrl(hash: string): string | null {
   clearExpiredMediaCoverProxyEntries();
-  const entry = mediaCoverProxyCache.get(hash);
-  return entry?.url ?? null;
+  try {
+    const row = db.prepare("SELECT url FROM MediaCoverProxyCache WHERE hash = ?").get(hash) as { url: string } | undefined;
+    return row?.url ?? null;
+  } catch (error) {
+    console.warn("Failed to get registered media cover proxy URL from DB:", error);
+    return null;
+  }
 }
 
 export function resolveMediaCoverProxyUrl(value: unknown): string | null {
@@ -127,7 +138,17 @@ function textOrNull(...values: unknown[]): string | null {
 
 export function normalizeArtworkUrl(value: unknown): string | null {
   const url = textOrNull(value);
-  return url && /^https?:\/\//i.test(url) ? url : null;
+  if (!url) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(url)) {
+    const formattedId = url.replace(/-/g, "/");
+    return `https://resources.tidal.com/images/${formattedId}/750x750.jpg`;
+  }
+  return null;
 }
 
 function getSkyHookImages(resource: SkyHookImageContainer | null | undefined): SkyHookImage[] {
@@ -279,9 +300,34 @@ export function chooseCachedProviderArtwork(
 }
 
 export function chooseCachedAlbumArtwork(options: {
+  albumMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
 }): string | null {
+  if (options.albumMbid) {
+    try {
+      const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
+      if (row?.images) {
+        const dbImages = JSON.parse(row.images);
+        if (Array.isArray(dbImages) && dbImages.length > 0) {
+          const preferredCoverTypes = ["Cover", "Poster"];
+          for (const coverType of preferredCoverTypes) {
+            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
+            if (match?.url) {
+              const url = normalizeArtworkUrl(match.url);
+              if (url) return registerMediaCoverProxyUrl(url) || url;
+            }
+          }
+          const fallback = dbImages[0]?.url;
+          if (fallback) {
+            const url = normalizeArtworkUrl(fallback);
+            if (url) return registerMediaCoverProxyUrl(url) || url;
+          }
+        }
+      }
+    } catch {}
+  }
+
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
   if (skyHookUrl) {
     return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
@@ -291,10 +337,35 @@ export function chooseCachedAlbumArtwork(options: {
 }
 
 export function chooseCachedArtistArtwork(options: {
+  artistMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   preferredCoverTypes?: string | string[];
 }): string | null {
+  if (options.artistMbid) {
+    try {
+      const row = db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(options.artistMbid) as { images?: string | null } | undefined;
+      if (row?.images) {
+        const dbImages = JSON.parse(row.images);
+        if (Array.isArray(dbImages) && dbImages.length > 0) {
+          const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
+          for (const coverType of types) {
+            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
+            if (match?.url) {
+              const url = normalizeArtworkUrl(match.url);
+              if (url) return registerMediaCoverProxyUrl(url) || url;
+            }
+          }
+          const fallback = dbImages[0]?.url;
+          if (fallback) {
+            const url = normalizeArtworkUrl(fallback);
+            if (url) return registerMediaCoverProxyUrl(url) || url;
+          }
+        }
+      }
+    } catch {}
+  }
+
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
   if (skyHookUrl) {
     return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
@@ -351,10 +422,35 @@ export async function resolveProviderArtworkUrl(
 }
 
 export async function resolveAlbumArtwork(options: {
+  albumMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   size?: string | number | null;
 }): Promise<string | null> {
+  if (options.albumMbid) {
+    try {
+      const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
+      if (row?.images) {
+        const dbImages = JSON.parse(row.images);
+        if (Array.isArray(dbImages) && dbImages.length > 0) {
+          const preferredCoverTypes = ["Cover", "Poster"];
+          for (const coverType of preferredCoverTypes) {
+            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
+            if (match?.url) {
+              const url = normalizeArtworkUrl(match.url);
+              if (url) return url;
+            }
+          }
+          const fallback = dbImages[0]?.url;
+          if (fallback) {
+            const url = normalizeArtworkUrl(fallback);
+            if (url) return url;
+          }
+        }
+      }
+    } catch {}
+  }
+
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
   if (skyHookUrl) {
     return skyHookUrl;
@@ -373,21 +469,51 @@ export async function resolveAlbumArtwork(options: {
 }
 
 export async function resolveArtistArtwork(options: {
+  artistMbid?: string | null;
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   preferredCoverTypes?: string | string[];
   size?: string | number | null;
 }): Promise<string | null> {
+  if (options.artistMbid) {
+    try {
+      const row = db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(options.artistMbid) as { images?: string | null } | undefined;
+      if (row?.images) {
+        const dbImages = JSON.parse(row.images);
+        if (Array.isArray(dbImages) && dbImages.length > 0) {
+          const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
+          for (const coverType of types) {
+            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
+            if (match?.url) {
+              const url = normalizeArtworkUrl(match.url);
+              if (url) return url;
+            }
+          }
+          const fallback = dbImages[0]?.url;
+          if (fallback) {
+            const url = normalizeArtworkUrl(fallback);
+            if (url) return url;
+          }
+        }
+      }
+    } catch {}
+  }
+
   const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
   if (skyHookUrl) {
     return skyHookUrl;
   }
 
-  return resolveProviderArtworkUrl(
+  const providerUrl = await resolveProviderArtworkUrl(
     options.providerCandidates || [],
     "artist",
     options.size ?? configuredArtistPictureResolution(),
   );
+  if (providerUrl) {
+    return providerUrl;
+  }
+
+  return null;
 }
 
 // MediaCoverService class aligned 1:1 with Lidarr naming and structure

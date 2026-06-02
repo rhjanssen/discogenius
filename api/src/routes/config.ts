@@ -21,6 +21,7 @@ import * as TOML from "@iarna/toml";
 import fs from "fs";
 import type { PublicAppConfigContract } from "../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../services/naming.js";
+import { queueCurationPass } from "../services/task-scheduler.js";
 
 const router = Router();
 
@@ -151,7 +152,8 @@ const updateFilteringConfig = (req: any, res: any) => {
   try {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
     updateConfig("filtering", updates);
-    res.json({ success: true });
+    const jobId = queueCurationPass({ trigger: 1 });
+    res.json({ success: true, jobId });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

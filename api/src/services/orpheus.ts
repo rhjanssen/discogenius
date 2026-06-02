@@ -303,6 +303,11 @@ function buildOrpheusSettings(downloadPath: string) {
                 prefer_ac4: false,
                 fix_mqa: false,
             },
+            applemusic: {
+                force_region: "us",
+                selected_language: "en",
+                get_original_cover: true,
+            },
         },
     };
 }
@@ -325,6 +330,11 @@ async function bootstrapRuntime(): Promise<void> {
         await runCommand("git", ["clone", "--depth", "1", "--recurse-submodules", ORPHEUS_TIDAL_REPO, moduleDir], ORPHEUS_RUNTIME_DIR);
     }
 
+    const amModuleDir = path.join(ORPHEUS_RUNTIME_DIR, "modules", "applemusic");
+    if (!fs.existsSync(amModuleDir)) {
+        await runCommand("git", ["clone", "--depth", "1", "https://github.com/bascurtiz/orpheusdl-applemusic.git", amModuleDir], ORPHEUS_RUNTIME_DIR);
+    }
+
     if (!fs.existsSync(ORPHEUS_PYTHON_BIN)) {
         await runCommand(ORPHEUS_BOOTSTRAP_PYTHON, ["-m", "venv", ORPHEUS_VENV_DIR], ORPHEUS_RUNTIME_DIR);
     }
@@ -333,6 +343,9 @@ async function bootstrapRuntime(): Promise<void> {
     await runCommand(ORPHEUS_PYTHON_BIN, ["-m", "pip", "install", "-r", "requirements.txt"], ORPHEUS_RUNTIME_DIR);
     if (fs.existsSync(path.join(moduleDir, "requirements.txt"))) {
         await runCommand(ORPHEUS_PYTHON_BIN, ["-m", "pip", "install", "-r", path.join("modules", "tidal", "requirements.txt")], ORPHEUS_RUNTIME_DIR);
+    }
+    if (fs.existsSync(path.join(amModuleDir, "requirements.txt"))) {
+        await runCommand(ORPHEUS_PYTHON_BIN, ["-m", "pip", "install", "-r", path.join("modules", "applemusic", "requirements.txt")], ORPHEUS_RUNTIME_DIR);
     }
 }
 
@@ -656,13 +669,14 @@ export async function spawnOrpheusDownload(
     type: "album" | "track" | "playlist",
     sourceId: string,
     downloadPath: string,
+    moduleName: string = "tidal",
 ): Promise<ChildProcess> {
     await ensureOrpheusRuntime();
     await syncOrpheusSettings(downloadPath);
 
     return spawn(
         ORPHEUS_PYTHON_BIN,
-        ["orpheus.py", "-o", downloadPath, "download", "tidal", type, sourceId],
+        ["orpheus.py", "-o", downloadPath, "download", moduleName, type, sourceId],
         {
             cwd: ORPHEUS_RUNTIME_DIR,
             env: {

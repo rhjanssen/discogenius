@@ -572,8 +572,11 @@ class ApiClient {
   }
 
   // Monitor endpoints - for explicit "Monitor" button action
-  async monitorArtist(artistId: string) {
-    return this.request(`/artists/${artistId}/monitor`, { method: 'POST' });
+  async monitorArtist(artistId: string, name?: string) {
+    return this.request(`/artists/${artistId}/monitor`, {
+      method: 'POST',
+      body: name ? JSON.stringify({ name }) : undefined,
+    });
   }
 
   async monitorAlbum(albumId: string) {
@@ -800,6 +803,23 @@ class ApiClient {
     return this.request(`/library-files/rename/status${query ? `?${query}` : ''}`);
   }
 
+  async getLibraryRenamePreview(params?: {
+    artistId?: string;
+    albumId?: string;
+    libraryRoot?: string;
+    fileTypes?: string[];
+    limit?: number;
+  }) {
+    const queryParams = new URLSearchParams();
+    if (params?.artistId) queryParams.set('artistId', params.artistId);
+    if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.libraryRoot) queryParams.set('libraryRoot', params.libraryRoot);
+    if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
+    if (params?.limit) queryParams.set('limit', params.limit.toString());
+    const query = queryParams.toString();
+    return this.request(`/library-files/rename/preview${query ? `?${query}` : ''}`);
+  }
+
   async applyLibraryRenames(params: {
     ids?: number[];
     artistId?: string;
@@ -825,6 +845,19 @@ class ApiClient {
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
     const query = queryParams.toString();
     return this.request(`/retag/status${query ? `?${query}` : ''}`);
+  }
+
+  async getRetagPreview(params?: {
+    artistId?: string;
+    albumId?: string;
+    limit?: number;
+  }) {
+    const queryParams = new URLSearchParams();
+    if (params?.artistId) queryParams.set('artistId', params.artistId);
+    if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.limit) queryParams.set('limit', params.limit.toString());
+    const query = queryParams.toString();
+    return this.request(`/retag${query ? `?${query}` : ''}`);
   }
 
   async applyRetags(params: {

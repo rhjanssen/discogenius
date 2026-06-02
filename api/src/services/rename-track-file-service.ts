@@ -39,6 +39,7 @@ type RenameLibraryFileRow = {
   library_root: string | null;
   file_type: string;
   extension: string;
+  library_slot?: string | null;
   quality?: string | null;
   codec?: string | null;
   bitrate?: number | null;
@@ -76,8 +77,11 @@ function moveFileCrossDevice(sourcePath: string, destPath: string) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   try {
     fs.renameSync(sourcePath, destPath);
-  } catch {
-    fs.copyFileSync(sourcePath, destPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+      throw error;
+    }
+    fs.copyFileSync(sourcePath, destPath, fs.constants.COPYFILE_EXCL);
     fs.rmSync(sourcePath, { force: true });
   }
 }
@@ -111,24 +115,24 @@ export class RenameTrackFileService {
     }
 
     const sql = `
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM (
-        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
+        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
         FROM TrackFiles
 
         UNION ALL
 
-        SELECT Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM MetadataFiles
 
         UNION ALL
 
-        SELECT Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM ExtraFiles
 
         UNION ALL
 
-        SELECT Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM LyricFiles
       ) lf
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -145,7 +149,7 @@ export class RenameTrackFileService {
 
   private static evaluateRenameRows(rows: RenameLibraryFileRow[]): RenamePreviewItem[] {
     const updates: Array<{ id: number; expectedPath: string | null; needsRename: number }> = [];
-    const relativePathUpdates: Array<{ id: number; relativePath: string }> = [];
+    const relativePathUpdates: Array<{ id: number; relativePath: string; libraryRoot: string }> = [];
 
     const results: RenamePreviewItem[] = rows.map((row) => {
       const resolvedFilePath = resolveStoredLibraryPath({
@@ -181,11 +185,13 @@ export class RenameTrackFileService {
       updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
 
       try {
-        const root = resolveLibraryRootPath(row.library_root, resolvedFilePath);
+        const root = resolveLibraryRootPath(null, resolvedFilePath)
+          || resolveLibraryRootPath(row.library_root, resolvedFilePath);
         if (root) {
           relativePathUpdates.push({
             id: row.id,
             relativePath: path.relative(root, resolvedFilePath),
+            libraryRoot: root,
           });
         }
       } catch {
@@ -226,13 +232,15 @@ export class RenameTrackFileService {
       for (const row of relativePathUpdates) {
         const decoded = decodeSyntheticId(row.id);
         const relPathCol = decoded.tableName === "TrackFiles" ? "relative_path" : "RelativePath";
+        const libraryRootCol = decoded.tableName === "TrackFiles" ? "library_root" : "LibraryRoot";
         const idCol = decoded.tableName === "TrackFiles" ? "id" : "Id";
 
         db.prepare(`
           UPDATE ${decoded.tableName}
-          SET ${relPathCol} = ?
+          SET ${relPathCol} = ?,
+              ${libraryRootCol} = ?
           WHERE ${idCol} = ?
-        `).run(row.relativePath, decoded.id);
+        `).run(row.relativePath, row.libraryRoot, decoded.id);
       }
     })();
 
@@ -275,7 +283,7 @@ export class RenameTrackFileService {
       const decoded = decodeSyntheticId(syntheticId);
       if (decoded.tableName === "TrackFiles") {
         const row = db.prepare(`
-          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels
           FROM TrackFiles
           WHERE id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -284,7 +292,7 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "MetadataFiles") {
         const row = db.prepare(`
-          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM MetadataFiles
           WHERE Id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -293,7 +301,7 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "ExtraFiles") {
         const row = db.prepare(`
-          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM ExtraFiles
           WHERE Id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -302,7 +310,7 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "LyricFiles") {
         const row = db.prepare(`
-          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM LyricFiles
           WHERE Id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -381,7 +389,9 @@ export class RenameTrackFileService {
         const oldDir = path.dirname(resolvedFilePath);
         moveFileCrossDevice(resolvedFilePath, expectedPath);
 
-        const root = resolveLibraryRootPath(row.library_root, resolvedFilePath) || path.dirname(expectedPath);
+        const root = resolveLibraryRootPath(null, expectedPath)
+          || resolveLibraryRootPath(row.library_root, resolvedFilePath)
+          || path.dirname(expectedPath);
         const relativePath = root ? path.relative(root, expectedPath) : path.basename(expectedPath);
         const filename = path.basename(expectedPath);
         const extension = path.extname(expectedPath).replace(".", "");
@@ -476,6 +486,10 @@ export class RenameTrackFileService {
     }
 
     if (result.renamed > 0) {
+      this.replicateSeparatedAudioSidecars();
+    }
+
+    if (result.renamed > 0) {
       result.cleanedDirectories = this.cleanEmptyDirectories();
     }
 
@@ -484,6 +498,131 @@ export class RenameTrackFileService {
 
   static executeRenameArtist(options: { artistId: string }): RenameApplyResult {
     return this.executeRenameFilesByQuery({ artistId: options.artistId });
+  }
+
+  private static replicateSeparatedAudioSidecars() {
+    const musicRoot = Config.getMusicPath();
+    const spatialRoot = Config.getSpatialPath();
+    if (normalizeResolvedPath(musicRoot) === normalizeResolvedPath(spatialRoot)) {
+      return;
+    }
+
+    const tracks = db.prepare(`
+      SELECT tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality,
+             pa.title AS album_title, pm.title AS track_title
+      FROM TrackFiles tf
+      JOIN ProviderAlbums pa ON pa.id = tf.album_id
+      JOIN ProviderMedia pm ON pm.id = tf.media_id
+      WHERE tf.file_type = 'track'
+        AND tf.library_slot IN ('stereo', 'spatial')
+    `).all() as Array<{
+      artist_id: string;
+      album_id: string;
+      media_id: string;
+      library_slot: "stereo" | "spatial";
+      quality: string | null;
+      album_title: string;
+      track_title: string;
+    }>;
+
+    const copyTrackedAsset = (source: any, target: {
+      artistId: string;
+      albumId?: string | null;
+      mediaId?: string | null;
+      librarySlot: "stereo" | "spatial";
+      libraryRoot: string;
+      quality?: string | null;
+      fileType: string;
+    }) => {
+      const sourcePath = resolveStoredLibraryPath({
+        filePath: source.FilePath,
+        libraryRoot: source.LibraryRoot,
+        relativePath: source.RelativePath,
+      });
+      if (!fs.existsSync(sourcePath)) return;
+
+      const expectedPath = LibraryFilesService.computeExpectedPath({
+        id: -1,
+        artist_id: target.artistId as unknown as number,
+        album_id: target.albumId ? target.albumId as unknown as number : null,
+        media_id: target.mediaId ? target.mediaId as unknown as number : null,
+        file_path: sourcePath,
+        relative_path: null,
+        library_root: target.libraryRoot,
+        library_slot: target.librarySlot,
+        file_type: target.fileType,
+        extension: source.Extension || path.extname(sourcePath).replace(".", ""),
+        quality: target.quality || null,
+      }).expectedPath;
+      if (!expectedPath) return;
+
+      if (normalizeResolvedPath(sourcePath) !== normalizeResolvedPath(expectedPath) && !fs.existsSync(expectedPath)) {
+        fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
+        fs.copyFileSync(sourcePath, expectedPath);
+      }
+      LibraryFilesService.upsertLibraryFile({
+        artistId: target.artistId,
+        albumId: target.albumId,
+        mediaId: target.mediaId,
+        filePath: expectedPath,
+        libraryRoot: target.libraryRoot,
+        fileType: target.fileType,
+        quality: target.quality,
+        librarySlot: target.librarySlot,
+      });
+    };
+
+    for (const track of tracks) {
+      const targetRoot = track.library_slot === "spatial" ? spatialRoot : musicRoot;
+      const artistAssets = db.prepare(`
+        SELECT * FROM MetadataFiles
+        WHERE ArtistId = ? AND AlbumId IS NULL AND MediaId IS NULL
+          AND FileType IN ('cover', 'nfo')
+      `).all(track.artist_id) as any[];
+      for (const asset of artistAssets) {
+        copyTrackedAsset(asset, {
+          artistId: track.artist_id,
+          librarySlot: track.library_slot,
+          libraryRoot: targetRoot,
+          fileType: asset.FileType,
+        });
+      }
+
+      const albumAssets = db.prepare(`
+        SELECT mf.*
+        FROM MetadataFiles mf
+        JOIN ProviderAlbums pa ON pa.id = mf.AlbumId
+        WHERE mf.ArtistId = ? AND mf.AlbumId IS NOT NULL AND mf.MediaId IS NULL
+          AND mf.FileType IN ('cover', 'nfo') AND pa.title = ?
+      `).all(track.artist_id, track.album_title) as any[];
+      for (const asset of albumAssets) {
+        copyTrackedAsset(asset, {
+          artistId: track.artist_id,
+          albumId: track.album_id,
+          librarySlot: track.library_slot,
+          libraryRoot: targetRoot,
+          fileType: asset.FileType,
+        });
+      }
+
+      const lyrics = db.prepare(`
+        SELECT lf.*
+        FROM LyricFiles lf
+        JOIN ProviderMedia pm ON pm.id = lf.MediaId
+        WHERE lf.ArtistId = ? AND pm.title = ?
+      `).all(track.artist_id, track.track_title) as any[];
+      for (const lyric of lyrics) {
+        copyTrackedAsset(lyric, {
+          artistId: track.artist_id,
+          albumId: track.album_id,
+          mediaId: track.media_id,
+          librarySlot: track.library_slot,
+          libraryRoot: targetRoot,
+          quality: track.quality,
+          fileType: "lyrics",
+        });
+      }
+    }
   }
 
   private static cleanEmptyDirectories(): number {

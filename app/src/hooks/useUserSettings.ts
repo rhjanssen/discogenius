@@ -73,7 +73,9 @@ export const useUserSettings = () => {
 
   const saveNamingSettings = useCallback(async (toSave: NamingSettings, notifySuccess: boolean) => {
     await api.updateNamingConfig(toSave);
-    pendingNamingRef.current = null;
+    if (pendingNamingRef.current === toSave) {
+      pendingNamingRef.current = null;
+    }
 
     if (notifySuccess) {
       toast({
@@ -195,19 +197,22 @@ export const useUserSettings = () => {
     }, 600);
   };
 
-  const flushNamingSettings = useCallback(async () => {
+  const flushNamingSettings = useCallback(async (updates?: Partial<NamingSettings>) => {
     if (namingSaveTimeoutRef.current) {
       clearTimeout(namingSaveTimeoutRef.current);
       namingSaveTimeoutRef.current = null;
     }
 
-    const toSave = pendingNamingRef.current;
+    const base = pendingNamingRef.current ?? namingSettings;
+    const toSave = base && updates ? { ...base, ...updates } : pendingNamingRef.current;
     if (!toSave) {
       return namingSettings;
     }
 
     try {
+      pendingNamingRef.current = toSave;
       await saveNamingSettings(toSave, false);
+      setNamingSettings(toSave);
       return toSave;
     } catch (error) {
       pendingNamingRef.current = toSave;

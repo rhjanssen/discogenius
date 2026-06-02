@@ -1225,7 +1225,8 @@ export class DiskScanService {
 
         if (ext === ".lrc") {
             // Try to match to a track by looking for an audio file with same stem
-            const mediaId = this.findMediaIdByStem(stem, artistId);
+            const mediaId = this.findMediaIdByStem(stem, artistId)
+                || this.findMediaIdByTrackedSibling(filePath, artistId);
             const albumId = mediaId
                 ? (db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(mediaId) as any)?.album_id?.toString() || null
                 : null;
@@ -1321,6 +1322,24 @@ export class DiskScanService {
         return null;
     }
 
+    private static findMediaIdByTrackedSibling(filePath: string, artistId: string): string | null {
+        const stem = path.parse(filePath).name;
+        const rows = db.prepare(`
+          SELECT media_id, file_path
+          FROM TrackFiles
+          WHERE artist_id = ?
+            AND media_id IS NOT NULL
+            AND file_type = 'track'
+        `).all(artistId) as Array<{ media_id: string; file_path: string }>;
+
+        const sibling = rows.find((row) =>
+            path.dirname(row.file_path) === path.dirname(filePath)
+            && path.parse(row.file_path).name === stem
+        );
+
+        return sibling?.media_id ? String(sibling.media_id) : null;
+    }
+
     /**
      * Try to find a video ID where the title matches the stem.
      */
@@ -1347,10 +1366,11 @@ export class DiskScanService {
 
         // Try to match directory name against album titles
         const albums = db.prepare(`
-      SELECT a.id, a.title FROM ProviderAlbums a
-      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
-      WHERE aa.artist_id = ?
-    `).all(artistId) as Array<{ id: number; title: string }>;
+      SELECT DISTINCT a.id, a.title
+      FROM ProviderAlbums a
+      LEFT JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
+      WHERE a.artist_id = ? OR aa.artist_id = ?
+    `).all(artistId, artistId) as Array<{ id: number; title: string }>;
 
         for (const album of albums) {
             if (dirName.includes(album.title) || album.title.includes(dirName)) {

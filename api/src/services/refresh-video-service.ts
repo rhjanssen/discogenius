@@ -84,6 +84,17 @@ function durationMs(durationSeconds: unknown): number | null {
     return Math.round(duration * 1000);
 }
 
+function serializeArtistCredits(artists: unknown): string | null {
+    if (!Array.isArray(artists) || artists.length === 0) {
+        return null;
+    }
+
+    return JSON.stringify(artists.map((artist: any) => ({
+        id: nullableText(artist?.id ?? artist?.providerId),
+        name: nullableText(artist?.name),
+    })).filter((artist) => artist.id || artist.name));
+}
+
 function getArtistMusicBrainzId(artistId: string): string | null {
     const row = db.prepare("SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = CAST(? AS TEXT) LIMIT 1")
         .get(artistId) as { mbid?: string | null } | undefined;
@@ -224,8 +235,8 @@ export class RefreshVideoService {
         const videoInsert = db.prepare(`
             INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, duration, release_date, version,
-                explicit, type, quality, popularity, cover, monitor, mbid, last_scanned
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                explicit, type, quality, popularity, cover, credits, monitor, mbid, last_scanned
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
 
         const videoUpdate = db.prepare(`
@@ -233,6 +244,7 @@ export class RefreshVideoService {
                 title = ?, duration = ?, release_date = ?, version = ?,
                 explicit = ?, quality = ?, popularity = ?,
                 ${forceUpdate ? "cover = ?" : "cover = COALESCE(?, cover)"},
+                credits = COALESCE(?, credits),
                 mbid = ?,
                 last_scanned = CURRENT_TIMESTAMP
             WHERE id = ? AND type = 'Music Video'
@@ -295,6 +307,7 @@ export class RefreshVideoService {
 
                 const quality = video.quality || "MP4_1080P";
                 const cover = video.image_id || null;
+                const credits = serializeArtistCredits(video.artists);
 
                 if (!exists) {
                     videoInsert.run(
@@ -309,6 +322,7 @@ export class RefreshVideoService {
                         quality,
                         video.popularity || 0,
                         cover,
+                        credits,
                         shouldMonitor,
                         recordingMbid,
                     );
@@ -322,6 +336,7 @@ export class RefreshVideoService {
                         quality,
                         video.popularity || 0,
                         cover,
+                        credits,
                         recordingMbid,
                         video.tidal_id,
                     );

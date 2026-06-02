@@ -1021,7 +1021,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByRole('button', { name: /Retry Job/i })).toHaveCount(0);
   });
 
-  test('failed album queue keeps track rows out of queued state', async ({ page }) => {
+  test('failed album queue stays out of the active list', async ({ page }) => {
     await page.addInitScript(({ targetUrlPart, mockEvents }) => {
       class MockEventSource {
         static CONNECTING = 0;
@@ -1109,11 +1109,10 @@ test.describe('Dashboard queue and activity tabs', () => {
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
-    await expect(page.getByText('From A Bakermat Point Of View')).toBeVisible();
-    await expect(page.getByText('Network timeout while downloading album').first()).toBeVisible();
-    await expect(page.getByText('Bakermat - Bad Influence')).toBeVisible();
-    await expect(page.getByText('Bakermat - Queen of NY')).toBeVisible();
     await page.waitForTimeout(200);
+    await expect(page.getByText('No items in queue')).toBeVisible();
+    await expect(page.getByText('From A Bakermat Point Of View')).toHaveCount(0);
+    await expect(page.getByText('Network timeout while downloading album')).toHaveCount(0);
     await expect(page.getByText('Queued')).toHaveCount(0);
   });
 

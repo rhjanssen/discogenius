@@ -62,6 +62,11 @@ type RetagTrackRow = {
   album_mbid: string | null;
   album_mb_release_group_id: string | null;
   artist_mbid: string | null;
+  release_status: string | null;
+  release_country: string | null;
+  release_primary_type: string | null;
+  release_secondary_types: string | null;
+  library_slot: string | null;
 };
 
 export type ManagedTag = {
@@ -722,6 +727,7 @@ export class AudioTagService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.library_slot,
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
@@ -755,11 +761,17 @@ export class AudioTagService {
         m.explicit AS media_explicit,
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
-        artist.mbid AS artist_mbid
+        artist.mbid AS artist_mbid,
+        ar.status AS release_status,
+        ar.country AS release_country,
+        alb.primary_type AS release_primary_type,
+        alb.secondary_types AS release_secondary_types
       FROM TrackFiles lf
       JOIN ProviderMedia m ON m.id = lf.media_id
       LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
       JOIN Artists artist ON artist.id = lf.artist_id
+      LEFT JOIN AlbumReleases ar ON ar.mbid = a.mbid
+      LEFT JOIN Albums alb ON alb.mbid = a.mb_release_group_id
       WHERE ${where.join(" AND ")}
       ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
@@ -788,6 +800,7 @@ export class AudioTagService {
         lf.relative_path,
         lf.library_root,
         lf.extension,
+        lf.library_slot,
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
@@ -821,11 +834,17 @@ export class AudioTagService {
         m.explicit AS media_explicit,
         a.mbid AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
-        artist.mbid AS artist_mbid
+        artist.mbid AS artist_mbid,
+        ar.status AS release_status,
+        ar.country AS release_country,
+        alb.primary_type AS release_primary_type,
+        alb.secondary_types AS release_secondary_types
       FROM TrackFiles lf
       JOIN ProviderMedia m ON m.id = lf.media_id
       LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
       JOIN Artists artist ON artist.id = lf.artist_id
+      LEFT JOIN AlbumReleases ar ON ar.mbid = a.mbid
+      LEFT JOIN Albums alb ON alb.mbid = a.mb_release_group_id
       WHERE lf.id IN (${placeholders})
       ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
     `).all(...ids) as RetagTrackRow[];
@@ -878,8 +897,127 @@ export class AudioTagService {
   return count > 0 ? count : null;
   }
 
-  static buildAudioTagWriteMap(tags: ManagedTag[]): Record<string, string> {
+  static buildAudioTagWriteMap(tags: ManagedTag[], extension?: string): Record<string, string> {
     const output: Record<string, string> = {};
+    const ext = String(extension || "").toLowerCase().trim();
+
+    const isFlac = ext === ".flac" || ext === ".ogg";
+    const isMp3 = ext === ".mp3";
+    const isM4a = ext === ".m4a" || ext === ".mp4";
+
+    const flacMap: Record<string, string> = {
+      title: "TITLE",
+      artist: "ARTIST",
+      album_artist: "ALBUMARTIST",
+      album: "ALBUM",
+      track: "track",
+      track_number: "TRACKNUMBER",
+      track_count: "TRACKTOTAL",
+      disc: "disc",
+      disc_number: "DISCNUMBER",
+      disc_count: "DISCTOTAL",
+      date: "DATE",
+      isrc: "ISRC",
+      copyright: "COPYRIGHT",
+      barcode: "BARCODE",
+      provider_url: "PROVIDER_URL",
+      musicbrainz_recordingid: "MUSICBRAINZ_TRACKID",
+      musicbrainz_albumid: "MUSICBRAINZ_ALBUMID",
+      musicbrainz_artistid: "MUSICBRAINZ_ARTISTID",
+      musicbrainz_albumartistid: "MUSICBRAINZ_ALBUMARTISTID",
+      musicbrainz_releasegroupid: "MUSICBRAINZ_RELEASEGROUPID",
+      musicbrainz_releasetrackid: "MUSICBRAINZ_RELEASETRACKID",
+      acoustid_id: "ACOUSTID_ID",
+      acoustid_fingerprint: "ACOUSTID_FINGERPRINT",
+      release_country: "RELEASECOUNTRY",
+      release_status: "RELEASESTATUS",
+      release_type: "RELEASETYPE",
+    };
+
+    const mp3Map: Record<string, string> = {
+      title: "title",
+      artist: "artist",
+      album_artist: "album_artist",
+      album: "album",
+      track: "track",
+      track_number: "TXXX:Track Number",
+      track_count: "TXXX:Track Count",
+      disc: "disc",
+      disc_number: "TXXX:Disc Number",
+      disc_count: "TXXX:Disc Count",
+      date: "date",
+      isrc: "isrc",
+      copyright: "copyright",
+      barcode: "TXXX:Barcode",
+      provider_url: "TXXX:PROVIDER_URL",
+      musicbrainz_recordingid: "TXXX:MusicBrainz Track Id",
+      musicbrainz_albumid: "TXXX:MusicBrainz Album Id",
+      musicbrainz_artistid: "TXXX:MusicBrainz Artist Id",
+      musicbrainz_albumartistid: "TXXX:MusicBrainz Album Artist Id",
+      musicbrainz_releasegroupid: "TXXX:MusicBrainz Release Group Id",
+      musicbrainz_releasetrackid: "TXXX:MusicBrainz Release Track Id",
+      acoustid_id: "TXXX:Acoustid Id",
+      acoustid_fingerprint: "TXXX:Acoustid Fingerprint",
+      release_country: "TXXX:MusicBrainz Album Release Country",
+      release_status: "TXXX:MusicBrainz Album Status",
+      release_type: "TXXX:MusicBrainz Album Type",
+    };
+
+    const m4aMap: Record<string, string> = {
+      title: "title",
+      artist: "artist",
+      album_artist: "album_artist",
+      album: "album",
+      track: "track",
+      track_number: "----:com.apple.iTunes:Track Number",
+      track_count: "----:com.apple.iTunes:Track Count",
+      disc: "disc",
+      disc_number: "----:com.apple.iTunes:Disc Number",
+      disc_count: "----:com.apple.iTunes:Disc Count",
+      date: "date",
+      isrc: "isrc",
+      copyright: "copyright",
+      barcode: "----:com.apple.iTunes:Barcode",
+      provider_url: "----:com.apple.iTunes:PROVIDER_URL",
+      musicbrainz_recordingid: "----:com.apple.iTunes:MusicBrainz Track Id",
+      musicbrainz_albumid: "----:com.apple.iTunes:MusicBrainz Album Id",
+      musicbrainz_artistid: "----:com.apple.iTunes:MusicBrainz Artist Id",
+      musicbrainz_albumartistid: "----:com.apple.iTunes:MusicBrainz Album Artist Id",
+      musicbrainz_releasegroupid: "----:com.apple.iTunes:MusicBrainz Release Group Id",
+      musicbrainz_releasetrackid: "----:com.apple.iTunes:MusicBrainz Release Track Id",
+      acoustid_id: "----:com.apple.iTunes:Acoustid Id",
+      acoustid_fingerprint: "----:com.apple.iTunes:Acoustid Fingerprint",
+      release_country: "----:com.apple.iTunes:MusicBrainz Album Release Country",
+      release_status: "----:com.apple.iTunes:MusicBrainz Album Status",
+      release_type: "----:com.apple.iTunes:MusicBrainz Album Type",
+    };
+
+    const getFormatKey = (tag: ManagedTag): string => {
+      if (isFlac) {
+        return flacMap[tag.key] || tag.ffmpegKey.toUpperCase();
+      }
+      if (isMp3) {
+        const mapped = mp3Map[tag.key];
+        if (mapped) return mapped;
+        if (tag.ffmpegKey.toUpperCase().startsWith("TXXX:")) return tag.ffmpegKey;
+        const standardId3Keys = new Set(["title", "artist", "album_artist", "album", "track", "disc", "date", "genre", "comment", "isrc", "copyright"]);
+        if (standardId3Keys.has(tag.key)) {
+          return tag.ffmpegKey;
+        }
+        return `TXXX:${tag.ffmpegKey}`;
+      }
+      if (isM4a) {
+        const mapped = m4aMap[tag.key];
+        if (mapped) return mapped;
+        if (tag.ffmpegKey.startsWith("----:com.apple.iTunes:")) return tag.ffmpegKey;
+        const standardMp4Keys = new Set(["title", "artist", "album_artist", "album", "track", "disc", "date", "genre", "comment", "isrc", "copyright"]);
+        if (standardMp4Keys.has(tag.key)) {
+          return tag.ffmpegKey;
+        }
+        return `----:com.apple.iTunes:${tag.ffmpegKey}`;
+      }
+      return tag.ffmpegKey;
+    };
 
     for (const tag of tags) {
       const value = normalizeComparableValue(tag.targetValue);
@@ -887,17 +1025,66 @@ export class AudioTagService {
         continue;
       }
 
-      output[tag.ffmpegKey] = value;
+      const formatKey = getFormatKey(tag);
+      output[formatKey] = value;
 
-      for (const alias of tag.writeAliases || []) {
-        const key = String(alias || "").trim();
-        if (key) {
-          output[key] = value;
+      if (!extension) {
+        for (const alias of tag.writeAliases || []) {
+          const key = String(alias || "").trim();
+          if (key) {
+            output[key] = value;
+          }
         }
       }
     }
 
     return output;
+  }
+
+  static buildAudioTagRemovalKeys(tags: ManagedTag[], extension?: string): string[] {
+    return Object.keys(this.buildAudioTagWriteMap(
+      tags.map((tag) => ({ ...tag, targetValue: "__remove__" })),
+      extension,
+    ));
+  }
+
+  static buildManagedTagRemovals(config: MetadataConfig): ManagedTag[] {
+    const removals: ManagedTag[] = [
+      {
+        key: "legacy_upc",
+        label: "Legacy UPC",
+        ffmpegKey: "UPC",
+        targetValue: "",
+        aliases: ["upc"],
+      },
+      {
+        key: "legacy_ean",
+        label: "Legacy EAN",
+        ffmpegKey: "EAN",
+        targetValue: "",
+        aliases: ["ean"],
+      },
+    ];
+
+    if (config.embed_replaygain === false) {
+      removals.push(
+        {
+          key: "replaygain_track_gain",
+          label: "ReplayGain Track Gain",
+          ffmpegKey: "REPLAYGAIN_TRACK_GAIN",
+          targetValue: "",
+          aliases: ["replaygain_track_gain"],
+        },
+        {
+          key: "replaygain_track_peak",
+          label: "ReplayGain Track Peak",
+          ffmpegKey: "REPLAYGAIN_TRACK_PEAK",
+          targetValue: "",
+          aliases: ["replaygain_track_peak"],
+        },
+      );
+    }
+    return removals;
   }
 
   private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {
@@ -982,6 +1169,13 @@ export class AudioTagService {
           media_mbid: bestIsrcMatch.recording.id,
           artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
         };
+      }
+    }
+
+    if (nextRow.media_mbid) {
+      const isSpatialOrVideo = nextRow.library_slot === "spatial" || nextRow.library_slot === "video";
+      if (!isSpatialOrVideo) {
+        return nextRow;
       }
     }
 
@@ -1307,10 +1501,10 @@ export class AudioTagService {
       if (row.album_upc) {
         tags.push({
           key: "barcode",
-          label: config.upc_target,
-          ffmpegKey: config.upc_target,
+          label: "Barcode",
+          ffmpegKey: "BARCODE",
           targetValue: String(row.album_upc),
-          aliases: ["barcode", "upc", "ean"],
+          aliases: ["barcode"],
         });
       }
 
@@ -1394,6 +1588,51 @@ export class AudioTagService {
             "musicbrainzreleasetrackid",
             "MusicBrainz Release Track Id",
           ],
+        });
+      }
+
+      if (row.release_country) {
+        tags.push({
+          key: "release_country",
+          label: "Release Country",
+          ffmpegKey: "release_country",
+          targetValue: String(row.release_country),
+          aliases: ["releasecountry", "release_country"],
+        });
+      }
+
+      if (row.release_status) {
+        tags.push({
+          key: "release_status",
+          label: "Release Status",
+          ffmpegKey: "release_status",
+          targetValue: String(row.release_status).toLowerCase(),
+          aliases: ["releasestatus", "release_status"],
+        });
+      }
+
+      let releaseType: string | null = null;
+      if (row.release_primary_type) {
+        const primary = row.release_primary_type.toLowerCase();
+        let secondaryList: string[] = [];
+        if (row.release_secondary_types) {
+          try {
+            secondaryList = JSON.parse(row.release_secondary_types)
+              .map((t: string) => t.toLowerCase())
+              .filter(Boolean);
+          } catch {
+            // ignore
+          }
+        }
+        releaseType = [primary, ...secondaryList].join("; ");
+      }
+      if (releaseType) {
+        tags.push({
+          key: "release_type",
+          label: "Release Type",
+          ffmpegKey: "release_type",
+          targetValue: releaseType,
+          aliases: ["releasetype", "release_type"],
         });
       }
 
@@ -1514,7 +1753,8 @@ export class AudioTagService {
     }
 
     const desiredTags = this.buildDesiredTags(row, config);
-    if (desiredTags.length === 0) {
+    const removals = this.buildManagedTagRemovals(config);
+    if (desiredTags.length === 0 && removals.length === 0) {
       return {
         id: row.id,
         artistId: row.artist_id,
@@ -1541,6 +1781,16 @@ export class AudioTagService {
         }
         return result;
       }, []);
+      for (const tag of removals) {
+        const currentValue = getCurrentTagValue(metadata, lookup, tag);
+        if (normalizeComparableValue(currentValue)) {
+          changes.push({
+            field: tag.label,
+            oldValue: currentValue,
+            newValue: null,
+          });
+        }
+      }
 
       return {
         id: row.id,
@@ -1668,7 +1918,8 @@ export class AudioTagService {
         continue;
       }
 
-      const desiredTags = this.buildAudioTagWriteMap(this.buildDesiredTags(enrichedRow, config));
+      const desiredTags = this.buildAudioTagWriteMap(this.buildDesiredTags(enrichedRow, config), enrichedRow.extension);
+      const removalKeys = this.buildAudioTagRemovalKeys(this.buildManagedTagRemovals(config), enrichedRow.extension);
 
       if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
         console.warn(`[Retag] Skipping embedded tag rewrite for ${resolvedPath}; ${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "spatial"} is not safely writable with ffmpeg stream copy.`);
@@ -1685,7 +1936,7 @@ export class AudioTagService {
         }
       }
 
-      const success = await writeMetadata(resolvedPath, desiredTags);
+      const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
       if (!success) {
         result.errors.push({ id, error: "Metadata write failed" });
         continue;

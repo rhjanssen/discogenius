@@ -209,6 +209,7 @@ router.post("/:artistId/monitor", async (req, res) => {
     const artistId = req.params.artistId;
     const result = await setArtistMonitoredState({
       artistId,
+      artistName: getOptionalString(getObjectBody(req.body), "name"),
       monitored: parseOptionalMonitored((req.body as any)?.monitored),
       priority: 1,
       trigger: 1,
@@ -473,11 +474,13 @@ router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     const artistId = getOptionalString(body, "mbid") ?? getRequiredIdentifier(body, "id");
-    rejectUnknownKeys(body, ["id", "mbid"], "Artist add");
+    const artistName = getOptionalString(body, "name");
+    rejectUnknownKeys(body, ["id", "mbid", "name"], "Artist add");
 
     // Ensure basic artist metadata exists and mark as monitored, then queue full scan.
     const { artist, jobId } = await monitorArtistAndQueueIntake({
       artistId,
+      artistName,
       priority: 1,
       trigger: 1,
     });

@@ -216,11 +216,7 @@ app.use("/api/unmapped", authMiddleware, unmappedRouter);
 function sendHealthSnapshot(res: express.Response) {
   const runtime = getRuntimeDiagnosticsSnapshot();
   const preflight = collectHealthDiagnosticsSnapshot();
-  const status = startupHealthSnapshot.status === "unhealthy" || preflight.status === "unhealthy"
-    ? "unhealthy"
-    : startupHealthSnapshot.status === "degraded" || preflight.status === "degraded"
-      ? "degraded"
-      : "healthy";
+  const status = preflight.status;
 
   res.status(status === "unhealthy" ? 503 : 200).json({
     status,

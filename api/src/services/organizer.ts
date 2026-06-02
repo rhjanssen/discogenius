@@ -15,6 +15,7 @@ import { getDownloadWorkspacePath } from "./download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
+import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 
 
@@ -884,7 +885,7 @@ export class OrganizerService {
 
       const siblingExt = path.extname(entry.name).toLowerCase();
       const isMediaSibling = this.AUDIO_EXTENSIONS.has(siblingExt) || this.VIDEO_EXTENSIONS.has(siblingExt);
-      if (!isMediaSibling || path.parse(entry.name).name !== targetStem) {
+      if (!isMediaSibling || siblingExt !== path.extname(targetPath).toLowerCase() || path.parse(entry.name).name !== targetStem) {
         continue;
       }
 
@@ -930,6 +931,21 @@ export class OrganizerService {
     }
   }
 
+  private static hasConflictingMediaDestination(filePath: string, mediaId: string, fileType: "track" | "video"): boolean {
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+
+    const existing = db.prepare(`
+      SELECT media_id
+      FROM TrackFiles
+      WHERE file_path = ? AND file_type = ?
+      LIMIT 1
+    `).get(filePath, fileType) as { media_id?: number | string | null } | undefined;
+
+    return !existing || String(existing.media_id ?? "") !== String(mediaId);
+  }
+
   /** Return the library root that contains the given absolute path, or null. */
   private static resolveLibraryRoot(filePath: string, libraryRoot?: string | null): string | null {
     const mappedRoot = resolveLibraryRootPath(libraryRoot, filePath);
@@ -948,15 +964,16 @@ export class OrganizerService {
     try {
       fs.renameSync(sourcePath, destPath);
       return;
-    } catch {
-      // Fall through to copy path.
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+        throw error;
+      }
     }
 
     if (process.platform === "win32") {
       fs.copyFileSync(sourcePath, destPath);
     } else {
-      // Match Tidarr-style transfer semantics: shell cp without preserve flags.
-      // This avoids chmod/chown metadata operations on ACL-backed destinations.
+      // Imports and upgrades intentionally replace an existing destination.
       execFileSync("cp", ["-f", sourcePath, destPath], { stdio: "ignore" });
     }
 
@@ -1131,7 +1148,7 @@ export class OrganizerService {
         const metrics = await parseAudioFile(srcFile);
         const derivedQuality = deriveQuality(ext, metrics);
 
-        const relativeTrackPath = renderRelativePath(trackTemplate, {
+        const renderedTrackPath = renderRelativePath(trackTemplate, {
           artistName: resolvedArtistName,
           artistId,
           artistMbId,
@@ -1156,6 +1173,18 @@ export class OrganizerService {
           sampleRate: metrics.sampleRate || null,
           bitDepth: metrics.bitDepth || null,
           channels: metrics.channels || null,
+        });
+        const baseRelativeTrackPath = renderedTrackPath;
+        const relativeTrackPath = renderAudioRelativePathForLibrary({
+          relativePath: baseRelativeTrackPath,
+          quality: derivedQuality,
+          musicRoot,
+          spatialRoot,
+          mustDisambiguate: this.hasConflictingMediaDestination(
+            path.join(targetRoot, artistFolder, `${baseRelativeTrackPath}${ext}`),
+            trackId,
+            "track",
+          ),
         });
 
         if (!sampleRelativeTrackPath) sampleRelativeTrackPath = relativeTrackPath;
@@ -1478,7 +1507,7 @@ export class OrganizerService {
       const metrics = await parseAudioFile(src);
       const derivedQuality = deriveQuality(ext, metrics);
 
-      const relativeTrackPath = renderRelativePath(trackTemplate, {
+      const renderedTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
@@ -1503,6 +1532,17 @@ export class OrganizerService {
         sampleRate: metrics.sampleRate || null,
         bitDepth: metrics.bitDepth || null,
         channels: metrics.channels || null,
+      });
+      const relativeTrackPath = renderAudioRelativePathForLibrary({
+        relativePath: renderedTrackPath,
+        quality: derivedQuality,
+        musicRoot,
+        spatialRoot,
+        mustDisambiguate: this.hasConflictingMediaDestination(
+          path.join(targetRoot, artistFolder, `${renderedTrackPath}${ext}`),
+          tidalId,
+          "track",
+        ),
       });
 
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
@@ -1848,14 +1888,12 @@ export class OrganizerService {
         mbid: artistMbId || null,
         path: artistPath || null,
       });
-      const targetDir = path.join(videoRoot, artistFolder);
-      this.ensureDir(targetDir);
       const videoNamingTemplate = path.join(artistFolder, naming.video_file);
 
       const ext = path.extname(src);
       const sourceMetrics = await parseAudioFile(src);
       const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? video.quality ?? null;
-      const destName = `${renderFileStem(naming.video_file, {
+      const separatedDestName = `${renderFileStem(naming.video_file, {
         provider: "tidal",
         artistName: resolvedArtistName,
         artistId,
@@ -1871,7 +1909,22 @@ export class OrganizerService {
         bitDepth: sourceMetrics.bitDepth || null,
         channels: sourceMetrics.channels || null,
       })}.mp4`;
-      const dest = path.join(targetDir, destName);
+      const separatedDest = path.join(videoRoot, artistFolder, separatedDestName);
+      const inlineExpected = LibraryFilesService.computeExpectedPath({
+        id: -1,
+        artist_id: artistId as unknown as number,
+        album_id: video.album_id ? video.album_id as unknown as number : null,
+        media_id: tidalId as unknown as number,
+        file_path: separatedDest,
+        relative_path: path.relative(videoRoot, separatedDest),
+        library_root: videoRoot,
+        file_type: "video",
+        extension: "mp4",
+        quality: sourceVideoQuality,
+      });
+      const dest = inlineExpected.expectedPath || separatedDest;
+      const organizedVideoRoot = this.resolveLibraryRoot(dest) || videoRoot;
+      this.ensureDir(path.dirname(dest));
 
       // Convert to MP4 directly from source into destination if not already MP4
       if (ext !== '.mp4') {
@@ -1897,7 +1950,7 @@ export class OrganizerService {
           albumId: video.album_id ? String(video.album_id) : null,
           mediaId: tidalId,
           filePath: dest,
-          libraryRoot: videoRoot,
+          libraryRoot: organizedVideoRoot,
           fileType: "video",
           quality: derivedVideoQuality,
           namingTemplate: videoNamingTemplate,
@@ -1938,7 +1991,7 @@ export class OrganizerService {
             albumId: video.album_id ? String(video.album_id) : null,
             mediaId: tidalId,
             mediaPath: dest,
-            libraryRoot: videoRoot,
+            libraryRoot: organizedVideoRoot,
             fileType: "video_thumbnail",
             quality: derivedVideoQuality,
             namingTemplate: videoNamingTemplate,
@@ -1974,7 +2027,7 @@ export class OrganizerService {
             albumId: video.album_id ? String(video.album_id) : null,
             mediaId: tidalId,
             filePath: persistentCoverPath,
-            libraryRoot: videoRoot,
+            libraryRoot: organizedVideoRoot,
             fileType: "video_thumbnail",
             quality: derivedVideoQuality,
             namingTemplate: videoNamingTemplate,
@@ -2000,7 +2053,7 @@ export class OrganizerService {
             albumId: video.album_id ? String(video.album_id) : null,
             mediaId: tidalId,
             filePath: videoNfoPath,
-            libraryRoot: videoRoot,
+            libraryRoot: organizedVideoRoot,
             fileType: "nfo",
             quality: derivedVideoQuality,
             namingTemplate: videoNamingTemplate,

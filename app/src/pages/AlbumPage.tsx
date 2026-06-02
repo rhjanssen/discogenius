@@ -176,13 +176,29 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     gap: tokens.spacingHorizontalS,
-    cursor: "pointer",
-    "&:hover": {
-      opacity: 0.8,
-    },
+    flexWrap: "wrap",
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
       gap: tokens.spacingHorizontalM,
+    },
+  },
+  artistCredit: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+  },
+  artistCreditButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    padding: 0,
+    border: 0,
+    backgroundColor: "transparent",
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+    "&:hover": {
+      opacity: 0.8,
     },
   },
   metadata: {
@@ -481,6 +497,16 @@ const AlbumPage = () => {
   }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
   const artistImage = pageData?.artistImage ?? undefined;
+  const albumArtists = album?.album_artists?.length
+    ? album.album_artists
+    : album
+      ? [{
+          id: album.artist_id,
+          name: album.artist_name,
+          join_phrase: "",
+          picture: artistImage,
+        }]
+      : [];
   const albumSkyHookArtworkUrl = album ? (album.cover_art_url || null) : null;
   const albumProviderArtworkUrl = album
     ? getAlbumCover((album as any).provider_cover_id, "large")
@@ -842,16 +868,26 @@ const AlbumPage = () => {
 
               <div
                 className={styles.artistInfo}
-                onClick={() => navigate(`/artist/${album.artist_id}`)}
               >
-                <Avatar
-                  image={{ src: artistImage }}
-                  name={album.artist_name}
-                  size={32}
-                />
-                <Text size={400} weight="semibold">
-                  {album.artist_name}
-                </Text>
+                {albumArtists.map((artist) => (
+                  <span key={artist.id} className={styles.artistCredit}>
+                    <button
+                      type="button"
+                      className={styles.artistCreditButton}
+                      onClick={() => navigate(`/artist/${artist.id}`)}
+                    >
+                      <Avatar
+                        image={{ src: artist.picture || artist.cover_image_url || undefined }}
+                        name={artist.name}
+                        size={32}
+                      />
+                      <Text size={400} weight="semibold">
+                        {artist.name}
+                      </Text>
+                    </button>
+                    {artist.join_phrase ? <Text size={400}>{artist.join_phrase}</Text> : null}
+                  </span>
+                ))}
               </div>
 
               <div className={styles.metadata}>

@@ -575,6 +575,7 @@ export class DownloadProcessor {
 
         // Initialize download backends with current settings
         try {
+            await streamingProviderManager.syncProviderCredentials();
             await streamingProviderManager.syncProviderSettings();
             console.log('[DOWNLOAD-PROCESSOR] Download backend settings initialized');
         } catch (error) {

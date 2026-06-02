@@ -53,7 +53,7 @@ export interface StreamingProvider {
   getArtworkUrl?(request: ProviderArtworkRequest): Promise<string | null> | string | null;
   getLyrics?(trackId: string | number): Promise<ProviderLyrics | null>;
   
-  logout(): void | Promise<void>;
+  logout?(): void | Promise<void>;
   loadToken?(): any;
   refreshProviderToken?(): Promise<void>;
   shouldRefreshToken?(): boolean;
@@ -73,6 +73,7 @@ export interface StreamingProvider {
     downloadPath: string,
     options?: ProviderDownloadOptions
   ): Promise<void>;
+  syncCredentials?(): Promise<void> | void;
   syncSettings?(downloadPath?: string): Promise<void> | void;
 }
 
@@ -201,6 +202,7 @@ export interface ProviderVideo {
   providerId: string;
   title: string;
   artist: ProviderArtist;
+  artists?: ProviderArtist[];
   duration?: number | null;
   releaseDate?: string | null;
   cover?: string | null;

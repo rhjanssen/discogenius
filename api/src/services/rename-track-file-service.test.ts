@@ -189,6 +189,28 @@ test("RenameTrackFileService accepts library root aliases for rename status and 
   assert.equal(statusAfter.renameNeeded, 0);
 });
 
+test("RenameTrackFileService stores the destination root after a configured root change", () => {
+  seedTrackedFile();
+  const nextMusicRoot = path.join(tempDir, "library", "music-next");
+  const config = configModule.readConfig();
+  config.path.music_path = nextMusicRoot;
+  configModule.writeConfig(config);
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+  assert.equal(result.renamed, 1);
+
+  const trackedFile = dbModule.db.prepare(`
+    SELECT file_path as filePath, relative_path as relativePath, library_root as libraryRoot
+    FROM TrackFiles
+    WHERE media_id = ?
+  `).get("100") as { filePath: string; relativePath: string; libraryRoot: string };
+  const expectedPath = path.join(nextMusicRoot, "Artist One", "Album One", "01 - Track One.flac");
+
+  assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
+  assert.equal(path.resolve(trackedFile.libraryRoot), path.resolve(nextMusicRoot));
+  assert.equal(trackedFile.relativePath, path.join("Artist One", "Album One", "01 - Track One.flac"));
+});
+
 test("RenameTrackFileService keeps the stored artist path canonical until path updates are applied explicitly", () => {
   writeTestConfig();
   const musicRoot = configModule.Config.getMusicPath();

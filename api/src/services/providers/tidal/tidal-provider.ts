@@ -24,7 +24,7 @@ import { db } from "../../../database.js";
 import { Config } from "../../config.js";
 import { buildStreamingMediaUrl, getDownloadBackendForMediaType } from "../../download-routing.js";
 import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgCommand, parseProgress } from "./tidal-dl-ng.js";
-import { loadStoredTidalToken } from "./tidal-auth.js";
+import { loadStoredTidalToken, syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../orpheus.js";
 import { MediaSeedService } from "../../media-seed-service.js";
 
@@ -104,7 +104,8 @@ export class TidalProvider implements StreamingProvider {
   async searchReleaseGroup(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]> {
     const searchText = `${query.artistName} ${query.releaseGroupTitle}`.trim();
     const results = await tidal.searchTidal(searchText, ["ALBUMS"], 25);
-    const albums: ProviderAlbum[] = (results.albums?.items || []).map(this.mapAlbum);
+    const items = Array.isArray(results) ? results : results.albums?.items || [];
+    const albums: ProviderAlbum[] = items.map(this.mapAlbum);
     if (query.slot === "spatial") {
       return albums.filter((album) => this.isSpatialQuality(album.quality, album.qualityTags));
     }
@@ -935,6 +936,10 @@ export class TidalProvider implements StreamingProvider {
     await syncOrpheusSettings(downloadPath);
   }
 
+  async syncCredentials(): Promise<void> {
+    await syncStoredTidalTokenToDownloaders();
+  }
+
   private isSpatialQuality(quality?: string | null, tags: string[] = []): boolean {
     return hasSpatialAudioQuality([quality, ...tags]);
   }
@@ -1051,6 +1056,11 @@ export class TidalProvider implements StreamingProvider {
           picture: video.artist.picture || null,
         }
         : { providerId: String(video.artist_id || ""), name: video.artist_name || video.subtitle || "Unknown Artist" },
+      artists: (video.artists || []).map((artist: any) => ({
+        providerId: String(artist.id ?? artist.tidal_id ?? ""),
+        name: artist.name || "Unknown Artist",
+        picture: artist.picture || null,
+      })),
       duration: video.duration ?? null,
       releaseDate: video.releaseDate || video.release_date || null,
       cover: video.image_id || video.imageId || video.image || video.cover || null,

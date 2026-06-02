@@ -2,12 +2,13 @@ import { db } from "../database.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 import { getConfigSection, type FilteringConfig } from "./config.js";
 import { LibraryFilesService } from "./library-files.js";
-import { skyHookProxy } from "./metadata/skyhook-proxy.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "./musicbrainz-release-group-filter.js";
+import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
+    artist_mbid: string;
     title: string;
     primary_type?: string | null;
     secondary_types?: string | null;
@@ -20,6 +21,7 @@ type ReleaseGroupSlotRow = {
     wanted: number;
     selected_provider?: string | null;
     selected_provider_id?: string | null;
+    selected_release_mbid?: string | null;
     provider_data?: string | null;
 };
 
@@ -80,36 +82,6 @@ export class CurationService {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
     }
 
-    private static hasCachedReleaseTracks(releaseGroupMbid: string): boolean {
-        const row = db.prepare(`
-            SELECT 1
-            FROM AlbumReleases r
-            JOIN Tracks t ON t.release_mbid = r.mbid
-            WHERE r.release_group_mbid = ?
-            LIMIT 1
-        `).get(releaseGroupMbid);
-        return Boolean(row);
-    }
-
-    private static async ensureReleaseGroupTrackCache(
-        artistMbid: string,
-        releaseGroupMbid: string,
-    ): Promise<void> {
-        if (
-            !this.looksLikeMusicBrainzMbid(artistMbid)
-            || !this.looksLikeMusicBrainzMbid(releaseGroupMbid)
-            || this.hasCachedReleaseTracks(releaseGroupMbid)
-        ) {
-            return;
-        }
-
-        try {
-            await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
-        } catch (error) {
-            console.warn(`[Curation] Failed to hydrate release-group tracks for ${releaseGroupMbid}:`, error);
-        }
-    }
-
     private static normalizeTrackTitle(title: string): string {
         return String(title || "")
             .toLowerCase()
@@ -118,7 +90,11 @@ export class CurationService {
             .trim();
     }
 
-    private static getPreferredReleaseRecordings(releaseGroupMbid: string): PreferredReleaseRecordings | null {
+    private static getPreferredReleaseRecordings(
+        releaseGroupMbid: string,
+        representativeReleaseMbid?: string | null,
+        restrictToRepresentative = false,
+    ): PreferredReleaseRecordings | null {
         const mapTracks = (releaseMbid: string): PreferredReleaseRecordings | null => {
             const rows = db.prepare(`
                 SELECT recording_mbid, title
@@ -158,33 +134,23 @@ export class CurationService {
             return null;
         };
 
-        const release = db.prepare(`
-            SELECT
-                r.mbid,
-                CASE
-                  WHEN EXISTS (
-                    SELECT 1 FROM AlbumReleaseMedia m
-                    WHERE m.release_mbid = r.mbid
-                      AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
-                  ) THEN 1 ELSE 0
-                END AS digital_score
-            FROM AlbumReleases r
-            WHERE r.release_group_mbid = ?
-            ORDER BY
-                digital_score DESC,
-                CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
-                COALESCE(r.track_count, 0) DESC,
-                (r.date IS NULL) ASC,
-                r.date DESC,
-                r.mbid ASC
-            LIMIT 1
-        `).get(releaseGroupMbid) as { mbid: string } | undefined;
+        if (restrictToRepresentative && !representativeReleaseMbid) {
+            return null;
+        }
+
+        const release = representativeReleaseMbid
+            ? { mbid: representativeReleaseMbid }
+            : MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid);
 
         if (release?.mbid) {
             const mapped = mapTracks(release.mbid);
             if (mapped) {
                 return mapped;
             }
+        }
+
+        if (restrictToRepresentative) {
+            return null;
         }
 
         const fallbackRelease = db.prepare(`
@@ -241,24 +207,24 @@ export class CurationService {
     }
 
     private static async findReleaseGroupsContainedByAlbums(
-        artistMbid: string,
         releaseGroups: ReleaseGroupForCuration[],
         includedReleaseGroupIds: Set<string>,
+        representativeReleaseMbids?: Map<string, string>,
+        restrictToRepresentatives = false,
     ): Promise<Set<string>> {
         const included = releaseGroups.filter((releaseGroup) => includedReleaseGroupIds.has(releaseGroup.mbid));
         if (included.length === 0) {
             return new Set();
         }
 
-        const releaseGroupIdsToHydrate = new Set(included.map((rg) => rg.mbid));
-        for (const releaseGroupMbid of releaseGroupIdsToHydrate) {
-            await this.ensureReleaseGroupTrackCache(artistMbid, releaseGroupMbid);
-        }
-
         const hydratedGroups = included
             .map((releaseGroup) => ({
                 releaseGroup,
-                preferredRelease: this.getPreferredReleaseRecordings(releaseGroup.mbid),
+                preferredRelease: this.getPreferredReleaseRecordings(
+                    releaseGroup.mbid,
+                    representativeReleaseMbids?.get(releaseGroup.mbid),
+                    restrictToRepresentatives,
+                ),
             }))
             .filter((entry): entry is { releaseGroup: ReleaseGroupForCuration; preferredRelease: PreferredReleaseRecordings } =>
                 Boolean(entry.preferredRelease)
@@ -292,7 +258,7 @@ export class CurationService {
         const redundantReleaseGroupIds = new Set<string>();
 
         for (const entry of hydratedGroups) {
-            const isContained = retainedGroups.some(({ preferredRelease }) => {
+            const isContained = retainedGroups.some(({ releaseGroup, preferredRelease }) => {
                 if (entry.preferredRelease.tracks.length > preferredRelease.tracks.length) {
                     return false;
                 }
@@ -343,54 +309,79 @@ export class CurationService {
         const includeSpatial = curationConfig.include_spatial === true;
         const enableRedundancyFilter = curationConfig.enable_redundancy_filter !== false;
         const releaseGroups = db.prepare(`
-            SELECT mbid, title, primary_type, secondary_types
-            FROM Albums
-            WHERE artist_mbid = ?
-        `).all(artistMbid) as ReleaseGroupForCuration[];
+            SELECT DISTINCT rg.mbid, rg.artist_mbid, rg.title, rg.primary_type, rg.secondary_types
+            FROM Albums rg
+            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+            WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+        `).all(artistMbid, artistMbid) as ReleaseGroupForCuration[];
 
         if (releaseGroups.length === 0) {
             console.log(`   No MusicBrainz release groups found for artist ${artistMbid}.`);
             return { newAlbums: 0, upgradedAlbums: 0 };
         }
 
-        this.ensureReleaseGroupSlotRows(artistMbid, releaseGroups, includeSpatial);
+        this.ensureReleaseGroupSlotRows(releaseGroups);
 
+        const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         const slotRows = db.prepare(`
-            SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, provider_data
+            SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, provider_data
             FROM ReleaseGroupSlots
-            WHERE artist_mbid = ?
-        `).all(artistMbid) as ReleaseGroupSlotRow[];
+            WHERE release_group_mbid IN (${releaseGroupMbids.map(() => "?").join(",")})
+        `).all(...releaseGroupMbids) as ReleaseGroupSlotRow[];
 
-        const requireProvider = curationConfig.require_provider_availability === true;
-        const hasProviderMatch = new Set<string>();
-        if (requireProvider) {
-            for (const slot of slotRows) {
-                if (slot.selected_provider_id != null && slot.selected_provider_id !== "") {
-                    hasProviderMatch.add(slot.release_group_mbid);
-                }
-            }
-        }
-
+        // 1. Identify which release groups are included based on MusicBrainz filters alone (metadata-only curation)
         const includedReleaseGroupIds = new Set<string>();
         for (const releaseGroup of releaseGroups) {
             if (this.isReleaseGroupIncluded(releaseGroup, curationConfig)) {
-                if (!requireProvider || hasProviderMatch.has(releaseGroup.mbid)) {
-                    includedReleaseGroupIds.add(releaseGroup.mbid);
+                includedReleaseGroupIds.add(releaseGroup.mbid);
+            }
+        }
+
+        const requireProvider = curationConfig.require_provider_availability === true;
+        const representativeReleaseMbids = new Map<string, string>();
+
+        if (requireProvider) {
+            const providerAvailableReleaseGroupIds = new Set<string>();
+            for (const slot of slotRows) {
+                if (!slot.selected_provider_id) {
+                    continue;
+                }
+                providerAvailableReleaseGroupIds.add(slot.release_group_mbid);
+                if (slot.selected_release_mbid && !representativeReleaseMbids.has(slot.release_group_mbid)) {
+                    representativeReleaseMbids.set(slot.release_group_mbid, slot.selected_release_mbid);
+                }
+            }
+
+            for (const releaseGroupMbid of includedReleaseGroupIds) {
+                if (!providerAvailableReleaseGroupIds.has(releaseGroupMbid)) {
+                    includedReleaseGroupIds.delete(releaseGroupMbid);
                 }
             }
         }
 
+        // 2. Compare the already-selected representatives across release groups.
         if (enableRedundancyFilter) {
             const redundantReleaseGroupIds = await this.findReleaseGroupsContainedByAlbums(
-                artistMbid,
                 releaseGroups,
                 includedReleaseGroupIds,
+                representativeReleaseMbids,
+                requireProvider,
             );
             for (const releaseGroupMbid of redundantReleaseGroupIds) {
                 includedReleaseGroupIds.delete(releaseGroupMbid);
             }
         }
 
+        const upsertContext = db.prepare(`
+            INSERT INTO ArtistReleaseGroupCuration (
+                source_artist_mbid, release_group_mbid, included, reason, updated_at
+            )
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(source_artist_mbid, release_group_mbid) DO UPDATE SET
+                included = excluded.included,
+                reason = excluded.reason,
+                updated_at = CURRENT_TIMESTAMP
+        `);
         const updateSlot = db.prepare(`
             UPDATE ReleaseGroupSlots
             SET wanted = ?, updated_at = CURRENT_TIMESTAMP
@@ -400,10 +391,24 @@ export class CurationService {
         let slotUpdates = 0;
         let wantedSlots = 0;
         db.transaction(() => {
+            for (const releaseGroup of releaseGroups) {
+                const included = includedReleaseGroupIds.has(releaseGroup.mbid);
+                upsertContext.run(artistMbid, releaseGroup.mbid, included ? 1 : 0, included ? "included" : "filtered-or-redundant");
+            }
+
             for (const slot of slotRows) {
                 const slotName = String(slot.slot || "").toLowerCase();
                 const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
-                const wanted = includedReleaseGroupIds.has(slot.release_group_mbid)
+                const monitoredContext = db.prepare(`
+                    SELECT 1
+                    FROM ArtistReleaseGroupCuration context
+                    JOIN Artists artist ON artist.mbid = context.source_artist_mbid
+                    WHERE context.release_group_mbid = ?
+                      AND context.included = 1
+                      AND artist.monitor = 1
+                    LIMIT 1
+                `).get(slot.release_group_mbid);
+                const wanted = Boolean(monitoredContext)
                     && (slotName !== "spatial" || includeSpatial)
                     && (!requireProvider || hasProvider)
                     ? 1
@@ -436,11 +441,13 @@ export class CurationService {
             `).all(artistId, artistId) as Array<{ id: string | number }>;
 
             const wantedAlbums = db.prepare(`
-                SELECT selected_provider_id
-                FROM ReleaseGroupSlots
-                WHERE artist_mbid = ?
-                  AND wanted = 1
-                  AND selected_provider_id IS NOT NULL
+                SELECT DISTINCT slot.selected_provider_id
+                FROM ReleaseGroupSlots slot
+                JOIN ArtistReleaseGroupCuration context
+                  ON context.release_group_mbid = slot.release_group_mbid
+                WHERE context.source_artist_mbid = ?
+                  AND slot.wanted = 1
+                  AND slot.selected_provider_id IS NOT NULL
             `).all(artistMbid) as Array<{ selected_provider_id: string }>;
             const wantedAlbumIds = new Set(
                 wantedAlbums.flatMap((r) => String(r.selected_provider_id || "").split(";").filter(Boolean))
@@ -493,11 +500,9 @@ export class CurationService {
     }
 
     private static ensureReleaseGroupSlotRows(
-        artistMbid: string,
         releaseGroups: ReleaseGroupForCuration[],
-        includeSpatial: boolean,
     ): void {
-        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
+        const slots = ["stereo", "spatial"];
         const insertMissingSlot = db.prepare(`
             INSERT INTO ReleaseGroupSlots (
                 artist_mbid,
@@ -515,7 +520,7 @@ export class CurationService {
         db.transaction(() => {
             for (const releaseGroup of releaseGroups) {
                 for (const slot of slots) {
-                    insertMissingSlot.run(artistMbid, releaseGroup.mbid, slot);
+                        insertMissingSlot.run(releaseGroup.artist_mbid, releaseGroup.mbid, slot);
                 }
             }
         })();
@@ -656,6 +661,7 @@ export class CurationService {
                 rgs.release_group_mbid,
                 rgs.selected_provider,
                 rgs.selected_provider_id AS id,
+                rgs.selected_release_mbid,
                 rgs.quality,
                 rgs.provider_data,
                 rg.primary_type,
@@ -682,22 +688,9 @@ export class CurationService {
             
             // Check if all target tracks of the preferred release are imported.
             // First find the preferred release MBID for this release group
-            const preferredReleaseRow = db.prepare(`
-                SELECT r.mbid FROM AlbumReleases r
-                WHERE r.release_group_mbid = ?
-                ORDER BY
-                    (EXISTS (
-                        SELECT 1 FROM AlbumReleaseMedia m
-                        WHERE m.release_mbid = r.mbid
-                          AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
-                    )) DESC,
-                    CASE LOWER(COALESCE(r.status, '')) WHEN 'official' THEN 0 ELSE 1 END ASC,
-                    COALESCE(r.track_count, 0) DESC,
-                    (r.date IS NULL) ASC,
-                    r.date DESC,
-                    r.mbid ASC
-                LIMIT 1
-            `).get(slot.release_group_mbid) as { mbid: string } | undefined;
+            const preferredReleaseRow = slot.selected_release_mbid
+                ? { mbid: String(slot.selected_release_mbid) }
+                : MusicBrainzReleaseSelectionService.selectRepresentativeRelease(slot.release_group_mbid);
 
             let allTracksImported = false;
             if (preferredReleaseRow) {

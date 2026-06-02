@@ -159,6 +159,18 @@ export function saveStoredTidalToken(token: TidalAuthToken): void {
     });
 }
 
+export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
+    const token = loadStoredTidalToken();
+    if (!token?.access_token) {
+        return false;
+    }
+
+    const expiresAt = token.expires_at || Math.floor(Date.now() / 1000) + 3600;
+    syncTokenToTidalDlNg(token.access_token, token.refresh_token || "", expiresAt);
+    await syncTokenToOrpheusSession(token);
+    return true;
+}
+
 export function clearStoredTidalToken(): void {
     try {
         if (fs.existsSync(TIDAL_AUTH_TOKEN_FILE)) {

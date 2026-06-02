@@ -65,3 +65,64 @@ test("syncReleaseGroup stores SkyHook album detail release type fields", async (
   assert.deepEqual(JSON.parse(releaseGroup.secondary_types), ["Live"]);
   assert.equal(releaseGroup.first_release_date, "2023-04-22");
 });
+
+test("syncReleaseGroup keeps the canonical SkyHook album owner instead of the scanning artist", async () => {
+  const { db } = dbModule;
+  db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("bastille-mbid", "Bastille");
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      id: "happier-release-group",
+      artistid: "marshmello-mbid",
+      title: "Happier",
+      type: "Single",
+      secondarytypes: [],
+      images: [],
+      Releases: [],
+    }),
+  })) as unknown as typeof fetch;
+
+  await skyHookModule.skyHookProxy.syncReleaseGroup("happier-release-group", "bastille-mbid");
+
+  const releaseGroup = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
+    .get("happier-release-group") as { artist_mbid: string };
+  assert.equal(releaseGroup.artist_mbid, "marshmello-mbid");
+});
+
+test("searchAll ranks the substantial exact-name artist ahead of same-name collisions", async () => {
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ([
+      {
+        artist: {
+          id: "metal-band",
+          artistname: "Bastille",
+          disambiguation: "metal band",
+          type: "Group",
+          Albums: [{ Id: "one" }],
+        },
+      },
+      {
+        artist: {
+          id: "indie-pop-band",
+          artistname: "Bastille",
+          disambiguation: "British indie pop band",
+          type: "Group",
+          Albums: Array.from({ length: 20 }, (_, index) => ({ Id: `album-${index}` })),
+        },
+      },
+    ]),
+  })) as unknown as typeof fetch;
+
+  const results = await skyHookModule.skyHookProxy.searchAll("Bastille", 10);
+
+  assert.equal(results[0].artist.id, "indie-pop-band");
+  assert.equal(results[1].artist.id, "metal-band");
+});

@@ -276,7 +276,13 @@ export function getReleaseGroupDownloadStatsMap(
       LEFT JOIN Tracks t
         ON t.release_mbid = sr.release_mbid
       LEFT JOIN TrackFiles lf
-        ON lf.canonical_track_mbid = t.mbid
+        ON (
+          lf.canonical_track_mbid = t.mbid
+          OR (
+            lf.canonical_track_mbid IS NULL
+            AND lf.canonical_recording_mbid = t.recording_mbid
+          )
+        )
        AND lf.file_type = 'track'
        AND lf.library_slot = sr.slot
       GROUP BY sr.release_group_mbid
@@ -431,7 +437,13 @@ export function countDownloadedAlbums(): number {
       JOIN Tracks t
         ON t.release_mbid = rgs.selected_release_mbid
       LEFT JOIN TrackFiles lf
-        ON lf.canonical_track_mbid = t.mbid
+        ON (
+          lf.canonical_track_mbid = t.mbid
+          OR (
+            lf.canonical_track_mbid IS NULL
+            AND lf.canonical_recording_mbid = t.recording_mbid
+          )
+        )
        AND lf.file_type = 'track'
        AND lf.library_slot = rgs.slot
       WHERE rgs.slot IN ('stereo', 'spatial')
@@ -452,7 +464,13 @@ export function countDownloadedTracks(): number {
     JOIN Tracks t
       ON t.release_mbid = rgs.selected_release_mbid
     JOIN TrackFiles lf
-      ON lf.canonical_track_mbid = t.mbid
+      ON (
+        lf.canonical_track_mbid = t.mbid
+        OR (
+          lf.canonical_track_mbid IS NULL
+          AND lf.canonical_recording_mbid = t.recording_mbid
+        )
+      )
      AND lf.file_type = 'track'
      AND lf.library_slot = rgs.slot
     WHERE rgs.slot IN ('stereo', 'spatial')

@@ -269,6 +269,16 @@ const useStyles = makeStyles({
     position: "relative",
     zIndex: 1,
   },
+  authWrapper: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "100dvh",
+    minHeight: "100dvh",
+    overflow: "hidden",
+  },
   tidalBannerWrap: {
     maxWidth: "1320px",
     marginTop: tokens.spacingVerticalS,
@@ -401,7 +411,7 @@ const Layout = () => {
   return (
     <>
       <UltraBlurBackground colors={colors} isDarkMode={ultraBlurIsDarkMode} />
-      <div className={styles.wrapper}>
+      <div className={mergeClasses(styles.wrapper, isAuthRoute && styles.authWrapper)}>
         {!isAuthRoute ? (
           <nav className={mergeClasses(styles.nav, isDarkMode ? styles.navDark : styles.navLight)}>
             <div className={styles.container}>

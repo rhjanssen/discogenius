@@ -210,6 +210,7 @@ const useStyles = makeStyles({
         justifyContent: "center",
         gap: tokens.spacingHorizontalXS,
         marginTop: tokens.spacingVerticalXS,
+        width: "100%",
     },
     // List Items
     listContainer: {
@@ -293,6 +294,15 @@ const useStyles = makeStyles({
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
+    },
+    artistSubtitle: {
+        color: tokens.colorNeutralForeground2,
+        display: "-webkit-box",
+        overflow: "hidden",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2,
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
     },
     rowActionsContainer: {
         display: "flex",
@@ -533,9 +543,9 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const renderGridItem = (item: SearchResultItem, type: 'artist' | 'album') => {
         const isProcessing = processingItems.has(item.tidalId);
+        const subtitle = item.subtitle?.split('·').slice(1).join(' · ').trim() || item.subtitle;
 
         if (type === "album") {
-            const subtitle = item.subtitle?.split('·').slice(1).join(' · ').trim() || item.subtitle;
             return (
                 <MediaCard
                     key={item.tidalId}
@@ -566,6 +576,11 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                         <Text weight="semibold" wrap={false} align="center" size={200}>
                             {item.name}
                         </Text>
+                        {subtitle && (
+                            <Caption1 className={styles.artistSubtitle}>
+                                {subtitle}
+                            </Caption1>
+                        )}
                     </div>
                     <Button
                         appearance="subtle"

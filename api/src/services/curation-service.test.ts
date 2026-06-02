@@ -124,7 +124,7 @@ test("CurationService synchronizes albums and tracks monitor status", async () =
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 1 and album/media monitor status became 1
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 1);
 
   const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
@@ -188,7 +188,7 @@ test("CurationService unmonitors album and track when slot becomes unwanted", as
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 0 and album/media monitor status became 0
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 0);
 
   const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
@@ -249,7 +249,7 @@ test("CurationService respects monitor_lock when synchronizing monitor status", 
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 0, but album/media monitor status remained 1 (locked)
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 0);
 
   const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
@@ -288,7 +288,7 @@ test("CurationService marks MusicBrainz release-group slots wanted without provi
   const slot = db.prepare(`
     SELECT wanted, selected_provider, selected_provider_id
     FROM ReleaseGroupSlots
-    WHERE release_group_mbid = ?
+    WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get("rg-mbid-1") as any;
 
   assert.equal(slot.wanted, 1);
@@ -337,6 +337,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
     (db.prepare(`
       SELECT release_group_mbid, wanted
       FROM ReleaseGroupSlots
+      WHERE slot = 'stereo'
       ORDER BY release_group_mbid
     `).all() as Array<{ release_group_mbid: string; wanted: number }>)
       .map((row) => [row.release_group_mbid, row.wanted])
@@ -363,6 +364,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
     (db.prepare(`
       SELECT release_group_mbid, wanted
       FROM ReleaseGroupSlots
+      WHERE slot = 'stereo'
       ORDER BY release_group_mbid
     `).all() as Array<{ release_group_mbid: string; wanted: number }>)
       .map((row) => [row.release_group_mbid, row.wanted])
@@ -390,6 +392,11 @@ test("Album read model does not inherit release-group wanted state from artist m
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
   `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+
+  db.prepare(`
+    INSERT INTO ArtistReleaseGroupCuration (source_artist_mbid, release_group_mbid, included)
+    VALUES (?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", 1);
 
   const result = albumQueryServiceModule.AlbumQueryService.listAlbums({
     limit: 10,
@@ -553,8 +560,8 @@ test("CurationService marks Single redundant if contained in an EP", async () =>
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP!
@@ -631,8 +638,8 @@ test("CurationService marks Album redundant if contained in a Compilation", asyn
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const compSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-compilation") as any;
-  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-album") as any;
+  const compSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-compilation") as any;
+  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album") as any;
 
   assert.equal(compSlot.wanted, 1);
   assert.equal(albumSlot.wanted, 0); // Album should be redundant because its tracks are in the Compilation!
@@ -713,8 +720,8 @@ test("CurationService uses fallback release when preferred release has no tracks
 
   // Verify wanted status: the Single should still be marked redundant because the EP
   // containment check fell back to the fallback release's tracks!
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP fallback release!
@@ -773,8 +780,8 @@ test("CurationService respects require_provider_availability filter", async () =
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const slot1 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-1") as any;
-  const slot2 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-2") as any;
+  const slot1 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-1") as any;
+  const slot2 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-2") as any;
 
   assert.equal(slot1.wanted, 1); // Matched slot should be wanted
   assert.equal(slot2.wanted, 0); // Unmatched slot should NOT be wanted
@@ -848,8 +855,8 @@ test("CurationService marks Single redundant if contained in an EP by track titl
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
@@ -919,9 +926,112 @@ test("CurationService does not mark Single redundant if contained in an Album by
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-album-edit") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get("rg-single-edit") as any;
+  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-edit") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-edit") as any;
 
   assert.equal(albumSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 1); // Single should not be redundant because different edit versions are treated as distinct recordings when recording IDs/ISRCs differ!
+});
+
+test("CurationService marks a single redundant when its parent album is present in MusicBrainz metadata even if the parent album is unmatched to a provider", async () => {
+  const { db } = dbModule;
+
+  // Insert artist
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-redundancy-unmatched", 1);
+
+  // Insert mb_artist
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-redundancy-unmatched", "Queen");
+
+  // Insert Album and Single Release Groups
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-album-unmatched", "artist-mbid-redundancy-unmatched", "A Night at the Opera", "album");
+  insertReleaseGroup.run("rg-single-matched", "artist-mbid-redundancy-unmatched", "Bohemian Rhapsody", "single");
+
+  // Insert Album and Single Releases
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run("release-album-unmatched", "rg-album-unmatched", "artist-mbid-redundancy-unmatched", "A Night at the Opera", "Official", "1975-11-21", 2, 1);
+  insertRelease.run("release-single-matched", "rg-single-matched", "artist-mbid-redundancy-unmatched", "Bohemian Rhapsody", "Official", "1975-10-31", 1, 1);
+
+  // Insert Recordings
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `);
+  insertRecording.run("rec-bohemian-rhapsody", "Bohemian Rhapsody");
+  insertRecording.run("rec-other-track", "Death on Two Legs");
+
+  // Insert Tracks for Album
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-album-1", "release-album-unmatched", "rec-bohemian-rhapsody", 1, 1, "1", "Bohemian Rhapsody", 355000);
+  insertTrack.run("track-album-2", "release-album-unmatched", "rec-other-track", 1, 2, "2", "Death on Two Legs", 200000);
+
+  // Insert Track for Single (identical recording MBID)
+  insertTrack.run("track-single-1", "release-single-matched", "rec-bohemian-rhapsody", 1, 1, "1", "Bohemian Rhapsody", 355000);
+
+  // Configure slots in DB:
+  // Album slot has NO selected provider (selected_provider = NULL, selected_provider_id = NULL)
+  // Single slot HAS a selected provider (so it is matched on the provider side)
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-redundancy-unmatched", "rg-album-unmatched", "stereo", 0, null, null, "unmatched");
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-redundancy-unmatched", "rg-single-matched", "stereo", 1, "tidal", "tidal-single-1", "release-single-matched", "verified");
+
+  // Configure filtering to include both Albums and Singles
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+      require_provider_availability: false,
+    },
+  });
+
+  // Run curation
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  // Verify wanted status
+  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
+  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
+
+  assert.equal(albumSlot.wanted, 1); // Album should be wanted (even if provider slot is unmatched, because require_provider_availability is false and it's included in metadata)
+  assert.equal(singleSlot.wanted, 0); // Single should be redundant (wanted = 0) because all its tracks are contained in the parent album, despite the parent album being unmatched!
+
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+      require_provider_availability: true,
+    },
+  });
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const requiredAlbumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
+  const requiredSingleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
+
+  assert.equal(requiredAlbumSlot.wanted, 0);
+  assert.equal(requiredSingleSlot.wanted, 1); // Provider-required redundancy only compares provider-available representatives.
 });

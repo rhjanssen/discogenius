@@ -49,10 +49,41 @@ router.get("/check-login", async (req, res) => {
 
 router.get("/status", async (req, res) => {
   try {
-    const providerId = (req.query.provider as string) || "tidal";
-    const provider = streamingProviderManager.getStreamingProvider(providerId);
-    
-    res.json(await provider.getAuthStatus());
+    const providerId = (req.query.provider as string);
+    if (providerId) {
+      const provider = streamingProviderManager.getStreamingProvider(providerId);
+      return res.json(await provider.getAuthStatus());
+    }
+
+    const providers = streamingProviderManager.getAllStreamingProviders();
+    let connected = false;
+    let remoteCatalogAvailable = false;
+    let message = "Connect a provider to access remote features.";
+    let user = null;
+
+    for (const p of providers) {
+      const status = await p.getAuthStatus();
+      if (status.connected) {
+        connected = true;
+        remoteCatalogAvailable = true;
+        message = status.message || `Connected to ${p.name}`;
+        user = status.user;
+        break;
+      }
+    }
+
+    res.json({
+      connected,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 12,
+      canAccessShell: true,
+      canAccessLocalLibrary: true,
+      remoteCatalogAvailable,
+      canAuthenticate: true,
+      user,
+      message,
+    });
   } catch (error: any) {
     res.json({
       connected: false,
@@ -72,6 +103,9 @@ router.post("/logout", async (req, res) => {
   try {
     const providerId = (req.query.provider as string) || (req.body?.provider as string) || "tidal";
     const provider = streamingProviderManager.getStreamingProvider(providerId);
+    if (!provider.logout) {
+      return res.status(501).json({ detail: `${provider.name} does not support disconnecting` });
+    }
     await provider.logout();
     res.json({ success: true });
   } catch (error: any) {

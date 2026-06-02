@@ -56,10 +56,7 @@ function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'vid
         release_date: item.release_date || item.releaseDate || null,
     };
 
-    // Add subtitle (artist name) for non-artist items
-    if (type !== 'artist') {
-        result.subtitle = item.subtitle || item.artist_name || item.artist?.name || null;
-    }
+    result.subtitle = item.subtitle || (type !== 'artist' ? item.artist_name || item.artist?.name : null) || null;
 
     // Add image ID based on type
     if (type === 'artist') {

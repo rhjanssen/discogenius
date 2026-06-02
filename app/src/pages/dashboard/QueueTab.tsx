@@ -717,8 +717,7 @@ const QueueTab = () => {
     const groupedDownloads = useMemo(() => {
         const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'processing');
         const pendingDownloads = liveQueueItems.filter(i => i.status === 'pending');
-        const failedDownloads = liveQueueItems.filter(i => i.status === 'failed');
-        const filteredQueue = [...activeDownloads, ...pendingDownloads, ...failedDownloads];
+        const filteredQueue = [...activeDownloads, ...pendingDownloads];
 
         const albumTrackCounts = new Map<string, number>();
 
@@ -1258,7 +1257,7 @@ const QueueTab = () => {
                                 const activeStage = activeItem?.stage || firstItem?.stage;
                                 const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing' || prog?.state === 'importPending');
                                 const isImportPending = !isDownloading && !isFailed && (activeStage === 'import' || prog?.state === 'importPending' || prog?.state === 'importing');
-                                const shouldRenderGroupedTrackRows = groupedTrackItems.length > 0;
+                                const shouldRenderGroupedTrackRows = group.type === 'album' && groupedTrackItems.length > 0;
                                 const groupError = firstItem?.error || (isFailed ? prog?.statusMessage : undefined);
                                 const groupNavPath = getQueueGroupNavPath(group.type, firstItem);
                                 const isPendingReorderable = isPendingReorderableGroup(group);

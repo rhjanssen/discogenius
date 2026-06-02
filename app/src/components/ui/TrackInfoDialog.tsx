@@ -5,6 +5,7 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
+    Button,
     Text,
     Spinner,
     makeStyles,
@@ -384,7 +385,13 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
                 <DialogBody>
                     <DialogTitle
                         action={
-                            <Dismiss24Regular className={styles.dismiss} onClick={onClose} />
+                            <Button
+                                appearance="transparent"
+                                aria-label="Close track info"
+                                icon={<Dismiss24Regular />}
+                                className={styles.dismiss}
+                                onClick={onClose}
+                            />
                         }
                     >
                         {dialogTitle}

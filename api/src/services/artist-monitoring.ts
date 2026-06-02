@@ -129,17 +129,52 @@ export function queueArtistMonitoringIntake(options: {
     });
 }
 
+function ensurePendingMusicBrainzArtist(artistId: string, artistName?: string): string | null {
+    if (!isMusicBrainzMbid(artistId)) {
+        return null;
+    }
+
+    const existing = db.prepare("SELECT id FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
+        .get(artistId, artistId) as { id: string | number } | undefined;
+    if (existing?.id != null) {
+        return String(existing.id);
+    }
+
+    const cachedMetadata = db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
+        .get(artistId) as { name?: string | null } | undefined;
+    const resolvedName = String(artistName || cachedMetadata?.name || "").trim();
+    if (!resolvedName) {
+        return null;
+    }
+
+    db.prepare(`
+        INSERT INTO Artists (
+            id, name, mbid, musicbrainz_status, musicbrainz_match_method,
+            monitor, monitored_at, user_date_added
+        )
+        VALUES (?, ?, ?, 'pending', 'musicbrainz-search-result', 0, NULL, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO NOTHING
+    `).run(artistId, resolvedName, artistId);
+    return artistId;
+}
+
 export async function monitorArtistAndQueueIntake(options: {
     artistId: string;
+    artistName?: string;
     priority?: number;
     trigger?: number;
 }) {
     const existingByMbid = isMusicBrainzMbid(options.artistId)
         ? db.prepare("SELECT id FROM Artists WHERE mbid = ? LIMIT 1").get(options.artistId) as { id: string | number } | undefined
         : undefined;
-    const artistId = existingByMbid?.id != null ? String(existingByMbid.id) : options.artistId;
+    let artistId = existingByMbid?.id != null ? String(existingByMbid.id) : options.artistId;
 
-    await RefreshArtistService.scanBasic(artistId, { monitorArtist: true });
+    const pendingArtistId = ensurePendingMusicBrainzArtist(artistId, options.artistName);
+    if (pendingArtistId) {
+        artistId = pendingArtistId;
+    } else {
+        await RefreshArtistService.scanBasic(artistId, { monitorArtist: true });
+    }
 
     const changes = applyArtistMonitoringState(artistId, true);
     if (changes === 0) {
@@ -148,6 +183,7 @@ export async function monitorArtistAndQueueIntake(options: {
 
     const jobId = queueArtistMonitoringIntake({
         artistId,
+        artistName: options.artistName,
         priority: options.priority,
         trigger: options.trigger,
     });
@@ -160,6 +196,7 @@ export async function monitorArtistAndQueueIntake(options: {
 
 export async function setArtistMonitoredState(options: {
     artistId: string;
+    artistName?: string;
     monitored: boolean;
     priority?: number;
     trigger?: number;
@@ -167,6 +204,7 @@ export async function setArtistMonitoredState(options: {
     if (options.monitored) {
         const result = await monitorArtistAndQueueIntake({
             artistId: options.artistId,
+            artistName: options.artistName,
             priority: options.priority,
             trigger: options.trigger,
         });

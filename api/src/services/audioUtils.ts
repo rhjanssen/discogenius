@@ -320,7 +320,9 @@ export async function lookupAcoustId(fingerprint: string, duration: number): Pro
     return null;
 }
 
-export async function writeMetadata(filePath: string, tags: Record<string, string>): Promise<boolean> {
+export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+    const removalArgs = Array.from(new Set(removeKeys.map((key) => key.trim()).filter(Boolean)))
+        .flatMap((key) => ['-metadata', `${key}=`]);
     const metadataArgs = Object.entries(tags)
         .filter(([, value]) => typeof value === 'string' && value.length > 0)
         .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
@@ -330,6 +332,7 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
         '-y',
         '-i', filePath,
         '-map_metadata', '0',
+        ...removalArgs,
         ...metadataArgs,
         '-c', 'copy',
         ...getMetadataRewriteContainerArgs(filePath),

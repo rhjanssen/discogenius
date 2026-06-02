@@ -221,7 +221,7 @@ export const useSearch = () => {
             // These handle fetching data + setting monitor flags in one call
             switch (item.type) {
                 case 'artist':
-                    await api.monitorArtist(item.tidalId);
+                    await api.monitorArtist(item.tidalId, item.name);
                     toastRef.current({
                         title: "Artist monitored",
                         description: `${item.name} is now being monitored`,

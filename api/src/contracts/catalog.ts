@@ -58,6 +58,13 @@ export interface AlbumContract {
   downloaded?: number;
   artist_id: string;
   artist_name: string;
+  album_artists?: Array<{
+    id: string;
+    name: string;
+    join_phrase: string;
+    picture?: string | null;
+    cover_image_url?: string | null;
+  }>;
   include_in_monitoring?: number;
   excluded_reason?: string | null;
   filtered_out?: number;
@@ -209,6 +216,18 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     downloaded: expectOptionalNumber(record.downloaded, `${label}.downloaded`),
     artist_id: expectIdentifierString(record.artist_id, `${label}.artist_id`),
     artist_name: expectString(record.artist_name, `${label}.artist_name`),
+    album_artists: record.album_artists === undefined
+      ? undefined
+      : expectArray(record.album_artists, `${label}.album_artists`, (artist, artistIndex) => {
+          const artistRecord = expectRecord(artist, `${label}.album_artists[${artistIndex}]`);
+          return {
+            id: expectIdentifierString(artistRecord.id, `${label}.album_artists[${artistIndex}].id`),
+            name: expectString(artistRecord.name, `${label}.album_artists[${artistIndex}].name`),
+            join_phrase: expectString(artistRecord.join_phrase, `${label}.album_artists[${artistIndex}].join_phrase`),
+            picture: expectNullableString(artistRecord.picture, `${label}.album_artists[${artistIndex}].picture`),
+            cover_image_url: expectNullableString(artistRecord.cover_image_url, `${label}.album_artists[${artistIndex}].cover_image_url`),
+          };
+        }),
     include_in_monitoring: expectOptionalNumber(record.include_in_monitoring, `${label}.include_in_monitoring`),
     excluded_reason: expectNullableString(record.excluded_reason, `${label}.excluded_reason`),
     filtered_out: expectOptionalNumber(record.filtered_out, `${label}.filtered_out`),
