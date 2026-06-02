@@ -126,4 +126,11 @@ test.describe('App shell & navigation', () => {
     // Should show some kind of not-found content
     await expect(page.locator('body')).toContainText(/not found|404|page/i);
   });
+
+  test('/health endpoint returns healthy status', async ({ request }) => {
+    const resp = await request.get(`${baseURL}/health`);
+    expect(resp.status()).toBe(200);
+    const data = await resp.json();
+    expect(data.status).toBe('healthy');
+  });
 });
