@@ -126,6 +126,7 @@ export interface RefreshArtistJobPayload extends QueuePayloadCommon {
   seedSimilarArtists?: boolean;
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
+  expandCreditedArtists?: boolean;
 }
 
 export interface RefreshAlbumJobPayload extends QueuePayloadCommon {

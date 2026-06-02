@@ -97,6 +97,7 @@ export function buildRefreshArtistJobPayload(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
+  expandCreditedArtists?: boolean;
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   const hydrateCatalog = phases.refreshMetadata;
@@ -116,6 +117,7 @@ export function buildRefreshArtistJobPayload(params: {
     seedSimilarArtists: false,
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
+    expandCreditedArtists: params.expandCreditedArtists !== false,
   };
 }
 
@@ -138,6 +140,7 @@ export function buildArtistWorkflowEntryJob(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
+  expandCreditedArtists?: boolean;
 }) {
   switch (params.workflow) {
     case "metadata-refresh":
@@ -151,6 +154,7 @@ export function buildArtistWorkflowEntryJob(params: {
           artistName: params.artistName,
           workflow: params.workflow,
           forceUpdate: params.forceUpdate,
+          expandCreditedArtists: params.expandCreditedArtists,
         }),
       };
     case "library-scan":
@@ -179,6 +183,7 @@ export function queueArtistWorkflow(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
+  expandCreditedArtists?: boolean;
   priority?: number;
   trigger?: number;
 }) {

@@ -33,6 +33,7 @@ export interface TrackRow {
   last_scanned?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  recording_data?: string | null;
 }
 
 interface LibraryFileRow {
@@ -153,13 +154,32 @@ function getTrackOrderBy(sort: SortableTrackField, dir: "ASC" | "DESC"): string 
 function getTrackSelectSql(whereClause: string): string {
   return `
     SELECT
-      media.*,
-      albums.title as album_title,
-      albums.cover as album_cover,
-      artists.name as artist_name
+      media.id,
+      media.album_id,
+      media.title,
+      media.version,
+      media.duration,
+      media.track_number,
+      media.volume_number,
+      media.quality,
+      media.explicit,
+      media.monitor,
+      media.monitor_lock,
+      media.release_date,
+      media.popularity,
+      media.last_scanned,
+      media.created_at,
+      media.updated_at,
+      artists.name AS artist_name,
+      artists.id AS artist_id,
+      albums.title AS album_title,
+      albums.cover AS album_cover,
+      r.data AS recording_data
     FROM ProviderMedia media
     LEFT JOIN ProviderAlbums albums ON media.album_id = albums.id
     LEFT JOIN Artists artists ON media.artist_id = artists.id
+    LEFT JOIN Tracks t ON t.mbid = media.mbid
+    LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
     ${whereClause}
   `;
 }
@@ -195,6 +215,37 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     const trackId = String(track.id);
     const isDownloaded = downloadStates.get(trackId) ?? false;
 
+    // Parse canonical artist credits
+    let artist_credits: Array<{ id: string; name: string; join_phrase: string }> = [];
+    if (track.recording_data) {
+      try {
+        const parsed = JSON.parse(track.recording_data);
+        const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+        if (Array.isArray(credits) && credits.length > 0) {
+          artist_credits = credits.map((c: any) => {
+            const artistId = c.artist?.id || c.artistId || "";
+            const name = c.name || c.artist?.name || "";
+            const joinPhrase = c.joinphrase || c.join_phrase || "";
+            return {
+              id: artistId,
+              name: name,
+              join_phrase: joinPhrase,
+            };
+          }).filter(c => c.name);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    if (artist_credits.length === 0) {
+      artist_credits = [{
+        id: track.artist_id != null ? String(track.artist_id) : "",
+        name: track.artist_name || "Unknown Artist",
+        join_phrase: "",
+      }];
+    }
+
     return {
       ...track,
       id: trackId,
@@ -205,6 +256,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       downloaded: isDownloaded,
       is_downloaded: isDownloaded,
       files: filesByTrack.get(trackId) || [],
+      artist_credits,
     };
   });
 }

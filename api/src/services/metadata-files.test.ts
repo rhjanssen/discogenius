@@ -23,10 +23,15 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM ExtraFiles").run();
     dbModule.db.prepare("DELETE FROM TrackFiles").run();
     dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare("DELETE FROM Tracks").run();
+    dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+    dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM ProviderMedia").run();
     dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
+    dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -248,4 +253,39 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     assert.equal(linked?.RelationType, "same_lyrical_content");
     assert.equal(linked?.SourceForeignRecordingId, "recording-stereo");
     assert.equal(linked?.TargetForeignRecordingId, "recording-atmos");
+});
+
+test("album NFO uses the selected canonical release for a composite provider slot", async () => {
+    seedMusicBrainzMetadata();
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderAlbums(
+            id, artist_id, title, release_date, type, explicit, quality,
+            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("201", "100", "Second Provider Single", "2024-02-03", "SINGLE", 0, "LOSSLESS", 1, 1, 0, 120, "other-release-group");
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, title)
+        VALUES(?, ?)
+    `).run("recording-mbid-301", "Second Canonical Track");
+    dbModule.db.prepare(`
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("track-mbid-301", "album-mbid-200", "recording-mbid-301", 1, 2, "Second Canonical Track", 120000);
+      dbModule.db.prepare(`
+        INSERT INTO ReleaseGroupSlots(
+          release_group_mbid, artist_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid
+        )
+        VALUES(?, ?, ?, ?, ?, ?)
+      `).run("release-group-mbid-200", "artist-mbid-100", "stereo", "tidal", "200;201", "album-mbid-200");
+
+    const albumPath = path.join(tempDir, "composite-album.nfo");
+    await metadataFilesModule.saveAlbumNfoFile("200", albumPath);
+    const albumNfo = fs.readFileSync(albumPath, "utf-8");
+
+    assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">200<\/uniqueid>/);
+    assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">201<\/uniqueid>/);
+    assert.match(albumNfo, /<position>2<\/position>/);
+    assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-301<\/uniqueid>/);
 });

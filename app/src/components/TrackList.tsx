@@ -1,5 +1,7 @@
 import { useState, type MouseEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  Link,
   Text,
   makeStyles,
   mergeClasses,
@@ -135,6 +137,105 @@ const useStyles = makeStyles({
   playerRow: {
     padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
   },
+  titleColumn: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+  },
+  mobileMetaRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    flexWrap: "wrap",
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      display: "none",
+    },
+  },
+  desktopArtistColumn: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "block",
+      width: "220px",
+      flexShrink: 0,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      paddingLeft: tokens.spacingHorizontalS,
+      paddingRight: tokens.spacingHorizontalS,
+      boxSizing: "border-box",
+    },
+  },
+  desktopAlbumColumn: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "block",
+      width: "220px",
+      flexShrink: 0,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      paddingLeft: tokens.spacingHorizontalS,
+      paddingRight: tokens.spacingHorizontalS,
+      boxSizing: "border-box",
+    },
+  },
+  desktopQualityColumn: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "flex",
+      width: "100px",
+      flexShrink: 0,
+      alignItems: "center",
+      paddingLeft: tokens.spacingHorizontalS,
+      paddingRight: tokens.spacingHorizontalS,
+      boxSizing: "border-box",
+    },
+  },
+  desktopDurationColumn: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "block",
+      width: "60px",
+      flexShrink: 0,
+      textAlign: "right",
+      paddingLeft: tokens.spacingHorizontalS,
+      paddingRight: tokens.spacingHorizontalS,
+      boxSizing: "border-box",
+    },
+  },
+  desktopMetaText: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+  },
+  artistLink: {
+    display: "inline",
+    padding: 0,
+    border: 0,
+    backgroundColor: "transparent",
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+    textDecoration: "none",
+    ":hover": {
+      textDecoration: "underline",
+      opacity: 0.8,
+    },
+  },
+  artistJoinPhrase: {
+    color: tokens.colorNeutralForeground3,
+    marginRight: tokens.spacingHorizontalXS,
+    marginLeft: tokens.spacingHorizontalXS,
+  },
+  artistContainer: {
+    display: "inline-flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+  },
 });
 
 const isTruthy = (value: unknown) => Boolean(value);
@@ -196,6 +297,7 @@ const TrackList = <T extends TrackListItem>({
   isTrackDownloading,
 }: TrackListProps<T>) => {
   const styles = useStyles();
+  const navigate = useNavigate();
   const {
     getPlaybackSrc,
     getTrackAudioFile,
@@ -205,6 +307,54 @@ const TrackList = <T extends TrackListItem>({
     toggleTrackPlayback,
   } = useTrackPlayback();
   const [infoTrack, setInfoTrack] = useState<T | null>(null);
+
+  const renderArtistCredits = (track: T) => {
+    const handleArtistClick = (artistId: string, event: React.MouseEvent) => {
+      event.stopPropagation();
+      navigate(`/artist/${artistId}`);
+    };
+
+    if (track.artist_credits && track.artist_credits.length > 0) {
+      return (
+        <span className={styles.artistContainer}>
+          {track.artist_credits.map((credit, idx) => (
+            <span key={`${credit.id}-${idx}`}>
+              {credit.id ? (
+                <Link
+                  inline
+                  className={styles.artistLink}
+                  onClick={(e) => handleArtistClick(credit.id, e)}
+                >
+                  {credit.name}
+                </Link>
+              ) : (
+                <Text>{credit.name}</Text>
+              )}
+              {credit.join_phrase ? (
+                <span className={styles.artistJoinPhrase}>{credit.join_phrase}</span>
+              ) : null}
+            </span>
+          ))}
+        </span>
+      );
+    }
+
+    if (track.artist_name) {
+      return track.artist_id ? (
+        <Link
+          inline
+          className={styles.artistLink}
+          onClick={(e) => handleArtistClick(track.artist_id!, e)}
+        >
+          {track.artist_name}
+        </Link>
+      ) : (
+        <Text>{track.artist_name}</Text>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <>
@@ -250,14 +400,14 @@ const TrackList = <T extends TrackListItem>({
                   )
                 ) : null}
 
-                <div className={styles.main}>
+                <div className={styles.titleColumn}>
                   <div className={styles.titleRow}>
                     <Text className={styles.title}>{getDisplayTitle(track)}</Text>
                     {track.explicit ? <ExplicitBadge /> : null}
                   </div>
 
-                  <div className={styles.metaRow}>
-                    {displayArtist ? <Text className={styles.metaText}>{displayArtist}</Text> : null}
+                  <div className={styles.mobileMetaRow}>
+                    {displayArtist ? renderArtistCredits(track) : null}
                     {displayArtist && displayAlbum ? <Text className={styles.separator}>•</Text> : null}
                     {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
                     {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
@@ -265,6 +415,36 @@ const TrackList = <T extends TrackListItem>({
                     {showQuality && track.quality ? <Text className={styles.separator}>•</Text> : null}
                     {showQuality && track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
                   </div>
+                </div>
+
+                {showArtist ? (
+                  <div className={styles.desktopArtistColumn}>
+                    {renderArtistCredits(track)}
+                  </div>
+                ) : null}
+
+                {showAlbum ? (
+                  <div className={styles.desktopAlbumColumn}>
+                    {displayAlbum ? (
+                      <Text className={styles.desktopMetaText}>{displayAlbum}</Text>
+                    ) : (
+                      <Text className={styles.desktopMetaText}>—</Text>
+                    )}
+                  </div>
+                ) : null}
+
+                {showQuality ? (
+                  <div className={styles.desktopQualityColumn}>
+                    {track.quality ? (
+                      <QualityBadge quality={track.quality} className={styles.qualityBadge} />
+                    ) : (
+                      <Text className={styles.desktopMetaText}>—</Text>
+                    )}
+                  </div>
+                ) : null}
+
+                <div className={styles.desktopDurationColumn}>
+                  <Text className={styles.desktopMetaText}>{durationText}</Text>
                 </div>
 
                 <div className={styles.trailing}>

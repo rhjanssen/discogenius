@@ -93,34 +93,34 @@ const useStyles = makeStyles({
         maskSize: "contain",
     },
     atmosSmall: {
-        height: tokens.lineHeightBase300,
-        minWidth: "46px",
+        height: "22px",
+        minWidth: "52px",
         padding: `0 ${tokens.spacingHorizontalXS}`,
         borderRadius: tokens.borderRadiusMedium,
     },
     atmosMedium: {
-        height: tokens.lineHeightBase400,
-        minWidth: "56px",
+        height: "27px",
+        minWidth: "63px",
         padding: `0 ${tokens.spacingHorizontalSNudge}`,
         borderRadius: tokens.borderRadiusMedium,
     },
     atmosLarge: {
-        height: "28px",
-        minWidth: "68px",
+        height: "32px",
+        minWidth: "76px",
         padding: `0 ${tokens.spacingHorizontalS}`,
         borderRadius: tokens.borderRadiusLarge,
     },
     atmosLogoSmall: {
-        width: "36px",
-        height: "14px",
+        width: "40px",
+        height: "16px",
     },
     atmosLogoMedium: {
-        width: "48px",
-        height: "18px",
+        width: "54px",
+        height: "20px",
     },
     atmosLogoLarge: {
-        width: "57px",
-        height: "21px",
+        width: "64px",
+        height: "24px",
     },
 });
 

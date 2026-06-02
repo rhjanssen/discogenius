@@ -67,6 +67,8 @@ type RetagTrackRow = {
   release_primary_type: string | null;
   release_secondary_types: string | null;
   library_slot: string | null;
+  canonical_release_mbid: string | null;
+  canonical_track_mbid: string | null;
 };
 
 export type ManagedTag = {
@@ -741,15 +743,15 @@ export class AudioTagService {
         m.version AS media_version,
         m.duration AS media_duration,
         m.release_date AS media_release_date,
-        m.track_number AS media_track_number,
-        m.volume_number AS media_volume_number,
+        COALESCE(canonical_track.position, m.track_number) AS media_track_number,
+        COALESCE(canonical_track.medium_position, m.volume_number) AS media_volume_number,
         m.isrc AS media_isrc,
         m.copyright AS media_copyright,
         m.replay_gain AS media_replay_gain,
         m.peak AS media_peak,
-        a.title AS album_title,
-        a.version AS album_version,
-        a.release_date AS album_release_date,
+        COALESCE(canonical_release.title, canonical_group.title, a.title) AS album_title,
+        CASE WHEN lf.canonical_release_group_mbid IS NOT NULL THEN NULL ELSE a.version END AS album_version,
+        COALESCE(canonical_release.date, a.release_date) AS album_release_date,
         a.num_volumes AS album_num_volumes,
         a.upc AS album_upc,
         a.review_text AS album_review_text,
@@ -759,21 +761,26 @@ export class AudioTagService {
         m.acoustid_fingerprint AS media_acoustid_fingerprint,
         m.fingerprint_duration AS media_fingerprint_duration,
         m.explicit AS media_explicit,
-        a.mbid AS album_mbid,
+        COALESCE(lf.canonical_release_mbid, a.mbid) AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
         artist.mbid AS artist_mbid,
-        ar.status AS release_status,
-        ar.country AS release_country,
-        alb.primary_type AS release_primary_type,
-        alb.secondary_types AS release_secondary_types
+        COALESCE(canonical_release.status, ar.status) AS release_status,
+        COALESCE(canonical_release.country, ar.country) AS release_country,
+        COALESCE(canonical_group.primary_type, alb.primary_type) AS release_primary_type,
+        COALESCE(canonical_group.secondary_types, alb.secondary_types) AS release_secondary_types,
+        lf.canonical_release_mbid,
+        lf.canonical_track_mbid
       FROM TrackFiles lf
       JOIN ProviderMedia m ON m.id = lf.media_id
       LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
       JOIN Artists artist ON artist.id = lf.artist_id
       LEFT JOIN AlbumReleases ar ON ar.mbid = a.mbid
       LEFT JOIN Albums alb ON alb.mbid = a.mb_release_group_id
+      LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid
+      LEFT JOIN AlbumReleases canonical_release ON canonical_release.mbid = lf.canonical_release_mbid
+      LEFT JOIN Albums canonical_group ON canonical_group.mbid = lf.canonical_release_group_mbid
       WHERE ${where.join(" AND ")}
-      ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
+      ORDER BY lf.artist_id, lf.album_id, COALESCE(canonical_track.medium_position, m.volume_number, 1), COALESCE(canonical_track.position, m.track_number, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
 
@@ -814,15 +821,15 @@ export class AudioTagService {
         m.version AS media_version,
         m.duration AS media_duration,
         m.release_date AS media_release_date,
-        m.track_number AS media_track_number,
-        m.volume_number AS media_volume_number,
+        COALESCE(canonical_track.position, m.track_number) AS media_track_number,
+        COALESCE(canonical_track.medium_position, m.volume_number) AS media_volume_number,
         m.isrc AS media_isrc,
         m.copyright AS media_copyright,
         m.replay_gain AS media_replay_gain,
         m.peak AS media_peak,
-        a.title AS album_title,
-        a.version AS album_version,
-        a.release_date AS album_release_date,
+        COALESCE(canonical_release.title, canonical_group.title, a.title) AS album_title,
+        CASE WHEN lf.canonical_release_group_mbid IS NOT NULL THEN NULL ELSE a.version END AS album_version,
+        COALESCE(canonical_release.date, a.release_date) AS album_release_date,
         a.num_volumes AS album_num_volumes,
         a.upc AS album_upc,
         a.review_text AS album_review_text,
@@ -832,21 +839,26 @@ export class AudioTagService {
         m.acoustid_fingerprint AS media_acoustid_fingerprint,
         m.fingerprint_duration AS media_fingerprint_duration,
         m.explicit AS media_explicit,
-        a.mbid AS album_mbid,
+        COALESCE(lf.canonical_release_mbid, a.mbid) AS album_mbid,
         a.mb_release_group_id AS album_mb_release_group_id,
         artist.mbid AS artist_mbid,
-        ar.status AS release_status,
-        ar.country AS release_country,
-        alb.primary_type AS release_primary_type,
-        alb.secondary_types AS release_secondary_types
+        COALESCE(canonical_release.status, ar.status) AS release_status,
+        COALESCE(canonical_release.country, ar.country) AS release_country,
+        COALESCE(canonical_group.primary_type, alb.primary_type) AS release_primary_type,
+        COALESCE(canonical_group.secondary_types, alb.secondary_types) AS release_secondary_types,
+        lf.canonical_release_mbid,
+        lf.canonical_track_mbid
       FROM TrackFiles lf
       JOIN ProviderMedia m ON m.id = lf.media_id
       LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
       JOIN Artists artist ON artist.id = lf.artist_id
       LEFT JOIN AlbumReleases ar ON ar.mbid = a.mbid
       LEFT JOIN Albums alb ON alb.mbid = a.mb_release_group_id
+      LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid
+      LEFT JOIN AlbumReleases canonical_release ON canonical_release.mbid = lf.canonical_release_mbid
+      LEFT JOIN Albums canonical_group ON canonical_group.mbid = lf.canonical_release_group_mbid
       WHERE lf.id IN (${placeholders})
-      ORDER BY lf.artist_id, lf.album_id, COALESCE(m.volume_number, 1), COALESCE(m.track_number, 0), lf.id
+      ORDER BY lf.artist_id, lf.album_id, COALESCE(canonical_track.medium_position, m.volume_number, 1), COALESCE(canonical_track.position, m.track_number, 0), lf.id
     `).all(...ids) as RetagTrackRow[];
   }
 
@@ -880,7 +892,20 @@ export class AudioTagService {
     return names.length > 0 ? names : [fallbackArtistName];
   }
 
-  private static getTrackCountForDisc(albumId: number | null, volumeNumber: number): number | null {
+  private static getTrackCountForDisc(albumId: number | null, volumeNumber: number, canonicalReleaseMbid?: string | null): number | null {
+    if (canonicalReleaseMbid) {
+      const canonicalRow = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM Tracks
+        WHERE release_mbid = ?
+          AND COALESCE(medium_position, 1) = ?
+      `).get(canonicalReleaseMbid, volumeNumber) as { count?: number } | undefined;
+      const canonicalCount = Number(canonicalRow?.count || 0);
+      if (canonicalCount > 0) {
+        return canonicalCount;
+      }
+    }
+
     if (!albumId) {
       return null;
     }
@@ -1343,12 +1368,12 @@ export class AudioTagService {
     const albumArtistNames = this.getAlbumArtistNames(row.album_id, fallbackArtistName);
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
-    const trackCount = this.getTrackCountForDisc(row.album_id, discNumber);
+    const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid);
     const releaseDate = normalizeReleaseDate(row.media_release_date || row.album_release_date);
 
     // Resolve the MusicBrainz release track ID from the canonical Tracks table
-    let releaseTrackMbid: string | null = null;
-    if (row.album_mbid && row.media_mbid) {
+    let releaseTrackMbid: string | null = row.canonical_track_mbid;
+    if (!releaseTrackMbid && row.album_mbid && row.media_mbid) {
       const trackRow = db.prepare(`
         SELECT mbid FROM Tracks
         WHERE release_mbid = ?

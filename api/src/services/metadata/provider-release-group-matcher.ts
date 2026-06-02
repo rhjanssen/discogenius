@@ -256,7 +256,12 @@ export function matchProviderAlbumToReleaseGroup(
     const scored = releaseGroups
         .map((releaseGroup) => scoreAlbumAgainstReleaseGroup(album, releaseGroup))
         .filter((candidate) => candidate.upcMatched || candidate.isrcOverlap >= 2 || candidate.confidence >= 0.78)
-        .sort((left, right) => right.confidence - left.confidence);
+        .sort((left, right) =>
+            Number(right.upcMatched) - Number(left.upcMatched)
+            || right.isrcOverlap - left.isrcOverlap
+            || right.titleScore - left.titleScore
+            || right.confidence - left.confidence
+        );
 
     const best = scored[0];
     if (!best) {
@@ -279,7 +284,13 @@ export function matchProviderAlbumToReleaseGroup(
 
     const ambiguousWith = scored
         .slice(1)
-        .filter((candidate) => best.confidence - candidate.confidence <= 0.04)
+        .filter((candidate) =>
+            !best.upcMatched
+            && !candidate.upcMatched
+            && best.isrcOverlap === candidate.isrcOverlap
+            && best.titleScore - candidate.titleScore <= 0.04
+            && best.confidence - candidate.confidence <= 0.04
+        )
         .map((candidate) => candidate.releaseGroup.mbid);
     const exactTitleMatch = best.titleScore === 1;
     const strongIdentityMatch = best.upcMatched || best.isrcOverlap >= 4;

@@ -17,6 +17,7 @@ import {
 } from "./metadata/media-cover-service.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService } from "./metadata/musicbrainz-artist-credit-service.js";
+import { getConfigSection } from "./config.js";
 
 function proxyStoredArtworkUrl(...values: unknown[]): string | null {
     for (const value of values) {
@@ -160,6 +161,7 @@ function listMusicBrainzReleaseVersions(
     releaseGroup: any,
     coverUrl?: string | null,
 ): AlbumVersionContract[] {
+    const includeSpatial = getConfigSection("filtering").include_spatial === true;
     const releases = db.prepare(`
       SELECT
         r.mbid,
@@ -213,8 +215,8 @@ function listMusicBrainzReleaseVersions(
             version: formatReleaseVersionLabel(release),
             stereo_provider_id: isStereoSelected ? releaseGroup.stereo_provider_id || null : null,
             stereo_quality: isStereoSelected ? releaseGroup.stereo_quality || null : null,
-            spatial_provider_id: isSpatialSelected ? releaseGroup.spatial_provider_id || null : null,
-            spatial_quality: isSpatialSelected ? releaseGroup.spatial_quality || null : null,
+            spatial_provider_id: includeSpatial && isSpatialSelected ? releaseGroup.spatial_provider_id || null : null,
+            spatial_quality: includeSpatial && isSpatialSelected ? releaseGroup.spatial_quality || null : null,
         };
     });
 }
@@ -287,6 +289,7 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     release: any | null,
     resolvedCoverUrl?: string | null,
 ): AlbumContract {
+    const includeSpatial = getConfigSection("filtering").include_spatial === true;
     const primaryType = String(releaseGroup.primary_type || "Album").trim().toUpperCase();
     const fallbackArtistId = releaseGroup.local_artist_id == null
         ? String(releaseGroup.artist_mbid)
@@ -322,10 +325,10 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         stereo_quality: releaseGroup.stereo_quality || null,
         stereo_match_status: releaseGroup.stereo_match_status || null,
         stereo_release_mbid: releaseGroup.stereo_release_mbid || null,
-        spatial_provider_id: releaseGroup.spatial_provider_id || null,
-        spatial_quality: releaseGroup.spatial_quality || null,
-        spatial_match_status: releaseGroup.spatial_match_status || null,
-        spatial_release_mbid: releaseGroup.spatial_release_mbid || null,
+        spatial_provider_id: includeSpatial ? releaseGroup.spatial_provider_id || null : null,
+        spatial_quality: includeSpatial ? releaseGroup.spatial_quality || null : null,
+        spatial_match_status: includeSpatial ? releaseGroup.spatial_match_status || null : null,
+        spatial_release_mbid: includeSpatial ? releaseGroup.spatial_release_mbid || null : null,
         selected_provider_id: releaseGroup.selected_provider_id || null,
         selected_release_mbid: releaseGroup.selected_release_mbid || null,
         source: "musicbrainz",
@@ -349,6 +352,29 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     };
 }
 
+function parseRecordingArtistCredits(recordingDataStr: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
+    if (!recordingDataStr) return null;
+    try {
+        const parsed = JSON.parse(recordingDataStr);
+        const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+        if (Array.isArray(credits) && credits.length > 0) {
+            return credits.map((c: any) => {
+                const artistId = c.artist?.id || c.artistId || "";
+                const name = c.name || c.artist?.name || "";
+                const joinPhrase = c.joinphrase || c.join_phrase || "";
+                return {
+                    id: artistId,
+                    name: name,
+                    join_phrase: joinPhrase,
+                };
+            }).filter(c => c.name);
+        }
+    } catch {
+        // Ignore
+    }
+    return null;
+}
+
 function getReleaseTrackContracts(
     releaseMbid: string,
     releaseGroupMbid: string,
@@ -365,43 +391,67 @@ function getReleaseTrackContracts(
         t.number,
         t.position,
         t.medium_position,
-        t.length_ms
+        t.length_ms,
+        r.data AS recording_data
       FROM Tracks t
+      LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
       WHERE t.release_mbid = ?
       ORDER BY t.medium_position ASC, t.position ASC
     `).all(releaseMbid) as any[];
 
-    return rows.map((track) => ({
-        id: String(track.mbid),
-        preview_provider: null,
-        preview_provider_track_id: null,
-        title: String(track.title || "Unknown Track"),
-        version: null,
-        duration: Math.round(Number(track.length_ms || 0) / 1000),
-        track_number: Number(track.position || 0),
-        volume_number: Number(track.medium_position || 1),
-        quality: "",
-        artist_name: artistName,
-        album_title: albumTitle,
-        musicbrainz_track_id: String(track.mbid),
-        musicbrainz_recording_id: track.recording_mbid == null ? null : String(track.recording_mbid),
-        musicbrainz_release_id: track.release_mbid == null ? null : String(track.release_mbid),
-        downloaded: false,
-        is_downloaded: false,
-        is_monitored: isMonitored,
-        monitor: isMonitored ? 1 : 0,
-        monitor_lock: 0,
-        monitor_locked: false,
-        explicit: false,
-        album_id: releaseGroupMbid,
-        files: [],
-    }));
+    return rows.map((track) => {
+        const parsedCredits = parseRecordingArtistCredits(track.recording_data);
+        const artist_credits = parsedCredits && parsedCredits.length > 0
+            ? parsedCredits
+            : [{ id: "", name: artistName, join_phrase: "" }];
+
+        return {
+            id: String(track.mbid),
+            preview_provider: null,
+            preview_provider_track_id: null,
+            title: String(track.title || "Unknown Track"),
+            version: null,
+            duration: Math.round(Number(track.length_ms || 0) / 1000),
+            track_number: Number(track.position || 0),
+            volume_number: Number(track.medium_position || 1),
+            quality: "",
+            artist_name: artistName,
+            artist_credits,
+            album_title: albumTitle,
+            musicbrainz_track_id: String(track.mbid),
+            musicbrainz_recording_id: track.recording_mbid == null ? null : String(track.recording_mbid),
+            musicbrainz_release_id: track.release_mbid == null ? null : String(track.release_mbid),
+            downloaded: false,
+            is_downloaded: false,
+            is_monitored: isMonitored,
+            monitor: isMonitored ? 1 : 0,
+            monitor_lock: 0,
+            monitor_locked: false,
+            explicit: false,
+            album_id: releaseGroupMbid,
+            files: [],
+        };
+    });
 }
 
-function scoreProviderTrackMatch(track: AlbumTrackContract, providerTrack: ProviderTrack): number {
-    const volumeScore = Number(track.volume_number || 1) === Number(providerTrack.volumeNumber || 1) ? 0.35 : 0;
-    const trackScore = Number(track.track_number || 0) === Number(providerTrack.trackNumber || 0) ? 0.35 : 0;
-    const titleScore = stringSimilarity(normalizeComparableText(track.title), normalizeComparableText(providerTrack.title)) * 0.2;
+function scoreProviderTrackMatch(
+    track: AlbumTrackContract,
+    providerTrack: ProviderTrack,
+    canonicalIsrcs: Set<string> = new Set(),
+): number {
+    const providerIsrc = String(providerTrack.isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (providerIsrc && canonicalIsrcs.has(providerIsrc)) {
+        return 1;
+    }
+
+    const titleSimilarity = stringSimilarity(normalizeComparableText(track.title), normalizeComparableText(providerTrack.title));
+    if (titleSimilarity < 0.72) {
+        return 0;
+    }
+
+    const volumeScore = Number(track.volume_number || 1) === Number(providerTrack.volumeNumber || 1) ? 0.2 : 0;
+    const trackScore = Number(track.track_number || 0) === Number(providerTrack.trackNumber || 0) ? 0.2 : 0;
+    const titleScore = titleSimilarity * 0.5;
     const durationDelta = Math.abs(Number(track.duration || 0) - Number(providerTrack.duration || 0));
     const durationScore = Number(track.duration || 0) > 0 && Number(providerTrack.duration || 0) > 0
         ? Math.max(0, 1 - (durationDelta / Math.max(8, Number(track.duration || 0) * 0.08))) * 0.1
@@ -646,6 +696,27 @@ async function attachProviderPreviewTracks(
     }
 
     try {
+        const recordingIsrcs = new Map<string, Set<string>>();
+        const selectRecordingIsrcs = db.prepare("SELECT isrcs FROM Recordings WHERE mbid = ?");
+        for (const track of tracks) {
+            const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
+            if (!recordingMbid || recordingIsrcs.has(recordingMbid)) {
+                continue;
+            }
+            const row = selectRecordingIsrcs.get(recordingMbid) as { isrcs?: string | null } | undefined;
+            try {
+                const isrcs = JSON.parse(String(row?.isrcs || "[]")) as unknown;
+                recordingIsrcs.set(
+                    recordingMbid,
+                    new Set(Array.isArray(isrcs)
+                        ? isrcs.map((isrc) => String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean)
+                        : []),
+                );
+            } catch {
+                recordingIsrcs.set(recordingMbid, new Set());
+            }
+        }
+
         const providerTracks = (await Promise.all(uniqueSelections.map(async (selection) => {
             const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
             const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
@@ -659,7 +730,14 @@ async function attachProviderPreviewTracks(
         return tracks.map((track) => {
             const candidates = providerTracks
                 .filter((providerTrack) => unusedProviderTracks.has(providerTrack.providerId))
-                .map((providerTrack) => ({ providerTrack, score: scoreProviderTrackMatch(track, providerTrack) }))
+                .map((providerTrack) => ({
+                    providerTrack,
+                    score: scoreProviderTrackMatch(
+                        track,
+                        providerTrack,
+                        recordingIsrcs.get(String(track.musicbrainz_recording_id || "").trim()),
+                    ),
+                }))
                 .sort((left, right) => right.score - left.score);
             const best = candidates[0];
             if (!best || best.score < 0.55) {

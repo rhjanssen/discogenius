@@ -89,6 +89,35 @@ test("marks exact title and type matches as verified", () => {
     assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
 });
 
+test("prefers an exact title over a nearby version even when release dates differ", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "liar-liar-acoustic",
+        title: "Liar Liar (Acoustic)",
+        releaseDate: "2023-08-04",
+        type: "SINGLE",
+        trackCount: 1,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "liar-liar",
+            title: "Liar Liar",
+            primaryType: "Single",
+            firstReleaseDate: "2023-08-04",
+            releases: [{ mbid: "liar-liar-release", trackCount: 1, mediaCount: 1 }],
+        },
+        {
+            mbid: "liar-liar-acoustic",
+            title: "Liar Liar (acoustic)",
+            primaryType: "Single",
+            firstReleaseDate: "2023-09-08",
+            releases: [{ mbid: "liar-liar-acoustic-release", trackCount: 1, mediaCount: 1 }],
+        },
+    ]);
+
+    assert.equal(match.releaseGroup?.mbid, "liar-liar-acoustic");
+    assert.notEqual(match.status, "ambiguous");
+});
+
 test("uses UPC evidence to verify a provider album against a MusicBrainz release", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "upc-match",

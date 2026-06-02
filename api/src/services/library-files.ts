@@ -8,8 +8,10 @@ import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js"
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "./history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "./app-events.js";
 import { resolveLibraryFileIdentity, type LibrarySlot } from "./library-file-identity.js";
+import { resolveCanonicalTrackPosition } from "./canonical-track-position.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
+import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
 import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "./extras/files/extra-file-service.js";
 import { LyricFileService } from "./extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "./extras/metadata/files/metadata-file-service.js";
@@ -68,6 +70,68 @@ type AudioMediaLookupRow = {
   track_quality: string | null;
   album_quality: string | null;
 };
+
+function resolveNamingAlbumId(row: LibraryFileRow): number | null {
+  if (!row.album_id) {
+    return null;
+  }
+
+  const trackedIdentity = row.media_id
+    ? db.prepare(`
+        SELECT canonical_release_group_mbid, canonical_release_mbid, library_slot
+        FROM TrackFiles
+        WHERE media_id = ?
+          AND file_type = 'track'
+          AND canonical_release_group_mbid IS NOT NULL
+        ORDER BY CASE WHEN library_slot = ? THEN 0 ELSE 1 END, id ASC
+        LIMIT 1
+      `).get(row.media_id, row.library_slot || "stereo") as {
+        canonical_release_group_mbid: string | null;
+        canonical_release_mbid: string | null;
+        library_slot: string | null;
+      } | undefined
+    : undefined;
+  const identity = resolveLibraryFileIdentity({
+    artistId: row.artist_id,
+    albumId: row.album_id,
+    mediaId: row.media_id,
+    fileType: row.file_type,
+    quality: row.quality,
+    libraryRoot: row.library_root,
+    librarySlot: row.library_slot,
+  });
+  const canonicalReleaseGroupMbid = trackedIdentity?.canonical_release_group_mbid || identity.canonicalReleaseGroupMbid;
+  const librarySlot = trackedIdentity?.library_slot || identity.librarySlot;
+  if (!canonicalReleaseGroupMbid) {
+    return row.album_id;
+  }
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ?
+      AND slot = ?
+      AND selected_provider_id IS NOT NULL
+    LIMIT 1
+  `).get(canonicalReleaseGroupMbid, librarySlot) as {
+    selected_provider_id: string | null;
+  } | undefined;
+
+  for (const providerAlbumId of String(slot?.selected_provider_id || "").split(";")) {
+    const normalizedId = providerAlbumId.trim();
+    if (!normalizedId) {
+      continue;
+    }
+    const album = db.prepare("SELECT id FROM ProviderAlbums WHERE id = ? LIMIT 1").get(normalizedId) as {
+      id: number;
+    } | undefined;
+    if (album) {
+      return album.id;
+    }
+  }
+
+  return row.album_id;
+}
 
 export type RenamePreviewItem = {
   id: number;
@@ -836,17 +900,36 @@ export class LibraryFilesService {
       return { expectedPath: null, reason: "missing_album_id" };
     }
 
-    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, version, explicit, release_date, num_volumes FROM ProviderAlbums WHERE id = ?").get(row.album_id) as any;
+    const namingAlbumId = resolveNamingAlbumId(row);
+    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, mb_release_group_id, version, explicit, release_date, num_volumes FROM ProviderAlbums WHERE id = ?").get(namingAlbumId) as any;
     if (!album) return { expectedPath: null, reason: "album_not_found" };
 
-    const releaseYear = getReleaseYear(album.release_date);
+    const trackedIdentity = row.media_id
+      ? db.prepare(`
+          SELECT canonical_release_group_mbid, canonical_release_mbid
+          FROM TrackFiles
+          WHERE media_id = ?
+            AND file_type = 'track'
+            AND canonical_release_group_mbid IS NOT NULL
+          ORDER BY CASE WHEN library_slot = ? THEN 0 ELSE 1 END, id ASC
+          LIMIT 1
+        `).get(row.media_id, row.library_slot || "stereo") as {
+          canonical_release_group_mbid: string | null;
+          canonical_release_mbid: string | null;
+        } | undefined
+      : undefined;
+    const canonicalAlbum = getCanonicalAlbumMetadata({
+      canonicalReleaseGroupMbid: trackedIdentity?.canonical_release_group_mbid || album.mb_release_group_id,
+      canonicalReleaseMbid: trackedIdentity?.canonical_release_mbid,
+    });
+    const releaseYear = getReleaseYear(canonicalAlbum?.releaseDate || album.release_date);
     const albumContext: NamingContext = {
       ...contextBase,
       albumId: String(album.id ?? row.album_id),
-      albumTitle: album.title,
-      albumType: album.type || album.mb_primary || null,
-      albumMbId: album.mbid || null,
-      albumVersion: album.version || null,
+      albumTitle: canonicalAlbum?.title || album.title,
+      albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
+      albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
+      albumVersion: canonicalAlbum ? null : album.version || null,
       releaseYear,
       explicit: album.explicit === 1,
     };
@@ -902,6 +985,15 @@ export class LibraryFilesService {
         : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
+      const canonicalPosition = resolveCanonicalTrackPosition({
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        quality: row.quality,
+        libraryRoot: row.library_root,
+        librarySlot: row.library_slot,
+      });
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: track.title,
@@ -911,8 +1003,8 @@ export class LibraryFilesService {
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
-        trackNumber: track.track_number,
-        volumeNumber: track.volume_number,
+        trackNumber: canonicalPosition?.trackNumber ?? track.track_number,
+        volumeNumber: canonicalPosition?.volumeNumber ?? track.volume_number,
         // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,
@@ -965,6 +1057,15 @@ export class LibraryFilesService {
         : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
+      const canonicalPosition = resolveCanonicalTrackPosition({
+        artistId: row.artist_id,
+        albumId: row.album_id,
+        mediaId: row.media_id,
+        fileType: row.file_type,
+        quality: row.quality,
+        libraryRoot: row.library_root,
+        librarySlot: row.library_slot,
+      });
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: track.title,
@@ -974,8 +1075,8 @@ export class LibraryFilesService {
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
-        trackNumber: track.track_number,
-        volumeNumber: track.volume_number,
+        trackNumber: canonicalPosition?.trackNumber ?? track.track_number,
+        volumeNumber: canonicalPosition?.volumeNumber ?? track.volume_number,
         // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,

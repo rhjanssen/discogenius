@@ -17,6 +17,8 @@ import { MoveArtistService } from "./move-artist-service.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "./canonical-track-position.js";
+import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
 
 
 type OrganizeType = "album" | "track" | "video" | "playlist";
@@ -1044,7 +1046,6 @@ export class OrganizerService {
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
-      const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
       const artistFolder = resolveArtistFolderFromRecord({
@@ -1139,8 +1140,21 @@ export class OrganizerService {
         }
 
         const trackTitle = trackRow.title || "Unknown Track";
-        const trackNumber = Number(trackRow.track_number || 0);
-        const volumeNumber = Number(trackRow.volume_number || 1);
+        const canonicalIdentity = resolveLibraryFileIdentity({
+          artistId,
+          albumId: String(trackRow.album_id || albumIds[0]),
+          mediaId: trackId,
+          fileType: "track",
+          quality: trackRow.quality || album.quality,
+          libraryRoot: targetRoot,
+        });
+        const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
+        const canonicalAlbum = getCanonicalAlbumMetadata({
+          canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
+          canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
+        });
+        const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || 0);
+        const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || 1);
         const trackArtistId = String(trackRow.artist_id || artistId);
         const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
         const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
@@ -1152,12 +1166,12 @@ export class OrganizerService {
           artistName: resolvedArtistName,
           artistId,
           artistMbId,
-          albumTitle: album.title,
+          albumTitle: canonicalAlbum?.title || album.title,
           albumId: String(trackRow.album_id || albumIds[0]),
-          albumType: album.type || album.mb_primary || null,
-          albumMbId: album.mbid || null,
-          albumVersion: album.version || null,
-          releaseYear: year,
+          albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
+          albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
+          albumVersion: canonicalAlbum ? null : album.version || null,
+          releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
           trackTitle,
           trackId,
           trackMbId: trackRow.mbid || null,
@@ -1481,7 +1495,6 @@ export class OrganizerService {
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
-      const year = this.getReleaseYear(album.release_date);
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
       const artistFolder = resolveArtistFolderFromRecord({
@@ -1495,8 +1508,28 @@ export class OrganizerService {
 
       const ext = path.extname(src);
       const trackTitle = trackRow.title || trackData.title || path.basename(src, ext);
-      const trackNumber = Number(trackRow.track_number || trackData.track_number || 0);
-      const volumeNumber = Number(trackRow.volume_number || trackData.volume_number || 1);
+      const canonicalPosition = resolveCanonicalTrackPosition({
+        artistId,
+        albumId,
+        mediaId: tidalId,
+        fileType: "track",
+        quality: trackRow.quality || album.quality,
+        libraryRoot: targetRoot,
+      });
+      const canonicalIdentity = resolveLibraryFileIdentity({
+        artistId,
+        albumId,
+        mediaId: tidalId,
+        fileType: "track",
+        quality: trackRow.quality || album.quality,
+        libraryRoot: targetRoot,
+      });
+      const canonicalAlbum = getCanonicalAlbumMetadata({
+        canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
+        canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
+      });
+      const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || trackData.track_number || 0);
+      const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || trackData.volume_number || 1);
       const trackArtistId = String(trackRow.artist_id || artistId);
       const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
       const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
@@ -1513,12 +1546,12 @@ export class OrganizerService {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
-        albumTitle: album.title,
+        albumTitle: canonicalAlbum?.title || album.title,
         albumId,
-        albumType: album.type || album.mb_primary || null,
-        albumMbId: album.mbid || null,
-        albumVersion: album.version || null,
-        releaseYear: year,
+        albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
+        albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
+        albumVersion: canonicalAlbum ? null : album.version || null,
+        releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
         trackTitle,
         trackId: tidalId,
         trackMbId: trackRow.mbid || null,

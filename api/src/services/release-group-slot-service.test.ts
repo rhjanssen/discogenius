@@ -465,6 +465,72 @@ test("provider slot selection matches multiple provider releases to cover a Musi
   assert.equal(slot.selected_provider_id, "prov-album-a;prov-album-b");
 });
 
+test("provider slot selection combines hydrated offers before legacy provider rows are stored", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-hydrated-multi";
+  insertReleaseGroup(releaseGroupMbid);
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-hydrated-multi", releaseGroupMbid, "artist-mbid-1", "MTV Unplugged edits", "Official", "2023-04-26", 3, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const [position, title, isrc] of [
+    [1, "Killing Me Softly With His Song (edit)", "GBUM72302334"],
+    [2, "Pompeii (edit)", "GBUM72302279"],
+    [3, "Come as You Are (edit)", "GBUM72302277"],
+  ] as const) {
+    insertRecording.run(`rec-hydrated-${position}`, title, JSON.stringify([isrc]));
+    insertTrack.run(`track-hydrated-${position}`, "release-mbid-hydrated-multi", `rec-hydrated-${position}`, title, position, 1);
+  }
+
+  const match = {
+    ...buildMatch(releaseGroupMbid, "provider-softly"),
+    releaseMbid: "release-mbid-hydrated-multi",
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-softly").evidence,
+      availableReleaseMbids: ["release-mbid-hydrated-multi"],
+    },
+  };
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-softly",
+        title: "Killing Me Softly With His Song (MTV Unplugged / Edit)",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [{ mbid: null, isrc: "GBUM72302334", title: "Killing Me Softly With His Song (edit)", track_number: 1, volume_number: 1, duration: null }],
+      },
+      match,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-pompeii-come-as-you-are",
+        title: "Pompeii / Come As You Are (MTV Unplugged)",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "GBUM72302279", title: "Pompeii (edit)", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "GBUM72302277", title: "Come as You Are (edit)", track_number: 2, volume_number: 1, duration: null },
+        ],
+      },
+      match: { ...match, providerId: "provider-pompeii-come-as-you-are" },
+    },
+  ]);
+
+  assert.equal(selections[0]?.album.providerId, "provider-softly;provider-pompeii-come-as-you-are");
+  assert.equal(selections[0]?.match.releaseMbid, "release-mbid-hydrated-multi");
+});
+
 test("provider slot selection skips partial provider releases unless they complete the MusicBrainz release", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-incomplete";

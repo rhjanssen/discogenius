@@ -22,6 +22,7 @@ import {
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "./metadata/media-cover-service.js";
+import { getConfigSection } from "./config.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
@@ -717,6 +718,7 @@ export class ArtistQueryService {
             const bucketKey = releaseGroupBucket(row);
             const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
             const monitored = Boolean(row.wanted);
+            const includeSpatial = getConfigSection("filtering").include_spatial === true;
             
             const selectedProviderData = (() => {
                 const raw = row.stereo_provider_data || row.spatial_provider_data;
@@ -752,11 +754,11 @@ export class ArtistQueryService {
                 stereo_quality: row.stereo_quality || null,
                 stereo_match_status: row.stereo_match_status || null,
                 stereo_match_method: row.stereo_match_method || null,
-                spatial_provider_id: row.spatial_provider_id || null,
-                spatial_release_mbid: row.spatial_release_mbid || null,
-                spatial_quality: row.spatial_quality || null,
-                spatial_match_status: row.spatial_match_status || null,
-                spatial_match_method: row.spatial_match_method || null,
+                spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
+                spatial_release_mbid: includeSpatial ? row.spatial_release_mbid || null : null,
+                spatial_quality: includeSpatial ? row.spatial_quality || null : null,
+                spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
+                spatial_match_method: includeSpatial ? row.spatial_match_method || null : null,
                 artist_id: String(artist.id),
                 artist_name: String(artist.name || "Unknown Artist"),
                 mb_release_group_id: String(row.mbid),

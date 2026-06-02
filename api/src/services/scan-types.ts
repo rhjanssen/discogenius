@@ -17,6 +17,7 @@ export interface ScanOptions {
     seedSimilarArtists?: boolean;
     includeSimilarAlbums?: boolean;
     seedSimilarAlbums?: boolean;
+    expandCreditedArtists?: boolean;
     progress?: (event: ArtistScanProgressEvent) => void;
 }
 

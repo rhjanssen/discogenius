@@ -62,6 +62,7 @@ export interface AlbumTrackContract {
   volume_number: number;
   quality: string;
   artist_name?: string;
+  artist_credits?: Array<{ id: string; name: string; join_phrase: string }>;
   album_title?: string;
   musicbrainz_track_id?: string | null;
   musicbrainz_recording_id?: string | null;
@@ -190,6 +191,16 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
     volume_number: expectNumber(record.volume_number, `${label}.volume_number`),
     quality: expectString(record.quality, `${label}.quality`),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
+    artist_credits: record.artist_credits === undefined
+      ? undefined
+      : expectArray(record.artist_credits, `${label}.artist_credits`, (credit, creditIndex) => {
+          const creditRecord = expectRecord(credit, `${label}.artist_credits[${creditIndex}]`);
+          return {
+            id: expectString(creditRecord.id, `${label}.artist_credits[${creditIndex}].id`),
+            name: expectString(creditRecord.name, `${label}.artist_credits[${creditIndex}].name`),
+            join_phrase: expectString(creditRecord.join_phrase, `${label}.artist_credits[${creditIndex}].join_phrase`),
+          };
+        }),
     album_title: expectOptionalString(record.album_title, `${label}.album_title`),
     musicbrainz_track_id: expectOptionalString(record.musicbrainz_track_id, `${label}.musicbrainz_track_id`) ?? null,
     musicbrainz_recording_id: expectOptionalString(record.musicbrainz_recording_id, `${label}.musicbrainz_recording_id`) ?? null,

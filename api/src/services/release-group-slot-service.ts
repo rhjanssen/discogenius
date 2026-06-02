@@ -16,6 +16,7 @@ export type ProviderAlbumSlotCandidate = {
     explicit?: boolean | number | null;
     trackCount?: number | null;
     volumeCount?: number | null;
+    tracks?: ProviderTrackDetail[];
     raw?: unknown;
 };
 
@@ -150,7 +151,7 @@ type TargetTrack = {
     lengthMs: number | null;
 };
 
-type ProviderTrackDetail = {
+export type ProviderTrackDetail = {
     mbid: string | null;
     isrc: string | null;
     title: string | null;
@@ -176,12 +177,17 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
     if (!target.title || !pt.title) {
         return 0.0;
     }
-    const volumeScore = Number(target.mediumPosition || 1) === Number(pt.volume_number || 1) ? 0.35 : 0;
-    const trackScore = Number(target.position || 0) === Number(pt.track_number || 0) ? 0.35 : 0;
-    const titleScore = stringSimilarity(
+    const titleSimilarity = stringSimilarity(
         normalizeComparableText(target.title),
         normalizeComparableText(pt.title),
-    ) * 0.2;
+    );
+    if (titleSimilarity < 0.72) {
+        return 0.0;
+    }
+
+    const volumeScore = Number(target.mediumPosition || 1) === Number(pt.volume_number || 1) ? 0.2 : 0;
+    const trackScore = Number(target.position || 0) === Number(pt.track_number || 0) ? 0.2 : 0;
+    const titleScore = titleSimilarity * 0.5;
     const durationSeconds = Number(target.lengthMs || 0) / 1000;
     const durationDelta = Math.abs(durationSeconds - Number(pt.duration || 0));
     const durationScore = durationSeconds > 0 && Number(pt.duration || 0) > 0
@@ -319,12 +325,13 @@ export function selectReleaseGroupSlotAlbums(
                 : [candidate.match.releaseMbid || ""])
             .map((releaseMbid) => String(releaseMbid || "").trim())
             .filter(Boolean);
-        const preferredReleaseRow = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(
-            releaseGroupMbid,
-            requireProviderAvailability
-                ? { availableReleaseMbids: providerMatchedReleaseMbids }
-                : {},
-        );
+        const preferredReleaseRow = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid)
+            || MusicBrainzReleaseSelectionService.selectRepresentativeRelease(
+                releaseGroupMbid,
+                requireProviderAvailability
+                    ? { availableReleaseMbids: providerMatchedReleaseMbids }
+                    : {},
+            );
         if (requireProviderAvailability && !preferredReleaseRow) {
             continue;
         }
@@ -336,6 +343,7 @@ export function selectReleaseGroupSlotAlbums(
                 FROM Tracks t
                 LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                 WHERE t.release_mbid = ?
+                ORDER BY t.medium_position ASC, t.position ASC
             `).all(preferredReleaseRow.mbid) as Array<{
                 recording_mbid: string | null;
                 isrcs: string | null;
@@ -376,9 +384,11 @@ export function selectReleaseGroupSlotAlbums(
         const preferredCompatibleCandidates = preferredReleaseRow
             ? groupCandidates.filter((candidate) => compatibleReleaseMbids(candidate.match).includes(preferredReleaseRow.mbid))
             : [];
-        const slotCandidates = preferredCompatibleCandidates.length > 0
-            ? preferredCompatibleCandidates
-            : groupCandidates;
+        const slotCandidates = targetTrackList.length > 0
+            ? groupCandidates
+            : preferredCompatibleCandidates.length > 0
+                ? preferredCompatibleCandidates
+                : groupCandidates;
 
         // Fetch tracks for all candidates in this group
         const candidatesWithTracks = slotCandidates.map(c => {
@@ -394,7 +404,7 @@ export function selectReleaseGroupSlotAlbums(
                 duration: number | null;
             }>;
 
-            const tracks = rows.map(r => ({
+            const tracks = c.album.tracks || rows.map(r => ({
                 mbid: r.mbid ? String(r.mbid).trim() : null,
                 isrc: r.isrc ? normalizeIsrc(r.isrc) : null,
                 title: r.title,
@@ -520,6 +530,13 @@ export function selectReleaseGroupSlotAlbums(
             }
         }
 
+        selectedCandidates.sort((left, right) => {
+            const firstCoveredTarget = (candidate: ProviderAlbumCandidateWithTracks) => {
+                const index = targetTrackList.findIndex((target) => isTrackCovered(target, candidate.tracks));
+                return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+            };
+            return firstCoveredTarget(left) - firstCoveredTarget(right);
+        });
         const selectedIds = selectedCandidates.map(c => c.album.providerId);
         const mergedAlbum: ProviderAlbumSlotCandidate = {
             ...primary.album,

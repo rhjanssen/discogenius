@@ -35,6 +35,7 @@ import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { ErrorState } from "@/components/ui/ContentState";
 
 import {
@@ -161,24 +162,7 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         flexWrap: "wrap",
     },
-    artistProfile: {
-        display: "flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalS,
-        cursor: "pointer",
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-        borderRadius: tokens.borderRadiusMedium,
-        transition: `background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
-        ":hover": {
-            backgroundColor: tokens.colorNeutralBackgroundAlpha,
-        }
-    },
-    artistAvatar: {
-        width: "40px",
-        height: "40px",
-        borderRadius: "50%",
-        objectFit: "cover",
-    },
+
     metaItems: {
         display: "flex",
         alignItems: "center",
@@ -513,16 +497,11 @@ const VideoPage = () => {
                     <div className={styles.metadataRow}>
                         <div className={styles.leftMeta}>
                             {video.artist_name && (
-                                <div className={styles.artistProfile} onClick={() => video.artist_id && navigate(`/artist/${video.artist_id}`)}>
-                                    {artistPicUrl ? (
-                                        <img src={artistPicUrl} className={styles.artistAvatar} alt={video.artist_name} />
-                                    ) : (
-                                        <div className={styles.artistAvatar} style={{ backgroundColor: tokens.colorNeutralBackground4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            <Text size={200} weight="bold">{video.artist_name.charAt(0)}</Text>
-                                        </div>
-                                    )}
-                                    <Text weight="semibold" size={400}>{video.artist_name}</Text>
-                                </div>
+                                <ArtistPersona
+                                    artistId={video.artist_id?.toString()}
+                                    artistName={video.artist_name}
+                                    avatarUrl={artistPicUrl || undefined}
+                                />
                             )}
 
                             <div className={styles.metaItems}>

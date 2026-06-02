@@ -236,6 +236,7 @@ export class Scheduler {
                         includeSimilarArtists: job.payload.includeSimilarArtists ?? true,
                         seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
                         forceUpdate: job.payload.forceUpdate ?? false,
+                        expandCreditedArtists: job.payload.expandCreditedArtists ?? true,
                         progress: (event) => {
                             if (event.kind === "status") {
                                 this.updateJobDescription(job, {
@@ -705,7 +706,6 @@ export class Scheduler {
         }
     }
 }
-
 
 
 

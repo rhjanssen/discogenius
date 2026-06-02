@@ -107,17 +107,6 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
         [onMonitorToggle]
     );
 
-    const handleMonitorKeyDown = useCallback(
-        (e: React.KeyboardEvent) => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                e.preventDefault();
-                onMonitorToggle?.(e as unknown as React.MouseEvent);
-            }
-        },
-        [onMonitorToggle]
-    );
-
     const previewClass = videoAspect ? styles.videoPreview : styles.cardPreview;
     const primaryImageUrl = imageUrl || null;
     const fallbackUrl = fallbackImageUrl && fallbackImageUrl !== primaryImageUrl ? fallbackImageUrl : null;
@@ -177,12 +166,10 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 )}
 
                 {onMonitorToggle && (
-                    <div
+                    <button
+                        type="button"
                         className={styles.monitorIndicator}
-                        role="button"
-                        tabIndex={0}
                         onClick={handleMonitorClick}
-                        onKeyDown={handleMonitorKeyDown}
                         aria-label={monitored ? "Unmonitor" : "Monitor"}
                         title={monitored ? "Unmonitor" : "Monitor"}
                     >
@@ -191,7 +178,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         ) : (
                             <Eye16Regular className={styles.monitorIcon} />
                         )}
-                    </div>
+                    </button>
                 )}
 
                 {downloadStatus && downloadStatus !== 'completed' && (

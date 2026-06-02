@@ -314,7 +314,7 @@ const useStyles = makeStyles({
   skipButton: {
     alignSelf: 'center',
     minHeight: '44px',
-    color: '#c9b6ff',
+    color: tokens.colorBrandForegroundLink,
     fontWeight: tokens.fontWeightSemibold,
   },
   panelFooter: {

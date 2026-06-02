@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useLayoutEffect, useRef, useEffect } from "react";
+import { Fragment, useState, useCallback, useMemo, useLayoutEffect, useRef, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
@@ -7,7 +7,6 @@ import {
   Text,
   Title1,
   Title2,
-  Avatar,
   Tooltip,
   Menu,
   MenuTrigger,
@@ -35,6 +34,7 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
@@ -185,7 +185,10 @@ const useStyles = makeStyles({
   artistCredit: {
     display: "inline-flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
+  },
+  artistJoinPhrase: {
+    display: "inline-flex",
+    alignItems: "center",
   },
   artistCreditButton: {
     display: "inline-flex",
@@ -870,23 +873,20 @@ const AlbumPage = () => {
                 className={styles.artistInfo}
               >
                 {albumArtists.map((artist) => (
-                  <span key={artist.id} className={styles.artistCredit}>
-                    <button
-                      type="button"
-                      className={styles.artistCreditButton}
-                      onClick={() => navigate(`/artist/${artist.id}`)}
-                    >
-                      <Avatar
-                        image={{ src: artist.picture || artist.cover_image_url || undefined }}
-                        name={artist.name}
-                        size={32}
-                      />
-                      <Text size={400} weight="semibold">
-                        {artist.name}
+                  <Fragment key={artist.id}>
+                    <span className={styles.artistCredit}>
+                    <ArtistPersona
+                      artistId={artist.id}
+                      artistName={artist.name}
+                      avatarUrl={artist.picture || artist.cover_image_url || undefined}
+                    />
+                    </span>
+                    {artist.join_phrase ? (
+                      <Text size={400} className={styles.artistJoinPhrase}>
+                        {artist.join_phrase}
                       </Text>
-                    </button>
-                    {artist.join_phrase ? <Text size={400}>{artist.join_phrase}</Text> : null}
-                  </span>
+                    ) : null}
+                  </Fragment>
                 ))}
               </div>
 

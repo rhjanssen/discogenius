@@ -7,6 +7,7 @@ import {
 import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
+import { getConfigSection } from "./config.js";
 const releaseGroupWantedExpression = `
         CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
 `;
@@ -124,6 +125,7 @@ function getReleaseGroupOrderBy(sortParam: string | undefined, sortDir: "ASC" | 
 function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDownloaded: boolean): AlbumContract {
     const album = normalizeMusicBrainzReleaseGroupAlbum(row, null);
     const monitored = Boolean(row.wanted);
+    const includeSpatial = getConfigSection("filtering").include_spatial === true;
 
     return {
         ...album,
@@ -135,9 +137,9 @@ function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDow
         stereo_provider_id: row.stereo_provider_id || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
-        spatial_provider_id: row.spatial_provider_id || null,
-        spatial_quality: row.spatial_quality || null,
-        spatial_match_status: row.spatial_match_status || null,
+        spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
+        spatial_quality: includeSpatial ? row.spatial_quality || null : null,
+        spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
         selected_provider_id: row.selected_provider_id || null,
         source: "musicbrainz",
     } as AlbumContract;
@@ -188,7 +190,9 @@ export class AlbumQueryService {
         }
 
         if (libraryFilter === "spatial") {
-            where.push("spatial.selected_provider_id IS NOT NULL");
+            where.push(getConfigSection("filtering").include_spatial === true
+                ? "spatial.selected_provider_id IS NOT NULL"
+                : "0 = 1");
         } else if (libraryFilter === "stereo") {
             where.push("stereo.selected_provider_id IS NOT NULL");
         }

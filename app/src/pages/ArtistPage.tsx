@@ -458,6 +458,9 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusCircular,
     backdropFilter: "blur(20px)",
     backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
   },
   monitorIcon: {
     width: "16px",
@@ -974,10 +977,9 @@ const ArtistPage = () => {
                 Locked
               </Badge>
             )}
-            <div
+            <button
+              type="button"
               className={styles.monitorIndicator}
-              role="button"
-              tabIndex={0}
               onClick={(e) => toggleVideoMonitored(e, tidalId, !isVideoMonitored)}
               title={isLocked ? 'Monitoring is locked' : (isVideoMonitored ? 'Unmonitor' : 'Monitor')}
               style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
@@ -987,7 +989,7 @@ const ArtistPage = () => {
               ) : (
                 <Eye24Regular className={styles.monitorIcon} />
               )}
-            </div>
+            </button>
             {(() => {
               const progress = getProgressByTidalId(String(tidalId));
               if (progress && progress.state !== 'completed') {

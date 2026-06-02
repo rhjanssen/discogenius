@@ -298,6 +298,7 @@ function normalizeRefreshArtistPayload(
         seedSimilarArtists: Boolean(payload.seedSimilarArtists),
         forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
+        expandCreditedArtists: payload.expandCreditedArtists !== false,
     };
 }
 
@@ -315,7 +316,8 @@ function areEquivalentRefreshArtistPayloads(
         && left.includeSimilarArtists === right.includeSimilarArtists
         && left.seedSimilarArtists === right.seedSimilarArtists
         && left.forceDownloadQueue === right.forceDownloadQueue
-        && left.forceUpdate === right.forceUpdate;
+        && left.forceUpdate === right.forceUpdate
+        && left.expandCreditedArtists === right.expandCreditedArtists;
 }
 
 export function isJobType(value: string): value is JobType {

@@ -23,6 +23,7 @@ export interface TrackListItem {
   cover_url?: string | null;
   artist_id?: string | null;
   artist_name?: string | null;
+  artist_credits?: Array<{ id: string; name: string; join_phrase: string }> | null;
   musicbrainz_track_id?: string | null;
   musicbrainz_recording_id?: string | null;
   musicbrainz_release_id?: string | null;

@@ -157,33 +157,82 @@ class LibraryMetadataBackfillService {
         result: MetadataFillResult,
     ) {
         const albums = db.prepare(`
-      SELECT DISTINCT a.id, a.title, a.version, a.release_date, a.num_volumes, a.video_cover, a.quality
-      FROM ProviderAlbums a
-      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
-      WHERE aa.artist_id = ?
-        AND a.monitor = 1
-        AND EXISTS (
-          SELECT 1 FROM TrackFiles lf
-          JOIN ProviderMedia m ON m.id = lf.media_id
-          WHERE m.album_id = a.id AND lf.file_type = 'track'
-        )
+      SELECT DISTINCT
+        a.id, a.title, a.version, a.release_date, a.num_volumes, a.video_cover, a.quality,
+        lf.canonical_release_group_mbid, lf.library_slot
+      FROM TrackFiles lf
+      JOIN ProviderMedia media ON media.id = lf.media_id
+      JOIN ProviderAlbums a ON a.id = media.album_id
+      WHERE lf.artist_id = ?
+        AND lf.file_type = 'track'
     `).all(artistId) as any[];
+        const processedAlbumSlots = new Set<string>();
 
-        for (const album of albums) {
+        for (const sourceAlbum of albums) {
+            const canonicalReleaseGroupMbid = String(sourceAlbum.canonical_release_group_mbid || "").trim();
+            const librarySlot = String(sourceAlbum.library_slot || "stereo");
+            const albumSlotKey = `${librarySlot}:${canonicalReleaseGroupMbid || sourceAlbum.id}`;
+            if (processedAlbumSlots.has(albumSlotKey)) {
+                continue;
+            }
+            processedAlbumSlots.add(albumSlotKey);
+
+            const selectedSlot = canonicalReleaseGroupMbid
+                ? db.prepare(`
+                    SELECT selected_provider_id
+                    FROM ReleaseGroupSlots
+                    WHERE release_group_mbid = ?
+                      AND slot = ?
+                      AND selected_provider_id IS NOT NULL
+                    LIMIT 1
+                `).get(canonicalReleaseGroupMbid, librarySlot) as { selected_provider_id?: string | null } | undefined
+                : undefined;
+            const representativeAlbumId = String(selectedSlot?.selected_provider_id || sourceAlbum.id)
+                .split(";")
+                .map((id) => id.trim())
+                .find(Boolean) || String(sourceAlbum.id);
+            const album = db.prepare(`
+                SELECT id, title, version, release_date, num_volumes, video_cover, quality
+                FROM ProviderAlbums
+                WHERE id = ?
+                LIMIT 1
+            `).get(representativeAlbumId) as any || sourceAlbum;
             const libraryRoots = (db.prepare(`
       SELECT DISTINCT lf.library_root
       FROM TrackFiles lf
-      JOIN ProviderMedia m ON m.id = lf.media_id
-      WHERE m.album_id = ?
+      WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
+        AND (
+          (? != '' AND lf.canonical_release_group_mbid = ?)
+          OR (? = '' AND lf.album_id = ?)
+        )
       ORDER BY lf.library_root ASC
-    `).all(album.id) as Array<{ library_root: string | null }>)
+    `).all(
+                    artistId,
+                    canonicalReleaseGroupMbid,
+                    canonicalReleaseGroupMbid,
+                    canonicalReleaseGroupMbid,
+                    album.id,
+                ) as Array<{ library_root: string | null }>)
                 .map((row) => String(row.library_root || "").trim())
                 .filter(Boolean);
 
             for (const libraryRoot of libraryRoots) {
-                const albumDir = this.resolveAlbumDir(libraryRoot, artistFolder, album, naming);
+                const expectedAlbumNfoPath = LibraryFilesService.computeExpectedPath({
+                    id: -1,
+                    artist_id: artistId as unknown as number,
+                    album_id: album.id,
+                    media_id: null,
+                    file_path: "",
+                    relative_path: null,
+                    library_root: libraryRoot,
+                    file_type: "nfo",
+                    extension: "nfo",
+                }).expectedPath;
+                const albumDir = expectedAlbumNfoPath
+                    ? path.dirname(expectedAlbumNfoPath)
+                    : this.resolveAlbumDir(libraryRoot, artistFolder, album, naming);
                 if (!albumDir || !fs.existsSync(albumDir)) continue;
 
                 if (metadataConfig.save_album_cover) {

@@ -1,13 +1,11 @@
 import type { StreamingProvider } from "./streaming-provider.js";
 import { tidalStreamingProvider } from "./tidal/tidal-provider.js";
-import { appleMusicStreamingProvider } from "./apple-music/apple-music-provider.js";
 
 class StreamingProviderManager {
   private readonly providers = new Map<string, StreamingProvider>();
 
   constructor() {
     this.registerStreamingProvider(tidalStreamingProvider);
-    this.registerStreamingProvider(appleMusicStreamingProvider);
   }
 
   registerStreamingProvider(provider: StreamingProvider): void {

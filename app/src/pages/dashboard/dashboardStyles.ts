@@ -166,7 +166,7 @@ export const useDashboardStyles = makeStyles({
     },
     downloadItem: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: tokens.spacingHorizontalM,
         padding: tokens.spacingHorizontalM,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
@@ -400,7 +400,7 @@ export const useDashboardStyles = makeStyles({
     },
     downloadBadgeRow: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
         minWidth: 0,

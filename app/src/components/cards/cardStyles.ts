@@ -181,6 +181,9 @@ export const useCardStyles = makeStyles({
         borderRadius: tokens.borderRadiusCircular,
         backdropFilter: "blur(20px)",
         backgroundColor: tokens.colorNeutralBackgroundAlpha,
+        border: "none",
+        padding: 0,
+        cursor: "pointer",
     },
 
     // Status badge overlay (top-right of preview)

@@ -1036,7 +1036,11 @@ export class TidalProvider implements StreamingProvider {
           title: track.album.title,
           artist: { providerId: "", name: "Unknown Artist" },
         }
-        : { providerId: "", title: "Unknown", artist: { providerId: "", name: "Unknown Artist" } },
+        : {
+          providerId: String(track.album_id || ""),
+          title: track.album_title || "Unknown",
+          artist: { providerId: "", name: "Unknown Artist" },
+        },
       duration: track.duration || 0,
       trackNumber: track.trackNumber ?? track.track_number ?? 0,
       volumeNumber: track.volumeNumber ?? track.volume_number ?? 1,

@@ -626,7 +626,59 @@ export async function saveAlbumNfoFile(
         LEFT JOIN Artists ar ON ar.id = a.artist_id
         WHERE a.id = ?
     `).get(albumId) as { mbid?: string | null; mb_release_group_id?: string | null; artist_mbid?: string | null } | undefined;
-    const tracks = db.prepare(`
+    const selectedSlot = localAlbum?.mb_release_group_id
+        ? db.prepare(`
+            SELECT selected_release_mbid, selected_provider_id
+            FROM ReleaseGroupSlots
+            WHERE release_group_mbid = ?
+              AND selected_release_mbid IS NOT NULL
+              AND (
+                selected_provider_id = ?
+                OR selected_provider_id LIKE ?
+                OR selected_provider_id LIKE ?
+                OR selected_provider_id LIKE ?
+              )
+            ORDER BY CASE WHEN slot = 'stereo' THEN 0 ELSE 1 END
+            LIMIT 1
+        `).get(
+            localAlbum.mb_release_group_id,
+            albumId,
+            `${albumId};%`,
+            `%;${albumId};%`,
+            `%;${albumId}`,
+        ) as { selected_release_mbid?: string | null; selected_provider_id?: string | null } | undefined
+        : undefined;
+    const canonicalRelease = selectedSlot?.selected_release_mbid
+        ? db.prepare(`
+            SELECT mbid, title, date, barcode
+            FROM AlbumReleases
+            WHERE mbid = ?
+            LIMIT 1
+        `).get(selectedSlot.selected_release_mbid) as {
+            mbid?: string | null;
+            title?: string | null;
+            date?: string | null;
+            barcode?: string | null;
+        } | undefined
+        : undefined;
+    const providerAlbumIds = String(selectedSlot?.selected_provider_id || albumId)
+        .split(";")
+        .map((id) => id.trim())
+        .filter(Boolean);
+    const tracks = canonicalRelease?.mbid
+        ? db.prepare(`
+            SELECT
+                track.title,
+                CASE WHEN track.length_ms IS NULL THEN NULL ELSE ROUND(track.length_ms / 1000.0) END AS duration,
+                track.position AS track_number,
+                track.medium_position AS volume_number,
+                track.recording_mbid,
+                track.mbid AS track_mbid
+            FROM Tracks track
+            WHERE track.release_mbid = ?
+            ORDER BY COALESCE(track.medium_position, 1), COALESCE(track.position, 0), track.Id
+        `).all(canonicalRelease.mbid)
+        : db.prepare(`
         SELECT
             media.title,
             media.duration,
@@ -646,7 +698,8 @@ export async function saveAlbumNfoFile(
         JOIN ProviderAlbums album ON album.id = media.album_id
         WHERE media.album_id = ? AND media.type != 'Music Video'
         ORDER BY COALESCE(media.volume_number, 1), COALESCE(media.track_number, 0), media.id
-    `).all(albumId) as Array<{
+    `).all(albumId);
+    const nfoTracks = tracks as Array<{
         title: string;
         duration: number | null;
         track_number: number | null;
@@ -654,28 +707,29 @@ export async function saveAlbumNfoFile(
         recording_mbid: string | null;
         track_mbid: string | null;
     }>;
-    const year = album.releaseDate ? album.releaseDate.substring(0, 4) : "";
+    const releaseDate = canonicalRelease?.date || album.releaseDate;
+    const year = releaseDate ? releaseDate.substring(0, 4) : "";
     const albumRecord = album as any;
     const artists = Array.isArray(albumRecord.artists) && albumRecord.artists.length > 0
         ? albumRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
         : [albumRecord.artist_name || albumRecord.artist?.name || "Unknown"];
 
     const elements = [
-        xmlElement("title", album.title),
+        xmlElement("title", canonicalRelease?.title || album.title),
         xmlElement("review", reviewText),
         xmlElement("year", year),
-        xmlElement("releasedate", album.releaseDate),
+        xmlElement("releasedate", releaseDate),
         ...artists.map((artistName: unknown) => xmlElement("artist", artistName)),
         ...artists.map((artistName: unknown) => xmlElement("albumartist", artistName)),
-        xmlElement("musicbrainzalbumid", localAlbum?.mbid),
+        xmlElement("musicbrainzalbumid", canonicalRelease?.mbid || localAlbum?.mbid),
         xmlElement("musicbrainzreleasegroupid", localAlbum?.mb_release_group_id),
         xmlElement("musicbrainzalbumartistid", localAlbum?.artist_mbid),
-        xmlElement("upc", album.upc),
-        xmlUniqueId("MusicBrainzAlbum", localAlbum?.mbid, true),
+        xmlElement("upc", canonicalRelease?.barcode || album.upc),
+        xmlUniqueId("MusicBrainzAlbum", canonicalRelease?.mbid || localAlbum?.mbid, true),
         xmlUniqueId("MusicBrainzReleaseGroup", localAlbum?.mb_release_group_id),
         xmlUniqueId("MusicBrainzAlbumArtist", localAlbum?.artist_mbid),
-        xmlUniqueId(`${provider.id}Album`, albumId),
-        ...tracks.map((track) => {
+        ...providerAlbumIds.map((providerAlbumId) => xmlUniqueId(`${provider.id}Album`, providerAlbumId)),
+        ...nfoTracks.map((track) => {
             const trackElements = [
                 xmlElement("disc", track.volume_number || 1),
                 xmlElement("position", track.track_number),

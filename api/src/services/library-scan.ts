@@ -1344,18 +1344,25 @@ export class DiskScanService {
      * Try to find a video ID where the title matches the stem.
      */
     private static findVideoIdByStem(stem: string, artistId: string): string | null {
-        // Check videos whose title might match the stem
+        const embeddedMediaId = this.findMediaIdByStem(stem, artistId);
+        if (embeddedMediaId) {
+            const exactVideo = db.prepare(`
+              SELECT id
+              FROM ProviderMedia
+              WHERE id = ? AND artist_id = ? AND type = 'Music Video'
+              LIMIT 1
+            `).get(embeddedMediaId, artistId) as { id: string | number } | undefined;
+            if (exactVideo) {
+                return String(exactVideo.id);
+            }
+        }
+
         const videos = db.prepare(`
       SELECT id, title FROM ProviderMedia WHERE artist_id = ? AND type = 'Music Video'
     `).all(artistId) as Array<{ id: number; title: string }>;
 
-        for (const video of videos) {
-            if (stem.includes(video.title) || video.title.includes(stem)) {
-                return String(video.id);
-            }
-        }
-
-        return null;
+        const titleMatches = videos.filter((video) => stem.includes(video.title) || video.title.includes(stem));
+        return titleMatches.length === 1 ? String(titleMatches[0].id) : null;
     }
 
     /**
