@@ -1570,6 +1570,8 @@ function ensureExtraFileSchema(): void {
 }
 
 function ensureMusicBrainzProviderSchema(): void {
+  ensureProviderCompatibilityTablesUseCurrentNames();
+  ensureProviderIdentityTablesUseCurrentNames();
   ensureCanonicalMusicBrainzTableShapes();
   addColumnIfMissing("Artists", "cover_image_url", "TEXT");
   addColumnIfMissing("Artists", "library_origin", "TEXT NOT NULL DEFAULT 'user'");
@@ -1834,6 +1836,8 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_target ON RecordingRelations(TargetForeignRecordingId, RelationType)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist ON ReleaseGroupSlots(artist_mbid, slot)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
+
+  backfillCanonicalMusicBrainzTablesFromLegacy();
 }
 
 function dropSupersededProviderIdentityTables(): void {
