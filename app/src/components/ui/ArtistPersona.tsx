@@ -22,7 +22,6 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     padding: `0 ${tokens.spacingHorizontalXS}`,
     transition: `background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    transform: "translateY(1px)",
     ":hover": {
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
       opacity: 0.9,
@@ -76,6 +75,7 @@ export const ArtistPersona: React.FC<ArtistPersonaProps> = ({
           style: {
             fontWeight: tokens.fontWeightSemibold,
             fontSize: tokens.fontSizeBase400,
+            lineHeight: tokens.lineHeightBase400,
           }
         }}
       />

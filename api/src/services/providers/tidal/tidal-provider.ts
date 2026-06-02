@@ -1027,6 +1027,7 @@ export class TidalProvider implements StreamingProvider {
     return {
       providerId: String(track.id ?? track.tidal_id),
       title: track.title,
+      version: track.version || null,
       artist: track.artist
         ? { providerId: String(track.artist.id ?? track.artist.tidal_id), name: track.artist.name }
         : { providerId: String(track.artist_id || ""), name: track.artist_name || "Unknown Artist" },

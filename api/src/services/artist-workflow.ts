@@ -197,6 +197,26 @@ export function queueArtistWorkflow(params: {
   );
 }
 
+export function queueArtistIntake(params: {
+  artistId: string;
+  artistName: string;
+  monitored: boolean;
+  forceUpdate?: boolean;
+  expandCreditedArtists?: boolean;
+  priority?: number;
+  trigger?: number;
+}) {
+  return queueArtistWorkflow({
+    artistId: params.artistId,
+    artistName: params.artistName,
+    workflow: params.monitored ? "monitoring-intake" : "metadata-refresh",
+    forceUpdate: params.forceUpdate,
+    expandCreditedArtists: params.expandCreditedArtists ?? params.monitored,
+    priority: params.priority,
+    trigger: params.trigger,
+  });
+}
+
 export function queueLibraryRescan(options: {
   trigger?: number;
   priority?: number;

@@ -19,6 +19,7 @@ interface TrackRowActionsProps {
   isDownloaded: boolean;
   isDownloading?: boolean;
   canShowInfo: boolean;
+  showDownload?: boolean;
   onPlay?: (event: MouseEvent<HTMLButtonElement>) => void;
   onToggleMonitor?: (event: MouseEvent<HTMLButtonElement>) => void;
   onToggleLock?: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -42,6 +43,7 @@ export function TrackRowActions({
   isDownloaded,
   isDownloading = false,
   canShowInfo,
+  showDownload = false,
   onPlay,
   onToggleMonitor,
   onToggleLock,
@@ -100,7 +102,7 @@ export function TrackRowActions({
             onClick={onShowInfo}
           />
         </Tooltip>
-      ) : onDownload ? (
+      ) : showDownload ? (
         isDownloaded ? (
           <Button
             appearance="subtle"
@@ -110,12 +112,13 @@ export function TrackRowActions({
             title="Downloaded"
           />
         ) : (
-          <Tooltip content="Download track" relationship="label">
+          <Tooltip content={onDownload ? "Download track" : "No provider offer available"} relationship="label">
             <Button
               appearance="subtle"
+              aria-label="Download track"
               icon={<ArrowDownload24Regular />}
               size="small"
-              disabled={isDownloading}
+              disabled={isDownloading || !onDownload}
               onClick={onDownload}
             />
           </Tooltip>

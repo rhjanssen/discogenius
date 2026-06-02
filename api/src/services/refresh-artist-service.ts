@@ -30,7 +30,7 @@ import {
 import { MusicBrainzArtistCreditService } from "./metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { requestMusicBrainzJson } from "./fingerprint.js";
-import { queueArtistWorkflow } from "./artist-workflow.js";
+import { queueArtistIntake } from "./artist-workflow.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -174,10 +174,10 @@ export class RefreshArtistService {
                         !collaborator?.lastScanned ||
                         collaborator.libraryOrigin === "musicbrainz-credit";
                     if (requiresHydration) {
-                        queueArtistWorkflow({
+                        queueArtistIntake({
                             artistId: String(collaborator?.id || collaboratorMbid),
                             artistName: String(collaborator?.name || collaboratorMbid),
-                            workflow: "metadata-refresh",
+                            monitored: false,
                             forceUpdate: true,
                             expandCreditedArtists: false,
                             priority: -1,

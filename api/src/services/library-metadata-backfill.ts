@@ -15,6 +15,7 @@ import {
 } from "./metadata-files.js";
 import { embedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
+import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
 
 export interface MetadataFillResult {
     downloaded: number;
@@ -192,7 +193,7 @@ class LibraryMetadataBackfillService {
                 .map((id) => id.trim())
                 .find(Boolean) || String(sourceAlbum.id);
             const album = db.prepare(`
-                SELECT id, title, version, release_date, num_volumes, video_cover, quality
+                SELECT id, title, version, release_date, num_volumes, video_cover, quality, mbid, mb_release_group_id
                 FROM ProviderAlbums
                 WHERE id = ?
                 LIMIT 1
@@ -548,18 +549,22 @@ class LibraryMetadataBackfillService {
         album: any,
         naming: ReturnType<typeof getNamingConfig>,
     ): string | null {
-        const releaseYear = album.release_date
-            ? (String(album.release_date).match(/^(\d{4})/)?.[1] || null)
+        const canonicalAlbum = getCanonicalAlbumMetadata({
+            canonicalReleaseGroupMbid: album.mb_release_group_id,
+            canonicalReleaseMbid: album.mbid,
+        });
+        const releaseYear = canonicalAlbum?.releaseDate || album.release_date
+            ? (String(canonicalAlbum?.releaseDate || album.release_date).match(/^(\d{4})/)?.[1] || null)
             : null;
 
         const albumContext: NamingContext = {
             artistName: "",
-            albumTitle: album.title,
-            albumVersion: album.version || null,
+            albumTitle: canonicalAlbum?.title || album.title,
+            albumVersion: canonicalAlbum ? null : album.version || null,
             releaseYear,
         };
 
-        const numVolumes = Number(album.num_volumes || 1);
+        const numVolumes = Number(canonicalAlbum?.volumeCount || album.num_volumes || 1);
         const trackTemplate = numVolumes > 1 ? naming.album_track_path_multi : naming.album_track_path_single;
 
         const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);

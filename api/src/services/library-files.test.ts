@@ -130,6 +130,64 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   assert.ok(!expected.expectedPath?.includes("Queen [artist-mbid-1]"));
 });
 
+test("computeExpectedPath prefers canonical release-group and track metadata over provider naming", () => {
+  writeTestConfig({
+    albumTrackPathSingle: "{albumTitle}/{trackNumber00} - {trackTitle}",
+  });
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-1", "Queen");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, path, monitor) VALUES (?, ?, ?, ?, ?)")
+    .run("1", "Queen", "artist-mbid-1", "Queen", 1);
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
+    .run("rg-mbid-1", "artist-mbid-1", "Canonical Group Title", "Album");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "Edition-Specific Title", 1, 1);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
+    .run("recording-mbid-1", "Canonical Recording");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 7, "7", "Canonical Track Title");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, selected_provider,
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, mbid, mb_release_group_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("10", "1", "Provider Album Title", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 354, "release-mbid-1", "rg-mbid-1");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("100", "1", "10", "Provider Track Title", 1, 1, 0, "Track", "LOSSLESS", 354, "recording-mbid-1");
+
+  const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    id: 500,
+    artist_id: "1" as unknown as number,
+    album_id: "10" as unknown as number,
+    media_id: "100" as unknown as number,
+    file_path: path.join(tempDir, "legacy.flac"),
+    relative_path: null,
+    library_root: "music",
+    file_type: "track",
+    extension: "flac",
+  });
+
+  assert.equal(
+    expected.expectedPath,
+    path.join(configModule.Config.getMusicPath(), "Queen", "Canonical Group Title", "07 - Canonical Track Title.flac"),
+  );
+});
+
 test("unified audio roots allow different extensions and disambiguate only real spatial conflicts", () => {
   const unifiedRoot = path.join(tempDir, "library", "unified");
 

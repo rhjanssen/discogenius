@@ -2,7 +2,7 @@ import { db } from "../database.js";
 import { getConfigSection } from "./config.js";
 import type { ProviderReleaseGroupMatch } from "./metadata/provider-release-group-matcher.js";
 import { isSpatialAudioQuality, normalizeQualityTag } from "../utils/spatial-audio.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "./import-matching-utils.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
@@ -155,6 +155,8 @@ export type ProviderTrackDetail = {
     mbid: string | null;
     isrc: string | null;
     title: string | null;
+    version?: string | null;
+    raw?: unknown;
     track_number: number | null;
     volume_number: number | null;
     duration: number | null;
@@ -179,7 +181,7 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
     }
     const titleSimilarity = stringSimilarity(
         normalizeComparableText(target.title),
-        normalizeComparableText(pt.title),
+        normalizeComparableText(providerTrackComparableTitle(pt)),
     );
     if (titleSimilarity < 0.72) {
         return 0.0;

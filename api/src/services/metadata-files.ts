@@ -650,9 +650,10 @@ export async function saveAlbumNfoFile(
         : undefined;
     const canonicalRelease = selectedSlot?.selected_release_mbid
         ? db.prepare(`
-            SELECT mbid, title, date, barcode
-            FROM AlbumReleases
-            WHERE mbid = ?
+            SELECT release.mbid, release_group.title, release.date, release.barcode
+            FROM AlbumReleases release
+            JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
+            WHERE release.mbid = ?
             LIMIT 1
         `).get(selectedSlot.selected_release_mbid) as {
             mbid?: string | null;

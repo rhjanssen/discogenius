@@ -404,7 +404,7 @@ async function tidalFetchWithRetry(
  * 
  * Priority: DOLBY_ATMOS > HIRES_LOSSLESS > LOSSLESS
  */
-function deriveQuality(item: any): string {
+export function deriveQuality(item: any): string {
   const tags: string[] = item?.mediaMetadata?.tags || [];
 
   // Priority order - return first match (highest quality)

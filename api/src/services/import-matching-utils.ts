@@ -126,6 +126,21 @@ export function normalizeComparableText(input?: string | null): string {
         .trim();
 }
 
+export function providerTrackComparableTitle(track: {
+    title?: string | null;
+    version?: string | null;
+    raw?: unknown;
+}): string {
+    const title = String(track.title || "").trim();
+    const raw = track.raw && typeof track.raw === "object" ? track.raw as Record<string, unknown> : {};
+    const version = String(track.version || raw.version || "").trim();
+    if (!version || normalizeComparableText(title).includes(normalizeComparableText(version))) {
+        return title;
+    }
+
+    return `${title} (${version})`;
+}
+
 export function matchTrackForFile(file: LocalFile, tracks: AlbumTrackLike[]): AlbumTrackLike | null {
     if (!tracks || tracks.length === 0) return null;
 

@@ -186,6 +186,7 @@ export interface ProviderAlbum {
 export interface ProviderTrack {
   providerId: string;
   title: string;
+  version?: string | null;
   artist: ProviderArtist;
   artists?: ProviderArtist[];
   album: ProviderAlbum;

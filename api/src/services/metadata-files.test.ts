@@ -257,6 +257,10 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
 
 test("album NFO uses the selected canonical release for a composite provider slot", async () => {
     seedMusicBrainzMetadata();
+    dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")
+      .run("Canonical Release Group Title", "release-group-mbid-200");
+    dbModule.db.prepare("UPDATE AlbumReleases SET title = ? WHERE mbid = ?")
+      .run("Edition-Specific Release Title", "album-mbid-200");
 
     dbModule.db.prepare(`
         INSERT INTO ProviderAlbums(
@@ -286,6 +290,8 @@ test("album NFO uses the selected canonical release for a composite provider slo
 
     assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">200<\/uniqueid>/);
     assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">201<\/uniqueid>/);
+    assert.match(albumNfo, /<title>Canonical Release Group Title<\/title>/);
+    assert.doesNotMatch(albumNfo, /Edition-Specific Release Title/);
     assert.match(albumNfo, /<position>2<\/position>/);
     assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-301<\/uniqueid>/);
 });

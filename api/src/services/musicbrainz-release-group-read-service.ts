@@ -3,7 +3,7 @@ import type { AlbumContract } from "../contracts/catalog.js";
 import type { AlbumPageContract } from "../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../contracts/media.js";
 import { skyHookProxy } from "./metadata/skyhook-proxy.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderTrack } from "./providers/streaming-provider.js";
 import {
@@ -444,7 +444,10 @@ function scoreProviderTrackMatch(
         return 1;
     }
 
-    const titleSimilarity = stringSimilarity(normalizeComparableText(track.title), normalizeComparableText(providerTrack.title));
+    const titleSimilarity = stringSimilarity(
+        normalizeComparableText(track.title),
+        normalizeComparableText(providerTrackComparableTitle(providerTrack)),
+    );
     if (titleSimilarity < 0.72) {
         return 0;
     }

@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
+import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "./import-matching-utils.js";
 import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderTrack } from "./providers/streaming-provider.js";
 
@@ -173,7 +173,7 @@ function scoreProviderTrackMatch(track: CanonicalTrackCandidate, providerTrack: 
 
     const titleSimilarity = stringSimilarity(
         normalizeComparableText(track.title || ""),
-        normalizeComparableText(providerTrack.title || ""),
+        normalizeComparableText(providerTrackComparableTitle(providerTrack)),
     );
     if (titleSimilarity < 0.72) {
         return 0;

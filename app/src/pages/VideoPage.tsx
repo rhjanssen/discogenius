@@ -151,22 +151,26 @@ const useStyles = makeStyles({
     },
     metadataRow: {
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "space-between",
         flexWrap: "wrap",
-        gap: tokens.spacingVerticalM,
+        columnGap: tokens.spacingHorizontalL,
+        rowGap: tokens.spacingVerticalM,
     },
     leftMeta: {
         display: "flex",
         alignItems: "center",
-        gap: tokens.spacingHorizontalM,
+        columnGap: tokens.spacingHorizontalM,
+        rowGap: tokens.spacingVerticalS,
         flexWrap: "wrap",
     },
 
     metaItems: {
         display: "flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalS,
+        alignItems: "flex-start",
+        columnGap: tokens.spacingHorizontalS,
+        rowGap: tokens.spacingVerticalXS,
+        flexWrap: "wrap",
         color: tokens.colorNeutralForeground2,
     },
     rightActions: {

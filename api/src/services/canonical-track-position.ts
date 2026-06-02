@@ -3,6 +3,7 @@ import { resolveLibraryFileIdentity, type LibraryFileIdentityInput } from "./lib
 
 export type CanonicalTrackPosition = {
   trackMbid: string;
+  title: string;
   trackNumber: number;
   volumeNumber: number;
 };
@@ -14,12 +15,13 @@ export function getCanonicalTrackPosition(canonicalTrackMbid: string | null | un
   }
 
   const row = db.prepare(`
-    SELECT mbid, position, medium_position
+    SELECT mbid, title, position, medium_position
     FROM Tracks
     WHERE mbid = ?
     LIMIT 1
   `).get(trackMbid) as {
     mbid: string;
+    title: string;
     position: number | null;
     medium_position: number | null;
   } | undefined;
@@ -30,6 +32,7 @@ export function getCanonicalTrackPosition(canonicalTrackMbid: string | null | un
 
   return {
     trackMbid: row.mbid,
+    title: row.title,
     trackNumber: Number(row.position),
     volumeNumber: Number(row.medium_position || 1),
   };

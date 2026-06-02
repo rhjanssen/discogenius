@@ -26,6 +26,8 @@ import {
     matchTrackForFile,
 } from "./import-matching-utils.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
+import { resolveCanonicalTrackPosition } from "./canonical-track-position.js";
 import type { ImportDecisionMode } from "./import-decision/types.js";
 import type {
     AutoImportedGroupSummary,
@@ -722,10 +724,6 @@ export class ImportService {
                 WHERE album_id = ? AND type != 'Music Video'
             `).all(albumId) as any[];
 
-            const releaseYear = albumRow.release_date ? String(albumRow.release_date).slice(0, 4) : null;
-            const isMultiDisc = Number(albumRow.num_volumes || 1) > 1;
-            const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
-            const fullPathTemplate = path.join(artistFolder, trackTemplate);
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
 
             for (const file of candidate.group.files) {
@@ -733,17 +731,42 @@ export class ImportService {
                     const mappedTrackId = match.trackIdsByFilePath?.[file.path];
                     const matchedTrack = (mappedTrackId ? trackRowsById.get(String(mappedTrackId)) : null)
                         || matchTrackForFile(file, trackRows);
-                    const trackTitle = matchedTrack?.title
+                    const canonicalIdentity = matchedTrack?.id
+                        ? resolveLibraryFileIdentity({
+                            artistId,
+                            albumId,
+                            mediaId: String(matchedTrack.id),
+                            fileType: "track",
+                        })
+                        : null;
+                    const canonicalAlbum = getCanonicalAlbumMetadata({
+                        canonicalReleaseGroupMbid: canonicalIdentity?.canonicalReleaseGroupMbid || albumRow.mb_release_group_id,
+                        canonicalReleaseMbid: canonicalIdentity?.canonicalReleaseMbid || albumRow.mbid,
+                    });
+                    const canonicalPosition = matchedTrack?.id
+                        ? resolveCanonicalTrackPosition({
+                            artistId,
+                            albumId,
+                            mediaId: String(matchedTrack.id),
+                            fileType: "track",
+                        })
+                        : null;
+                    const releaseYear = String(canonicalAlbum?.releaseDate || albumRow.release_date || "").slice(0, 4) || null;
+                    const isMultiDisc = Number(canonicalAlbum?.volumeCount || albumRow.num_volumes || 1) > 1;
+                    const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
+                    const fullPathTemplate = path.join(artistFolder, trackTemplate);
+                    const trackTitle = canonicalPosition?.title
+                        || matchedTrack?.title
                         || file.metadata?.common?.title
                         || path.parse(file.name).name;
-                    const trackNumber = matchedTrack?.track_number || file.metadata?.common?.track?.no || 0;
-                    const volumeNumber = matchedTrack?.volume_number || file.metadata?.common?.disk?.no || 1;
+                    const trackNumber = canonicalPosition?.trackNumber ?? matchedTrack?.track_number ?? file.metadata?.common?.track?.no ?? 0;
+                    const volumeNumber = canonicalPosition?.volumeNumber ?? matchedTrack?.volume_number ?? file.metadata?.common?.disk?.no ?? 1;
 
                     const context = {
                         artistName,
                         artistMbId: artistRow?.mbid || null,
-                        albumTitle: albumRow.title,
-                        albumVersion: albumRow.version,
+                        albumTitle: canonicalAlbum?.title || albumRow.title,
+                        albumVersion: canonicalAlbum ? null : albumRow.version,
                         releaseYear,
                         trackTitle,
                         trackNumber,

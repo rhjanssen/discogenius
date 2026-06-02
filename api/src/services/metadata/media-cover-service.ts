@@ -387,6 +387,33 @@ function configuredArtistPictureResolution(): number {
   }
 }
 
+function persistResolvedFallbackArtwork(
+  table: "Albums" | "ArtistMetadata",
+  mbid: string | null | undefined,
+  coverType: "Cover" | "Headshot",
+  url: string,
+): void {
+  const canonicalMbid = String(mbid || "").trim();
+  if (!canonicalMbid) {
+    return;
+  }
+
+  try {
+    const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
+      images?: string | null;
+    } | undefined;
+    const existing = row?.images ? JSON.parse(row.images) : [];
+    if (Array.isArray(existing) && existing.length > 0) {
+      return;
+    }
+
+    db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
+      .run(JSON.stringify([{ coverType, url, source: "provider-fallback" }]), canonicalMbid);
+  } catch (error) {
+    console.warn(`[MediaCoverService] Failed to cache fallback artwork for ${table}:${canonicalMbid}:`, error);
+  }
+}
+
 export async function resolveProviderArtworkUrl(
   candidates: ProviderArtworkCandidate[],
   entityType: ProviderArtworkEntityType,
@@ -468,6 +495,7 @@ export async function resolveAlbumArtwork(options: {
     options.size ?? configuredAlbumCoverResolution(),
   );
   if (providerUrl) {
+    persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
     return providerUrl;
   }
 
@@ -518,6 +546,7 @@ export async function resolveArtistArtwork(options: {
     options.size ?? configuredArtistPictureResolution(),
   );
   if (providerUrl) {
+    persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, "Headshot", providerUrl);
     return providerUrl;
   }
 

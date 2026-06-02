@@ -1056,8 +1056,12 @@ export class OrganizerService {
 
       const isSpatial = isSpatialAudioQuality(album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
+      const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
+        canonicalReleaseGroupMbid: album.mb_release_group_id,
+        canonicalReleaseMbid: album.mbid,
+      });
 
-      const trackTemplate = Number(album.num_volumes || 1) > 1
+      const trackTemplate = Number(canonicalAlbumForNaming?.volumeCount || album.num_volumes || 1) > 1
         ? naming.album_track_path_multi
         : naming.album_track_path_single;
 
@@ -1139,7 +1143,6 @@ export class OrganizerService {
           continue;
         }
 
-        const trackTitle = trackRow.title || "Unknown Track";
         const canonicalIdentity = resolveLibraryFileIdentity({
           artistId,
           albumId: String(trackRow.album_id || albumIds[0]),
@@ -1153,6 +1156,7 @@ export class OrganizerService {
           canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
         });
+        const trackTitle = canonicalPosition?.title || trackRow.title || "Unknown Track";
         const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || 0);
         const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || 1);
         const trackArtistId = String(trackRow.artist_id || artistId);
@@ -1177,7 +1181,7 @@ export class OrganizerService {
           trackMbId: trackRow.mbid || null,
           trackArtistName: resolvedTrackArtistName,
           trackArtistMbId,
-          trackVersion: trackRow.version || null,
+          trackVersion: canonicalPosition ? null : trackRow.version || null,
           explicit: trackRow.explicit === 1,
           trackNumber,
           volumeNumber,
@@ -1507,7 +1511,6 @@ export class OrganizerService {
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
       const ext = path.extname(src);
-      const trackTitle = trackRow.title || trackData.title || path.basename(src, ext);
       const canonicalPosition = resolveCanonicalTrackPosition({
         artistId,
         albumId,
@@ -1528,6 +1531,7 @@ export class OrganizerService {
         canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
         canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
       });
+      const trackTitle = canonicalPosition?.title || trackRow.title || trackData.title || path.basename(src, ext);
       const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || trackData.track_number || 0);
       const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || trackData.volume_number || 1);
       const trackArtistId = String(trackRow.artist_id || artistId);
@@ -1535,7 +1539,7 @@ export class OrganizerService {
       const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
       const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
 
-      const trackTemplate = Number(album.num_volumes || 1) > 1
+      const trackTemplate = Number(canonicalAlbum?.volumeCount || album.num_volumes || 1) > 1
         ? naming.album_track_path_multi
         : naming.album_track_path_single;
       const trackNamingTemplate = path.join(artistFolder, trackTemplate);
@@ -1559,7 +1563,7 @@ export class OrganizerService {
         trackArtistMbId,
         trackNumber,
         volumeNumber,
-        trackVersion: trackRow.version || null,
+        trackVersion: canonicalPosition ? null : trackRow.version || null,
         explicit: trackRow.explicit === 1,
         quality: derivedQuality,
         codec: metrics.codec || null,

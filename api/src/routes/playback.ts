@@ -14,15 +14,20 @@ import crypto from "crypto";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { Readable } from "stream";
-import { spawnSegmentedPlaybackWorker } from "../services/playback-segment-worker.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../services/providers/streaming-provider.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from "../services/provider-track-resolver.js";
+import { materializeSegmentedPlayback, parsePlaybackRange } from "../services/segmented-playback-cache.js";
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
 const PLAYBACK_QUALITIES = new Set(["DOLBY_ATMOS", "HIRES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"]);
+const PLAYBACK_INFO_TTL_MS = 5 * 60 * 1000;
+const playbackInfoCache = new Map<string, {
+    expiresAt: number;
+    promise: Promise<ProviderPlaybackInfo | null>;
+}>();
 
 // Use JWT_SECRET (same as auth) for HMAC signing
 const getSecret = () => process.env.JWT_SECRET || "discogenius-stream-secret";
@@ -47,6 +52,29 @@ function signUrl(providerId: string, id: string, expires: number, quality?: stri
     const hmac = crypto.createHmac("sha256", getSecret());
     hmac.update(`${providerId}:${id}:${quality || ""}:${expires}`);
     return hmac.digest("hex");
+}
+
+function getCachedPlaybackInfo(
+    providerId: string,
+    trackId: string,
+    quality: string | null,
+    load: () => Promise<ProviderPlaybackInfo | null>,
+) {
+    const key = `${providerId}:${trackId}:${quality || "auto"}`;
+    const cached = playbackInfoCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.promise;
+    }
+
+    const promise = load().catch((error) => {
+        playbackInfoCache.delete(key);
+        throw error;
+    });
+    playbackInfoCache.set(key, {
+        expiresAt: Date.now() + PLAYBACK_INFO_TTL_MS,
+        promise,
+    });
+    return promise;
 }
 
 /**
@@ -131,8 +159,15 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
             return res.status(501).json({ error: `${provider.name} does not support track preview` });
         }
 
-        console.log(`[Playback] Fetching ${provider.name} playback info for track ${trackId} (preferred=${quality || "auto"})...`);
-        const info: ProviderPlaybackInfo | null = await provider.getPlaybackInfo(trackId, quality || undefined);
+        const info: ProviderPlaybackInfo | null = await getCachedPlaybackInfo(
+            providerId,
+            trackId,
+            quality,
+            () => {
+                console.log(`[Playback] Fetching ${provider.name} playback info for track ${trackId} (preferred=${quality || "auto"})...`);
+                return provider.getPlaybackInfo!(trackId, quality || undefined);
+            },
+        );
         if (!info) {
             console.error(`[Playback] No browser-safe playback source for track ${trackId}`);
             return res.status(502).json({ error: "No playable quality available" });
@@ -169,53 +204,35 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
             return;
         }
 
-        console.log(`[Playback] DASH stream for track ${trackId} (${info.segments.length} segments)`);
-        const worker = spawnSegmentedPlaybackWorker({
-            segments: info.segments,
-            contentType: info.contentType,
-        });
-        let stderr = "";
-        worker.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-            worker.once("close", (code, signal) => resolve({ code, signal }));
-            worker.once("error", reject);
-        });
-        const spawnedPromise = new Promise<void>((resolve, reject) => {
-            worker.once("spawn", () => resolve());
-            worker.once("error", reject);
-        });
-        const cleanupWorker = () => {
-            if (worker.exitCode === null && worker.signalCode === null) {
-                worker.kill();
-            }
-        };
-
-        req.once("close", cleanupWorker);
-        res.once("close", cleanupWorker);
-
+        console.log(`[Playback] Seekable DASH stream for track ${trackId} (${info.segments.length} segments)`);
+        const buffer = await materializeSegmentedPlayback(
+            `${providerId}:${trackId}:${quality || "auto"}`,
+            info.segments,
+        );
+        const rangeHeader = typeof req.headers.range === "string" ? req.headers.range : undefined;
+        let range: { start: number; end: number } | null;
         try {
-            await spawnedPromise;
-
-            res.status(200);
-            res.setHeader("content-type", info.contentType || "audio/mp4");
-            res.setHeader("cache-control", "no-store");
-            res.setHeader("accept-ranges", "none");
-
-            await streamPipeline(worker.stdout, res);
-
-            const { code, signal } = await exitPromise;
-            if ((code ?? 0) !== 0 && signal == null) {
-                console.error(`[Playback] DASH worker exited with code ${code}: ${stderr.trim() || "unknown error"}`);
-            }
-            return;
-        } finally {
-            req.off("close", cleanupWorker);
-            res.off("close", cleanupWorker);
-            cleanupWorker();
+            range = parsePlaybackRange(rangeHeader, buffer.byteLength);
+        } catch {
+            res.status(416);
+            res.setHeader("content-range", `bytes */${buffer.byteLength}`);
+            return res.end();
         }
+
+        res.setHeader("content-type", info.contentType || "audio/mp4");
+        res.setHeader("cache-control", "private, max-age=300");
+        res.setHeader("accept-ranges", "bytes");
+        if (range) {
+            const body = buffer.subarray(range.start, range.end + 1);
+            res.status(206);
+            res.setHeader("content-range", `bytes ${range.start}-${range.end}/${buffer.byteLength}`);
+            res.setHeader("content-length", body.byteLength);
+            return res.end(body);
+        }
+
+        res.status(200);
+        res.setHeader("content-length", buffer.byteLength);
+        return res.end(buffer);
     } catch (err: any) {
         // Ignore premature close (client stopped playback)
         if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;

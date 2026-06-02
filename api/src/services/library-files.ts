@@ -956,7 +956,7 @@ export class LibraryFilesService {
       return path.join(...dirSegments);
     };
 
-    const trackTemplateForAlbum = pickTrackTemplate(Number(album.num_volumes || 1));
+    const trackTemplateForAlbum = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
     const albumDirRelative = deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
     const albumDir = path.join(libraryRootPath, artistFolder, albumDirRelative);
 
@@ -996,10 +996,10 @@ export class LibraryFilesService {
       });
       const trackContext: NamingContext = {
         ...albumContext,
-        trackTitle: track.title,
+        trackTitle: canonicalPosition?.title || track.title,
         trackId: String(track.id ?? row.media_id),
         trackMbId: track.mbid || null,
-        trackVersion: track.version || null,
+        trackVersion: canonicalPosition ? null : track.version || null,
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
@@ -1014,7 +1014,7 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
-      const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
+      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
       const renderedTrackPath = renderRelativePath(trackTemplate, trackContext);
       const baseExpectedPath = path.join(libraryRootPath, artistFolder, `${renderedTrackPath}.${ext}`);
       const relativeTrackPath = renderAudioRelativePathForLibrary({
@@ -1068,10 +1068,10 @@ export class LibraryFilesService {
       });
       const trackContext: NamingContext = {
         ...albumContext,
-        trackTitle: track.title,
+        trackTitle: canonicalPosition?.title || track.title,
         trackId: String(track.id ?? row.media_id),
         trackMbId: track.mbid || null,
-        trackVersion: track.version || null,
+        trackVersion: canonicalPosition ? null : track.version || null,
         explicit: track.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
@@ -1086,7 +1086,7 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
-      const trackTemplate = pickTrackTemplate(Number(album.num_volumes || 1));
+      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderRelativePath(trackTemplate, trackContext),
         quality: row.quality,

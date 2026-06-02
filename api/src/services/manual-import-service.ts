@@ -22,6 +22,9 @@ export class ManualImportService {
         const { resolveArtistFolderForPersistence } = await import("./artist-paths.js");
         const { calculateFingerprint } = await import("./audioUtils.js");
         const { isSpatialAudioQuality } = await import("../utils/spatial-audio.js");
+        const { resolveLibraryFileIdentity } = await import("./library-file-identity.js");
+        const { resolveCanonicalTrackPosition } = await import("./canonical-track-position.js");
+        const { getCanonicalAlbumMetadata } = await import("./canonical-album-metadata.js");
 
         const namingConfig = getNamingConfig();
         const provider = streamingProviderManager.getDefaultStreamingProvider();
@@ -170,19 +173,44 @@ export class ManualImportService {
                 });
 
                 const releaseYear = albumRow?.release_date ? String(albumRow.release_date).slice(0, 4) : null;
-                const isMultiDisc = Number(albumRow?.num_volumes || 1) > 1;
+                const canonicalIdentity = !isVideo && albumId
+                    ? resolveLibraryFileIdentity({
+                        artistId,
+                        albumId,
+                        mediaId: item.tidalId,
+                        fileType: "track",
+                        quality,
+                        libraryRoot: libraryRootKey,
+                    })
+                    : null;
+                const canonicalAlbum = getCanonicalAlbumMetadata({
+                    canonicalReleaseGroupMbid: canonicalIdentity?.canonicalReleaseGroupMbid || albumRow?.mb_release_group_id,
+                    canonicalReleaseMbid: canonicalIdentity?.canonicalReleaseMbid || albumRow?.mbid,
+                });
+                const canonicalPosition = !isVideo && albumId
+                    ? resolveCanonicalTrackPosition({
+                        artistId,
+                        albumId,
+                        mediaId: item.tidalId,
+                        fileType: "track",
+                        quality,
+                        libraryRoot: libraryRootKey,
+                    })
+                    : null;
+                const canonicalReleaseYear = String(canonicalAlbum?.releaseDate || releaseYear || "").slice(0, 4) || null;
+                const isMultiDisc = Number(canonicalAlbum?.volumeCount || albumRow?.num_volumes || 1) > 1;
                 const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
                 const fullPathTemplate = isVideo ? path.join(artistFolder, namingConfig.video_file) : path.join(artistFolder, trackTemplate);
 
                 const expectedRelPath = renderRelativePath(fullPathTemplate, {
                     artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     artistMbId: artistRow?.mbid || null,
-                    albumTitle: trackData.album?.title || trackData.album_title || "Unknown Album",
-                    albumVersion: albumRow?.version,
-                    releaseYear,
-                    trackTitle: trackData.title,
-                    trackNumber: trackData.trackNumber || trackData.track_num || 1,
-                    volumeNumber: trackData.volumeNumber || trackData.volume_num || 1,
+                    albumTitle: canonicalAlbum?.title || trackData.album?.title || trackData.album_title || "Unknown Album",
+                    albumVersion: canonicalAlbum ? null : albumRow?.version,
+                    releaseYear: canonicalReleaseYear,
+                    trackTitle: canonicalPosition?.title || trackData.title,
+                    trackNumber: canonicalPosition?.trackNumber ?? trackData.trackNumber ?? trackData.track_num ?? 1,
+                    volumeNumber: canonicalPosition?.volumeNumber ?? trackData.volumeNumber ?? trackData.volume_num ?? 1,
                     explicit: Boolean(albumRow?.explicit),
                     videoTitle: trackData.title
                 }) + "." + extension;

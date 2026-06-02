@@ -5,6 +5,7 @@ export type CanonicalAlbumMetadata = {
   releaseDate: string | null;
   albumType: string | null;
   albumMbid: string | null;
+  volumeCount: number | null;
 };
 
 export function getCanonicalAlbumMetadata(input: {
@@ -19,10 +20,11 @@ export function getCanonicalAlbumMetadata(input: {
 
   const row = db.prepare(`
     SELECT
-      COALESCE(release.title, release_group.title) AS title,
+      release_group.title AS title,
       release.date AS release_date,
       release_group.primary_type AS album_type,
-      release.mbid AS album_mbid
+      release.mbid AS album_mbid,
+      release.media_count AS volume_count
     FROM Albums release_group
     LEFT JOIN AlbumReleases release
       ON release.release_group_mbid = release_group.mbid
@@ -34,6 +36,7 @@ export function getCanonicalAlbumMetadata(input: {
     release_date: string | null;
     album_type: string | null;
     album_mbid: string | null;
+    volume_count: number | null;
   } | undefined;
 
   if (!row?.title) {
@@ -45,5 +48,6 @@ export function getCanonicalAlbumMetadata(input: {
     releaseDate: row.release_date || null,
     albumType: row.album_type || null,
     albumMbid: row.album_mbid || null,
+    volumeCount: row.volume_count || null,
   };
 }

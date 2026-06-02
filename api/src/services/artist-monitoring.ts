@@ -2,12 +2,10 @@ import { db } from "../database.js";
 import { invalidateAlbumDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
-import { queueArtistWorkflow } from "./artist-workflow.js";
+import { queueArtistIntake, queueArtistWorkflow } from "./artist-workflow.js";
 import { isMusicBrainzMbid } from "./refresh-artist-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
-const MONITOR_ARTIST_WORKFLOW = "monitoring-intake" as const;
-
 export type ArtistMonitorRow = Record<string, unknown> & {
     id: string | number;
     name?: string | null;
@@ -120,10 +118,10 @@ export function queueArtistMonitoringIntake(options: {
     priority?: number;
     trigger?: number;
 }) {
-    return queueArtistWorkflow({
+    return queueArtistIntake({
         artistId: options.artistId,
         artistName: String(options.artistName || "").trim() || requireArtistName(options.artistId),
-        workflow: MONITOR_ARTIST_WORKFLOW,
+        monitored: true,
         priority: options.priority,
         trigger: options.trigger,
     });

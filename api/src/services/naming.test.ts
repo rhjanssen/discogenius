@@ -374,12 +374,22 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
   const validation = validateNamingConfig(config);
   assert.equal(Object.values(validation).every((result) => result.valid), true);
 
-  assert.deepEqual(previewNamingConfig(config), {
-    artistFolder: "Nine Inch Nails",
-    standardTrack: "The Downward Spiral (1994)/14 - Hurt.flac",
-    multiDiscTrack: "The Downward Spiral (1994)/203 - Hurt.flac",
-    video: "Nine Inch Nails - Hurt [123456789].mp4",
-  });
+  const preview = previewNamingConfig(config);
+  const normalize = (p: string) => p.replace(/\\/g, "/");
+  assert.deepEqual(
+    {
+      artistFolder: normalize(preview.artistFolder),
+      standardTrack: normalize(preview.standardTrack),
+      multiDiscTrack: normalize(preview.multiDiscTrack),
+      video: normalize(preview.video),
+    },
+    {
+      artistFolder: "Nine Inch Nails",
+      standardTrack: "The Downward Spiral (1994)/14 - Hurt.flac",
+      multiDiscTrack: "The Downward Spiral (1994)/203 - Hurt.flac",
+      video: "Nine Inch Nails - Hurt [123456789].mp4",
+    }
+  );
 });
 
 test("validateNamingConfig rejects unknown tokens and unsafe track templates", () => {

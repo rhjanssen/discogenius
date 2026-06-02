@@ -92,8 +92,9 @@ const useStyles = makeStyles({
   },
   metaRow: {
     display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
+    alignItems: "flex-start",
+    columnGap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
     minWidth: 0,
   },
@@ -104,9 +105,8 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground4,
   },
   qualityBadge: {
-    transform: "scale(0.9)",
-    transformOrigin: "left center",
     display: "inline-flex",
+    flexShrink: 0,
   },
   explicitBadge: {
     flexShrink: 0,
@@ -321,7 +321,7 @@ const LibraryTrackList = ({
             </Text>
           ))}
           {track.quality ? <Text size={200} className={styles.separator}>•</Text> : null}
-          {track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
+          {track.quality ? <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} /> : null}
           {isDownloadedTrack(track) ? <DownloadedBadge /> : null}
         </div>
       </div>

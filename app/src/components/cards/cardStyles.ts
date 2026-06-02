@@ -103,7 +103,7 @@ export const useCardStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
     },
 
     // Title row (title + badges)
@@ -164,7 +164,10 @@ export const useCardStyles = makeStyles({
         zIndex: 2,
         display: "flex",
         alignItems: "flex-start",
-        gap: tokens.spacingHorizontalXS,
+        flexWrap: "wrap",
+        columnGap: tokens.spacingHorizontalXXS,
+        rowGap: tokens.spacingVerticalXXS,
+        maxWidth: `calc(100% - ${tokens.spacingHorizontalXXL})`,
     },
 
     // Monitor indicator overlay (bottom-right of preview)

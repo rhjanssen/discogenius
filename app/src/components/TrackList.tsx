@@ -49,12 +49,15 @@ const useStyles = makeStyles({
   row: {
     display: "flex",
     flexWrap: "nowrap",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: tokens.spacingHorizontalS,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     scrollMarginTop: `calc(${tokens.spacingVerticalXXL} * 2)`,
     transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
+    "@media (min-width: 768px)": {
+      alignItems: "center",
+    },
   },
   rowClickable: {
     cursor: "pointer",
@@ -64,11 +67,15 @@ const useStyles = makeStyles({
   },
   number: {
     width: "28px",
+    paddingTop: tokens.spacingVerticalXXS,
     flexShrink: 0,
     textAlign: "center",
     color: tokens.colorNeutralForeground3,
     fontFamily: tokens.fontFamilyMonospace,
     fontSize: tokens.fontSizeBase200,
+    "@media (min-width: 768px)": {
+      paddingTop: 0,
+    },
   },
   cover: {
     width: "44px",
@@ -118,15 +125,20 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
   },
   qualityBadge: {
-    transform: "scale(0.9)",
-    transformOrigin: "left center",
+    display: "inline-flex",
+    flexShrink: 0,
   },
   trailing: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: tokens.spacingHorizontalS,
     marginLeft: "auto",
+    paddingTop: tokens.spacingVerticalXXS,
     flexShrink: 0,
+    "@media (min-width: 768px)": {
+      alignItems: "center",
+      paddingTop: 0,
+    },
   },
   actions: {
     display: "flex",
@@ -146,8 +158,9 @@ const useStyles = makeStyles({
   },
   mobileMetaRow: {
     display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
+    alignItems: "flex-start",
+    columnGap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
     minWidth: 0,
     "@media (min-width: 768px)": {
@@ -413,7 +426,7 @@ const TrackList = <T extends TrackListItem>({
                     {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
                     <Text className={styles.metaText}>{durationText}</Text>
                     {showQuality && track.quality ? <Text className={styles.separator}>•</Text> : null}
-                    {showQuality && track.quality ? <QualityBadge quality={track.quality} className={styles.qualityBadge} /> : null}
+                    {showQuality && track.quality ? <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} /> : null}
                   </div>
                 </div>
 
@@ -436,7 +449,7 @@ const TrackList = <T extends TrackListItem>({
                 {showQuality ? (
                   <div className={styles.desktopQualityColumn}>
                     {track.quality ? (
-                      <QualityBadge quality={track.quality} className={styles.qualityBadge} />
+                      <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} />
                     ) : (
                       <Text className={styles.desktopMetaText}>—</Text>
                     )}
@@ -456,6 +469,7 @@ const TrackList = <T extends TrackListItem>({
                     isDownloaded={isDownloaded}
                     isDownloading={isDownloading}
                     canShowInfo={Boolean(audioFile)}
+                    showDownload={Boolean(onDownloadTrack)}
                     onPlay={canPlay ? (event) => toggleTrackPlayback(track, event) : undefined}
                     onToggleMonitor={onToggleMonitor
                       ? (event) => {
