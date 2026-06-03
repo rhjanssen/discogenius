@@ -61,6 +61,7 @@ export interface AlbumTrackContract {
   track_number: number;
   volume_number: number;
   quality: string;
+  qualityTags?: string[];
   artist_name?: string;
   artist_credits?: Array<{ id: string; name: string; join_phrase: string }>;
   album_title?: string;
@@ -190,6 +191,10 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
     track_number: expectNumber(record.track_number, `${label}.track_number`),
     volume_number: expectNumber(record.volume_number, `${label}.volume_number`),
     quality: expectString(record.quality, `${label}.quality`),
+    qualityTags: record.qualityTags === undefined
+      ? undefined
+      : expectArray(record.qualityTags, `${label}.qualityTags`, (quality, qualityIndex) =>
+          expectString(quality, `${label}.qualityTags[${qualityIndex}]`)),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
     artist_credits: record.artist_credits === undefined
       ? undefined

@@ -67,10 +67,10 @@ export class TidalProvider implements StreamingProvider {
       ];
 
     return {
-      artists: items.filter((item: any) => item?.type === "artist").map(this.mapArtist),
-      albums: items.filter((item: any) => item?.type === "album").map(this.mapAlbum),
-      tracks: items.filter((item: any) => item?.type === "track").map(this.mapTrack),
-      videos: items.filter((item: any) => item?.type === "video").map(this.mapVideo),
+      artists: items.filter((item: any) => item?.type === "artist").map((item: any) => this.mapArtist(item)),
+      albums: items.filter((item: any) => item?.type === "album").map((item: any) => this.mapAlbum(item)),
+      tracks: items.filter((item: any) => item?.type === "track").map((item: any) => this.mapTrack(item)),
+      videos: items.filter((item: any) => item?.type === "video").map((item: any) => this.mapVideo(item)),
     };
   }
 
@@ -79,11 +79,11 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async getArtistAlbums(id: string | number): Promise<ProviderAlbum[]> {
-    return (await tidal.getArtistAlbums(String(id))).map(this.mapAlbum);
+    return (await tidal.getArtistAlbums(String(id))).map((album: any) => this.mapAlbum(album));
   }
 
   async getArtistVideos(id: string | number): Promise<ProviderVideo[]> {
-    return (await tidal.getArtistVideos(String(id))).map(this.mapVideo);
+    return (await tidal.getArtistVideos(String(id))).map((video: any) => this.mapVideo(video));
   }
 
   async getArtistCatalogPage(id: string | number): Promise<any> {
@@ -91,18 +91,18 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async getFollowedArtists(): Promise<ProviderArtist[]> {
-    return (await tidal.getFollowedArtists()).map(this.mapArtist);
+    return (await tidal.getFollowedArtists()).map((artist: any) => this.mapArtist(artist));
   }
 
   async listArtistReleaseOffers(id: string | number): Promise<ProviderAlbum[]> {
-    return (await tidal.getArtistAlbums(String(id))).map(this.mapAlbum);
+    return (await tidal.getArtistAlbums(String(id))).map((album: any) => this.mapAlbum(album));
   }
 
   async searchReleaseGroup(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]> {
     const searchText = `${query.artistName} ${query.releaseGroupTitle}`.trim();
     const results = await tidal.searchTidal(searchText, ["ALBUMS"], 25);
     const items = Array.isArray(results) ? results : results.albums?.items || [];
-    const albums: ProviderAlbum[] = items.map(this.mapAlbum);
+    const albums: ProviderAlbum[] = items.map((album: any) => this.mapAlbum(album));
     if (query.slot === "spatial") {
       return albums.filter((album) => this.isSpatialQuality(album.quality, album.qualityTags));
     }
@@ -117,7 +117,7 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async getAlbumTracks(id: string | number): Promise<ProviderTrack[]> {
-    return (await tidal.getAlbumTracks(String(id))).map(this.mapTrack);
+    return (await tidal.getAlbumTracks(String(id))).map((track: any) => this.mapTrack(track));
   }
 
   async getTrack(id: string | number): Promise<ProviderTrack> {
@@ -143,7 +143,7 @@ export class TidalProvider implements StreamingProvider {
 
   async getSimilarArtists(id: string | number): Promise<ProviderArtist[]> {
     const res = await tidal.getArtistSimilar(String(id));
-    return (Array.isArray(res) ? res : []).map(this.mapArtist);
+    return (Array.isArray(res) ? res : []).map((artist: any) => this.mapArtist(artist));
   }
 
   async getAlbumReview(id: string | number): Promise<string | null> {
@@ -153,7 +153,7 @@ export class TidalProvider implements StreamingProvider {
 
   async getSimilarAlbums(id: string | number): Promise<ProviderAlbum[]> {
     const res = await tidal.getAlbumSimilar(String(id));
-    return (Array.isArray(res) ? res : []).map(this.mapAlbum);
+    return (Array.isArray(res) ? res : []).map((album: any) => this.mapAlbum(album));
   }
 
   async getAlbumCredits(id: string | number): Promise<any[]> {
@@ -961,34 +961,55 @@ export class TidalProvider implements StreamingProvider {
     return normalized;
   }
 
-  private mapArtist(artist: any): ProviderArtist {
+  private providerId(...values: unknown[]): string {
+    for (const value of values) {
+      if (value === null || value === undefined) {
+        continue;
+      }
+
+      const normalized = String(value).trim();
+      if (!normalized || normalized.toLowerCase() === "undefined" || normalized.toLowerCase() === "null") {
+        continue;
+      }
+
+      return normalized;
+    }
+
+    return "";
+  }
+
+  private mapProviderArtist(artist: any): ProviderArtist {
     return {
-      providerId: String(artist.id ?? artist.tidal_id),
-      name: artist.name,
-      picture: artist.picture || null,
-      url: artist.url,
-      popularity: artist.popularity ?? null,
-      types: Array.isArray(artist.artist_types) ? artist.artist_types : undefined,
-      roles: Array.isArray(artist.artist_roles) ? artist.artist_roles : undefined,
+      providerId: this.providerId(artist?.providerId, artist?.provider_id, artist?.id, artist?.tidal_id),
+      name: artist?.name || artist?.artist_name || "Unknown Artist",
+      picture: artist?.picture || null,
+      url: artist?.url,
+      popularity: artist?.popularity ?? null,
+      types: Array.isArray(artist?.artist_types) ? artist.artist_types : undefined,
+      roles: Array.isArray(artist?.artist_roles) ? artist.artist_roles : undefined,
       raw: artist,
     };
+  }
+
+  private mapArtist(artist: any): ProviderArtist {
+    return this.mapProviderArtist(artist);
   }
 
   private mapAlbum(album: any): ProviderAlbum {
     const qualityTags = Array.isArray(album.mediaMetadata?.tags)
       ? album.mediaMetadata.tags.map((tag: unknown) => String(tag))
       : [];
+    const albumArtists = Array.isArray(album.artists)
+      ? album.artists.map((artist: any) => this.mapProviderArtist(artist))
+      : [];
 
     return {
-      providerId: String(album.id ?? album.tidal_id),
+      providerId: this.providerId(album.providerId, album.provider_id, album.id, album.tidal_id),
       title: album.title,
       artist: album.artist
-        ? {
-          providerId: String(album.artist.id ?? album.artist.tidal_id),
-          name: album.artist.name,
-          picture: album.artist.picture || null,
-        }
-        : { providerId: String(album.artist_id || ""), name: album.artist_name || "Unknown Artist" },
+        ? this.mapProviderArtist(album.artist)
+        : { providerId: this.providerId(album.artist_provider_id, album.artist_id), name: album.artist_name || "Unknown Artist" },
+      artists: albumArtists.length > 0 ? albumArtists : undefined,
       cover: album.cover || album.cover_id || null,
       releaseDate: album.releaseDate || album.release_date || null,
       trackCount: album.numberOfTracks ?? album.num_tracks ?? null,
@@ -1006,21 +1027,34 @@ export class TidalProvider implements StreamingProvider {
   }
 
   private mapTrack(track: any): ProviderTrack {
+    const qualityTags = Array.isArray(track.mediaMetadata?.tags)
+      ? track.mediaMetadata.tags.map((tag: unknown) => String(tag))
+      : [];
+    const artists = Array.isArray(track.artists)
+      ? track.artists.map((artist: any) => this.mapProviderArtist(artist))
+      : [];
+
     return {
-      providerId: String(track.id ?? track.tidal_id),
+      providerId: this.providerId(track.providerId, track.provider_id, track.id, track.tidal_id),
       title: track.title,
       version: track.version || null,
       artist: track.artist
-        ? { providerId: String(track.artist.id ?? track.artist.tidal_id), name: track.artist.name }
-        : { providerId: String(track.artist_id || ""), name: track.artist_name || "Unknown Artist" },
+        ? this.mapProviderArtist(track.artist)
+        : {
+          providerId: this.providerId(track.artist_provider_id, track.artist_id),
+          name: track.artist_name || artists[0]?.name || "Unknown Artist",
+        },
+      artists: artists.length > 0 ? artists : undefined,
       album: track.album
         ? {
-          providerId: String(track.album.id ?? track.album.tidal_id),
+          providerId: this.providerId(track.album.providerId, track.album.provider_id, track.album.id, track.album.tidal_id),
           title: track.album.title,
-          artist: { providerId: "", name: "Unknown Artist" },
+          artist: track.album.artist
+            ? this.mapProviderArtist(track.album.artist)
+            : { providerId: "", name: track.album.artist_name || "Unknown Artist" },
         }
         : {
-          providerId: String(track.album_id || ""),
+          providerId: this.providerId(track.album_provider_id, track.album_id),
           title: track.album_title || "Unknown",
           artist: { providerId: "", name: "Unknown Artist" },
         },
@@ -1029,24 +1063,21 @@ export class TidalProvider implements StreamingProvider {
       volumeNumber: track.volumeNumber ?? track.volume_number ?? 1,
       url: track.url,
       isrc: track.isrc || null,
-      quality: track.quality || track.audioQuality || null,
+      quality: track.quality || track.audioQuality || qualityTags[0] || null,
+      qualityTags,
       raw: track,
     };
   }
 
   private mapVideo(video: any): ProviderVideo {
     return {
-      providerId: String(video.id ?? video.tidal_id),
+      providerId: this.providerId(video.providerId, video.provider_id, video.id, video.tidal_id),
       title: video.title || video.name || "Unknown Video",
       artist: video.artist
-        ? {
-          providerId: String(video.artist.id ?? video.artist.tidal_id),
-          name: video.artist.name,
-          picture: video.artist.picture || null,
-        }
-        : { providerId: String(video.artist_id || ""), name: video.artist_name || video.subtitle || "Unknown Artist" },
+        ? this.mapProviderArtist(video.artist)
+        : { providerId: this.providerId(video.artist_provider_id, video.artist_id), name: video.artist_name || video.subtitle || "Unknown Artist" },
       artists: (video.artists || []).map((artist: any) => ({
-        providerId: String(artist.id ?? artist.tidal_id ?? ""),
+        providerId: this.providerId(artist.providerId, artist.provider_id, artist.id, artist.tidal_id),
         name: artist.name || "Unknown Artist",
         picture: artist.picture || null,
       })),

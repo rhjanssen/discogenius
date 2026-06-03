@@ -54,15 +54,55 @@ function refreshTrackState(trackId: string) {
   }
 }
 
-/**
- * Tracks routes - queries the unified 'media' table where album_id IS NOT NULL
- * Tracks are media items that belong to albums (vs. videos which have type='Music Video')
- * Updated for new schema where:
- * - 'media' table replaces 'tracks' table
- * - 'id' is the primary key (INT, TIDAL track id)
- * - 'quality' replaces 'audio_quality'
- * - 'monitor' replaces 'monitored'
- */
+function getCanonicalTrackReleaseGroup(trackId: string): { release_group_mbid: string; artist_mbid: string } | null {
+  const row = db.prepare(`
+    SELECT release.release_group_mbid, release.artist_mbid
+    FROM Tracks track
+    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+    WHERE track.mbid = ?
+    LIMIT 1
+  `).get(trackId) as { release_group_mbid?: string | null; artist_mbid?: string | null } | undefined;
+
+  if (!row?.release_group_mbid || !row.artist_mbid) {
+    return null;
+  }
+
+  return {
+    release_group_mbid: String(row.release_group_mbid),
+    artist_mbid: String(row.artist_mbid),
+  };
+}
+
+function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boolean {
+  const canonicalTrack = getCanonicalTrackReleaseGroup(trackId);
+  if (!canonicalTrack) {
+    return false;
+  }
+
+  const wanted = monitored ? 1 : 0;
+  const result = db.prepare(`
+    UPDATE ReleaseGroupSlots
+    SET wanted = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE release_group_mbid = ?
+  `).run(wanted, canonicalTrack.release_group_mbid);
+
+  if (result.changes === 0) {
+    db.prepare(`
+      INSERT INTO ReleaseGroupSlots (
+        artist_mbid, release_group_mbid, slot, wanted, match_status, updated_at
+      ) VALUES (?, ?, 'stereo', ?, 'unmatched', CURRENT_TIMESTAMP)
+      ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
+        wanted = excluded.wanted,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(canonicalTrack.artist_mbid, canonicalTrack.release_group_mbid, wanted);
+  }
+
+  return true;
+}
+
+function hasCanonicalTrack(trackId: string): boolean {
+  return Boolean(getCanonicalTrackReleaseGroup(trackId));
+}
 
 router.get("/", (req, res) => {
   try {
@@ -156,6 +196,10 @@ router.post("/:trackId/monitor", (req, res) => {
     const body = getObjectBody(req.body);
     const monitored = getRequiredBoolean(body, "monitored");
 
+    if (setCanonicalTrackMonitoring(trackId, monitored)) {
+      return res.json({ success: true });
+    }
+
     const result = db.prepare(
       "UPDATE ProviderMedia SET monitor = ? WHERE id = ? AND album_id IS NOT NULL"
     ).run(monitored ? 1 : 0, trackId);
@@ -204,6 +248,13 @@ router.patch("/:trackId", (req, res) => {
     }
 
     if (updates.length === 0) {
+      return res.json({ success: true });
+    }
+
+    if (hasCanonicalTrack(trackId)) {
+      if (monitored !== undefined) {
+        setCanonicalTrackMonitoring(trackId, monitored);
+      }
       return res.json({ success: true });
     }
 

@@ -163,6 +163,25 @@ const useStyles = makeStyles({
 const getTrackDisplayTitle = (track: Track) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 
+const getQualityTags = (track: Track): string[] => {
+  const values = Array.isArray(track.qualityTags) && track.qualityTags.length > 0
+    ? track.qualityTags
+    : track.quality
+      ? [track.quality]
+      : [];
+  const seen = new Set<string>();
+  return values
+    .map((quality) => String(quality || "").trim())
+    .filter((quality) => {
+      const key = quality.toUpperCase();
+      if (!quality || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+};
+
 const isDownloadedTrack = (track: Track) => Boolean(track.is_downloaded ?? track.downloaded);
 const isMonitoredTrack = (track: Track) => Boolean(track.is_monitored ?? track.monitor ?? track.monitored);
 const isLockedTrack = (track: Track) => Boolean(track.monitor_locked ?? track.monitor_lock);
@@ -304,6 +323,7 @@ const LibraryTrackList = ({
     const metaItems = joinTrackMeta([
       formatDurationSeconds(track.duration),
     ]);
+    const qualityTags = getQualityTags(track);
 
     return (
       <div className={styles.titleBlock}>
@@ -320,8 +340,10 @@ const LibraryTrackList = ({
               {item}
             </Text>
           ))}
-          {track.quality ? <Text size={200} className={styles.separator}>•</Text> : null}
-          {track.quality ? <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} /> : null}
+          {qualityTags.length > 0 ? <Text size={200} className={styles.separator}>•</Text> : null}
+          {qualityTags.map((quality) => (
+            <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+          ))}
           {isDownloadedTrack(track) ? <DownloadedBadge /> : null}
         </div>
       </div>

@@ -118,6 +118,8 @@ export function normalizeComparableText(input?: string | null): string {
     return (input || "")
         .toLowerCase()
         .replace(/\[tidal-\d+\]/g, " ")
+        .replace(/\((?:[^)]*\b(?:feat|ft|featuring)\b[^)]*)\)/g, " ")
+        .replace(/\[(?:[^\]]*\b(?:feat|ft|featuring)\b[^\]]*)\]/g, " ")
         .replace(/\[(?:\d+\s*-\s*bit[^\]]*|album|single|ep|video|explicit|clean|e|atmos|dolby atmos)\]/g, " ")
         .replace(/\((?:19|20)\d{2}\)/g, " ")
         .replace(/[_./\\-]+/g, " ")

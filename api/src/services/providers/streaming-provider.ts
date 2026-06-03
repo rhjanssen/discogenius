@@ -191,6 +191,7 @@ export interface ProviderTrack {
   url?: string;
   isrc?: string | null;
   quality?: string | null;
+  qualityTags?: string[];
   raw?: unknown;
 }
 

@@ -453,8 +453,51 @@ export class RefreshArtistService {
             const initialAlbums = groupMatches
                 .map((match) => albumsById.get(String(match.providerId)))
                 .filter(Boolean);
+            const targetTrackCount = Number(representative.track_count || 0);
+            const hydratedTracks = new Map<string, ReturnType<typeof RefreshArtistService.slotTrack>[]>();
+
+            const hydrateAlbum = async (albumId: string): Promise<ReturnType<typeof RefreshArtistService.slotTrack>[]> => {
+                const cached = hydratedTracks.get(albumId);
+                if (cached) {
+                    return cached;
+                }
+
+                const album = albumsById.get(albumId);
+                if (Array.isArray(album?._provider_tracks)) {
+                    hydratedTracks.set(albumId, album._provider_tracks);
+                    return album._provider_tracks;
+                }
+
+                const tracks = (await provider.getAlbumTracks(albumId)).map((track) => this.slotTrack(track));
+                hydratedTracks.set(albumId, tracks);
+                if (album) {
+                    album._provider_tracks = tracks;
+                }
+                return tracks;
+            };
+
+            for (const match of groupMatches) {
+                const album = albumsById.get(String(match.providerId));
+                if (!album) {
+                    continue;
+                }
+
+                const albumTrackCount = Number(album.num_tracks || 0);
+                const hasSuspiciousShape = targetTrackCount > 1
+                    && albumTrackCount > 0
+                    && albumTrackCount !== targetTrackCount;
+                const needsEvidence = match.status !== "verified" || match.evidence?.trackCountMatched !== true;
+                if (hasSuspiciousShape || needsEvidence) {
+                    try {
+                        await hydrateAlbum(String(album.provider_id));
+                    } catch (error) {
+                        console.warn(`[RefreshArtistService] Failed to hydrate provider album ${album.provider_id}:`, error);
+                    }
+                }
+            }
+
             const largestInitialOffer = Math.max(0, ...initialAlbums.map((album) => Number(album.num_tracks || 0)));
-            if (largestInitialOffer >= Number(representative.track_count || 0)) {
+            if (largestInitialOffer >= targetTrackCount) {
                 continue;
             }
 
@@ -485,21 +528,6 @@ export class RefreshArtistService {
                     isrcs: new Set(isrcs),
                 };
             });
-            const hydratedTracks = new Map<string, ReturnType<typeof RefreshArtistService.slotTrack>[]>();
-
-            const hydrateAlbum = async (albumId: string): Promise<ReturnType<typeof RefreshArtistService.slotTrack>[]> => {
-                const cached = hydratedTracks.get(albumId);
-                if (cached) {
-                    return cached;
-                }
-                const tracks = (await provider.getAlbumTracks(albumId)).map((track) => this.slotTrack(track));
-                hydratedTracks.set(albumId, tracks);
-                const album = albumsById.get(albumId);
-                if (album) {
-                    album._provider_tracks = tracks;
-                }
-                return tracks;
-            };
             const coversTarget = (track: ReturnType<typeof RefreshArtistService.slotTrack>, target: typeof targetRows[number]) =>
                 Boolean(track.isrc && target.isrcs.has(track.isrc))
                 || this.normalizeRecordingText(track.title) === target.normalizedTitle;

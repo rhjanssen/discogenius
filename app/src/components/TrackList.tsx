@@ -259,6 +259,24 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
   track.cover_url ?? track.album_cover ?? track.album?.cover_id ?? null;
 const getDisplayTitle = (track: TrackListItem) =>
   track.version ? `${track.title} (${track.version})` : track.title;
+const getQualityTags = (track: TrackListItem): string[] => {
+  const values = Array.isArray(track.qualityTags) && track.qualityTags.length > 0
+    ? track.qualityTags
+    : track.quality
+      ? [track.quality]
+      : [];
+  const seen = new Set<string>();
+  return values
+    .map((quality) => String(quality || "").trim())
+    .filter((quality) => {
+      const key = quality.toUpperCase();
+      if (!quality || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+};
 
 const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
   if (numbering === "index") {
@@ -385,6 +403,7 @@ const TrackList = <T extends TrackListItem>({
           const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
             ? getAlbumTitle(track, contextAlbumTitle)
             : null;
+          const qualityTags = getQualityTags(track);
           const durationText = formatDurationSeconds(track.duration);
           const coverUrl = showCover ? getAlbumArtworkUrl(track) : null;
           const isDownloading = Boolean(isTrackDownloading?.(track));
@@ -425,8 +444,10 @@ const TrackList = <T extends TrackListItem>({
                     {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
                     {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
                     <Text className={styles.metaText}>{durationText}</Text>
-                    {showQuality && track.quality ? <Text className={styles.separator}>•</Text> : null}
-                    {showQuality && track.quality ? <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} /> : null}
+                    {showQuality && qualityTags.length > 0 ? <Text className={styles.separator}>•</Text> : null}
+                    {showQuality && qualityTags.map((quality) => (
+                      <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                    ))}
                   </div>
                 </div>
 
@@ -448,8 +469,10 @@ const TrackList = <T extends TrackListItem>({
 
                 {showQuality ? (
                   <div className={styles.desktopQualityColumn}>
-                    {track.quality ? (
-                      <QualityBadge quality={track.quality} size="small" className={styles.qualityBadge} />
+                    {qualityTags.length > 0 ? (
+                      qualityTags.map((quality) => (
+                        <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                      ))
                     ) : (
                       <Text className={styles.desktopMetaText}>—</Text>
                     )}

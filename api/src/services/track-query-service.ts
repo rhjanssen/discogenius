@@ -1,14 +1,105 @@
 import { db } from "../database.js";
 import type { AlbumTrackContract, LibraryFileContract } from "../contracts/media.js";
-import { getMediaDownloadStateMap } from "./download-state.js";
 import { spatialAudioQualitySql } from "../utils/spatial-audio.js";
 
-const trackDownloadedPredicate = `
-  EXISTS (
-    SELECT 1
-    FROM TrackFiles lf
-    WHERE lf.media_id = media.id
-      AND lf.file_type = 'track'
+const canonicalTrackDownloadedPredicate = `
+  track.mbid IN (
+    SELECT downloaded_file.canonical_track_mbid
+    FROM TrackFiles downloaded_file
+    WHERE downloaded_file.canonical_track_mbid IS NOT NULL
+      AND downloaded_file.file_type = 'track'
+  )
+`;
+
+const canonicalTrackAvailablePredicate = `
+  (
+    track.release_mbid IN (
+      SELECT available_slot.selected_release_mbid
+      FROM ReleaseGroupSlots available_slot
+      WHERE available_slot.selected_release_mbid IS NOT NULL
+        AND available_slot.selected_provider_id IS NOT NULL
+    )
+    OR track.mbid IN (
+      SELECT available_file.canonical_track_mbid
+      FROM TrackFiles available_file
+      WHERE available_file.canonical_track_mbid IS NOT NULL
+        AND available_file.file_type IN ('track', 'lyrics')
+    )
+  )
+`;
+
+const canonicalTrackMonitoredPredicate = `
+  release_group.mbid IN (
+    SELECT monitored_slot.release_group_mbid
+    FROM ReleaseGroupSlots monitored_slot
+    WHERE monitored_slot.release_group_mbid IS NOT NULL
+      AND monitored_slot.wanted = 1
+  )
+`;
+
+const canonicalTrackSpatialQualityPredicate = `
+  (
+    track.release_mbid IN (
+      SELECT spatial_slot.selected_release_mbid
+      FROM ReleaseGroupSlots spatial_slot
+      WHERE spatial_slot.selected_release_mbid IS NOT NULL
+        AND ${spatialAudioQualitySql("spatial_slot.quality")}
+    )
+    OR track.mbid IN (
+      SELECT spatial_provider_item.track_mbid
+      FROM ProviderItems spatial_provider_item
+      WHERE spatial_provider_item.entity_type = 'track'
+        AND spatial_provider_item.track_mbid IS NOT NULL
+        AND ${spatialAudioQualitySql("spatial_provider_item.quality")}
+    )
+    OR track.recording_mbid IN (
+      SELECT spatial_provider_item.recording_mbid
+      FROM ProviderItems spatial_provider_item
+      WHERE spatial_provider_item.entity_type = 'track'
+        AND spatial_provider_item.recording_mbid IS NOT NULL
+        AND ${spatialAudioQualitySql("spatial_provider_item.quality")}
+    )
+    OR track.mbid IN (
+      SELECT spatial_file.canonical_track_mbid
+      FROM TrackFiles spatial_file
+      WHERE spatial_file.canonical_track_mbid IS NOT NULL
+        AND ${spatialAudioQualitySql("spatial_file.quality")}
+    )
+  )
+`;
+
+const canonicalTrackStereoQualityPredicate = `
+  (
+    track.release_mbid IN (
+      SELECT stereo_slot.selected_release_mbid
+      FROM ReleaseGroupSlots stereo_slot
+      WHERE stereo_slot.selected_release_mbid IS NOT NULL
+        AND stereo_slot.quality IS NOT NULL
+        AND NOT ${spatialAudioQualitySql("stereo_slot.quality")}
+    )
+    OR track.mbid IN (
+      SELECT stereo_provider_item.track_mbid
+      FROM ProviderItems stereo_provider_item
+      WHERE stereo_provider_item.entity_type = 'track'
+        AND stereo_provider_item.track_mbid IS NOT NULL
+        AND stereo_provider_item.quality IS NOT NULL
+        AND NOT ${spatialAudioQualitySql("stereo_provider_item.quality")}
+    )
+    OR track.recording_mbid IN (
+      SELECT stereo_provider_item.recording_mbid
+      FROM ProviderItems stereo_provider_item
+      WHERE stereo_provider_item.entity_type = 'track'
+        AND stereo_provider_item.recording_mbid IS NOT NULL
+        AND stereo_provider_item.quality IS NOT NULL
+        AND NOT ${spatialAudioQualitySql("stereo_provider_item.quality")}
+    )
+    OR track.mbid IN (
+      SELECT stereo_file.canonical_track_mbid
+      FROM TrackFiles stereo_file
+      WHERE stereo_file.canonical_track_mbid IS NOT NULL
+        AND stereo_file.quality IS NOT NULL
+        AND NOT ${spatialAudioQualitySql("stereo_file.quality")}
+    )
   )
 `;
 
@@ -21,6 +112,7 @@ export interface TrackRow {
   track_number: number;
   volume_number: number;
   quality: string;
+  quality_tags?: string | null;
   artist_name?: string;
   artist_id?: number | string | null;
   album_title?: string;
@@ -34,6 +126,12 @@ export interface TrackRow {
   created_at?: string | null;
   updated_at?: string | null;
   recording_data?: string | null;
+  preview_provider?: string | null;
+  preview_provider_track_id?: string | null;
+  musicbrainz_track_id?: string | null;
+  musicbrainz_recording_id?: string | null;
+  musicbrainz_release_id?: string | null;
+  is_downloaded?: boolean | number;
 }
 
 interface LibraryFileRow {
@@ -59,6 +157,7 @@ interface LibraryFileRow {
   bitrate?: number;
   sample_rate?: number;
   bit_depth?: number;
+  channels?: number;
   codec?: string;
   duration?: number;
   created_at?: string;
@@ -116,6 +215,7 @@ function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
     bitrate: file.bitrate,
     sample_rate: file.sample_rate,
     bit_depth: file.bit_depth,
+    channels: file.channels,
     codec: file.codec,
     duration: file.duration,
   };
@@ -140,55 +240,157 @@ function normalizeSortField(value: string | undefined): SortableTrackField {
 function getTrackOrderBy(sort: SortableTrackField, dir: "ASC" | "DESC"): string {
   switch (sort) {
     case "name":
-      return ` ORDER BY media.title ${dir}, media.id ASC`;
+      return ` ORDER BY track.title ${dir}, track.mbid ASC`;
     case "popularity":
-      return ` ORDER BY COALESCE(media.popularity, 0) ${dir}, media.id ASC`;
+      return ` ORDER BY COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`;
     case "scannedAt":
-      return ` ORDER BY (media.last_scanned IS NULL) ASC, media.last_scanned ${dir}, media.id ASC`;
+      return ` ORDER BY (track.updated_at IS NULL) ASC, track.updated_at ${dir}, track.mbid ASC`;
     case "releaseDate":
     default:
-      return ` ORDER BY (media.release_date IS NULL) ASC, media.release_date ${dir}, media.id ASC`;
+      return ` ORDER BY (release_group.first_release_date IS NULL) ASC, release_group.first_release_date ${dir}, track.mbid ASC`;
   }
 }
 
-function getTrackSelectSql(whereClause: string): string {
+function getTrackFromSql(selectClause: string, whereClause: string): string {
   return `
     SELECT
-      media.id,
-      media.album_id,
-      media.title,
-      media.version,
-      media.duration,
-      media.track_number,
-      media.volume_number,
-      media.quality,
-      media.explicit,
-      media.monitor,
-      media.monitor_lock,
-      media.release_date,
-      media.popularity,
-      media.last_scanned,
-      media.created_at,
-      media.updated_at,
-      artists.name AS artist_name,
-      artists.id AS artist_id,
-      albums.title AS album_title,
-      albums.cover AS album_cover,
-      r.data AS recording_data
-    FROM ProviderMedia media
-    LEFT JOIN ProviderAlbums albums ON media.album_id = albums.id
-    LEFT JOIN Artists artists ON media.artist_id = artists.id
-    LEFT JOIN Tracks t ON t.mbid = media.mbid
-    LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+      ${selectClause}
+    FROM Tracks track
+    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+    JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
+    LEFT JOIN ArtistMetadata artist ON artist.mbid = release_group.artist_mbid
+    LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
     ${whereClause}
   `;
 }
 
+function getTrackSelectSql(whereClause: string): string {
+  return getTrackFromSql(`
+      track.mbid AS id,
+      release_group.mbid AS album_id,
+      track.title,
+      NULL AS version,
+      COALESCE(
+        ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0),
+        0
+      ) AS duration,
+      track.position AS track_number,
+      track.medium_position AS volume_number,
+      COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
+      (
+        SELECT GROUP_CONCAT(quality_value)
+        FROM (
+          SELECT slot_quality.quality AS quality_value
+          FROM ReleaseGroupSlots slot_quality
+          WHERE slot_quality.release_group_mbid = release_group.mbid
+            AND slot_quality.selected_release_mbid = track.release_mbid
+          UNION
+          SELECT provider_quality.quality AS quality_value
+          FROM ProviderItems provider_quality
+          WHERE provider_quality.entity_type = 'track'
+            AND (
+              provider_quality.track_mbid = track.mbid
+              OR provider_quality.recording_mbid = track.recording_mbid
+            )
+          UNION
+          SELECT file_quality.quality AS quality_value
+          FROM TrackFiles file_quality
+          WHERE file_quality.canonical_track_mbid = track.mbid
+        )
+        WHERE quality_value IS NOT NULL AND TRIM(quality_value) != ''
+      ) AS quality_tags,
+      COALESCE(provider_track.explicit, 0) AS explicit,
+      CASE WHEN ${canonicalTrackMonitoredPredicate} THEN 1 ELSE 0 END AS monitor,
+      0 AS monitor_lock,
+      COALESCE(release.date, release_group.first_release_date) AS release_date,
+      COALESCE(artist.popularity, 0) AS popularity,
+      track.updated_at AS last_scanned,
+      track.updated_at AS created_at,
+      track.updated_at AS updated_at,
+      artist.name AS artist_name,
+      artist.mbid AS artist_id,
+      release_group.title AS album_title,
+      provider_album.asset_id AS album_cover,
+      recording.data AS recording_data,
+      provider_track.provider AS preview_provider,
+      provider_track.provider_id AS preview_provider_track_id,
+      track.mbid AS musicbrainz_track_id,
+      track.recording_mbid AS musicbrainz_recording_id,
+      track.release_mbid AS musicbrainz_release_id,
+      CASE WHEN ${canonicalTrackDownloadedPredicate} THEN 1 ELSE 0 END AS is_downloaded
+    `, `
+    LEFT JOIN ProviderItems provider_track
+      ON provider_track.rowid = (
+       SELECT preferred_provider_track.rowid
+       FROM ProviderItems preferred_provider_track
+       WHERE preferred_provider_track.entity_type = 'track'
+         AND (
+           preferred_provider_track.track_mbid = track.mbid
+           OR preferred_provider_track.recording_mbid = track.recording_mbid
+         )
+       ORDER BY
+         CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+         preferred_provider_track.updated_at DESC,
+         preferred_provider_track.provider_id ASC
+       LIMIT 1
+     )
+    LEFT JOIN ProviderItems provider_album
+      ON provider_album.rowid = (
+       SELECT preferred_provider_album.rowid
+       FROM ProviderItems preferred_provider_album
+       WHERE preferred_provider_album.entity_type = 'album'
+         AND preferred_provider_album.release_group_mbid = release_group.mbid
+       ORDER BY
+         CASE preferred_provider_album.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+         preferred_provider_album.updated_at DESC,
+         preferred_provider_album.provider_id ASC
+       LIMIT 1
+     )
+    LEFT JOIN ReleaseGroupSlots selected_slot
+      ON selected_slot.release_group_mbid = release_group.mbid
+     AND selected_slot.selected_release_mbid = track.release_mbid
+     AND selected_slot.id = (
+       SELECT preferred_slot.id
+       FROM ReleaseGroupSlots preferred_slot
+       WHERE preferred_slot.release_group_mbid = release_group.mbid
+         AND preferred_slot.selected_release_mbid = track.release_mbid
+       ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+       LIMIT 1
+     )
+    LEFT JOIN TrackFiles primary_file
+      ON primary_file.canonical_track_mbid = track.mbid
+     AND primary_file.file_type = 'track'
+     AND primary_file.id = (
+       SELECT preferred_file.id
+       FROM TrackFiles preferred_file
+       WHERE preferred_file.canonical_track_mbid = track.mbid
+         AND preferred_file.file_type = 'track'
+       ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
+       LIMIT 1
+     )
+    ${whereClause}
+  `);
+}
+
+function splitQualityTags(value: string | null | undefined): string[] {
+  const seen = new Set<string>();
+  return String(value || "")
+    .split(",")
+    .map((quality) => quality.trim())
+    .filter((quality) => {
+      const key = quality.toUpperCase();
+      if (!quality || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
 export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
   const trackIds = tracks.map((track) => String(track.id));
-  const downloadStates = getMediaDownloadStateMap(trackIds, "track");
-
   const filesByTrack = new Map<string, LibraryFileContract[]>();
+
   if (trackIds.length > 0) {
     const placeholders = trackIds.map(() => "?").join(",");
     const files = db.prepare(`
@@ -196,45 +398,51 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
              canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
              canonical_track_mbid, canonical_recording_mbid,
              provider, provider_entity_type, provider_id, library_slot,
-             quality, library_root, file_size, bitrate, sample_rate, bit_depth, codec, duration
+             quality, library_root, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration
       FROM TrackFiles
-      WHERE media_id IN (${placeholders})
+      WHERE (
+          canonical_track_mbid IN (${placeholders})
+          OR media_id IN (${placeholders})
+        )
         AND file_type IN ('track', 'lyrics')
       ORDER BY file_type ASC, id ASC
-    `).all(...trackIds) as LibraryFileRow[];
+    `).all(...trackIds, ...trackIds) as LibraryFileRow[];
 
     for (const file of files) {
-      const mediaId = String(file.media_id);
-      const bucket = filesByTrack.get(mediaId) || [];
+      const key = String(file.canonical_track_mbid || file.media_id || "");
+      if (!key) {
+        continue;
+      }
+      const bucket = filesByTrack.get(key) || [];
       bucket.push(normalizeLibraryFileRow(file));
-      filesByTrack.set(mediaId, bucket);
+      filesByTrack.set(key, bucket);
     }
   }
 
   return tracks.map((track) => {
     const trackId = String(track.id);
-    const isDownloaded = downloadStates.get(trackId) ?? false;
+    const files = filesByTrack.get(trackId) || [];
+    const isDownloaded = Boolean(track.is_downloaded) || files.some((file) => file.file_type === "track");
 
-    // Parse canonical artist credits
     let artist_credits: Array<{ id: string; name: string; join_phrase: string }> = [];
     if (track.recording_data) {
       try {
         const parsed = JSON.parse(track.recording_data);
         const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
         if (Array.isArray(credits) && credits.length > 0) {
-          artist_credits = credits.map((c: any) => {
-            const artistId = c.artist?.id || c.artistId || "";
-            const name = c.name || c.artist?.name || "";
-            const joinPhrase = c.joinphrase || c.join_phrase || "";
+          artist_credits = credits.map((credit: any) => {
+            const artistId = credit.artist?.id || credit.artistId || "";
+            const name = credit.name || credit.artist?.name || "";
+            const joinPhrase = credit.joinphrase || credit.join_phrase || "";
             return {
               id: artistId,
-              name: name,
+              name,
               join_phrase: joinPhrase,
             };
-          }).filter(c => c.name);
+          }).filter(credit => credit.name);
         }
       } catch {
-        // Ignore
+        // Ignore malformed MusicBrainz recording data.
       }
     }
 
@@ -250,51 +458,50 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       ...track,
       id: trackId,
       album_id: track.album_id != null ? String(track.album_id) : null,
+      preview_provider: track.preview_provider || null,
+      preview_provider_track_id: track.preview_provider_track_id || null,
+      musicbrainz_track_id: track.musicbrainz_track_id || trackId,
+      musicbrainz_recording_id: track.musicbrainz_recording_id || null,
+      musicbrainz_release_id: track.musicbrainz_release_id || null,
+      quality: track.quality || "",
+      qualityTags: splitQualityTags(track.quality_tags),
       is_monitored: Boolean(track.monitor),
       monitor_locked: Boolean(track.monitor_lock),
       explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),
       downloaded: isDownloaded,
       is_downloaded: isDownloaded,
-      files: filesByTrack.get(trackId) || [],
+      files,
       artist_credits,
     };
   });
 }
 
 export function listTracks(input: ListTracksQuery): TracksListResponse {
-  const where: string[] = ["media.album_id IS NOT NULL"];
+  const where: string[] = [canonicalTrackAvailablePredicate];
   const params: Array<string | number> = [];
-  const countParams: Array<string | number> = [];
 
   if (input.search) {
     const searchParam = `%${input.search}%`;
-    where.push("(media.title LIKE ? OR artists.name LIKE ?)");
-    params.push(searchParam, searchParam);
-    countParams.push(searchParam, searchParam);
+    where.push("(track.title LIKE ? OR artist.name LIKE ? OR release_group.title LIKE ?)");
+    params.push(searchParam, searchParam, searchParam);
   }
 
   if (input.monitored !== undefined) {
-    const monitoredValue = input.monitored ? 1 : 0;
-    where.push("media.monitor = ?");
-    params.push(monitoredValue);
-    countParams.push(monitoredValue);
+    where.push(input.monitored ? canonicalTrackMonitoredPredicate : `NOT (${canonicalTrackMonitoredPredicate})`);
   }
 
   if (input.downloaded !== undefined) {
-    where.push(input.downloaded ? trackDownloadedPredicate : `NOT (${trackDownloadedPredicate})`);
+    where.push(input.downloaded ? canonicalTrackDownloadedPredicate : `NOT (${canonicalTrackDownloadedPredicate})`);
   }
 
-  if (input.locked !== undefined) {
-    where.push("COALESCE(media.monitor_lock, 0) = ?");
-    const lockedValue = input.locked ? 1 : 0;
-    params.push(lockedValue);
-    countParams.push(lockedValue);
+  if (input.locked === true) {
+    where.push("0 = 1");
   }
 
   if (input.libraryFilter === "spatial") {
-    where.push(spatialAudioQualitySql("media.quality"));
+    where.push(canonicalTrackSpatialQualityPredicate);
   } else if (input.libraryFilter === "stereo") {
-    where.push(`NOT ${spatialAudioQualitySql("media.quality")}`);
+    where.push(canonicalTrackStereoQualityPredicate);
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
@@ -309,11 +516,8 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   `).all(...params, input.limit, input.offset) as TrackRow[];
 
   const totalResult = db.prepare(`
-    SELECT COUNT(*) as total
-    FROM ProviderMedia media
-    LEFT JOIN Artists artists ON media.artist_id = artists.id
-    ${whereClause}
-  `).get(...countParams) as { total: number };
+    ${getTrackFromSql("COUNT(*) as total", whereClause)}
+  `).get(...params) as { total: number };
 
   const items = hydrateTrackRows(rows);
 
@@ -328,7 +532,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
 
 export function getTrackDetail(trackId: string): AlbumTrackContract | null {
   const row = db.prepare(`
-    ${getTrackSelectSql("WHERE media.id = ? AND media.album_id IS NOT NULL")}
+    ${getTrackSelectSql("WHERE track.mbid = ?")}
   `).get(trackId) as TrackRow | undefined;
 
   if (!row) {
@@ -354,6 +558,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       bitrate,
       sample_rate,
       bit_depth,
+      channels,
       codec,
       duration,
       canonical_artist_mbid,
@@ -368,7 +573,8 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       created_at,
       modified_at
     FROM TrackFiles
-    WHERE media_id = ?
+    WHERE canonical_track_mbid = ?
+       OR media_id = ?
     ORDER BY
       CASE file_type
         WHEN 'track' THEN 0
@@ -377,7 +583,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       END,
       file_path ASC,
       id ASC
-  `).all(trackId) as LibraryFileRow[];
+  `).all(trackId, trackId) as LibraryFileRow[];
 
   return rows.map((row) => ({
     ...normalizeLibraryFileRow(row),

@@ -392,29 +392,11 @@ export function selectReleaseGroupSlotAlbums(
                 ? preferredCompatibleCandidates
                 : groupCandidates;
 
-        // Fetch tracks for all candidates in this group
         const candidatesWithTracks = slotCandidates.map(c => {
-            const rows = db.prepare(`
-                SELECT mbid, isrc, title, track_number, volume_number, duration FROM ProviderMedia
-                WHERE album_id = ?
-            `).all(c.album.providerId) as Array<{
-                mbid: string | null;
-                isrc: string | null;
-                title: string | null;
-                track_number: number | null;
-                volume_number: number | null;
-                duration: number | null;
-            }>;
-
-            const tracks = c.album.tracks || rows.map(r => ({
-                mbid: r.mbid ? String(r.mbid).trim() : null,
-                isrc: r.isrc ? normalizeIsrc(r.isrc) : null,
-                title: r.title,
-                track_number: r.track_number,
-                volume_number: r.volume_number,
-                duration: r.duration,
+            const tracks = (c.album.tracks || []).map(track => ({
+                ...track,
+                isrc: track.isrc ? normalizeIsrc(track.isrc) : null,
             }));
-
             return { ...c, tracks };
         });
 
@@ -502,22 +484,6 @@ export function selectReleaseGroupSlotAlbums(
         }
 
         if (coveredTargets.size < targetTrackList.length) {
-            const primaryCoverage = primary ? targetTrackList.filter(target => isTrackCovered(target, primary.tracks)).length : 0;
-            const coverageRatio = targetTrackList.length > 0 ? primaryCoverage / targetTrackList.length : 0;
-            if (primary && primaryCoverage > 0 && (targetTrackList.length <= 2 || coverageRatio >= 0.5)) {
-                const selectedMatch: ProviderReleaseGroupMatch = {
-                    ...primary.match,
-                    releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, primary, preferredReleaseRow?.mbid),
-                };
-                bestByReleaseGroupAndSlot.set(key, {
-                    releaseGroupMbid,
-                    slot,
-                    provider: primary.provider,
-                    album: primary.album,
-                    match: selectedMatch,
-                    score: primary.score,
-                });
-            }
             continue;
         }
 

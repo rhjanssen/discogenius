@@ -17,6 +17,7 @@ export interface TrackListItem {
   volume_number?: number | null;
   explicit?: boolean;
   quality?: string | null;
+  qualityTags?: string[] | null;
   album_id?: string | null;
   album_title?: string | null;
   album_cover?: string | null;

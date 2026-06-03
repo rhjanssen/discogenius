@@ -3,6 +3,8 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
 import {
+  AvatarGroup,
+  AvatarGroupItem,
   Button,
   Text,
   Title1,
@@ -181,6 +183,22 @@ const useStyles = makeStyles({
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
       columnGap: tokens.spacingHorizontalS,
+    },
+  },
+  artistAvatarGroup: {
+    display: "inline-flex",
+    alignItems: "center",
+    marginRight: tokens.spacingHorizontalXS,
+  },
+  artistNames: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    columnGap: tokens.spacingHorizontalXXS,
+    rowGap: tokens.spacingVerticalXXS,
+    "@media (min-width: 768px)": {
+      justifyContent: "flex-start",
     },
   },
   artistCredit: {
@@ -579,6 +597,70 @@ const AlbumPage = () => {
     return badges;
   }, [album?.quality, album?.spatial_quality, album?.stereo_quality]);
 
+  const renderAlbumArtists = () => {
+    if (albumArtists.length > 1) {
+      return (
+        <>
+          <AvatarGroup
+            aria-label={albumArtists.map((artist) => artist.name).join(", ")}
+            className={styles.artistAvatarGroup}
+            layout="stack"
+            size={24}
+          >
+            {albumArtists.map((artist, index) => (
+              <AvatarGroupItem
+                key={`${artist.id || artist.name}-${index}`}
+                name={artist.name}
+                image={artist.picture || artist.cover_image_url
+                  ? { src: artist.picture || artist.cover_image_url || undefined }
+                  : undefined}
+              />
+            ))}
+          </AvatarGroup>
+          <span className={styles.artistNames}>
+            {albumArtists.map((artist, index) => (
+              <Fragment key={`${artist.id || artist.name}-name-${index}`}>
+                {artist.id ? (
+                  <button
+                    type="button"
+                    className={styles.artistCreditButton}
+                    onClick={() => navigate(`/artist/${artist.id}`)}
+                  >
+                    {artist.name}
+                  </button>
+                ) : (
+                  <Text size={300}>{artist.name}</Text>
+                )}
+                {artist.join_phrase ? (
+                  <Text size={300} className={styles.artistJoinPhrase}>
+                    {artist.join_phrase}
+                  </Text>
+                ) : null}
+              </Fragment>
+            ))}
+          </span>
+        </>
+      );
+    }
+
+    return albumArtists.map((artist) => (
+      <Fragment key={artist.id || artist.name}>
+        <span className={styles.artistCredit}>
+          <ArtistPersona
+            artistId={artist.id}
+            artistName={artist.name}
+            avatarUrl={artist.picture || artist.cover_image_url || undefined}
+          />
+        </span>
+        {artist.join_phrase ? (
+          <Text size={300} className={styles.artistJoinPhrase}>
+            {artist.join_phrase}
+          </Text>
+        ) : null}
+      </Fragment>
+    ));
+  };
+
   useLayoutEffect(() => {
     if (!albumId) {
       return;
@@ -887,22 +969,7 @@ const AlbumPage = () => {
               <div
                 className={styles.artistInfo}
               >
-                {albumArtists.map((artist) => (
-                  <Fragment key={artist.id}>
-                    <span className={styles.artistCredit}>
-                    <ArtistPersona
-                      artistId={artist.id}
-                      artistName={artist.name}
-                      avatarUrl={artist.picture || artist.cover_image_url || undefined}
-                    />
-                    </span>
-                    {artist.join_phrase ? (
-                      <Text size={300} className={styles.artistJoinPhrase}>
-                        {artist.join_phrase}
-                      </Text>
-                    ) : null}
-                  </Fragment>
-                ))}
+                {renderAlbumArtists()}
               </div>
 
               <div className={styles.metadata}>

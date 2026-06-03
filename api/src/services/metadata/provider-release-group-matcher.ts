@@ -14,6 +14,7 @@ export type ProviderAlbumForReleaseGroupMatching = {
 
 export type MusicBrainzReleaseForMatching = {
     mbid: string;
+    title?: string | null;
     barcode?: string | null;
     date?: string | null;
     trackCount?: number | null;
@@ -101,6 +102,7 @@ function titleCandidatesForReleaseGroup(releaseGroup: MusicBrainzReleaseGroupFor
     const candidates = [
         normalizeComparableText(rawTitle),
         normalizeComparableText(releaseGroup.disambiguation),
+        ...(releaseGroup.releases || []).map((release) => normalizeComparableText(release.title)),
     ].filter((value): value is string => Boolean(value));
 
     // MusicBrainz can use symbolic release-group names. Provider APIs often

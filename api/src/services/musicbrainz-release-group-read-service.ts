@@ -415,6 +415,7 @@ function getReleaseTrackContracts(
             track_number: Number(track.position || 0),
             volume_number: Number(track.medium_position || 1),
             quality: "",
+            qualityTags: [],
             artist_name: artistName,
             artist_credits,
             album_title: albumTitle,
@@ -495,92 +496,6 @@ function normalizeLibraryFileFromRow(row: any) {
     };
 }
 
-function attachLocalFilesToTracks(
-    tracks: AlbumTrackContract[],
-    providerAlbumIds: string[],
-    providerId: string | null,
-): AlbumTrackContract[] {
-    const normalizedAlbumIds = Array.from(new Set(providerAlbumIds.flatMap(splitProviderAlbumIds)));
-    if (normalizedAlbumIds.length === 0 || tracks.length === 0) {
-        return tracks;
-    }
-
-    const placeholders = normalizedAlbumIds.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT
-        m.id AS media_id,
-        m.album_id,
-        m.title,
-        m.quality AS media_quality,
-        m.track_number,
-        m.volume_number,
-        lf.id AS file_id,
-        lf.artist_id,
-        lf.album_id AS file_album_id,
-        lf.media_id AS file_media_id,
-        lf.canonical_artist_mbid,
-        lf.canonical_release_group_mbid,
-        lf.canonical_release_mbid,
-        lf.canonical_track_mbid,
-        lf.canonical_recording_mbid,
-        lf.provider,
-        lf.provider_entity_type,
-        lf.provider_id,
-        lf.library_slot,
-        lf.file_type,
-        lf.file_path,
-        lf.relative_path,
-        lf.filename,
-        lf.extension,
-        lf.quality,
-        lf.library_root,
-        lf.file_size,
-        lf.bitrate,
-        lf.sample_rate,
-        lf.bit_depth,
-        lf.channels,
-        lf.codec,
-        lf.duration
-      FROM ProviderMedia m
-      LEFT JOIN TrackFiles lf
-        ON CAST(lf.media_id AS TEXT) = CAST(m.id AS TEXT)
-       AND lf.file_type = 'track'
-      WHERE CAST(m.album_id AS TEXT) IN (${placeholders})
-        AND m.type != 'Music Video'
-    `).all(...normalizedAlbumIds) as any[];
-
-    if (rows.length === 0) {
-        return tracks;
-    }
-
-    const rowsByPosition = new Map<string, any[]>();
-    for (const row of rows) {
-        const key = `${Number(row.volume_number || 1)}:${Number(row.track_number || 0)}`;
-        const list = rowsByPosition.get(key) || [];
-        list.push(row);
-        rowsByPosition.set(key, list);
-    }
-
-    return tracks.map((track) => {
-        const key = `${Number(track.volume_number || 1)}:${Number(track.track_number || 0)}`;
-        const matches = rowsByPosition.get(key) || [];
-        const files = matches
-            .filter((row) => row.file_id != null)
-            .map((row) => normalizeLibraryFileFromRow(row));
-        const bestMedia = matches[0] || null;
-
-        return {
-            ...track,
-            preview_provider: track.preview_provider || (bestMedia ? providerId : null),
-            preview_provider_track_id: track.preview_provider_track_id || (bestMedia?.media_id == null ? null : String(bestMedia.media_id)),
-            quality: bestMedia?.media_quality || track.quality,
-            downloaded: files.length > 0 || track.downloaded,
-            is_downloaded: files.length > 0 || track.is_downloaded,
-            files: files.length > 0 ? files : track.files,
-        };
-    });
-}
-
 function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackContract[] {
     const trackMbids = Array.from(new Set(
         tracks
@@ -656,6 +571,7 @@ function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackC
         return {
             ...track,
             quality: primaryFile?.quality || track.quality,
+            qualityTags: mergeQualityTags([primaryFile?.quality, ...(track.qualityTags || []), track.quality]),
             downloaded: true,
             is_downloaded: true,
             files,
@@ -663,38 +579,140 @@ function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackC
     });
 }
 
+type ProviderTrackSlot = "stereo" | "spatial" | "selected";
+
+type ProviderTrackSelection = {
+    providerId: string;
+    providerAlbumId: string;
+    slot: ProviderTrackSlot;
+    quality: string | null;
+};
+
+type AnnotatedProviderTrack = ProviderTrack & {
+    __providerId: string;
+    __providerAlbumId: string;
+    __slot: ProviderTrackSlot;
+    __albumQuality: string | null;
+    __key: string;
+};
+
+function mergeQualityTags(values: Array<string | null | undefined>): string[] {
+    const seen = new Set<string>();
+    return values
+        .map((value) => String(value || "").trim())
+        .filter((value) => {
+            const key = value.toUpperCase();
+            if (!value || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+}
+
+function providerTrackQuality(track: AnnotatedProviderTrack | null | undefined): string | null {
+    return track?.quality || track?.__albumQuality || null;
+}
+
+function providerArtistCredits(track: AnnotatedProviderTrack | null | undefined): Array<{ id: string; name: string; join_phrase: string }> {
+    const trackArtists = track?.artists;
+    const artists = Array.isArray(trackArtists) && trackArtists.length > 0
+        ? trackArtists
+        : track?.artist
+            ? [track.artist]
+            : [];
+    const seen = new Set<string>();
+    const names = artists
+        .map((artist) => String(artist?.name || "").trim())
+        .filter((name) => {
+            const key = name.toLowerCase();
+            if (!name || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+
+    return names.map((name, index) => ({
+        id: "",
+        name,
+        join_phrase: index < names.length - 1 ? ", " : "",
+    }));
+}
+
+function buildProviderTrackSelections(releaseGroup: any): ProviderTrackSelection[] {
+    const selections: Array<{
+        providerId: string;
+        providerAlbumIds: string[];
+        slot: ProviderTrackSlot;
+        quality: string | null;
+    }> = [
+        {
+            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
+            providerAlbumIds: splitProviderAlbumIds(releaseGroup.stereo_provider_id),
+            slot: "stereo",
+            quality: releaseGroup.stereo_quality || null,
+        },
+        {
+            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
+            providerAlbumIds: splitProviderAlbumIds(releaseGroup.spatial_provider_id),
+            slot: "spatial",
+            quality: releaseGroup.spatial_quality || null,
+        },
+        {
+            providerId: String(releaseGroup.selected_provider || "").trim(),
+            providerAlbumIds: splitProviderAlbumIds(releaseGroup.selected_provider_id),
+            slot: "selected",
+            quality: releaseGroup.selected_quality || null,
+        },
+    ];
+
+    const unique: ProviderTrackSelection[] = [];
+    const seenAlbums = new Set<string>();
+    for (const selection of selections) {
+        for (const providerAlbumId of selection.providerAlbumIds) {
+            const key = `${selection.providerId}:${providerAlbumId}`;
+            if (!selection.providerId || !providerAlbumId || seenAlbums.has(key)) {
+                continue;
+            }
+            seenAlbums.add(key);
+            unique.push({
+                providerId: selection.providerId,
+                providerAlbumId,
+                slot: selection.slot,
+                quality: selection.quality,
+            });
+        }
+    }
+
+    return unique;
+}
+
+function findBestProviderTrackMatch(
+    track: AlbumTrackContract,
+    providerTracks: AnnotatedProviderTrack[],
+    unusedProviderTracks: Set<string>,
+    canonicalIsrcs: Set<string> | undefined,
+    slot: ProviderTrackSlot,
+): { providerTrack: AnnotatedProviderTrack; score: number } | null {
+    const candidates = providerTracks
+        .filter((providerTrack) => providerTrack.__slot === slot && unusedProviderTracks.has(providerTrack.__key))
+        .map((providerTrack) => ({
+            providerTrack,
+            score: scoreProviderTrackMatch(track, providerTrack, canonicalIsrcs),
+        }))
+        .filter((candidate) => candidate.score >= 0.55)
+        .sort((left, right) => right.score - left.score);
+
+    return candidates[0] || null;
+}
+
 async function attachProviderPreviewTracks(
     tracks: AlbumTrackContract[],
     releaseGroup: any,
 ): Promise<AlbumTrackContract[]> {
-    const providerAlbumSelections = [
-        {
-            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.stereo_provider_id || "").trim(),
-        },
-        {
-            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.spatial_provider_id || "").trim(),
-        },
-        {
-            providerId: String(releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.selected_provider_id || "").trim(),
-        },
-    ].flatMap((selection) => splitProviderAlbumIds(selection.providerAlbumId).map((providerAlbumId) => ({
-        providerId: selection.providerId,
-        providerAlbumId,
-    }))).filter((selection) => selection.providerId && selection.providerAlbumId);
-    const seenAlbums = new Set<string>();
-    const uniqueSelections = providerAlbumSelections.filter((selection) => {
-        const key = `${selection.providerId}:${selection.providerAlbumId}`;
-        if (seenAlbums.has(key)) {
-            return false;
-        }
-        seenAlbums.add(key);
-        return true;
-    });
-
-    if (uniqueSelections.length === 0 || tracks.length === 0) {
+    const providerAlbumSelections = buildProviderTrackSelections(releaseGroup);
+    if (providerAlbumSelections.length === 0 || tracks.length === 0) {
         return tracks;
     }
 
@@ -720,39 +738,63 @@ async function attachProviderPreviewTracks(
             }
         }
 
-        const providerTracks = (await Promise.all(uniqueSelections.map(async (selection) => {
+        const providerTracks = (await Promise.all(providerAlbumSelections.map(async (selection) => {
             const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
             const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
-            return albumTracks.map((track) => ({
+            return albumTracks.map((track, index) => ({
                 ...track,
                 __providerId: selection.providerId,
-            }));
-        }))).flat();
-        const unusedProviderTracks = new Set(providerTracks.map((track) => track.providerId));
+                __providerAlbumId: selection.providerAlbumId,
+                __slot: selection.slot,
+                __albumQuality: selection.quality,
+                __key: `${selection.providerId}:${selection.providerAlbumId}:${track.providerId || index}`,
+            } satisfies AnnotatedProviderTrack));
+        }))).flat() as AnnotatedProviderTrack[];
+        const unusedProviderTracks = new Set(providerTracks.map((track) => track.__key));
 
         return tracks.map((track) => {
-            const candidates = providerTracks
-                .filter((providerTrack) => unusedProviderTracks.has(providerTrack.providerId))
-                .map((providerTrack) => ({
-                    providerTrack,
-                    score: scoreProviderTrackMatch(
-                        track,
-                        providerTrack,
-                        recordingIsrcs.get(String(track.musicbrainz_recording_id || "").trim()),
-                    ),
-                }))
-                .sort((left, right) => right.score - left.score);
-            const best = candidates[0];
-            if (!best || best.score < 0.55) {
-                return track;
+            const trackIsrcs = recordingIsrcs.get(String(track.musicbrainz_recording_id || "").trim());
+            const stereoBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "stereo");
+            const spatialBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "spatial");
+            const selectedBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "selected");
+            const bestPreview = stereoBest || selectedBest || spatialBest;
+
+            if (!stereoBest && !spatialBest && !selectedBest) {
+                return {
+                    ...track,
+                    qualityTags: mergeQualityTags([...(track.qualityTags || []), track.quality]),
+                };
             }
 
-            unusedProviderTracks.delete(best.providerTrack.providerId);
+            for (const best of [stereoBest, spatialBest, selectedBest]) {
+                if (best) {
+                    unusedProviderTracks.delete(best.providerTrack.__key);
+                }
+            }
+
+            const credits = providerArtistCredits(bestPreview?.providerTrack);
+            const qualityTags = mergeQualityTags([
+                providerTrackQuality(spatialBest?.providerTrack),
+                providerTrackQuality(stereoBest?.providerTrack),
+                providerTrackQuality(selectedBest?.providerTrack),
+                ...(track.qualityTags || []),
+                track.quality,
+            ]);
+            const primaryQuality = providerTrackQuality(stereoBest?.providerTrack)
+                || providerTrackQuality(selectedBest?.providerTrack)
+                || providerTrackQuality(spatialBest?.providerTrack)
+                || track.quality;
+
             return {
                 ...track,
-                preview_provider: String((best.providerTrack as ProviderTrack & { __providerId?: string }).__providerId || ""),
-                preview_provider_track_id: String(best.providerTrack.providerId),
-                quality: best.providerTrack.quality || track.quality,
+                preview_provider: bestPreview ? bestPreview.providerTrack.__providerId : track.preview_provider,
+                preview_provider_track_id: bestPreview ? String(bestPreview.providerTrack.providerId) : track.preview_provider_track_id,
+                quality: primaryQuality,
+                qualityTags,
+                artist_name: credits.length > 0
+                    ? credits.map((credit) => credit.name).join(", ")
+                    : track.artist_name,
+                artist_credits: credits.length > 0 ? credits : track.artist_credits,
             };
         });
     } catch (error) {
@@ -766,12 +808,6 @@ async function buildReleaseGroupTrackContracts(
     release: any,
     album: AlbumContract,
 ): Promise<AlbumTrackContract[]> {
-    const providerAlbumIds = [
-        releaseGroup.stereo_provider_id,
-        releaseGroup.spatial_provider_id,
-        releaseGroup.selected_provider_id,
-    ].flatMap(splitProviderAlbumIds);
-    const providerId = String(releaseGroup.selected_provider || "").trim() || null;
     const canonicalTracks = getReleaseTrackContracts(
         release.mbid,
         releaseGroup.mbid,
@@ -780,8 +816,7 @@ async function buildReleaseGroupTrackContracts(
         Boolean(releaseGroup.wanted),
     );
     const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks);
-    const withLocalFiles = attachLocalFilesToTracks(withCanonicalFiles, providerAlbumIds, providerId);
-    return attachProviderPreviewTracks(withLocalFiles, releaseGroup);
+    return attachProviderPreviewTracks(withCanonicalFiles, releaseGroup);
 }
 
 export class MusicBrainzReleaseGroupReadService {

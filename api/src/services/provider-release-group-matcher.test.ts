@@ -135,6 +135,31 @@ test("uses UPC evidence to verify a provider album against a MusicBrainz release
     assert.equal(match.evidence.matchedReleaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
 });
 
+test("uses MusicBrainz release titles when provider title differs from release group title", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "57231699",
+        title: "Games (feat. Marie Plassard)",
+        releaseDate: "2016-02-05",
+        type: "SINGLE",
+        trackCount: 3,
+        volumeCount: 1,
+    }, [{
+        mbid: "b14c65e0-d21c-4999-aa9e-0c2cb9a23f8d",
+        title: "Games Continued",
+        primaryType: "Single",
+        firstReleaseDate: "2016-02-05",
+        releases: [
+            { mbid: "16462c36-3748-4edd-9bb8-334628778f14", title: "Games", trackCount: 3, mediaCount: 1 },
+            { mbid: "642b667a-b2b1-424d-bfea-b1da1ae17136", title: "Games Continued", trackCount: 2, mediaCount: 1 },
+        ],
+    }]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.releaseGroup?.mbid, "b14c65e0-d21c-4999-aa9e-0c2cb9a23f8d");
+    assert.equal(match.evidence.candidateTitle, "games");
+    assert.deepEqual(match.evidence.availableReleaseMbids, ["16462c36-3748-4edd-9bb8-334628778f14"]);
+});
+
 test("matches symbolic MusicBrainz release-group titles before partial provider editions", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "394021126",

@@ -239,6 +239,7 @@ export class SkyHookProxy {
         SELECT
           r.mbid,
           r.release_group_mbid,
+          r.title,
           r.barcode,
           r.date,
           r.track_count,
@@ -251,6 +252,7 @@ export class SkyHookProxy {
       `).all(...rows.map((row) => row.mbid)) as Array<{
         mbid: string;
         release_group_mbid: string;
+        title: string | null;
         barcode: string | null;
         date: string | null;
         track_count: number | null;
@@ -261,6 +263,7 @@ export class SkyHookProxy {
     const releaseEvidenceByMbid = new Map<string, {
       releaseGroupMbid: string;
       mbid: string;
+      title: string | null;
       barcode: string | null;
       date: string | null;
       trackCount: number | null;
@@ -271,6 +274,7 @@ export class SkyHookProxy {
       const evidence = releaseEvidenceByMbid.get(release.mbid) || {
         releaseGroupMbid: release.release_group_mbid,
         mbid: release.mbid,
+        title: release.title,
         barcode: release.barcode,
         date: release.date,
         trackCount: release.track_count,
@@ -300,6 +304,7 @@ export class SkyHookProxy {
       const list = releasesByReleaseGroup.get(release.releaseGroupMbid) || [];
       list.push({
         mbid: release.mbid,
+        title: release.title,
         barcode: release.barcode,
         date: release.date,
         trackCount: release.trackCount,
