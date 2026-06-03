@@ -75,8 +75,8 @@ The schema now keeps the Lidarr-style MusicBrainz graph separate from provider a
 - `ReleaseGroupSlots` selects the provider offer that can satisfy a MusicBrainz release group and library slot.
 - `ProviderAlbums` and `ProviderMedia` remain as compatibility tables for provider-primary download/import paths that still need to be retired.
 - `TrackFiles` stores imported playable file inventory with canonical MBIDs plus provider provenance. `MetadataFiles`, `LyricFiles`, and `ExtraFiles` now receive generated/imported sidecar writes using Lidarr-style names and TypeScript service boundaries.
-- API contract normalization is in place for TIDAL entity payloads: `tidal.ts` emits canonical `id` in both search mappers and core getters (`getArtist`, `getTrack`, `getArtistVideos`, `getVideo`) while retaining `tidal_id` as a compatibility field.
-- Import matching candidate identity now uses canonical `id` (including fingerprint-backed candidate paths) instead of `tidal_id` fallback keys.
+- API contract normalization is in place for TIDAL entity payloads: `tidal.ts` emits canonical `id` plus provider-neutral `provider_id` aliases where provider-row hydration still needs them.
+- Import matching candidate identity now uses canonical `id` or provider-neutral `provider_id` aliases.
 
 **Why `mb_release_group_id` matters — and its limits:**
 

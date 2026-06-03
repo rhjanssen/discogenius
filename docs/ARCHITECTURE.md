@@ -265,8 +265,8 @@ Operationally important semantics:
 - App access and provider access are separate concerns. `AppBootstrapGate` blocks the shell only for Discogenius app auth; missing TIDAL auth no longer blocks local-library navigation.
 - Provider auth state is polled via `useTidalConnection` (TanStack Query, 30 s stale time). It controls remote catalog and login-required provider features, not shell access.
 - Search and metadata endpoints still require a live TIDAL session where remote catalog access is necessary, but users can still load the local library shell without a live TIDAL session.
-- The TIDAL API layer now emits canonical `id` values across both search mappers (`mapArtist`, `mapTrack`, `mapVideo`) and core getter responses (`getArtist`, `getTrack`, `getArtistVideos`, `getVideo`) in `tidal.ts`, while retaining `tidal_id` for compatibility where still consumed.
-- Internal matching paths that previously depended on `tidal_id` fallbacks (for example in `import-matcher-service.ts` candidate keys and fingerprint track loops) now key on canonical `id`.
+- The TIDAL provider adapter emits canonical `id` values plus provider-neutral `provider_id` aliases for remaining provider-row hydration paths.
+- Internal matching paths key on canonical `id` or `provider_id`; generic queue/API payloads use `providerId`.
 
 ## Boundaries We Intentionally Keep
 

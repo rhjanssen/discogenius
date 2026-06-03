@@ -497,7 +497,7 @@ export class ImportService {
 
             if (match.itemType === "video") {
                 const tidalVideo = match.item;
-                const videoId = tidalVideo?.id?.toString?.() ?? tidalVideo?.tidal_id?.toString?.();
+                const videoId = tidalVideo?.id?.toString?.() ?? tidalVideo?.provider_id?.toString?.();
                 if (!videoId) continue;
 
                 let videoData = tidalVideo;
@@ -650,7 +650,7 @@ export class ImportService {
             }
 
             const tidalAlbum = match.item;
-            const albumId = tidalAlbum?.id?.toString?.() ?? tidalAlbum?.tidal_id?.toString?.();
+            const albumId = tidalAlbum?.id?.toString?.() ?? tidalAlbum?.provider_id?.toString?.();
             if (!albumId) continue;
 
             try {

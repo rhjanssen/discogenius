@@ -84,7 +84,7 @@ export class ImportMatcherService {
 
     private getCandidateKey(candidate: any): string | null {
         const directId = candidate?.id?.toString?.()
-            ?? candidate?.tidal_id?.toString?.()
+            ?? candidate?.provider_id?.toString?.()
             ?? candidate?.providerId?.toString?.();
         if (directId) {
             return directId;

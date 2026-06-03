@@ -15,7 +15,7 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: T
     const rows: LibraryRow[] = [];
 
     if (match.itemType === "video") {
-        const mediaId = match.item?.id?.toString?.() ?? match.item?.tidal_id?.toString?.();
+        const mediaId = match.item?.id?.toString?.() ?? match.item?.provider_id?.toString?.();
         if (!mediaId) {
             return null;
         }

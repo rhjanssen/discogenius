@@ -888,7 +888,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
     return {
       type: "artist",
       id: item.id?.toString(),
-      tidal_id: item.id?.toString(),
+      provider_id: item.id?.toString(),
       name: item.name || 'Unknown Artist',
       picture: item.picture || null,  // UUID for artist picture
       popularity: item.popularity || 0,
@@ -900,7 +900,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
     // Construct rich object for ImportService
     return {
       id: item.id?.toString(),
-      tidal_id: item.id?.toString(), // Retained for existing internal consumers
+      provider_id: item.id?.toString(),
       title: item.title || 'Unknown Album',
       url: item.url || `https://tidal.com/album/${item.id}`,
       cover: item.cover || null,
@@ -935,7 +935,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
     return {
       type: "track",
       id: item.id?.toString(),
-      tidal_id: item.id?.toString(),
+      provider_id: item.id?.toString(),
       title: item.title || 'Unknown Track',
       name: item.title || 'Unknown Track',
       artist_id: item.artist?.id?.toString() || item.artists?.[0]?.id?.toString(),
@@ -955,7 +955,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
     return {
       type: "video",
       id: item.id?.toString(),
-      tidal_id: item.id?.toString(),
+      provider_id: item.id?.toString(),
       title: item.title || 'Unknown Video',
       name: item.title || 'Unknown Video',
       artist_id: item.artist?.id?.toString() || item.artists?.[0]?.id?.toString(),
@@ -1002,7 +1002,7 @@ export async function getArtistSimilar(artistId: string) {
 
   const data = await res.json() as any;
   return (data.items || []).map((item: any) => ({
-    tidal_id: item.id?.toString(),
+    provider_id: item.id?.toString(),
     name: item.name,
     picture: item.picture || null,  // UUID for artist picture
     popularity: item.popularity || 0,
@@ -1029,7 +1029,7 @@ export async function getArtist(artistId: string) {
 
   return {
     id: data.id.toString(),
-    tidal_id: data.id.toString(),
+    provider_id: data.id.toString(),
     name: data.name || 'Unknown Artist',
     url: data.url || `https://listen.tidal.com/artist/${data.id}`,
     picture: data.picture || null,  // UUID for artist picture
@@ -1094,7 +1094,7 @@ export async function getArtistAlbums(artistId: string) {
     if (!uniqueAlbums.has(albumId) ||
       (quality && getQualityRank(quality) > getQualityRank(uniqueAlbums.get(albumId).quality))) {
       uniqueAlbums.set(albumId, {
-        tidal_id: albumId,
+        provider_id: albumId,
         // Use the album's actual artist, not necessarily the one we queried
         artist_id: item.artist?.id?.toString() || artistId,
         artist_name: item.artist?.name || 'Unknown Artist',
@@ -1133,7 +1133,7 @@ export async function getTrack(trackId: string) {
   }
   return {
     id: data.id.toString(),
-    tidal_id: data.id.toString(),
+    provider_id: data.id.toString(),
     title: data.title,
     duration: data.duration,
     track_number: data.trackNumber || data.trackNumberOnVolume || 0,
@@ -1185,7 +1185,7 @@ export async function getAlbumSimilar(albumId: string) {
 
     const data = await res.json() as any;
     return (data.items || []).map((item: any) => ({
-      tidal_id: item.id?.toString(),
+      provider_id: item.id?.toString(),
       title: item.title,
       artist_id: item.artist?.id?.toString(),
       artist_name: item.artist?.name,
@@ -1244,7 +1244,7 @@ export async function getFollowedArtists() {
     .map((favorite: any) => {
       const artist = favorite.item;
       return {
-        tidal_id: artist.id.toString(),
+        provider_id: artist.id.toString(),
         name: artist.name || 'Unknown Artist',
         picture: artist.picture || null,  // UUID for artist picture
         url: artist.url || `https://listen.tidal.com/artist/${artist.id}`,
@@ -1263,7 +1263,7 @@ export async function getAlbum(albumId: string) {
 
   return {
     id: data.id.toString(),
-    tidal_id: data.id.toString(),
+    provider_id: data.id.toString(),
     title: data.title || 'Unknown Album',
     url: data.url || `https://tidal.com/album/${data.id}`,
     cover: data.cover || null,
@@ -1319,7 +1319,7 @@ export async function getAlbumTracks(albumId: string) {
   const data = await tidalApiRequestPaginated(`/albums/${albumId}/tracks?countryCode=${cc}`);
 
   return data.items?.filter((item: any) => item && item.id).map((item: any) => ({
-    tidal_id: item.id.toString(),
+    provider_id: item.id.toString(),
     title: item.title || 'Unknown Track',
     duration: item.duration || 0,
     track_number: item.trackNumber || 0,
@@ -1358,7 +1358,7 @@ export async function getAlbumItems(albumId: string) {
 
     if (itemType === 'video') {
       return {
-        tidal_id: item.id.toString(),
+        provider_id: item.id.toString(),
         title: item.title || 'Unknown Video',
         duration: item.duration || 0,
         track_number: item.trackNumber || 0,
@@ -1380,7 +1380,7 @@ export async function getAlbumItems(albumId: string) {
 
     // Track
     return {
-      tidal_id: item.id.toString(),
+      provider_id: item.id.toString(),
       title: item.title || 'Unknown Track',
       duration: item.duration || 0,
       track_number: item.trackNumber || 0,
@@ -1418,7 +1418,7 @@ export async function getArtistVideos(artistId: string) {
 
   return data.items?.filter((item: any) => item && item.id).map((item: any) => ({
     id: item.id.toString(),
-    tidal_id: item.id.toString(),
+    provider_id: item.id.toString(),
     title: item.title || 'Unknown Video',
     duration: item.duration || 0,
     release_date: item.releaseDate || item.streamStartDate || null,
@@ -1445,7 +1445,7 @@ export async function getVideo(videoId: string) {
   }
   return {
     id: data.id.toString(),
-    tidal_id: data.id.toString(),
+    provider_id: data.id.toString(),
     title: data.title,
     artist_id: data.artist?.id?.toString() || null,
     artist_name: data.artist?.name || null,

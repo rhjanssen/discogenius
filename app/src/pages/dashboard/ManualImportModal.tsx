@@ -617,7 +617,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                                 >
                                                                     <option value="">-- Don&apos;t Map --</option>
                                                                     {albumTracks.map((track) => {
-                                                                        const providerId = String(track.providerId || track.id || track.tidal_id || '');
+                                                                        const providerId = String(track.providerId || track.id || track.provider_id || '');
                                                                         return (
                                                                             <option key={providerId} value={providerId}>
                                                                                 {track.trackNumber || track.track_number}. {track.title} {track.version ? `(${track.version})` : ''}

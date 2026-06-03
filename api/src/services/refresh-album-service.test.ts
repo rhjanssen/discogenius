@@ -32,7 +32,7 @@ after(() => {
 test("track artist storage preserves the main credit when provider identities collapse to one canonical artist", () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const track = {
-    tidal_id: "473839984",
+    provider_id: "473839984",
     artist_id: "4526830",
     artists: [
       { id: "4526830", name: "Bastille" },
@@ -46,7 +46,7 @@ test("track artist storage preserves the main credit when provider identities co
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(track.tidal_id, artistMbid, "SAVE MY SOUL", "SINGLE", 0, "HIRES_LOSSLESS");
+  `).run(track.provider_id, artistMbid, "SAVE MY SOUL", "SINGLE", 0, "HIRES_LOSSLESS");
 
   (refreshServiceModule.RefreshAlbumService as any).storeTrackArtists(
     track,
@@ -62,9 +62,9 @@ test("track artist storage preserves the main credit when provider identities co
       SELECT media_id, artist_id, type
       FROM ProviderMediaArtists
       WHERE media_id = ?
-    `).all(track.tidal_id),
+    `).all(track.provider_id),
     [{
-      media_id: track.tidal_id,
+      media_id: track.provider_id,
       artist_id: artistMbid,
       type: "MAIN",
     }],

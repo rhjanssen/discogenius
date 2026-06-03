@@ -1,7 +1,7 @@
 /**
  * URL reconstruction helpers
  * Since we're removing URL columns from the database,
- * use these to generate URLs dynamically from tidal_id
+ * use these to generate URLs dynamically from provider_id
  */
 
 // Valid Tidal image sizes per content type (from tidalapi library)

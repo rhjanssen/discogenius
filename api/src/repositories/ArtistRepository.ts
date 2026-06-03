@@ -3,17 +3,18 @@ import { BaseRepository } from "./BaseRepository.js";
 import { resolveArtistFolderForPersistence } from "../services/artist-paths.js";
 
 /**
- * Artist entity matching the new schema
- * Note: id is now INT (TIDAL artist id) as primary key, not tidal_id
+ * Artist entity matching the provider-primary compatibility schema.
+ * TODO: migrate this repository to app-owned artist IDs once the remaining
+ * ProviderAlbums/ProviderMedia read paths are retired.
  */
 export interface Artist {
-    id: number;                    // TIDAL artist id (primary key)
+    id: number;                    // provider artist id (primary key)
     name: string;                  // Artist name
     picture?: string;              // Artist picture UUID
-    popularity?: number;           // TIDAL popularity score
+    popularity?: number;           // provider popularity score
     artist_types?: string;         // JSON array: ["ARTIST", "CONTRIBUTOR", ...ETC]
     artist_roles?: string;         // JSON array of role objects
-    user_date_added?: string;      // When added to TIDAL favorites
+    user_date_added?: string;      // When added through the provider
     similar_artists?: string;      // JSON array of similar artist IDs
     path?: string;                 // Resolved library folder path
 

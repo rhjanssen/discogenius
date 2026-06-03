@@ -40,10 +40,10 @@ export function isMusicBrainzMbid(value: string | number | null | undefined): bo
 
 function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId: string): any {
     const raw = providerAlbum.raw;
-    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+    if (raw && typeof raw === "object" && "provider_id" in raw) {
         return {
             ...raw,
-            provider_id: String((raw as any).tidal_id),
+            provider_id: String((raw as any).provider_id),
         };
     }
 
@@ -76,12 +76,12 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
 
 function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArtistId: string): any {
     const raw = providerVideo.raw;
-    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+    if (raw && typeof raw === "object" && "provider_id" in raw) {
         return raw;
     }
 
     return {
-        tidal_id: providerVideo.providerId,
+        provider_id: providerVideo.providerId,
         title: providerVideo.title,
         duration: providerVideo.duration || 0,
         release_date: providerVideo.releaseDate || null,

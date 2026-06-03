@@ -288,9 +288,9 @@ export class RefreshVideoService {
 
         db.transaction(() => {
             for (const video of videos) {
-                const exists = selectVideo.get(video.tidal_id) as any;
+                const exists = selectVideo.get(video.provider_id) as any;
                 const provider = String(video.provider || video._provider || "tidal");
-                const existingProviderItem = selectProviderItem.get(provider, String(video.tidal_id)) as { recording_id?: number | null } | undefined;
+                const existingProviderItem = selectProviderItem.get(provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
                 const identity = buildVideoIdentity(video);
                 const recordingMbid = String(video.mbid || video.recording_mbid || "").trim() || null;
                 const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || getArtistMusicBrainzId(artistId);
@@ -311,7 +311,7 @@ export class RefreshVideoService {
 
                 if (!exists) {
                     videoInsert.run(
-                        video.tidal_id,
+                        video.provider_id,
                         artistId,
                         video.album_id || null,
                         video.title,
@@ -338,13 +338,13 @@ export class RefreshVideoService {
                         cover,
                         credits,
                         recordingMbid,
-                        video.tidal_id,
+                        video.provider_id,
                     );
                 }
 
                 upsertProviderItem.run(
                     provider,
-                    String(video.tidal_id),
+                    String(video.provider_id),
                     artistMbid,
                     recordingMbid,
                     video.title,

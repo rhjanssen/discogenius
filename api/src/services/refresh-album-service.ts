@@ -23,13 +23,13 @@ function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
 
 function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
     const raw = providerAlbum.raw;
-    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+    if (raw && typeof raw === "object" && "provider_id" in raw) {
         return raw;
     }
 
     return {
         id: providerAlbum.providerId,
-        tidal_id: providerAlbum.providerId,
+        provider_id: providerAlbum.providerId,
         artist_id: providerAlbum.artist?.providerId || null,
         artist_name: providerAlbum.artist?.name || "Unknown Artist",
         artists: Array.isArray(providerAlbum.artists)
@@ -55,12 +55,12 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
 
 function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
     const raw = providerTrack.raw;
-    if (raw && typeof raw === "object" && "tidal_id" in raw) {
+    if (raw && typeof raw === "object" && "provider_id" in raw) {
         return raw;
     }
 
     return {
-        tidal_id: providerTrack.providerId,
+        provider_id: providerTrack.providerId,
         title: providerTrack.title,
         duration: providerTrack.duration || 0,
         track_number: providerTrack.trackNumber || 0,
@@ -607,7 +607,7 @@ export class RefreshAlbumService {
                     for (const currentTrack of trackBatch) {
                         const currentTrackArtistId = String(album.artist_id);
 
-                        const exists = selectMedia.get(currentTrack.tidal_id, albumId) as any;
+                        const exists = selectMedia.get(currentTrack.provider_id, albumId) as any;
 
                         let shouldMonitor = exists?.monitor || (album?.monitor ? 1 : 0);
                         if (exists?.monitor_lock) {
@@ -616,7 +616,7 @@ export class RefreshAlbumService {
 
                         if (!exists) {
                             trackInsert.run(
-                                currentTrack.tidal_id,
+                                currentTrack.provider_id,
                                 currentTrackArtistId,
                                 albumId,
                                 currentTrack.title,
@@ -658,7 +658,7 @@ export class RefreshAlbumService {
                                 currentTrack.replay_gain || null,
                                 null,
                                 currentTrack.copyright || null,
-                                currentTrack.tidal_id,
+                                currentTrack.provider_id,
                                 albumId,
                             );
                         }
@@ -693,14 +693,14 @@ export class RefreshAlbumService {
         const artistExists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(primaryArtistId);
         if (!artistExists) {
             if (!isMusicBrainzMbid(primaryArtistId)) {
-                throw new Error(`Provider album ${album.tidal_id} did not resolve to a canonical MusicBrainz artist.`);
+                throw new Error(`Provider album ${album.provider_id} did not resolve to a canonical MusicBrainz artist.`);
             }
             await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
-        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(album.tidal_id) as any;
+        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(album.provider_id) as any;
         const shouldMonitor = exists?.monitor || 0;
-        const moduleFromPage = albumModuleMap.get(album.tidal_id) || album._module || null;
+        const moduleFromPage = albumModuleMap.get(album.provider_id) || album._module || null;
 
         if (!exists) {
             db.prepare(`
@@ -711,7 +711,7 @@ export class RefreshAlbumService {
                     mb_primary, mb_secondary, monitor
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-                album.tidal_id,
+                album.provider_id,
                 primaryArtistId,
                 album.title,
                 album.version || null,
@@ -774,7 +774,7 @@ export class RefreshAlbumService {
                 album.upc || null,
                 this.getMusicBrainzPrimary(album.type, moduleFromPage, album.title),
                 this.getMusicBrainzSecondary(album.type, moduleFromPage, album.title),
-                album.tidal_id,
+                album.provider_id,
             );
         }
 
@@ -824,7 +824,7 @@ export class RefreshAlbumService {
         const scanningType = primaryArtistId === scanningArtistId ? "MAIN" : "APPEARS_ON";
         const scanningParticipant = participants.get(String(scanningArtistId));
         upsertScannedRelation.run(
-            album.tidal_id,
+            album.provider_id,
             scanningArtistId,
             scanningParticipant?.name || null,
             scanningParticipant?.ord ?? null,
@@ -836,7 +836,7 @@ export class RefreshAlbumService {
         if (primaryArtistId && primaryArtistId !== scanningArtistId) {
             const primaryParticipant = participants.get(String(primaryArtistId));
             upsertRelatedRelation.run(
-                album.tidal_id,
+                album.provider_id,
                 primaryArtistId,
                 primaryParticipant?.name || album.artist_name || null,
                 primaryParticipant?.ord ?? 0,
@@ -867,7 +867,7 @@ export class RefreshAlbumService {
                 secondaryTypeFromProviderMatch(releaseGroupMatch),
                 getAlbumIdentityStatusFromProviderMatch(releaseGroupMatch),
                 releaseGroupMatch?.method || "musicbrainz-release-group-title-year-type",
-                album.tidal_id,
+                album.provider_id,
             );
         }
 
@@ -896,7 +896,7 @@ export class RefreshAlbumService {
                 data = excluded.data,
                 updated_at = CURRENT_TIMESTAMP
         `).run(
-            String(album.tidal_id),
+            String(album.provider_id),
             album.title || null,
             album.version || null,
             album.explicit ? 1 : 0,
@@ -926,9 +926,9 @@ export class RefreshAlbumService {
                 WHERE id = ?
                   AND mbid IS NULL
                   AND mb_release_group_id IS NULL
-            `).run(album.tidal_id);
+            `).run(album.provider_id);
         } else {
-            await MetadataIdentityService.resolveAlbum(String(album.tidal_id), {
+            await MetadataIdentityService.resolveAlbum(String(album.provider_id), {
                 force: forceUpdate,
                 includeTracks: false,
             });
@@ -947,7 +947,7 @@ export class RefreshAlbumService {
     }
 
     private static storeTrackArtists(track: any, canonicalArtistId: string, resolvedGuestsMap?: Map<string, string>): void {
-        const mediaId = track?.tidal_id?.toString?.() ?? String(track?.tidal_id ?? "");
+        const mediaId = track?.provider_id?.toString?.() ?? String(track?.provider_id ?? "");
         if (!mediaId) return;
 
         db.prepare("DELETE FROM ProviderMediaArtists WHERE media_id = ?").run(mediaId);

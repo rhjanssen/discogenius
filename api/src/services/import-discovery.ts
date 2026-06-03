@@ -236,7 +236,7 @@ export function summarizeAutoImportedCandidate(candidate: ImportCandidate): Auto
         ?? null;
     const itemId =
         match.item?.id?.toString?.()
-        ?? match.item?.tidal_id?.toString?.()
+        ?? match.item?.provider_id?.toString?.()
         ?? null;
 
     if (!artistId || !artistName || !itemId) {

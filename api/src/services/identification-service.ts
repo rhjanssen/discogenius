@@ -250,7 +250,7 @@ export class IdentificationService {
             const distance = distances[rowIndex][colIndex];
 
             if (distance.normalizedDistance <= this.MAX_ACCEPTABLE_DISTANCE) {
-                mappedTracks[file.id] = (track.tidal_id ?? track.id ?? track.providerId).toString();
+                mappedTracks[file.id] = (track.provider_id ?? track.id ?? track.providerId).toString();
                 acceptedDistances.push(distance.normalizedDistance);
             }
         });
@@ -290,7 +290,7 @@ export class IdentificationService {
         const matches: AlbumCandidateMatch[] = [];
 
         for (const album of albumCandidates) {
-            const albumId = album?.id?.toString?.() || album?.tidal_id?.toString?.();
+            const albumId = album?.id?.toString?.() || album?.provider_id?.toString?.();
             if (!albumId) continue;
 
             const identification = await this.identifyUnmappedFiles(files, albumId);
