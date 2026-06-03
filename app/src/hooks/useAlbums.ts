@@ -115,7 +115,7 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
       queryClient.setQueriesData<InfiniteData<AlbumsPage>>(
         { queryKey: ["albums"] },
         (current) => updateAlbumPages(current, (album) => (
-          album.id === detail.tidalId
+          album.id === detail.providerId
             ? { ...album, is_monitored: detail.monitored }
             : album
         )),
@@ -150,7 +150,7 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
       await api.updateAlbum(albumId, { monitored: nextState });
       dispatchMonitorStateChanged({
         type: "album",
-        tidalId: albumId,
+        providerId: albumId,
         monitored: nextState,
       });
       dispatchLibraryUpdated();

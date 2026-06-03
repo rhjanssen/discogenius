@@ -8,14 +8,14 @@ export type MonitorItemType = 'artist' | 'album' | 'track' | 'video';
 
 export interface MonitorStateChangedDetail {
   type: MonitorItemType;
-  tidalId: string;
+  providerId: string;
   monitored: boolean;
 }
 
 const optimisticMonitorState = new Map<string, boolean>();
 
-function getMonitorStateKey(type: MonitorItemType, tidalId: string) {
-  return `${type}:${tidalId}`;
+function getMonitorStateKey(type: MonitorItemType, providerId: string) {
+  return `${type}:${providerId}`;
 }
 
 export function dispatchLibraryUpdated() {
@@ -41,13 +41,13 @@ export function dispatchMonitorStateChanged(detail: MonitorStateChangedDetail) {
 }
 
 export function setOptimisticMonitorState(detail: MonitorStateChangedDetail) {
-  optimisticMonitorState.set(getMonitorStateKey(detail.type, detail.tidalId), detail.monitored);
+  optimisticMonitorState.set(getMonitorStateKey(detail.type, detail.providerId), detail.monitored);
 }
 
-export function getOptimisticMonitorState(type: MonitorItemType, tidalId: string) {
-  return optimisticMonitorState.get(getMonitorStateKey(type, tidalId));
+export function getOptimisticMonitorState(type: MonitorItemType, providerId: string) {
+  return optimisticMonitorState.get(getMonitorStateKey(type, providerId));
 }
 
-export function clearOptimisticMonitorState(type: MonitorItemType, tidalId: string) {
-  optimisticMonitorState.delete(getMonitorStateKey(type, tidalId));
+export function clearOptimisticMonitorState(type: MonitorItemType, providerId: string) {
+  optimisticMonitorState.delete(getMonitorStateKey(type, providerId));
 }

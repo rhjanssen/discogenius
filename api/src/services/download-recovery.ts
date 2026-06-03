@@ -17,9 +17,9 @@ function isImportDownloadJob(job: Job): job is Job & { type: typeof JobTypes.Imp
 
 export function getExistingLibraryMediaIds(
     type: DownloadMediaType,
-    tidalId: string,
+    providerId: string,
 ): string[] {
-    const albumIds = tidalId.split(";").filter(Boolean);
+    const albumIds = providerId.split(";").filter(Boolean);
     const rows = type === 'album'
         ? (albumIds.length > 0
             ? db.prepare(`
@@ -34,7 +34,7 @@ export function getExistingLibraryMediaIds(
                 FROM TrackFiles
                 WHERE media_id = ? AND file_type = ?
             `).all(
-            tidalId,
+            providerId,
             type === 'video' ? 'video' : 'track',
         ) as Array<{ file_path: string; library_root: string; media_id: number }>;
 
@@ -55,8 +55,8 @@ export function shouldQueueRedownloadForFailedImport(job: Job): boolean {
     }
 
     const mediaType = job.payload?.type;
-    const tidalId = job.payload?.tidalId;
-    if (!isDownloadMediaType(mediaType) || !tidalId) {
+    const providerId = job.payload?.providerId;
+    if (!isDownloadMediaType(mediaType) || !providerId) {
         return false;
     }
 
@@ -65,10 +65,10 @@ export function shouldQueueRedownloadForFailedImport(job: Job): boolean {
         return true;
     }
 
-    const downloadPath = job.payload.path || getDownloadWorkspacePath(mediaType, tidalId);
+    const downloadPath = job.payload.path || getDownloadWorkspacePath(mediaType, providerId);
     if (fs.existsSync(downloadPath)) {
         return false;
     }
 
-    return getExistingLibraryMediaIds(mediaType, tidalId).length === 0;
+    return getExistingLibraryMediaIds(mediaType, providerId).length === 0;
 }

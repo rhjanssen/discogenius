@@ -355,7 +355,7 @@ const Library = () => {
     queryFn: () => api.getStreamingProviders(),
     staleTime: 60_000,
   });
-  const { addToQueue, getProgressByTidalId } = useQueueStatus();
+  const { addToQueue, getProgressByProviderId } = useQueueStatus();
   const [importing, setImporting] = useState(false);
   const { setArtwork } = useUltraBlurContext();
   const artistSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -641,7 +641,7 @@ const Library = () => {
   const setSelectedArtistMonitoring = async (monitored: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(artistSelection.selectedItems, async (artist: any) => {
       await api.toggleArtistMonitored(artist.id, monitored);
-      dispatchMonitorStateChanged({ type: "artist", tidalId: artist.id, monitored });
+      dispatchMonitorStateChanged({ type: "artist", providerId: artist.id, monitored });
     });
 
     if (succeeded > 0) {
@@ -682,7 +682,7 @@ const Library = () => {
   const setSelectedAlbumMonitoring = async (monitored: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
       await api.updateAlbum(album.id, { monitored });
-      dispatchMonitorStateChanged({ type: "album", tidalId: album.id, monitored });
+      dispatchMonitorStateChanged({ type: "album", providerId: album.id, monitored });
     });
 
     if (succeeded > 0) {
@@ -750,7 +750,7 @@ const Library = () => {
   const setSelectedTrackMonitoring = async (monitored: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
       await api.updateTrack(track.id, { monitored });
-      dispatchMonitorStateChanged({ type: "track", tidalId: track.id, monitored });
+      dispatchMonitorStateChanged({ type: "track", providerId: track.id, monitored });
     });
 
     if (succeeded > 0) {
@@ -816,7 +816,7 @@ const Library = () => {
   const setSelectedVideoMonitoring = async (monitored: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(videoSelection.selectedItems, async (video: any) => {
       await api.updateVideo(video.id, { monitored });
-      dispatchMonitorStateChanged({ type: "video", tidalId: video.id, monitored });
+      dispatchMonitorStateChanged({ type: "video", providerId: video.id, monitored });
     });
 
     if (succeeded > 0) {
@@ -1026,7 +1026,7 @@ const Library = () => {
   const renderArtistCard = (artist: any) => {
     const albumCount = artist.album_count ?? 0;
     const imageUrl = artist.picture || artist.cover_image_url || null;
-    const itemProgress = getProgressByTidalId(String(artist.id));
+    const itemProgress = getProgressByProviderId(String(artist.id));
     return (
       <MediaCard
         key={artist.id}
@@ -1211,7 +1211,7 @@ const Library = () => {
       await api.updateAlbum(album.id, { monitored: nextMonitored });
       dispatchMonitorStateChanged({
         type: 'album',
-        tidalId: album.id,
+        providerId: album.id,
         monitored: nextMonitored,
       });
       dispatchLibraryUpdated();
@@ -1238,7 +1238,7 @@ const Library = () => {
     const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
     const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
     const providerImageUrl = getAlbumCover(album.provider_cover_id, 'small');
-    const itemProgress = getProgressByTidalId(String(album.id));
+    const itemProgress = getProgressByProviderId(String(album.id));
     return (
       <MediaCard
         key={album.id}

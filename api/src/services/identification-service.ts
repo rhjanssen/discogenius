@@ -16,7 +16,7 @@ export interface IdentifiableFile {
 
 export interface IdentificationResult {
     fileId: number;
-    tidalId: string;
+    providerId: string;
 }
 
 export interface AlbumIdentificationResult {

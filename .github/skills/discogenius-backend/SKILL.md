@@ -61,7 +61,7 @@ Discogenius follows Lidarr-style patterns:
 1. Job added to `job_queue` table via `TaskQueueService.addJob()`
 2. `DownloadProcessor` polls for pending exact media download jobs
 3. Checks retry limit (max 3 attempts)
-4. Creates per-job staging folder: `{downloads}/.staging/job_{id}_{tidalId}`
+4. Creates per-job staging folder: `{downloads}/.staging/job_{id}_{providerId}`
 5. Chooses the backend based on media type (`download-routing.ts`)
 6. Spawns Orpheus for music downloads or tidal-dl-ng for video downloads
 7. Emits SSE events via `downloadEvents` with track-level progress

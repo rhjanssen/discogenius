@@ -30,13 +30,13 @@ type QueueJobRow = {
 type QueueDetailsFilters = {
   artistId?: string;
   albumIds?: string[];
-  tidalIds?: string[];
+  providerIds?: string[];
 };
 
 type NormalizedQueueDetailsFilters = {
   artistId?: string;
   albumIds: string[];
-  tidalIds: string[];
+  providerIds: string[];
 };
 
 const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
@@ -92,9 +92,9 @@ function resolveQueueItemContentType(job: QueueJobRow): QueueItemContract["type"
   return "track";
 }
 
-function getJobTidalId(job: QueueJobRow): string | null {
+function getJobProviderId(job: QueueJobRow): string | null {
   return getOptionalString(job.payload?.providerId)
-    ?? getOptionalString(job.payload?.tidalId)
+    ?? getOptionalString(job.payload?.providerId)
     ?? getOptionalString(job.ref_id);
 }
 
@@ -110,14 +110,14 @@ function getJobAlbumId(job: QueueJobRow): string | null {
   }
 
   const contentType = resolveQueueItemContentType(job);
-  const tidalId = getJobTidalId(job);
+  const providerId = getJobProviderId(job);
 
-  if (!tidalId) {
+  if (!providerId) {
     return null;
   }
 
   if (contentType === "album") {
-    return tidalId;
+    return providerId;
   }
 
   if (contentType === "track" || contentType === "video") {
@@ -125,7 +125,7 @@ function getJobAlbumId(job: QueueJobRow): string | null {
       SELECT album_id
       FROM ProviderMedia
       WHERE id = ?
-    `).get(tidalId) as { album_id?: string | number | null } | undefined;
+    `).get(providerId) as { album_id?: string | number | null } | undefined;
 
     return getOptionalString(row?.album_id);
   }
@@ -144,9 +144,9 @@ function getJobArtistId(job: QueueJobRow): string | null {
   }
 
   const contentType = resolveQueueItemContentType(job);
-  const tidalId = getJobTidalId(job);
+  const providerId = getJobProviderId(job);
 
-  if (!tidalId) {
+  if (!providerId) {
     return null;
   }
 
@@ -155,7 +155,7 @@ function getJobArtistId(job: QueueJobRow): string | null {
       SELECT artist_id
       FROM ProviderAlbums
       WHERE id = ?
-    `).get(tidalId) as { artist_id?: string | number | null } | undefined;
+    `).get(providerId) as { artist_id?: string | number | null } | undefined;
 
     return getOptionalString(row?.artist_id);
   }
@@ -165,7 +165,7 @@ function getJobArtistId(job: QueueJobRow): string | null {
       SELECT artist_id
       FROM ProviderMedia
       WHERE id = ?
-    `).get(tidalId) as { artist_id?: string | number | null } | undefined;
+    `).get(providerId) as { artist_id?: string | number | null } | undefined;
 
     return getOptionalString(row?.artist_id);
   }
@@ -177,7 +177,7 @@ function normalizeQueueDetailsFilters(filters: QueueDetailsFilters): NormalizedQ
   return {
     artistId: getOptionalString(filters.artistId) ?? undefined,
     albumIds: normalizeDistinctIdentifiers(filters.albumIds),
-    tidalIds: normalizeDistinctIdentifiers(filters.tidalIds),
+    providerIds: normalizeDistinctIdentifiers(filters.providerIds),
   };
 }
 
@@ -193,9 +193,9 @@ function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFi
     }
   }
 
-  if (filters.tidalIds.length > 0) {
-    const tidalId = getJobTidalId(job);
-    if (!tidalId || !filters.tidalIds.includes(tidalId)) {
+  if (filters.providerIds.length > 0) {
+    const providerId = getJobProviderId(job);
+    if (!providerId || !filters.providerIds.includes(providerId)) {
       return false;
     }
   }
@@ -314,14 +314,14 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
     return null;
   }
 
-  const tidalId = item.tidalId ?? "";
-  if (!tidalId) {
+  const providerId = item.providerId ?? "";
+  if (!providerId) {
     return null;
   }
 
   return {
     jobId: item.id,
-    tidalId,
+    providerId,
     type: item.type,
     quality: item.quality ?? null,
     title: item.title,
@@ -452,7 +452,7 @@ export class DownloadQueueQueryService {
   static mapDownloadQueueJob(job: QueueJobRow, queuePosition?: number): QueueItemContract {
     const downloadState = (job.payload?.downloadState as Record<string, unknown> | undefined) ?? {};
     const contentType = resolveQueueItemContentType(job);
-    const tidalId = getJobTidalId(job);
+    const providerId = getJobProviderId(job);
 
     let title = getOptionalString(job.payload?.title)
       ?? getOptionalString((job.payload?.resolved as Record<string, unknown> | undefined)?.title)
@@ -478,7 +478,7 @@ export class DownloadQueueQueryService {
       ?? getOptionalString(job.payload?.librarySlot)
       ?? null;
 
-    if (tidalId && (!title || !artist || cover === null || albumId === null || albumTitle === null || quality === null)) {
+    if (providerId && (!title || !artist || cover === null || albumId === null || albumTitle === null || quality === null)) {
       try {
         if (contentType === "album") {
           const row = db.prepare(`
@@ -486,7 +486,7 @@ export class DownloadQueueQueryService {
             FROM ProviderAlbums a
             LEFT JOIN Artists ar ON ar.id = a.artist_id
             WHERE a.id = ?
-          `).get(tidalId) as {
+          `).get(providerId) as {
             title?: string;
             cover?: string | null;
             artist_name?: string;
@@ -507,7 +507,7 @@ export class DownloadQueueQueryService {
             LEFT JOIN Artists ar ON ar.id = m.artist_id
             LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ? AND m.type = 'Music Video'
-          `).get(tidalId) as {
+          `).get(providerId) as {
             title?: string;
             artist_name?: string;
             video_cover?: string | null;
@@ -529,7 +529,7 @@ export class DownloadQueueQueryService {
             LEFT JOIN Artists ar ON ar.id = m.artist_id
             LEFT JOIN ProviderAlbums a ON a.id = m.album_id
             WHERE m.id = ?
-          `).get(tidalId) as {
+          `).get(providerId) as {
             title?: string;
             version?: string | null;
             artist_name?: string;
@@ -560,7 +560,7 @@ export class DownloadQueueQueryService {
 
     return {
       id: job.id,
-      tidalId,
+      providerId,
       type: contentType,
       status: job.status as QueueItemContract["status"],
       stage: job.type === JobTypes.ImportDownload ? "import" : "download",

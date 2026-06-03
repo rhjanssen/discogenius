@@ -51,7 +51,7 @@ test("activity page supports pagination and category/status filters", () => {
     );
     const downloadTrackId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadTrack,
-        { tidalId: "t1", url: "https://listen.tidal.com/track/t1", type: "track" },
+        { providerId: "t1", url: "https://listen.tidal.com/track/t1", type: "track" },
         "t1",
     );
 
@@ -111,7 +111,7 @@ test("activity summary returns command-surface counts without download queue dup
 
     queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadTrack,
-        { tidalId: "t2", url: "https://listen.tidal.com/track/t2", type: "track" },
+        { providerId: "t2", url: "https://listen.tidal.com/track/t2", type: "track" },
         "t2",
     );
 
@@ -149,19 +149,19 @@ test("activity page computes absolute pending queue positions without scanning t
 test("activity page prioritizes processing downloads ahead of newer pending downloads", () => {
     const processingId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadVideo,
-        { tidalId: "video-processing", url: "https://listen.tidal.com/video/video-processing", type: "video" },
+        { providerId: "video-processing", url: "https://listen.tidal.com/video/video-processing", type: "video" },
         "video-processing",
     );
     queueModule.TaskQueueService.markProcessing(processingId);
 
     const pendingOneId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadVideo,
-        { tidalId: "video-pending-1", url: "https://listen.tidal.com/video/video-pending-1", type: "video" },
+        { providerId: "video-pending-1", url: "https://listen.tidal.com/video/video-pending-1", type: "video" },
         "video-pending-1",
     );
     const pendingTwoId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadVideo,
-        { tidalId: "video-pending-2", url: "https://listen.tidal.com/video/video-pending-2", type: "video" },
+        { providerId: "video-pending-2", url: "https://listen.tidal.com/video/video-pending-2", type: "video" },
         "video-pending-2",
     );
 

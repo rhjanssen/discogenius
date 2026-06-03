@@ -33,7 +33,7 @@ type QueueGlobalJobEventData = {
 
 type QueueProgressEvent = Partial<DownloadProgress> & {
   jobId?: number;
-  tidalId?: string;
+  providerId?: string;
   type?: DownloadProgress["type"];
   state?: DownloadProgress["state"];
   error?: string | null;
@@ -88,16 +88,16 @@ function buildProgressSnapshot(
   existing?: DownloadProgress,
 ): DownloadProgress | null {
   const jobId = Number(data.jobId ?? existing?.jobId);
-  const tidalId = String(data.tidalId ?? existing?.tidalId ?? "").trim();
+  const providerId = String(data.providerId ?? existing?.providerId ?? "").trim();
   const type = data.type ?? existing?.type;
 
-  if (!Number.isFinite(jobId) || jobId <= 0 || !type || tidalId.length === 0) {
+  if (!Number.isFinite(jobId) || jobId <= 0 || !type || providerId.length === 0) {
     return null;
   }
 
   return {
     jobId,
-    tidalId,
+    providerId,
     type,
     quality: data.quality ?? existing?.quality ?? null,
     title: data.title ?? existing?.title,
@@ -119,8 +119,8 @@ function buildProgressSnapshot(
   };
 }
 
-function removeTrackedProgress(state: ProgressState, jobId: number, tidalId?: string | null): ProgressState {
-  return removeProgressSnapshot(state, jobId, tidalId);
+function removeTrackedProgress(state: ProgressState, jobId: number, providerId?: string | null): ProgressState {
+  return removeProgressSnapshot(state, jobId, providerId);
 }
 
 function useQueueStatusContextValue(): QueueStatusContextType {
@@ -266,7 +266,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
           }
 
           if (event === "completed") {
-            updateProgressState((previous) => removeTrackedProgress(previous, Number(data?.jobId), data?.tidalId));
+            updateProgressState((previous) => removeTrackedProgress(previous, Number(data?.jobId), data?.providerId));
             scheduleStatusRefresh(0);
             invalidateQueueQueries();
             toastRef.current({
@@ -336,20 +336,19 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     };
   }, [applyQueueStatus, fetchQueueStatus, invalidateQueueQueries, scheduleStatusRefresh, updateProgressState]);
 
-  const addToQueue = useCallback(async (url: string | null | undefined, type: string, tidalId?: string | null, options?: AddToQueueOptions) => {
+  const addToQueue = useCallback(async (url: string | null | undefined, type: string, providerId?: string | null, options?: AddToQueueOptions) => {
     try {
-      const response = await api.addToQueue(url, type, tidalId, options?.payload);
+      const response = await api.addToQueue(url, type, providerId, options?.payload);
       const payload = options?.payload ?? {};
-      const payloadTidalId = typeof payload.tidalId === "string" ? payload.tidalId : undefined;
       const payloadProviderId = typeof payload.providerId === "string" ? payload.providerId : undefined;
-      const resolvedTidalId = String(payloadProviderId || payloadTidalId || tidalId || "").trim();
+      const resolvedProviderId = String(payloadProviderId || providerId || "").trim();
       const normalizedType = type === "video" || type === "album" || type === "track"
         ? type
         : "track";
-      if (response?.id && resolvedTidalId) {
+      if (response?.id && resolvedProviderId) {
         updateProgressState((previous) => upsertProgressSnapshots(previous, [{
           jobId: response.id,
-          tidalId: resolvedTidalId,
+          providerId: resolvedProviderId,
           type: normalizedType,
           quality: typeof payload.quality === "string" ? payload.quality : null,
           title: typeof payload.title === "string"
@@ -535,9 +534,9 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     stats,
     isPaused,
     progressByJobId: progressState.byJobId,
-    progressByTidalId: progressState.byTidalId,
+    progressByProviderId: progressState.byProviderId,
     getProgress: (jobId: number) => progressState.byJobId.get(jobId),
-    getProgressByTidalId: (tidalId: string) => progressState.byTidalId.get(String(tidalId)),
+    getProgressByProviderId: (providerId: string) => progressState.byProviderId.get(String(providerId)),
     addToQueue,
     processItem,
     retryItem,
@@ -557,7 +556,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     pauseQueue,
     processItem,
     progressState.byJobId,
-    progressState.byTidalId,
+    progressState.byProviderId,
     reorderItems,
     resumeQueue,
     retryItem,

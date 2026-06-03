@@ -494,11 +494,11 @@ export class TaskQueueService {
         trigger: number = 0,
         queueOrder?: number | null,
     ): number {
-        // Validate download jobs have valid tidalId
+        // Validate download jobs have valid providerId
         if (isDownloadJobType(type)) {
-            const tidalId = payload?.tidalId || refId;
-            if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
-                console.warn(`[TaskQueue] Rejecting ${type} job with invalid tidalId: `, payload);
+            const providerId = payload?.providerId || refId;
+            if (!providerId || providerId === 'undefined' || providerId === 'null') {
+                console.warn(`[TaskQueue] Rejecting ${type} job with invalid providerId: `, payload);
                 return -1; // Return invalid ID to indicate rejection
             }
         }

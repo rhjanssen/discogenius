@@ -202,7 +202,7 @@ const [state, setState] = useState(() =>
 
 **Available Events**:
 - `LIBRARY_UPDATED_EVENT`: Library content changed (artist/album/track added/removed)
-- `MONITOR_STATE_CHANGED_EVENT`: Item monitor/lock state changed (with detail: type, tidalId, monitored)
+- `MONITOR_STATE_CHANGED_EVENT`: Item monitor/lock state changed (with detail: type, providerId, monitored)
 - `ACTIVITY_REFRESH_EVENT`: Activity queue needs refresh
 - `OPEN_ACTIVITY_QUEUE_EVENT`: Request open activity queue UI
 - `OPEN_SEARCH_EVENT`: Request open search UI
@@ -212,9 +212,9 @@ const [state, setState] = useState(() =>
 import { dispatchLibraryUpdated, setOptimisticMonitorState } from '@/utils/appEvents';
 
 // When monitor state changes:
-setOptimisticMonitorState({ type: 'track', tidalId: '123', monitored: true });
+setOptimisticMonitorState({ type: 'track', providerId: '123', monitored: true });
 api.updateMonitor(...); // async
-dispatchMonitorStateChanged({ type: 'track', tidalId: '123', monitored: true });
+dispatchMonitorStateChanged({ type: 'track', providerId: '123', monitored: true });
 ```
 
 **Pattern** (Listen):
@@ -416,7 +416,7 @@ import {
 export function parseDownloadJobPayload(payload: unknown) {
   const obj = expectRecord(payload, "JobPayload");
   return {
-    tidalId: expectString(obj.tidalId, "tidalId"),
+    providerId: expectString(obj.providerId, "providerId"),
     mediaType: expectString(obj.mediaType, "mediaType"),
     quality: expectOptionalString(obj.quality, "quality"),
     tags: expectArray(obj.tags, "tags", (tag, index) =>
@@ -630,14 +630,14 @@ export async function organize(filePath: string): Promise<OrganizeResult> {
 ```typescript
 export interface DownloadTrackJobPayload extends BaseJobPayload {
   type: 'DownloadTrack';
-  tidalId: string;
+  providerId: string;
   quality: AudioQualityValue;
   albumId: string;
 }
 
 export interface DownloadVideoJobPayload extends BaseJobPayload {
   type: 'DownloadVideo';
-  tidalId: string;
+  providerId: string;
   quality: VideoQualityValue;
 }
 
@@ -654,7 +654,7 @@ const payload: DownloadJobPayload = job.payload;
 // Type-safe switch
 if (payload.type === 'DownloadTrack') {
   // payload is narrowed to DownloadTrackJobPayload
-  const { tidalId, quality, albumId } = payload;
+  const { providerId, quality, albumId } = payload;
 }
 ```
 

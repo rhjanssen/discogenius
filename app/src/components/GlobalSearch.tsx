@@ -455,17 +455,17 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const handleItemClick = async (item: SearchResultItem) => {
         if (item.type === 'artist') {
-            navigate(`/artist/${item.tidalId}`);
+            navigate(`/artist/${item.providerId}`);
         } else if (item.type === 'album') {
-            navigateToAlbum(navigate, item.tidalId);
+            navigateToAlbum(navigate, item.providerId);
         } else if (item.type === 'video') {
-            navigate(`/video/${item.tidalId}`);
+            navigate(`/video/${item.providerId}`);
         } else if (item.type === 'track') {
             try {
-                const track = await api.getTrack(item.tidalId) as { album_id?: string | number | null; albumId?: string | number | null; album?: { id?: string | number | null } | null };
+                const track = await api.getTrack(item.providerId) as { album_id?: string | number | null; albumId?: string | number | null; album?: { id?: string | number | null } | null };
                 const albumId = String(track?.album_id ?? track?.albumId ?? track?.album?.id ?? '').trim();
                 if (albumId) {
-                    navigateToAlbumTrack(navigate, albumId, item.tidalId);
+                    navigateToAlbumTrack(navigate, albumId, item.providerId);
                 }
             } catch {
                 // If track detail lookup fails, keep the current page instead of navigating incorrectly.
@@ -476,7 +476,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const handleToggleItem = async (item: SearchResultItem, e: React.MouseEvent) => {
         e.stopPropagation();
-        setProcessingItems(prev => new Set(prev).add(item.tidalId));
+        setProcessingItems(prev => new Set(prev).add(item.providerId));
         try {
             // This button toggles monitoring for an item already in the library.
             if (item.monitored) await removeItem(item);
@@ -484,7 +484,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         } finally {
             setProcessingItems(prev => {
                 const next = new Set(prev);
-                next.delete(item.tidalId);
+                next.delete(item.providerId);
                 return next;
             });
         }
@@ -493,10 +493,10 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     const handleDownloadItem = async (item: SearchResultItem, e: React.MouseEvent) => {
         e.stopPropagation();
 
-        setDownloadingItems(prev => new Set(prev).add(item.tidalId));
+        setDownloadingItems(prev => new Set(prev).add(item.providerId));
         try {
             if (item.type === 'album') {
-                await api.addAlbum(item.tidalId);
+                await api.addAlbum(item.providerId);
                 toast({
                     title: "Added to queue",
                     description: `${item.name} will be downloaded shortly`,
@@ -506,12 +506,12 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 return;
             }
 
-            await addToQueue(null, item.type, item.tidalId, {
+            await addToQueue(null, item.type, item.providerId, {
                 successTitle: "Added to queue",
                 successDescription: `${item.name} will be downloaded shortly`,
                 payload: {
                     provider: "tidal",
-                    providerId: item.tidalId,
+                    providerId: item.providerId,
                     title: item.name,
                     artist: item.subtitle,
                     cover: item.imageId ?? null,
@@ -527,7 +527,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         } finally {
             setDownloadingItems(prev => {
                 const next = new Set(prev);
-                next.delete(item.tidalId);
+                next.delete(item.providerId);
                 return next;
             });
         }
@@ -542,13 +542,13 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     );
 
     const renderGridItem = (item: SearchResultItem, type: 'artist' | 'album') => {
-        const isProcessing = processingItems.has(item.tidalId);
+        const isProcessing = processingItems.has(item.providerId);
         const subtitle = item.subtitle?.split('·').slice(1).join(' · ').trim() || item.subtitle;
 
         if (type === "album") {
             return (
                 <MediaCard
-                    key={item.tidalId}
+                    key={item.providerId}
                     onClick={() => handleItemClick(item)}
                     imageUrl={getTidalImage(item.imageId, 'album', 'medium') || null}
                     alt={item.name}
@@ -560,7 +560,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
         return (
             <Card
-                key={item.tidalId}
+                key={item.providerId}
                 className={styles.artistCard}
                 onClick={() => handleItemClick(item)}
             >
@@ -596,8 +596,8 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     };
 
     const renderDetailedRow = (item: SearchResultItem) => {
-        const isProcessing = processingItems.has(item.tidalId);
-        const isDownloading = downloadingItems.has(item.tidalId);
+        const isProcessing = processingItems.has(item.providerId);
+        const isDownloading = downloadingItems.has(item.providerId);
         const isVideo = item.type === 'video';
         const canDownload = item.type === 'track' || item.type === 'album' || item.type === 'video';
         const downloadDisabled = isDownloading;
@@ -609,7 +609,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
         return (
             <div
-                key={item.tidalId}
+                key={item.providerId}
                 className={mergeClasses(styles.detailedRow, isVideo ? styles.detailedRowVideo : undefined)}
                 onClick={() => handleItemClick(item)}
             >

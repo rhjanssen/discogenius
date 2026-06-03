@@ -104,18 +104,18 @@ router.get("/:videoId", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const tidalId = getRequiredIdentifier(body, "id");
+    const providerId = getRequiredIdentifier(body, "id");
 
-    const videoData = await MediaSeedService.seedVideo(tidalId, { monitorArtist: true });
+    const videoData = await MediaSeedService.seedVideo(providerId, { monitorArtist: true });
 
     db.prepare(`
       UPDATE ProviderMedia
       SET monitor = 1,
           monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
       WHERE id = ? AND type = 'Music Video'
-    `).run(tidalId);
+    `).run(providerId);
 
-    refreshVideoState(tidalId);
+    refreshVideoState(providerId);
 
     res.json({ success: true, message: "Video added", video: videoData });
   } catch (error: any) {

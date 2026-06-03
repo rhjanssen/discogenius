@@ -110,7 +110,7 @@ export const useVideos = (options?: UseVideosOptions) => {
       queryClient.setQueriesData<InfiniteData<VideosPage>>(
         { queryKey: ["videos"] },
         (current) => updateVideoPages(current, (video) => (
-          video.id === detail.tidalId
+          video.id === detail.providerId
             ? { ...video, is_monitored: detail.monitored, monitor: detail.monitored }
             : video
         )),
@@ -144,7 +144,7 @@ export const useVideos = (options?: UseVideosOptions) => {
       );
       dispatchMonitorStateChanged({
         type: "video",
-        tidalId: videoId,
+        providerId: videoId,
         monitored: nextState,
       });
       dispatchLibraryUpdated();

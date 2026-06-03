@@ -168,7 +168,7 @@ export class UpgraderService {
 
                 TaskQueueService.addJob(
                     JobTypes.DownloadAlbum,
-                    { tidalId: albumId, reason: 'upgrade' },
+                    { providerId: albumId, reason: 'upgrade' },
                     albumId,
                     -5
                 );
@@ -195,7 +195,7 @@ export class UpgraderService {
 
             TaskQueueService.addJob(
                 jobType,
-                { tidalId: d.mediaId, reason: 'upgrade' },
+                { providerId: d.mediaId, reason: 'upgrade' },
                 d.mediaId,
                 -5
             );

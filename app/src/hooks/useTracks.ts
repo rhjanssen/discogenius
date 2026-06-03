@@ -137,7 +137,7 @@ export const useTracks = (options?: UseTracksOptions) => {
       queryClient.setQueriesData<InfiniteData<TracksPage>>(
         { queryKey: ["tracks"] },
         (current) => updateTrackPages(current, (track) => (
-          track.id === detail.tidalId
+          track.id === detail.providerId
             ? { ...track, is_monitored: detail.monitored, monitor: detail.monitored }
             : track
         )),

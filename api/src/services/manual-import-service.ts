@@ -13,7 +13,7 @@ import {
 } from "./import-finalize-service.js";
 
 export class ManualImportService {
-    async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
+    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<void> {
         const { db } = await import("../database.js");
         const { streamingProviderManager } = await import("./providers/index.js");
         const { RefreshAlbumService } = await import("./refresh-album-service.js");
@@ -33,7 +33,7 @@ export class ManualImportService {
         // Fetch all remote metadata, fingerprints, and FS stats before touching the DB.
         interface CollectedItem {
             id: number;
-            tidalId: string;
+            providerId: string;
             file: any;
             trackData: any;
             artistId: string;
@@ -73,18 +73,18 @@ export class ManualImportService {
                 let trackData: any;
                 if (isVideo) {
                     try {
-                        trackData = await provider.getVideo?.(item.tidalId);
+                        trackData = await provider.getVideo?.(item.providerId);
                     } catch (videoError: any) {
-                        console.error(`[Bulk Import] Could not resolve video ${item.tidalId} for file ${file.filename}`, videoError);
+                        console.error(`[Bulk Import] Could not resolve video ${item.providerId} for file ${file.filename}`, videoError);
                         continue;
                     }
                 } else {
                     try {
-                        trackData = await provider.getTrack(item.tidalId);
+                        trackData = await provider.getTrack(item.providerId);
                     } catch (e: any) {
-                        console.warn(`[Bulk Import] getTrack(${item.tidalId}) failed: ${e.message}. Trying getAlbumTracks...`);
+                        console.warn(`[Bulk Import] getTrack(${item.providerId}) failed: ${e.message}. Trying getAlbumTracks...`);
                         try {
-                            const tracks = await provider.getAlbumTracks(item.tidalId);
+                            const tracks = await provider.getAlbumTracks(item.providerId);
 
                             let bestTrack = tracks.length > 0 ? tracks[0] : null;
                             const lowerFilename = file.filename.toLowerCase();
@@ -100,12 +100,12 @@ export class ManualImportService {
 
                             if (bestTrack) {
                                 trackData = await provider.getTrack(bestTrack.providerId);
-                                console.log(`[Bulk Import] Resolved album ${item.tidalId} to track ${bestTrack.providerId} for file ${file.filename}`);
+                                console.log(`[Bulk Import] Resolved album ${item.providerId} to track ${bestTrack.providerId} for file ${file.filename}`);
                             } else {
                                 throw new Error("No tracks found in album");
                             }
                         } catch (e2: any) {
-                            console.error(`[Bulk Import] Could not resolve album ${item.tidalId} for file ${file.filename}`, e2);
+                            console.error(`[Bulk Import] Could not resolve album ${item.providerId} for file ${file.filename}`, e2);
                             continue;
                         }
                     }
@@ -177,7 +177,7 @@ export class ManualImportService {
                     ? resolveLibraryFileIdentity({
                         artistId,
                         albumId,
-                        mediaId: item.tidalId,
+                        mediaId: item.providerId,
                         fileType: "track",
                         quality,
                         libraryRoot: libraryRootKey,
@@ -191,7 +191,7 @@ export class ManualImportService {
                     ? resolveCanonicalTrackPosition({
                         artistId,
                         albumId,
-                        mediaId: item.tidalId,
+                        mediaId: item.providerId,
                         fileType: "track",
                         quality,
                         libraryRoot: libraryRootKey,
@@ -225,7 +225,7 @@ export class ManualImportService {
 
                 collected.push({
                     id: item.id,
-                    tidalId: item.tidalId,
+                    providerId: item.providerId,
                     file,
                     trackData,
                     artistId,
@@ -248,7 +248,7 @@ export class ManualImportService {
                     artistFolder,
                 });
             } catch (outerError: any) {
-                console.error(`[Bulk Import] Failed collecting metadata for file ${item.id} → TIDAL ${item.tidalId}:`, outerError);
+                console.error(`[Bulk Import] Failed collecting metadata for file ${item.id} → TIDAL ${item.providerId}:`, outerError);
             }
         }
 
@@ -260,7 +260,7 @@ export class ManualImportService {
         const audioDirMappings = new Map<string, ImportedDirectoryMapping>();
         const videoInsertedIds: number[] = [];
         const videoDirMappings = new Map<string, ImportedDirectoryMapping>();
-        const statusUpdates: Array<{ albumId: string | null; tidalId: string }> = [];
+        const statusUpdates: Array<{ albumId: string | null; providerId: string }> = [];
 
         db.transaction(() => {
             for (const c of collected) {
@@ -309,7 +309,7 @@ export class ManualImportService {
                             cover = COALESCE(excluded.cover, cover),
                             monitor = CASE WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1 ELSE monitor END
                     `).run(
-                        c.tidalId, c.artistId, c.albumId || null,
+                        c.providerId, c.artistId, c.albumId || null,
                         c.trackData.title || "Unknown Video", c.trackData.version || null,
                         c.trackData.release_date || null, c.trackData.explicit ? 1 : 0,
                         c.trackData.quality || "MP4_1080P", c.trackData.duration || 0,
@@ -323,7 +323,7 @@ export class ManualImportService {
                     WHERE media_id = ? AND file_type = ?
                     ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
                     LIMIT 1
-                `).get(c.tidalId, c.fileType, c.file.file_path) as {
+                `).get(c.providerId, c.fileType, c.file.file_path) as {
                     id: number; file_path: string; relative_path: string | null; library_root: string | null;
                 } | undefined;
 
@@ -343,7 +343,7 @@ export class ManualImportService {
                     db.prepare(`
                         UPDATE UnmappedFiles SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
                     `).run("Duplicate of an existing imported library file", c.id);
-                    console.warn(`[Bulk Import] Skipping duplicate: ${c.file.file_path} for media ${c.tidalId}`);
+                    console.warn(`[Bulk Import] Skipping duplicate: ${c.file.file_path} for media ${c.providerId}`);
                     continue;
                 }
 
@@ -358,7 +358,7 @@ export class ManualImportService {
                             modified_at=?, verified_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     `).run(
-                        c.artistId, c.albumId, c.tidalId, c.file.file_path, c.relativePath,
+                        c.artistId, c.albumId, c.providerId, c.file.file_path, c.relativePath,
                         c.libraryRootKey, c.file.filename, c.extension, c.stats.size,
                         c.trackData.duration || 0, c.fileType, c.quality, c.needsRename,
                         c.fullPathTemplate, c.expectedPath, c.file.filename,
@@ -366,7 +366,7 @@ export class ManualImportService {
                         existingLibraryFile.id,
                     );
                     db.prepare(`DELETE FROM TrackFiles WHERE media_id = ? AND file_type = ? AND id != ?`)
-                        .run(c.tidalId, c.fileType, existingLibraryFile.id);
+                        .run(c.providerId, c.fileType, existingLibraryFile.id);
                 } else {
                     db.prepare(`
                         INSERT INTO TrackFiles (
@@ -392,7 +392,7 @@ export class ManualImportService {
                             expected_path = excluded.expected_path, fingerprint = excluded.fingerprint,
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
-                        artistId: c.artistId, albumId: c.albumId, mediaId: c.tidalId,
+                        artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
                         filePath: c.file.file_path, relativePath: c.relativePath,
                         libraryRoot: c.libraryRootKey, filename: c.file.filename,
                         extension: c.extension, fileSize: c.stats.size,
@@ -407,7 +407,7 @@ export class ManualImportService {
                 // Monitor media + remove from unmapped
                 db.prepare(`
                     UPDATE ProviderMedia SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
-                `).run(c.tidalId);
+                `).run(c.providerId);
                 db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
 
                 // Track finalization targets (outside transaction, post-commit)
@@ -426,7 +426,7 @@ export class ManualImportService {
                     });
                 }
 
-                statusUpdates.push({ albumId: c.albumId, tidalId: c.tidalId });
+                statusUpdates.push({ albumId: c.albumId, providerId: c.providerId });
             }
         })();
 
@@ -436,7 +436,7 @@ export class ManualImportService {
                 if (su.albumId) {
                     updateAlbumDownloadStatus(su.albumId);
                 } else {
-                    updateArtistDownloadStatusFromMedia(su.tidalId);
+                    updateArtistDownloadStatusFromMedia(su.providerId);
                 }
             } catch { /* best-effort */ }
         }

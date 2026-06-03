@@ -18,20 +18,20 @@ function snapToValidSize(requestedSize: number, validSizes: number[]): number {
     return larger ?? validSizes[validSizes.length - 1];
 }
 
-export function getTidalAlbumUrl(tidalId: string): string {
-    return `https://listen.tidal.com/album/${tidalId}`;
+export function getTidalAlbumUrl(providerId: string): string {
+    return `https://listen.tidal.com/album/${providerId}`;
 }
 
-export function getTidalTrackUrl(tidalId: string): string {
-    return `https://listen.tidal.com/track/${tidalId}`;
+export function getTidalTrackUrl(providerId: string): string {
+    return `https://listen.tidal.com/track/${providerId}`;
 }
 
-export function getTidalVideoUrl(tidalId: string): string {
-    return `https://listen.tidal.com/video/${tidalId}`;
+export function getTidalVideoUrl(providerId: string): string {
+    return `https://listen.tidal.com/video/${providerId}`;
 }
 
-export function getTidalArtistUrl(tidalId: string): string {
-    return `https://listen.tidal.com/artist/${tidalId}`;
+export function getTidalArtistUrl(providerId: string): string {
+    return `https://listen.tidal.com/artist/${providerId}`;
 }
 
 /**

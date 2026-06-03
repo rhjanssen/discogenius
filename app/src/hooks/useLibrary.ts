@@ -202,9 +202,9 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     }
   }, [artistsQuery, statsQuery, toast]);
 
-  const deleteArtist = useCallback(async (tidalId: string) => {
+  const deleteArtist = useCallback(async (providerId: string) => {
     try {
-      await api.deleteArtist(tidalId);
+      await api.deleteArtist(providerId);
       await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
 
       toast({
@@ -221,9 +221,9 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     }
   }, [artistsQuery, statsQuery, toast]);
 
-  const updateArtist = useCallback(async (tidalId: string, data: { is_monitored?: boolean }) => {
+  const updateArtist = useCallback(async (providerId: string, data: { is_monitored?: boolean }) => {
     try {
-      await api.updateArtist(tidalId, data);
+      await api.updateArtist(providerId, data);
       await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
 
       toast({

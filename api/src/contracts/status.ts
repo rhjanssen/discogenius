@@ -38,7 +38,7 @@ export interface QueueItemContract {
   quality?: string | null;
   slot?: string | null;
   stage?: QueueStageContract;
-  tidalId: string | null;
+  providerId: string | null;
   path: string | null;
   status: QueueItemStatusContract;
   progress: number;
@@ -86,14 +86,14 @@ export interface QueueStatusContract {
   isPaused: boolean;
   processing: boolean;
   currentJobId?: number;
-  currentTidalId?: string;
+  currentProviderId?: string;
   currentType?: string;
   stats?: TaskQueueStatContract[];
 }
 
 export interface DownloadProgressContract {
   jobId: number;
-  tidalId: string;
+  providerId: string;
   type: DownloadContentTypeContract;
   quality?: string | null;
   title?: string;
@@ -117,7 +117,7 @@ export interface DownloadProgressContract {
 
 export interface DownloadStartedEventContract {
   jobId: number;
-  tidalId: string;
+  providerId: string;
   type: DownloadContentTypeContract;
   quality?: string | null;
   title?: string;
@@ -238,7 +238,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     quality: expectNullableString(record.quality, `${label}.quality`),
     slot: expectNullableString(record.slot, `${label}.slot`) ?? null,
     stage: stage as QueueStageContract | undefined,
-    tidalId: expectNullableString(record.tidalId, `${label}.tidalId`) ?? null,
+    providerId: expectNullableString(record.providerId, `${label}.providerId`) ?? null,
     path: expectNullableString(record.path, `${label}.path`) ?? null,
     status: status as QueueItemStatusContract,
     progress: expectNumber(record.progress, `${label}.progress`),
@@ -369,7 +369,7 @@ export function parseQueueStatusContract(value: unknown): QueueStatusContract {
     isPaused: expectBoolean(record.isPaused, "queueStatus.isPaused"),
     processing: expectBoolean(record.processing, "queueStatus.processing"),
     currentJobId: expectOptionalNumber(record.currentJobId, "queueStatus.currentJobId"),
-    currentTidalId: expectOptionalString(record.currentTidalId, "queueStatus.currentTidalId"),
+    currentProviderId: expectOptionalString(record.currentProviderId, "queueStatus.currentProviderId"),
     currentType: expectOptionalString(record.currentType, "queueStatus.currentType"),
     stats: record.stats === undefined ? undefined : expectArray(record.stats, "queueStatus.stats", parseTaskQueueStatContract),
   };
@@ -395,7 +395,7 @@ export function parseDownloadProgressContract(value: unknown): DownloadProgressC
 
   return {
     jobId: expectNumber(record.jobId, "downloadProgress.jobId"),
-    tidalId: expectIdentifierString(record.tidalId, "downloadProgress.tidalId"),
+    providerId: expectIdentifierString(record.providerId, "downloadProgress.providerId"),
     type: type as DownloadContentTypeContract,
     quality: expectNullableString(record.quality, "downloadProgress.quality"),
     title: expectOptionalString(record.title, "downloadProgress.title"),
@@ -426,7 +426,7 @@ function parseDownloadStartedBase(value: unknown, label: string): DownloadStarte
   const type = expectString(record.type, `${label}.type`);
   return {
     jobId: expectNumber(record.jobId, `${label}.jobId`),
-    tidalId: expectIdentifierString(record.tidalId, `${label}.tidalId`),
+    providerId: expectIdentifierString(record.providerId, `${label}.providerId`),
     type: type as DownloadContentTypeContract,
     quality: expectNullableString(record.quality, `${label}.quality`),
     title: expectOptionalString(record.title, `${label}.title`),

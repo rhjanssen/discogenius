@@ -16,7 +16,7 @@ export type QueueStatsSummary = {
 
 type ProgressState = {
   byJobId: Map<number, DownloadProgress>;
-  byTidalId: Map<string, DownloadProgress>;
+  byProviderId: Map<string, DownloadProgress>;
 };
 
 const DOWNLOAD_QUEUE_JOB_TYPES = new Set([
@@ -29,7 +29,7 @@ const DOWNLOAD_QUEUE_JOB_TYPES = new Set([
 function cloneProgressState(state: ProgressState): ProgressState {
   return {
     byJobId: new Map(state.byJobId),
-    byTidalId: new Map(state.byTidalId),
+    byProviderId: new Map(state.byProviderId),
   };
 }
 
@@ -42,7 +42,7 @@ function getRelevantStats(stats?: TaskQueueStatContract[]): TaskQueueStatContrac
 export function createEmptyProgressState(): ProgressState {
   return {
     byJobId: new Map(),
-    byTidalId: new Map(),
+    byProviderId: new Map(),
   };
 }
 
@@ -82,11 +82,11 @@ export function upsertProgressSnapshots(
       continue;
     }
 
-    const tidalId = String(snapshot.tidalId || "").trim();
+    const providerId = String(snapshot.providerId || "").trim();
 
     next.byJobId.set(snapshot.jobId, snapshot);
-    if (tidalId.length > 0) {
-      next.byTidalId.set(tidalId, snapshot);
+    if (providerId.length > 0) {
+      next.byProviderId.set(providerId, snapshot);
     }
   }
 
@@ -96,7 +96,7 @@ export function upsertProgressSnapshots(
 export function removeProgressSnapshot(
   state: ProgressState,
   jobId: number,
-  tidalId?: string | null,
+  providerId?: string | null,
 ): ProgressState {
   if (!Number.isFinite(jobId) || jobId <= 0) {
     return state;
@@ -106,11 +106,11 @@ export function removeProgressSnapshot(
   const existing = next.byJobId.get(jobId);
   next.byJobId.delete(jobId);
 
-  const resolvedTidalId = String(tidalId || existing?.tidalId || "").trim();
-  if (resolvedTidalId.length > 0) {
-    const current = next.byTidalId.get(resolvedTidalId);
+  const resolvedProviderId = String(providerId || existing?.providerId || "").trim();
+  if (resolvedProviderId.length > 0) {
+    const current = next.byProviderId.get(resolvedProviderId);
     if (!current || current.jobId === jobId) {
-      next.byTidalId.delete(resolvedTidalId);
+      next.byProviderId.delete(resolvedProviderId);
     }
   }
 

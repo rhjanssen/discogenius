@@ -80,7 +80,7 @@ The schema now keeps the Lidarr-style MusicBrainz graph separate from provider a
 
 **Why `mb_release_group_id` matters — and its limits:**
 
-A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different TIDAL IDs, different MB Release IDs (different UPCs), but the **same MB Release Group**. The Release Group is the right join key when asking "do we have this album on provider X?" across providers.
+A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different provider IDs, different MB Release IDs (different UPCs), but the **same MB Release Group**. The Release Group is the right join key when asking "do we have this album on provider X?" across providers.
 
 **Important caveat:** MB guidelines explicitly group Standard and Deluxe editions (with bonus tracks/discs) into the **same Release Group**. This means `mb_release_group_id` is too coarse for our dedup logic, which must keep Standard and Deluxe separate. Our ISRC-set dedup in `curation-service.ts` is correctly finer-grained — a Deluxe edition has additional ISRCs for bonus tracks, so it produces a distinct ISRC set. **Never use `mb_release_group_id` as a dedup key.** Use it only as a cross-provider linking hint.
 

@@ -293,7 +293,7 @@ const VideoPage = () => {
             queryClient.setQueryData(["video", videoId], (old: VideoDetailContract | undefined) =>
                 old ? { ...old, is_monitored: nextMonitored } : old
             );
-            dispatchMonitorStateChanged({ type: "video", tidalId: videoId!, monitored: nextMonitored });
+            dispatchMonitorStateChanged({ type: "video", providerId: videoId!, monitored: nextMonitored });
             dispatchLibraryUpdated();
         },
         onError: (err: any) => {

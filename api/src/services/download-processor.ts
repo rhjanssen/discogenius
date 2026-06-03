@@ -64,7 +64,7 @@ export class DownloadProcessor {
     private isPaused: boolean = false;
     private currentAbortController?: AbortController;
     private currentJobId?: number;
-    private currentTidalId?: string;
+    private currentProviderId?: string;
     private currentType?: string;
     private currentDownloadPath?: string;
     private pollTimer?: NodeJS.Timeout;
@@ -74,7 +74,7 @@ export class DownloadProcessor {
     private queueEventsSubscribed: boolean = false;
 
     /** Tracks the active import job (runs in its own slot alongside downloads, Tidarr-style). */
-    private activeImports = new Map<number, { tidalId: string; type: string; promise: Promise<void> }>();
+    private activeImports = new Map<number, { providerId: string; type: string; promise: Promise<void> }>();
 
     // ── Progress write coalescing ───────────────────────────────────
     // Buffers the latest in-flight progress state per job and flushes
@@ -98,13 +98,13 @@ export class DownloadProcessor {
      */
     private dispatchImportJob(job: ReturnType<typeof TaskQueueService.getNextJobByTypes> & {}): void {
         const importPayload = job.payload as ImportDownloadJobPayload;
-        const tidalId = String(importPayload?.tidalId || job.ref_id || '');
+        const providerId = String(importPayload?.providerId || job.ref_id || '');
         const rawType = String(importPayload?.type || 'track');
         const type: DownloadJobType = rawType === 'album' || rawType === 'video' ? rawType : 'track';
 
-        if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
-            console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid tidalId: ${tidalId}`);
-            TaskQueueService.fail(job.id, 'Invalid tidalId - cannot import');
+        if (!providerId || providerId === 'undefined' || providerId === 'null') {
+            console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid providerId: ${providerId}`);
+            TaskQueueService.fail(job.id, 'Invalid providerId - cannot import');
             return;
         }
 
@@ -118,12 +118,12 @@ export class DownloadProcessor {
             console.log(`[DOWNLOAD-PROCESSOR] Import job #${job.id} is no longer pending; skipping dispatch.`);
             return;
         }
-        console.log(`[DOWNLOAD-PROCESSOR] Dispatching import job #${job.id}: ${type} ${tidalId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
+        console.log(`[DOWNLOAD-PROCESSOR] Dispatching import job #${job.id}: ${type} ${providerId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
 
         const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
             this.persistDownloadState(job.id, state);
             downloadEvents.emitProgress(job.id, {
-                tidalId,
+                providerId,
                 type,
                 quality: importPayload?.quality ?? null,
                 title: resolved.title,
@@ -148,14 +148,14 @@ export class DownloadProcessor {
 
                 TaskQueueService.complete(job.id);
                 downloadEvents.emitCompleted(job.id, {
-                    tidalId,
+                    providerId,
                     type,
                     quality: importPayload?.quality ?? null,
                     title: resolved.title,
                     artist: resolved.artist,
                     cover: resolved.cover,
                 });
-                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${tidalId}`);
+                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${providerId}`);
             } catch (error: any) {
                 console.error(`[DOWNLOAD-PROCESSOR] Failed to import job #${job.id}:`, error);
                 this.persistDownloadState(job.id, {
@@ -166,7 +166,7 @@ export class DownloadProcessor {
                 });
                 TaskQueueService.fail(job.id, error?.message || 'Unknown import error');
                 downloadEvents.emitFailed(job.id, {
-                    tidalId,
+                    providerId,
                     type,
                     quality: importPayload?.quality ?? null,
                     title: resolved.title,
@@ -182,7 +182,7 @@ export class DownloadProcessor {
             }
         })();
 
-        this.activeImports.set(job.id, { tidalId, type, promise: importPromise });
+        this.activeImports.set(job.id, { providerId, type, promise: importPromise });
     }
 
     private logBusy(): void {
@@ -318,12 +318,12 @@ export class DownloadProcessor {
     }
 
     private async ensureMetadataReady(
-        tidalId: string,
+        providerId: string,
         type: 'track' | 'video' | 'album',
     ): Promise<void> {
         switch (type) {
             case 'album': {
-                const albumIds = tidalId.split(";").filter(Boolean);
+                const albumIds = providerId.split(";").filter(Boolean);
                 for (const subAlbumId of albumIds) {
                     if (!this.hasAlbumMetadataReady(subAlbumId)) {
                         console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; running album scan before download`);
@@ -336,9 +336,9 @@ export class DownloadProcessor {
                 return;
             }
             case 'track':
-                if (!this.hasTrackMetadataReady(tidalId)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Track ${tidalId} is missing metadata; seeding track before download`);
-                    await MediaSeedService.seedTrack(tidalId, {
+                if (!this.hasTrackMetadataReady(providerId)) {
+                    console.log(`[DOWNLOAD-PROCESSOR] Track ${providerId} is missing metadata; seeding track before download`);
+                    await MediaSeedService.seedTrack(providerId, {
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,
@@ -347,9 +347,9 @@ export class DownloadProcessor {
                 }
                 return;
             case 'video':
-                if (!this.hasVideoMetadataReady(tidalId)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Video ${tidalId} is missing metadata; seeding video before download`);
-                    await MediaSeedService.seedVideo(tidalId, {
+                if (!this.hasVideoMetadataReady(providerId)) {
+                    console.log(`[DOWNLOAD-PROCESSOR] Video ${providerId} is missing metadata; seeding video before download`);
+                    await MediaSeedService.seedVideo(providerId, {
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,
@@ -363,7 +363,7 @@ export class DownloadProcessor {
     }
 
     private resolveDownloadMetadata(
-        tidalId: string,
+        providerId: string,
         type: DownloadJobType,
         payload: DownloadJobPayload,
     ): Required<ResolvedDownloadMetadata> {
@@ -373,7 +373,7 @@ export class DownloadProcessor {
 
         try {
             if (type === 'album') {
-                const albumIds = tidalId.split(";").filter(Boolean);
+                const albumIds = providerId.split(";").filter(Boolean);
                 const titles: string[] = [];
                 let artistName = 'Unknown';
                 let cover: string | null = null;
@@ -404,7 +404,7 @@ export class DownloadProcessor {
                     LEFT JOIN Artists ar ON ar.id = m.artist_id
                     LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                     WHERE m.id = ? AND m.type = 'Music Video'
-                `).get(tidalId) as any;
+                `).get(providerId) as any;
                 return {
                     title: fallbackTitle || row?.title || 'Unknown',
                     artist: fallbackArtist || row?.artist_name || 'Unknown',
@@ -418,7 +418,7 @@ export class DownloadProcessor {
                 LEFT JOIN Artists ar ON ar.id = m.artist_id
                 LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                 WHERE m.id = ?
-            `).get(tidalId) as any;
+            `).get(providerId) as any;
             return {
                 title: fallbackTitle || row?.title || 'Unknown',
                 artist: fallbackArtist || row?.artist_name || 'Unknown',
@@ -434,7 +434,7 @@ export class DownloadProcessor {
     }
 
     private resolveDownloadQuality(
-        tidalId: string,
+        providerId: string,
         type: DownloadJobType,
         payload: DownloadJobPayload,
     ): string | null {
@@ -444,7 +444,7 @@ export class DownloadProcessor {
 
         try {
             if (type === 'album') {
-                const firstId = tidalId.split(";")[0];
+                const firstId = providerId.split(";")[0];
                 const row = db.prepare(`
                     SELECT quality
                     FROM ProviderAlbums
@@ -457,7 +457,7 @@ export class DownloadProcessor {
                 SELECT quality
                 FROM ProviderMedia
                 WHERE id = ?
-            `).get(tidalId) as { quality?: string | null } | undefined;
+            `).get(providerId) as { quality?: string | null } | undefined;
             return row?.quality ?? null;
         } catch {
             return null;
@@ -675,9 +675,9 @@ export class DownloadProcessor {
         this.processing = true;
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
-        const tidalId = String(
+        const providerId = String(
             (job.payload as DownloadJobPayload | undefined)?.providerId
-            || job.payload?.tidalId
+            || job.payload?.providerId
             || job.ref_id
             || '',
         );
@@ -696,28 +696,28 @@ export class DownloadProcessor {
             return;
         }
 
-        // Validate tidalId before processing
-        if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
-            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid tidalId: ${tidalId}`);
-            TaskQueueService.fail(job.id, `Invalid tidalId - cannot download`);
+        // Validate providerId before processing
+        if (!providerId || providerId === 'undefined' || providerId === 'null') {
+            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid providerId: ${providerId}`);
+            TaskQueueService.fail(job.id, `Invalid providerId - cannot download`);
             this.processing = false;
             this.currentJobId = undefined;
             // Process next item
             this.scheduleNext();
             return;
         }
-        this.currentTidalId = tidalId;
+        this.currentProviderId = providerId;
         this.currentType = type;
         this.currentDownloadPath = undefined;
         let payload = job.payload as DownloadOrImportJobPayload;
 
-        console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${tidalId})`);
+        console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${providerId})`);
 
         if (!TaskQueueService.markProcessing(job.id)) {
             console.log(`[DOWNLOAD-PROCESSOR] Job #${job.id} is no longer pending; skipping dispatch.`);
             this.processing = false;
             this.currentJobId = undefined;
-            this.currentTidalId = undefined;
+            this.currentProviderId = undefined;
             this.currentType = undefined;
             this.scheduleNext();
             return;
@@ -735,10 +735,10 @@ export class DownloadProcessor {
                 statusMessage: 'Preparing metadata...',
             });
 
-            await this.ensureMetadataReady(tidalId, type);
+            await this.ensureMetadataReady(providerId, type);
 
-            resolved = this.resolveDownloadMetadata(tidalId, type, payload);
-            const resolvedQuality = this.resolveDownloadQuality(tidalId, type, payload);
+            resolved = this.resolveDownloadMetadata(providerId, type, payload);
+            const resolvedQuality = this.resolveDownloadQuality(providerId, type, payload);
             payload = {
                 ...((payload as DownloadJobPayload) || {}),
                 title: resolved.title,
@@ -754,7 +754,7 @@ export class DownloadProcessor {
                 statusMessage: 'Starting download...',
             });
             downloadEvents.emitStarted(job.id, {
-                tidalId,
+                providerId,
                 type,
                 quality: payload.quality ?? null,
                 title: resolved.title,
@@ -762,7 +762,7 @@ export class DownloadProcessor {
                 cover: resolved.cover,
             });
 
-            await this.downloadItem(job.id, tidalId, type, payload);
+            await this.downloadItem(job.id, providerId, type, payload);
 
             // Check if the item-specific download path has any media files before attempting organization.
             // tidal-dl-ng may skip all items (e.g. "already in history") and exit successfully
@@ -779,25 +779,25 @@ export class DownloadProcessor {
                            ON lf.media_id = m.id
                           AND lf.file_type = 'track'
                          WHERE m.album_id = ? AND m.type != 'Music Video'`
-                    ).get(tidalId) as any;
+                    ).get(providerId) as any;
 
                     if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done > 0) {
                         // Album has at least some tracks downloaded.  tidal-dl-ng
                         // couldn't add anything new (items skipped or unavailable).
                         const pct = Math.round(row.done / row.total * 100);
                         console.log(
-                            `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${tidalId} already has ${row.done}/${row.total} tracks downloaded (${pct}%). ` +
+                            `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${row.done}/${row.total} tracks downloaded (${pct}%). ` +
                             `Remaining tracks may be unavailable on TIDAL — treating as complete.`
                         );
 
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
-                        updateAlbumDownloadStatus(String(tidalId));
+                        updateAlbumDownloadStatus(String(providerId));
 
                         TaskQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
-                            tidalId, type,
+                            providerId, type,
                             quality: payload.quality ?? null,
                             title: resolved.title,
                             artist: resolved.artist,
@@ -813,15 +813,15 @@ export class DownloadProcessor {
                         WHERE media_id = ?
                           AND file_type = ?
                         LIMIT 1
-                    `).get(tidalId, type === 'video' ? 'video' : 'track') as any;
+                    `).get(providerId, type === 'video' ? 'video' : 'track') as any;
 
                     if (payload?.reason !== 'upgrade' && row) {
-                        console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${tidalId} is already downloaded — marking job as complete.`);
+                        console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
                         TaskQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
-                            tidalId, type,
+                            providerId, type,
                             quality: payload.quality ?? null,
                             title: resolved.title,
                             artist: resolved.artist,
@@ -834,7 +834,7 @@ export class DownloadProcessor {
 
                 // Nothing in library either — something is genuinely wrong
                 throw new Error(
-                    `tidal-dl-ng finished successfully but no files were downloaded for ${type} ${tidalId}. ` +
+                    `tidal-dl-ng finished successfully but no files were downloaded for ${type} ${providerId}. ` +
                     `All items may have been skipped (already in tidal-dl-ng history or unavailable on TIDAL).`
                 );
             }
@@ -842,13 +842,12 @@ export class DownloadProcessor {
             // Organize into library (dispatched to the import/finalization queue)
             TaskQueueService.addJob(JobTypes.ImportDownload, {
                 provider: payload.provider,
-                providerId: payload.providerId ?? tidalId,
+                providerId: payload.providerId ?? providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
                 canonicalTrackMbid: payload.canonicalTrackMbid,
                 canonicalRecordingMbid: payload.canonicalRecordingMbid,
                 slot: payload.slot,
                 type,
-                tidalId,
                 path: this.currentDownloadPath,
                 quality: payload.quality ?? null,
                 qualityProfile: payload.qualityProfile,
@@ -865,7 +864,7 @@ export class DownloadProcessor {
                 url: payload.url,
                 resolved,
                 originalJobId: job.id
-            }, tidalId, Math.max(job.priority, 100), job.trigger, job.queue_order);
+            }, providerId, Math.max(job.priority, 100), job.trigger, job.queue_order);
 
             TaskQueueService.complete(job.id);
 
@@ -873,7 +872,7 @@ export class DownloadProcessor {
             this.currentDownloadPath = undefined;
 
             // Note: We do NOT emit completed event here, it will be emitted by ImportDownload
-            console.log(`[DOWNLOAD-PROCESSOR] Successfully downloaded ${type} ${tidalId} - dispatched to import queue`);
+            console.log(`[DOWNLOAD-PROCESSOR] Successfully downloaded ${type} ${providerId} - dispatched to import queue`);
         } catch (error: any) {
             if (this.cancelCurrentDownload && this.isPaused) {
                 const current = TaskQueueService.getById(job.id);
@@ -895,7 +894,7 @@ export class DownloadProcessor {
 
                 // Emit failed event
                 downloadEvents.emitFailed(job.id, {
-                    tidalId,
+                    providerId,
                     type,
                     quality: payload.quality ?? null,
                     title: resolved.title,
@@ -911,7 +910,7 @@ export class DownloadProcessor {
             this.processing = false;
             this.currentAbortController = undefined;
             this.currentJobId = undefined;
-            this.currentTidalId = undefined;
+            this.currentProviderId = undefined;
             this.currentType = undefined;
             this.cancelCurrentDownload = false;
 
@@ -943,7 +942,7 @@ export class DownloadProcessor {
         const onProgress = (state: any) => {
             this.persistDownloadState(jobId, state);
             downloadEvents.emitProgress(jobId, {
-                tidalId: id,
+                providerId: id,
                 type,
                 quality: payload.quality ?? null,
                 title: payload.title,
@@ -1029,7 +1028,7 @@ export class DownloadProcessor {
         isPaused: boolean;
         processing: boolean;
         currentJobId?: number;
-        currentTidalId?: string;
+        currentProviderId?: string;
         currentType?: string;
         activeImports: number;
     } {
@@ -1037,7 +1036,7 @@ export class DownloadProcessor {
             isPaused: this.isPaused,
             processing: this.processing,
             currentJobId: this.currentJobId,
-            currentTidalId: this.currentTidalId,
+            currentProviderId: this.currentProviderId,
             currentType: this.currentType,
             activeImports: this.activeImports.size,
         };

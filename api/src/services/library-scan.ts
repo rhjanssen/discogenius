@@ -1236,7 +1236,7 @@ export class DiskScanService {
         // Audio files
         const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff"]);
         if (audioExtensions.has(ext)) {
-            // Try to match by TIDAL ID in filename
+            // Try to match by provider ID in filename
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare("SELECT album_id, quality FROM ProviderMedia WHERE id = ?").get(mediaId) as any;
@@ -1306,13 +1306,13 @@ export class DiskScanService {
      * Try to find a media ID by checking if the file stem contains a known TIDAL track/media ID.
      */
     private static findMediaIdByStem(stem: string, artistId: string): string | null {
-        // Check if stem is directly a TIDAL ID (numeric)
+        // Check if stem is directly a provider ID (numeric)
         if (/^\d+$/.test(stem)) {
             const media = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND artist_id = ?").get(stem, artistId) as any;
             if (media) return String(media.id);
         }
 
-        // Check if stem contains a TIDAL ID (e.g. "01 - 12345678 - Song Title")
+        // Check if stem contains a provider ID (e.g. "01 - 12345678 - Song Title")
         const idMatch = stem.match(/\b(\d{6,})\b/);
         if (idMatch) {
             const media = db.prepare("SELECT id FROM ProviderMedia WHERE id = ? AND artist_id = ?").get(idMatch[1], artistId) as any;

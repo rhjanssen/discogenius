@@ -466,7 +466,7 @@ const AlbumPage = () => {
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
-  const { getProgressByTidalId } = useQueueStatus();
+  const { getProgressByProviderId } = useQueueStatus();
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
@@ -1102,7 +1102,7 @@ const AlbumPage = () => {
                 {similarAlbums.map((similarAlbum) => {
                   const year = similarAlbum.release_date ? new Date(similarAlbum.release_date).getFullYear() : '';
                   const subtitle = [similarAlbum.artist_name, year].filter(Boolean).join(' · ');
-                  const sProgress = getProgressByTidalId(String(similarAlbum.id));
+                  const sProgress = getProgressByProviderId(String(similarAlbum.id));
                   return renderMiniAlbumCard(similarAlbum, subtitle, sProgress);
                 })}
               </div>

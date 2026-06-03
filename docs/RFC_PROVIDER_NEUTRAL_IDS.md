@@ -5,7 +5,7 @@ Status: Approved direction for phased implementation
 
 ## Why This RFC Exists
 
-Discogenius still treats TIDAL IDs as the app's primary identity in too many places:
+Discogenius still treats provider IDs as the app's primary identity in too many places:
 
 - schema primary keys in `api/src/database.ts`
 - queue payloads in `api/src/services/job-payloads.ts`
@@ -64,7 +64,7 @@ The same assumption flows into:
 
 ### Queue and status payloads are provider-shaped
 
-`api/src/services/job-payloads.ts` still centers `tidalId`, `artistId`, and `albumId` as stringly typed remote IDs. The same assumption appears in:
+`api/src/services/job-payloads.ts` still centers `providerId`, `artistId`, and `albumId` as stringly typed remote IDs. The same assumption appears in:
 
 - `api/src/routes/download-queue.ts`
 - `api/src/services/download-processor.ts`
@@ -72,12 +72,12 @@ The same assumption flows into:
 - `api/src/contracts/status.ts`
 - `api/src/services/download-events.ts`
 
-### UI and helper paths still resolve identity through TIDAL IDs
+### UI and helper paths still resolve identity through provider IDs
 
 Examples:
 
-- `api/src/services/command-history.ts` resolves titles by `job.ref_id || payload.tidalId`
-- `api/src/routes/search.ts` checks monitored/in-library state by `id = tidalId`
+- `api/src/services/command-history.ts` resolves titles by `job.ref_id || payload.providerId`
+- `api/src/routes/search.ts` checks monitored/in-library state by `id = providerId`
 - `api/src/utils/url-helpers.ts` is entirely TIDAL-specific
 - `api/src/services/audio-tag-service.ts` writes a `TIDAL_URL` tag directly from `media_id`
 
@@ -99,7 +99,7 @@ The important implication for Discogenius is not "copy MusicBrainz." The importa
 For Discogenius, that means:
 
 - local artist/album/media IDs must become internal IDs
-- TIDAL IDs move into provider mappings
+- provider IDs move into provider mappings
 - MusicBrainz IDs and ISRC stay as matching/enrichment data
 
 ## Target Identity Model
@@ -224,7 +224,7 @@ During migration, queue payloads may temporarily carry both:
 {
   ref?: ProviderRef;
   entity?: LocalEntityRef;
-  tidalId?: string; // legacy compatibility only
+  providerId?: string; // legacy compatibility only
 }
 ```
 
@@ -232,7 +232,7 @@ The rule should be:
 
 1. prefer `entity`
 2. fall back to `ref`
-3. fall back to legacy `tidalId` only where the migration has not reached yet
+3. fall back to legacy `providerId` only where the migration has not reached yet
 
 ## Affected Discogenius Areas
 
@@ -304,7 +304,7 @@ Highest-risk code and schema areas that the migration must explicitly cover:
 ### Phase 5: cleanup
 
 - remove legacy TIDAL-primary columns
-- remove `tidalId` compatibility payloads
+- remove `providerId` compatibility payloads
 - move TIDAL URL generation behind provider-aware helpers
 
 ## Rollback and Safety Expectations
@@ -325,7 +325,7 @@ Required safety rules:
 
 - migration smoke test from current TIDAL-primary schema to additive local-ID shadow columns
 - provider mapping backfill test for artists/albums/media
-- queue payload tests covering `entity`, `ref`, and legacy `tidalId`
+- queue payload tests covering `entity`, `ref`, and legacy `providerId`
 - search/history/status contract tests proving local-ID-first behavior
 
 ### Staging / real-data rehearsal

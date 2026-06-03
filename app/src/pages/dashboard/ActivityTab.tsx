@@ -54,10 +54,10 @@ function getJobPayload(job: ActivityJob): Record<string, unknown> | null {
     return typeof job.payload === "object" ? (job.payload as Record<string, unknown>) : null;
 }
 
-function getJobTidalId(job: ActivityJob): string {
+function getJobProviderId(job: ActivityJob): string {
     const payload = getJobPayload(job);
     const legacyRefId = (job as ActivityJob & { ref_id?: string }).ref_id;
-    return String(payload?.tidalId || legacyRefId || "").trim();
+    return String(payload?.providerId || legacyRefId || "").trim();
 }
 
 function getJobMediaType(job: ActivityJob): string {
@@ -180,14 +180,14 @@ const ActivityTab = ({
     const hasSupersedingSuccess = useCallback((job: ActivityJob) => {
         if (job?.type !== "ImportDownload" || !job?.error) return false;
 
-        const tidalId = getJobTidalId(job);
+        const providerId = getJobProviderId(job);
         const mediaType = getJobMediaType(job);
-        if (!tidalId || !mediaType) return false;
+        if (!providerId || !mediaType) return false;
 
         const jobTime = Number(job?.endTime || job?.startTime || 0);
         const recoveredInHistory = historyJobs.some((candidate) => {
             if (candidate?.status !== "completed") return false;
-            return getJobTidalId(candidate) === tidalId
+            return getJobProviderId(candidate) === providerId
                 && getJobMediaType(candidate) === mediaType
                 && Number(candidate?.endTime || candidate?.startTime || 0) > jobTime;
         });
@@ -196,7 +196,7 @@ const ActivityTab = ({
 
         return inFlightActivityItems.some((candidate) => {
             if (!candidate || !["running", "processing", "pending"].includes(candidate.status || "")) return false;
-            return getJobTidalId(candidate) === tidalId && getJobMediaType(candidate) === mediaType;
+            return getJobProviderId(candidate) === providerId && getJobMediaType(candidate) === mediaType;
         });
     }, [historyJobs, inFlightActivityItems]);
 

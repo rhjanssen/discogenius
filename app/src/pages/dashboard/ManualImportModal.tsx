@@ -385,7 +385,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
     };
 
     const importMutation = useMutation({
-        mutationFn: async (payload: { items: Array<{ id: number; tidalId: string }> }) => api.bulkMapUnmappedFiles(payload.items),
+        mutationFn: async (payload: { items: Array<{ id: number; providerId: string }> }) => api.bulkMapUnmappedFiles(payload.items),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
             toast({ title: 'Success', description: 'Successfully mapped selected files.' });
@@ -401,7 +401,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
             .filter((file) => selectedFiles[file.id] && mappedTracks[file.id])
             .map((file) => ({
                 id: file.id,
-                tidalId: mappedTracks[file.id],
+                providerId: mappedTracks[file.id],
             }));
 
         if (payloadItems.length === 0) {
@@ -617,9 +617,9 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                                 >
                                                                     <option value="">-- Don&apos;t Map --</option>
                                                                     {albumTracks.map((track) => {
-                                                                        const tidalId = String(track.providerId || track.id || track.tidal_id || '');
+                                                                        const providerId = String(track.providerId || track.id || track.tidal_id || '');
                                                                         return (
-                                                                            <option key={tidalId} value={tidalId}>
+                                                                            <option key={providerId} value={providerId}>
                                                                                 {track.trackNumber || track.track_number}. {track.title} {track.version ? `(${track.version})` : ''}
                                                                             </option>
                                                                         );

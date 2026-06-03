@@ -179,9 +179,8 @@ export type StreamingProviderStatus = {
 export type QueueDownloadRequest = {
   url?: string | null;
   type: string;
-  tidalId?: string | null;
-  provider?: string | null;
   providerId?: string | null;
+  provider?: string | null;
   releaseGroupMbid?: string | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
@@ -562,10 +561,10 @@ class ApiClient {
   }
 
 
-  async addArtist(tidalId: string) {
+  async addArtist(providerId: string) {
     return this.request(`/artists`, {
       method: 'POST',
-      body: JSON.stringify({ id: tidalId }),
+      body: JSON.stringify({ id: providerId }),
     });
   }
 
@@ -704,10 +703,10 @@ class ApiClient {
     return this.request(`/tracks/${trackId}`);
   }
 
-  async addTrack(tidalId: string) {
+  async addTrack(providerId: string) {
     return this.request(`/tracks`, {
       method: 'POST',
-      body: JSON.stringify({ id: tidalId }),
+      body: JSON.stringify({ id: providerId }),
     });
   }
 
@@ -755,10 +754,10 @@ class ApiClient {
     return this.request(`/videos/${videoId}`, {}, parseVideoDetailContract);
   }
 
-  async addVideo(tidalId: string) {
+  async addVideo(providerId: string) {
     return this.request(`/videos`, {
       method: 'POST',
-      body: JSON.stringify({ id: tidalId }),
+      body: JSON.stringify({ id: providerId }),
     });
   }
 
@@ -965,14 +964,14 @@ class ApiClient {
     return this.request(`/unmapped${query ? `?${query}` : ''}`);
   }
 
-  async actionUnmappedFile(fileId: number, action: 'map' | 'ignore' | 'unignore' | 'delete', tidalId?: string) {
+  async actionUnmappedFile(fileId: number, action: 'map' | 'ignore' | 'unignore' | 'delete', providerId?: string) {
     return this.request(`/unmapped/${fileId}/action`, {
       method: 'POST',
-      body: JSON.stringify({ action, tidalId }),
+      body: JSON.stringify({ action, providerId }),
     });
   }
 
-  async bulkMapUnmappedFiles(items: Array<{ id: number, tidalId: string }>) {
+  async bulkMapUnmappedFiles(items: Array<{ id: number, providerId: string }>) {
     return this.request(`/unmapped/bulk-map`, {
       method: 'POST',
       body: JSON.stringify({ items }),
@@ -1046,12 +1045,12 @@ class ApiClient {
   async getQueueDetails(params?: {
     artistId?: string;
     albumIds?: string[];
-    tidalIds?: string[];
+    providerIds?: string[];
   }): Promise<QueueDetailsResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumIds && params.albumIds.length > 0) queryParams.set('albumIds', params.albumIds.join(','));
-    if (params?.tidalIds && params.tidalIds.length > 0) queryParams.set('tidalIds', params.tidalIds.join(','));
+    if (params?.providerIds && params.providerIds.length > 0) queryParams.set('providerIds', params.providerIds.join(','));
     const query = queryParams.toString();
     return this.request(`/queue/details${query ? `?${query}` : ''}`, {}, parseQueueDetailsResponseContract);
   }
@@ -1144,10 +1143,10 @@ class ApiClient {
     return this.request(`/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
   }
 
-  async addToQueue(url: string | null | undefined, type: string, tidalId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
+  async addToQueue(url: string | null | undefined, type: string, providerId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
     return this.request<{ id: number; message: string }>('/queue', {
       method: 'POST',
-      body: JSON.stringify({ ...payload, url, type, tidalId }),
+      body: JSON.stringify({ ...payload, url, type, providerId }),
     });
   }
 

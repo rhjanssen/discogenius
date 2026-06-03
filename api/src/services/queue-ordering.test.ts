@@ -28,7 +28,7 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-function queuePendingDownload(type: "track" | "video" | "album", tidalId: string) {
+function queuePendingDownload(type: "track" | "video" | "album", providerId: string) {
     const jobType = type === "video"
         ? queueModule.JobTypes.DownloadVideo
         : type === "album"
@@ -37,8 +37,8 @@ function queuePendingDownload(type: "track" | "video" | "album", tidalId: string
 
     return queueModule.TaskQueueService.addJob(
         jobType,
-        { tidalId, type, url: `https://listen.tidal.com/${type}/${tidalId}` },
-        tidalId,
+        { providerId, type, url: `https://listen.tidal.com/${type}/${providerId}` },
+        providerId,
     );
 }
 
@@ -114,7 +114,7 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
         queueModule.JobTypes.ImportDownload,
         {
             type: "track",
-            tidalId: "21",
+            providerId: "21",
             path: "E:/tmp/downloads/job_21",
             originalJobId: first,
         },
@@ -169,8 +169,6 @@ test("download queue query surfaces pending, processing, and history items with 
         {
             type: "album",
             provider: "tidal",
-            providerId: "provider-album-1",
-            tidalId: "provider-album-1",
             releaseGroupMbid: "release-group-1",
             slot: "stereo",
             title: "Processing Album",
@@ -186,8 +184,6 @@ test("download queue query surfaces pending, processing, and history items with 
         {
             type: "album",
             provider: "tidal",
-            providerId: "provider-album-2",
-            tidalId: "provider-album-2",
             releaseGroupMbid: "release-group-2",
             slot: "spatial",
             title: "Pending Album",
@@ -202,8 +198,6 @@ test("download queue query surfaces pending, processing, and history items with 
         {
             type: "track",
             provider: "tidal",
-            providerId: "provider-track-1",
-            tidalId: "provider-track-1",
             title: "Completed Track",
             artist: "Queue Artist",
             cover: "track-cover",
@@ -244,7 +238,6 @@ test("download queue history collapses completed download and import jobs into o
             type: "album",
             provider: "tidal",
             providerId: "provider-album-history",
-            tidalId: "provider-album-history",
             releaseGroupMbid: "release-group-history",
             slot: "stereo",
             title: "Imported Album",
@@ -262,7 +255,6 @@ test("download queue history collapses completed download and import jobs into o
             type: "album",
             provider: "tidal",
             providerId: "provider-album-history",
-            tidalId: "provider-album-history",
             releaseGroupMbid: "release-group-history",
             slot: "stereo",
             title: "Imported Album",
@@ -292,7 +284,6 @@ test("download queue history keeps completed album visible during import handoff
             type: "album",
             provider: "tidal",
             providerId: "provider-album-handoff",
-            tidalId: "provider-album-handoff",
             releaseGroupMbid: "release-group-handoff",
             slot: "stereo",
             title: "Handoff Album",
@@ -310,7 +301,6 @@ test("download queue history keeps completed album visible during import handoff
             type: "album",
             provider: "tidal",
             providerId: "provider-album-handoff",
-            tidalId: "provider-album-handoff",
             releaseGroupMbid: "release-group-handoff",
             slot: "stereo",
             title: "Handoff Album",
@@ -398,7 +388,7 @@ test("active import blocks duplicate download for the same content id", () => {
         queueModule.JobTypes.ImportDownload,
         {
             type: "track",
-            tidalId: "102",
+            providerId: "102",
             path: path.join(tempDir, "download-102"),
             originalJobId: 1,
         },

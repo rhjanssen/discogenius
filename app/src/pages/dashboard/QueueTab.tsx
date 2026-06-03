@@ -251,11 +251,11 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     }
 
     if (groupType === 'video') {
-        return buildVideoNavPath(firstItem.tidalId);
+        return buildVideoNavPath(firstItem.providerId);
     }
 
     if (groupType === 'album') {
-        return buildAlbumNavPath(firstItem.album_id ?? (firstItem.type === 'album' ? firstItem.tidalId : null));
+        return buildAlbumNavPath(firstItem.album_id ?? (firstItem.type === 'album' ? firstItem.providerId : null));
     }
 
     return buildAlbumNavPath(firstItem.album_id);
@@ -281,11 +281,11 @@ function getQueueItemSlotKey(item: QueueItem): string | null {
 
 function getQueueHistoryNavPath(item: QueueItem): string | null {
     if (item.type === 'video') {
-        return buildVideoNavPath(item.tidalId);
+        return buildVideoNavPath(item.providerId);
     }
 
     if (item.type === 'album') {
-        return buildAlbumNavPath(item.album_id ?? item.tidalId);
+        return buildAlbumNavPath(item.album_id ?? item.providerId);
     }
 
     if (item.type === 'track') {
@@ -466,7 +466,7 @@ function mergeQueueItemsWithProgress(
             queuePosition: undefined,
             quality: progress.quality ?? null,
             stage: getLiveQueueItemStage(progress),
-            tidalId: progress.tidalId,
+            providerId: progress.providerId,
             path: null,
             status,
             progress: progress.progress ?? 0,
@@ -478,7 +478,7 @@ function mergeQueueItemsWithProgress(
             title: progress.title,
             artist: progress.artist,
             cover: progress.cover ?? null,
-            album_id: progress.type === "album" ? progress.tidalId : null,
+            album_id: progress.type === "album" ? progress.providerId : null,
             album_title: progress.type === "album" ? progress.title : null,
             currentFileNum: progress.currentFileNum,
             totalFiles: progress.totalFiles,
@@ -499,7 +499,7 @@ function mergeQueueItemsWithProgress(
 }
 
 function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | undefined {
-    if (!item || !item.tidalId) {
+    if (!item || !item.providerId) {
         return undefined;
     }
 
@@ -533,7 +533,7 @@ function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | unde
 
     return {
         jobId: item.id,
-        tidalId: item.tidalId,
+        providerId: item.providerId,
         type: item.type,
         quality: item.quality ?? null,
         title: item.title,
@@ -735,12 +735,12 @@ const QueueTab = () => {
                 && Boolean(item.album_id)
                 && (albumTrackCounts.get(item.album_id as string) ?? 0) > 1;
             const groupId = isAlbum
-                ? `album-${item.album_id ?? item.tidalId}-${albumSlotKey ?? 'default'}`
+                ? `album-${item.album_id ?? item.providerId}-${albumSlotKey ?? 'default'}`
                 : isVideo
-                    ? `video-${item.tidalId}`
+                    ? `video-${item.providerId}`
                     : shouldGroupTrackAsAlbum
                         ? `album-${item.album_id}`
-                        : `track-${item.tidalId}`;
+                        : `track-${item.providerId}`;
 
             if (!groups[groupId]) {
                 const groupType = isAlbum

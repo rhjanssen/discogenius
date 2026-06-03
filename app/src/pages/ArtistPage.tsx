@@ -548,7 +548,7 @@ const ArtistPage = () => {
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
   ));
-  const { getProgressByTidalId } = useQueueStatus();
+  const { getProgressByProviderId } = useQueueStatus();
 
   useDebouncedQueryInvalidation({
     queryKeys: [['artist-activity', artistId]],
@@ -660,7 +660,7 @@ const ArtistPage = () => {
       const detail = (event as CustomEvent<MonitorStateChangedDetail>).detail;
       if (!detail || !artistId) return;
 
-      if (detail.type === 'artist' && detail.tidalId === artistId) {
+      if (detail.type === 'artist' && detail.providerId === artistId) {
         setMonitorOverride(detail.monitored);
         refetchPage();
         return;
@@ -692,7 +692,7 @@ const ArtistPage = () => {
     setMonitorOverride(nextMonitored);
     try {
       await api.updateArtist(artistId, { monitored: nextMonitored });
-      dispatchMonitorStateChanged({ type: 'artist', tidalId: artistId, monitored: nextMonitored });
+      dispatchMonitorStateChanged({ type: 'artist', providerId: artistId, monitored: nextMonitored });
       dispatchLibraryUpdated();
       refetchPage();
     } catch (error) {
@@ -769,7 +769,7 @@ const ArtistPage = () => {
     e.stopPropagation();
     try {
       await api.updateAlbum(albumId, { monitored: nextMonitored });
-      dispatchMonitorStateChanged({ type: 'album', tidalId: albumId, monitored: nextMonitored });
+      dispatchMonitorStateChanged({ type: 'album', providerId: albumId, monitored: nextMonitored });
       dispatchLibraryUpdated();
       refetchPage();
     } catch (error) {
@@ -781,7 +781,7 @@ const ArtistPage = () => {
     e.stopPropagation();
     try {
       await api.updateVideo(videoId, { monitored: nextMonitored });
-      dispatchMonitorStateChanged({ type: 'video', tidalId: videoId, monitored: nextMonitored });
+      dispatchMonitorStateChanged({ type: 'video', providerId: videoId, monitored: nextMonitored });
       dispatchLibraryUpdated();
       refetchPage();
     } catch (error) {
@@ -791,7 +791,7 @@ const ArtistPage = () => {
 
   // Rendering Helpers
   const renderAlbumCard = (item: any) => {
-    const tidalId = item.id?.toString?.() ?? String(item.id);
+    const providerId = item.id?.toString?.() ?? String(item.id);
     const albumTitle = item.title || "Unknown Album";
 
     const isAlbumMonitored = Boolean(item.is_monitored ?? item.monitor);
@@ -849,9 +849,9 @@ const ArtistPage = () => {
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
       : [item.artist_name || artistName, year || ''].filter(Boolean).join(' · ');
-    const itemProgress = getProgressByTidalId(String(item.stereo_provider_id || ""))
-      || getProgressByTidalId(String(item.spatial_provider_id || ""))
-      || getProgressByTidalId(String(tidalId));
+    const itemProgress = getProgressByProviderId(String(item.stereo_provider_id || ""))
+      || getProgressByProviderId(String(item.spatial_provider_id || ""))
+      || getProgressByProviderId(String(providerId));
     const releaseGroupSlotBadges = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
       ? (
         <div className={styles.slotBadgeRow}>
@@ -875,8 +875,8 @@ const ArtistPage = () => {
 
     return (
       <MediaCard
-        key={tidalId}
-        to={getAlbumPath(tidalId)}
+        key={providerId}
+        to={getAlbumPath(providerId)}
         imageUrl={imageUrl}
         fallbackImageUrl={providerImageUrl}
         alt={albumTitle}
@@ -886,7 +886,7 @@ const ArtistPage = () => {
         quality={item.source === "musicbrainz" ? undefined : (quality as any)}
         qualityBadges={releaseGroupSlotBadges}
         monitored={isAlbumMonitored}
-        onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, tidalId, !isAlbumMonitored)}
+        onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, providerId, !isAlbumMonitored)}
         statusBadge={statusBadge}
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
@@ -897,15 +897,15 @@ const ArtistPage = () => {
 
   // Render an artist card (for Similar Artists, Influencers sections)
   const renderArtistCard = (item: any) => {
-    const tidalId = item.id?.toString?.() ?? String(item.id);
+    const providerId = item.id?.toString?.() ?? String(item.id);
     const name = item.name || "Unknown Artist";
     const imageUrl = item.picture || item.cover_image_url || null;
 
     return (
       <Card
-        key={tidalId}
+        key={providerId}
         className={styles.card}
-        onClick={() => navigate(`/artist/${tidalId}`)}
+        onClick={() => navigate(`/artist/${providerId}`)}
       >
         <div className={styles.cardPreview}>
           {imageUrl ? (
@@ -925,7 +925,7 @@ const ArtistPage = () => {
 
   // Render a video card
   const renderVideoCard = (item: any) => {
-    const tidalId = item.id?.toString?.() ?? String(item.id);
+    const providerId = item.id?.toString?.() ?? String(item.id);
     const title = item.title || "Unknown Video";
     const isVideoMonitored = Boolean(item.is_monitored ?? item.monitor);
     const isLocked = Boolean(item.monitor_locked ?? item.monitor_lock);
@@ -955,9 +955,9 @@ const ArtistPage = () => {
     if (libraryFilter === 'video' || libraryFilter === 'all') {
       return (
         <Card
-          key={tidalId}
+          key={providerId}
           className={mergeClasses(styles.card, styles.videoCard)}
-          onClick={() => navigate(`/video/${tidalId}`)}
+          onClick={() => navigate(`/video/${providerId}`)}
         >
           <div className={mergeClasses(styles.cardPreview, styles.videoPreview)}>
             {imageUrl ? (
@@ -980,7 +980,7 @@ const ArtistPage = () => {
             <button
               type="button"
               className={styles.monitorIndicator}
-              onClick={(e) => toggleVideoMonitored(e, tidalId, !isVideoMonitored)}
+              onClick={(e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
               title={isLocked ? 'Monitoring is locked' : (isVideoMonitored ? 'Unmonitor' : 'Monitor')}
               style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
             >
@@ -991,7 +991,7 @@ const ArtistPage = () => {
               )}
             </button>
             {(() => {
-              const progress = getProgressByTidalId(String(tidalId));
+              const progress = getProgressByProviderId(String(providerId));
               if (progress && progress.state !== 'completed') {
                 return (
                   <DownloadOverlay

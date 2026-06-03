@@ -64,7 +64,7 @@ Download work stays in `download-processor.ts`; scheduled/non-download work stay
 
 ## Remaining Work
 
-- Move manual import and unmapped matching terminology from `tidalId` to provider-neutral IDs.
+- Move manual import and unmapped matching terminology from `providerId` to provider-neutral IDs.
 - Surface MusicBrainz-only video recordings in the local library UI before provider acquisition is configured.
 - Retire provider-primary video read paths once `ProviderItems` + `Recordings` can fully serve video pages and download queueing.
 - Complete Lidarr-style rename/retag preview and apply flows for all library slots.

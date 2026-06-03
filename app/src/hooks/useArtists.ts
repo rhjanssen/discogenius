@@ -107,7 +107,7 @@ export const useArtists = (options?: UseArtistsOptions) => {
       queryClient.setQueriesData<InfiniteData<ArtistsPage>>(
         { queryKey: ["artists"] },
         (current) => updateArtistPages(current, (artist) => (
-          artist.id === detail.tidalId
+          artist.id === detail.providerId
             ? { ...artist, is_monitored: detail.monitored }
             : artist
         )),
@@ -142,7 +142,7 @@ export const useArtists = (options?: UseArtistsOptions) => {
       await api.toggleArtistMonitored(artistId, nextState);
       dispatchMonitorStateChanged({
         type: "artist",
-        tidalId: artistId,
+        providerId: artistId,
         monitored: nextState,
       });
       dispatchLibraryUpdated();

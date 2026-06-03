@@ -14,7 +14,7 @@ import {
 
 export interface SearchResultItem {
     id: string;
-    tidalId: string;
+    providerId: string;
     name: string;
     imageUrl: string | null;
     type: 'artist' | 'album' | 'track' | 'video';
@@ -59,7 +59,7 @@ export const useSearch = () => {
     const syncOptimisticMonitorState = useCallback((item: SearchResultItem, monitored: boolean) => {
         const detail = {
             type: item.type,
-            tidalId: item.tidalId,
+            providerId: item.providerId,
             monitored,
         } as const;
 
@@ -68,10 +68,10 @@ export const useSearch = () => {
     }, []);
 
     const reconcileMonitorQueries = useCallback((item: SearchResultItem) => {
-        queryClient.invalidateQueries({ queryKey: [item.type, item.tidalId] });
+        queryClient.invalidateQueries({ queryKey: [item.type, item.providerId] });
 
         if (item.type === 'artist') {
-            queryClient.invalidateQueries({ queryKey: ["artistPage", item.tidalId] });
+            queryClient.invalidateQueries({ queryKey: ["artistPage", item.providerId] });
         }
     }, [queryClient]);
 
@@ -130,7 +130,7 @@ export const useSearch = () => {
 
                 return {
                     id: String(item.id),
-                    tidalId: item.id?.toString(),
+                    providerId: item.id?.toString(),
                     name: item.name,
                     imageUrl: null, // Computed on frontend now
                     type,
@@ -200,7 +200,7 @@ export const useSearch = () => {
         // Optimistically update monitored status immediately
         setSearchResults(prev => {
             const updateList = (list: SearchResultItem[]) =>
-                list.map(i => i.tidalId === item.tidalId ? { ...i, monitored: true, inLibrary: true } : i);
+                list.map(i => i.providerId === item.providerId ? { ...i, monitored: true, inLibrary: true } : i);
 
             return {
                 ...prev,
@@ -208,7 +208,7 @@ export const useSearch = () => {
                 albums: updateList(prev.albums),
                 tracks: updateList(prev.tracks),
                 videos: updateList(prev.videos),
-                topResult: prev.topResult?.tidalId === item.tidalId
+                topResult: prev.topResult?.providerId === item.providerId
                     ? { ...prev.topResult, monitored: true, inLibrary: true }
                     : prev.topResult
             };
@@ -221,14 +221,14 @@ export const useSearch = () => {
             // These handle fetching data + setting monitor flags in one call
             switch (item.type) {
                 case 'artist':
-                    await api.monitorArtist(item.tidalId, item.name);
+                    await api.monitorArtist(item.providerId, item.name);
                     toastRef.current({
                         title: "Artist monitored",
                         description: `${item.name} is now being monitored`,
                     });
                     break;
                 case 'album':
-                    await api.monitorAlbum(item.tidalId);
+                    await api.monitorAlbum(item.providerId);
                     toastRef.current({
                         title: "Album monitored",
                         description: `${item.name} is now being monitored`,
@@ -236,9 +236,9 @@ export const useSearch = () => {
                     break;
                 case 'track':
                     if (item.inLibrary) {
-                        await api.updateTrack(item.tidalId, { monitored: true });
+                        await api.updateTrack(item.providerId, { monitored: true });
                     } else {
-                        await api.addTrack(item.tidalId);
+                        await api.addTrack(item.providerId);
                     }
                     toastRef.current({
                         title: "Track monitored",
@@ -247,9 +247,9 @@ export const useSearch = () => {
                     break;
                 case 'video':
                     if (item.inLibrary) {
-                        await api.updateVideo(item.tidalId, { monitored: true });
+                        await api.updateVideo(item.providerId, { monitored: true });
                     } else {
-                        await api.addVideo(item.tidalId);
+                        await api.addVideo(item.providerId);
                     }
                     toastRef.current({
                         title: "Video monitored",
@@ -273,7 +273,7 @@ export const useSearch = () => {
             // Revert optimistic update on error
             setSearchResults(prev => {
                 const updateList = (list: SearchResultItem[]) =>
-                    list.map(i => i.tidalId === item.tidalId ? { ...i, monitored: previousMonitored, inLibrary: previousInLibrary } : i);
+                    list.map(i => i.providerId === item.providerId ? { ...i, monitored: previousMonitored, inLibrary: previousInLibrary } : i);
 
                 return {
                     ...prev,
@@ -281,7 +281,7 @@ export const useSearch = () => {
                     albums: updateList(prev.albums),
                     tracks: updateList(prev.tracks),
                     videos: updateList(prev.videos),
-                    topResult: prev.topResult?.tidalId === item.tidalId
+                    topResult: prev.topResult?.providerId === item.providerId
                         ? { ...prev.topResult, monitored: previousMonitored, inLibrary: previousInLibrary }
                         : prev.topResult
                 };
@@ -290,10 +290,10 @@ export const useSearch = () => {
             if (previousMonitored) {
                 syncOptimisticMonitorState(item, true);
             } else {
-                clearOptimisticMonitorState(item.type, item.tidalId);
+                clearOptimisticMonitorState(item.type, item.providerId);
                 dispatchMonitorStateChanged({
                     type: item.type,
-                    tidalId: item.tidalId,
+                    providerId: item.providerId,
                     monitored: false,
                 });
             }
@@ -307,7 +307,7 @@ export const useSearch = () => {
         // Note: We only toggle monitored=false, NOT delete. Item stays in library but unmonitored.
         setSearchResults(prev => {
             const updateList = (list: SearchResultItem[]) =>
-                list.map(i => i.tidalId === item.tidalId ? { ...i, monitored: false } : i);
+                list.map(i => i.providerId === item.providerId ? { ...i, monitored: false } : i);
 
             return {
                 ...prev,
@@ -315,7 +315,7 @@ export const useSearch = () => {
                 albums: updateList(prev.albums),
                 tracks: updateList(prev.tracks),
                 videos: updateList(prev.videos),
-                topResult: prev.topResult?.tidalId === item.tidalId
+                topResult: prev.topResult?.providerId === item.providerId
                     ? { ...prev.topResult, monitored: false }
                     : prev.topResult
             };
@@ -327,16 +327,16 @@ export const useSearch = () => {
             // Toggle monitored to false instead of deleting
             switch (item.type) {
                 case 'artist':
-                    await api.updateArtist(item.tidalId, { monitored: false });
+                    await api.updateArtist(item.providerId, { monitored: false });
                     break;
                 case 'album':
-                    await api.updateAlbum(item.tidalId, { monitored: false });
+                    await api.updateAlbum(item.providerId, { monitored: false });
                     break;
                 case 'track':
-                    await api.updateTrack(item.tidalId, { monitored: false });
+                    await api.updateTrack(item.providerId, { monitored: false });
                     break;
                 case 'video':
-                    await api.updateVideo(item.tidalId, { monitored: false });
+                    await api.updateVideo(item.providerId, { monitored: false });
                     break;
             }
 
@@ -360,7 +360,7 @@ export const useSearch = () => {
             // Revert optimistic update on error
             setSearchResults(prev => {
                 const updateList = (list: SearchResultItem[]) =>
-                    list.map(i => i.tidalId === item.tidalId ? { ...i, monitored: true } : i);
+                    list.map(i => i.providerId === item.providerId ? { ...i, monitored: true } : i);
 
                 return {
                     ...prev,
@@ -368,7 +368,7 @@ export const useSearch = () => {
                     albums: updateList(prev.albums),
                     tracks: updateList(prev.tracks),
                     videos: updateList(prev.videos),
-                    topResult: prev.topResult?.tidalId === item.tidalId
+                    topResult: prev.topResult?.providerId === item.providerId
                         ? { ...prev.topResult, monitored: true }
                         : prev.topResult
                 };
@@ -377,7 +377,7 @@ export const useSearch = () => {
             if (previousMonitored) {
                 syncOptimisticMonitorState(item, true);
             } else {
-                clearOptimisticMonitorState(item.type, item.tidalId);
+                clearOptimisticMonitorState(item.type, item.providerId);
             }
         }
     }, [reconcileMonitorQueries, syncOptimisticMonitorState]);

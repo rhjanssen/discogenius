@@ -47,7 +47,7 @@ Tidarr gets more leverage from `tiddl` because it wraps downloader behavior more
 
 ### Queue payloads are still provider-shaped
 
-Job payloads still assume `tidalId` as the main external identity. That makes provider-neutral routing difficult even though provider offers are now cached in `ProviderItems`.
+Job payloads still assume `providerId` as the main external identity. That makes provider-neutral routing difficult even though provider offers are now cached in `ProviderItems`.
 
 ### Progress is coupled to CLI parsing
 
@@ -67,7 +67,7 @@ export interface ProviderRef {
 }
 ```
 
-This is additive first. Existing queue payloads can keep `tidalId` until the provider-neutral ID migration RFC lands.
+This is additive first. Existing queue payloads can keep `providerId` until the provider-neutral ID migration RFC lands.
 
 ### MediaTraits
 

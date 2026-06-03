@@ -8,31 +8,31 @@ import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 type UseQueueDetailsOptions = {
   artistId?: string;
   albumIds?: string[];
-  tidalIds?: string[];
+  providerIds?: string[];
   enabled?: boolean;
 };
 
 export function useQueueDetails({
   artistId,
   albumIds,
-  tidalIds,
+  providerIds,
   enabled = true,
 }: UseQueueDetailsOptions = {}) {
   const normalizedAlbumIds = useMemo(() => Array.from(new Set((albumIds ?? []).filter(Boolean))), [albumIds]);
-  const normalizedTidalIds = useMemo(() => Array.from(new Set((tidalIds ?? []).filter(Boolean))), [tidalIds]);
+  const normalizedProviderIds = useMemo(() => Array.from(new Set((providerIds ?? []).filter(Boolean))), [providerIds]);
   const queryKey = useMemo(() => ([
     "queueDetails",
     {
       artistId: artistId ?? null,
       albumIds: normalizedAlbumIds,
-      tidalIds: normalizedTidalIds,
+      providerIds: normalizedProviderIds,
     },
-  ] as const), [artistId, normalizedAlbumIds, normalizedTidalIds]);
+  ] as const), [artistId, normalizedAlbumIds, normalizedProviderIds]);
 
   const hasFilters = Boolean(
     (artistId && artistId.trim().length > 0)
     || normalizedAlbumIds.length > 0
-    || normalizedTidalIds.length > 0,
+    || normalizedProviderIds.length > 0,
   );
   const isEnabled = enabled && hasFilters;
 
@@ -49,7 +49,7 @@ export function useQueueDetails({
     queryFn: () => api.getQueueDetails({
       artistId,
       albumIds: normalizedAlbumIds,
-      tidalIds: normalizedTidalIds,
+      providerIds: normalizedProviderIds,
     }),
     staleTime: 5_000,
     refetchOnWindowFocus: false,

@@ -191,7 +191,7 @@ export class ImportMatcherService {
         upcs: Set<string>;
     }) {
         const tidalUrlRegex = /(?:https?:\/\/)?(?:listen\.|www\.)?tidal\.com(?:\/browse)?\/(album|track|video|artist)\/(\d+)/gi;
-        const labeledTidalIdRegex = /\btidal[\s_-]*(album|track|video|artist)(?:[\s_-]*id)?\s*[:=]\s*(\d+)\b/gi;
+        const labeledProviderIdRegex = /\btidal[\s_-]*(album|track|video|artist)(?:[\s_-]*id)?\s*[:=]\s*(\d+)\b/gi;
         const labeledUpcRegex = /\b(?:upc|barcode|ean)\s*[:=]\s*([\d -]{12,20})\b/gi;
 
         let match: RegExpExecArray | null;
@@ -203,7 +203,7 @@ export class ImportMatcherService {
             if (entityType === "video") identifiers.videoIds.add(entityId);
         }
 
-        while ((match = labeledTidalIdRegex.exec(text)) !== null) {
+        while ((match = labeledProviderIdRegex.exec(text)) !== null) {
             const entityType = match[1].toLowerCase();
             const entityId = match[2];
             if (entityType === "album") identifiers.albumIds.add(entityId);
@@ -243,9 +243,9 @@ export class ImportMatcherService {
 
         this.extractTextIdentifiers(group.path, identifiers);
 
-        const tidalIdMatch = group.path.match(/\[TIDAL-(\d+)\]/i);
-        if (tidalIdMatch) {
-            identifiers.albumIds.add(tidalIdMatch[1]);
+        const providerIdMatch = group.path.match(/\[TIDAL-(\d+)\]/i);
+        if (providerIdMatch) {
+            identifiers.albumIds.add(providerIdMatch[1]);
         }
 
         for (const file of group.files) {

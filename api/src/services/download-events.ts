@@ -148,7 +148,7 @@ class DownloadEventEmitter extends EventEmitter {
  * 2. Item progress (current track): trackProgress 0-100
  */
 export interface DownloadProgressData {
-    tidalId: string;
+    providerId: string;
     type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
@@ -197,7 +197,7 @@ export interface DownloadProgressData {
 }
 
 export interface DownloadStartedData {
-    tidalId: string;
+    providerId: string;
     type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
@@ -206,7 +206,7 @@ export interface DownloadStartedData {
 }
 
 export interface DownloadCompletedData {
-    tidalId: string;
+    providerId: string;
     type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
@@ -216,7 +216,7 @@ export interface DownloadCompletedData {
 }
 
 export interface DownloadFailedData {
-    tidalId: string;
+    providerId: string;
     type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;

@@ -73,7 +73,7 @@ router.post("/:id/action", async (req, res) => {
                 break;
 
             case "map":
-                await unmappedFilesService.bulkMap([{ id, tidalId: getRequiredIdentifier(body, "tidalId") }]);
+                await unmappedFilesService.bulkMap([{ id, providerId: getRequiredIdentifier(body, "providerId") }]);
 
                 res.json({ success: true, message: `Successfully mapped file` });
                 break;
@@ -98,11 +98,11 @@ router.post("/identify", async (req, res) => {
         const entityType = typeof body.entityType === "string" ? body.entityType : undefined;
 
         if (entityType === "video") {
-            const tidalId = getRequiredIdentifier(body, "tidalId");
+            const providerId = getRequiredIdentifier(body, "providerId");
             const provider = streamingProviderManager.getDefaultStreamingProvider();
-            const video = provider.getVideo ? await provider.getVideo(tidalId) : null;
+            const video = provider.getVideo ? await provider.getVideo(providerId) : null;
             if (!video) {
-                return res.status(404).json({ success: false, error: `Video ${tidalId} not found on ${provider.name}` });
+                return res.status(404).json({ success: false, error: `Video ${providerId} not found on ${provider.name}` });
             }
             res.json({ success: true, entityType: "video", candidate: video });
             return;
@@ -125,7 +125,7 @@ router.post("/identify", async (req, res) => {
 
 /**
  * POST /api/unmapped/bulk-map
- * Bulk maps unmapped files to Tidal tracks.
+ * Bulk maps unmapped files to provider tracks.
  */
 router.post("/bulk-map", async (req, res) => {
     try {
@@ -139,7 +139,7 @@ router.post("/bulk-map", async (req, res) => {
             const item = getObjectBody(entry, `items[${index}] must be a JSON object`);
             return {
                 id: getRequiredInteger(item, "id"),
-                tidalId: getRequiredIdentifier(item, "tidalId"),
+                providerId: getRequiredIdentifier(item, "providerId"),
             };
         });
 

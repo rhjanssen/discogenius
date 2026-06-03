@@ -25,7 +25,7 @@ type OrganizeType = "album" | "track" | "video";
 
 type OrganizeRequest = {
   type: OrganizeType | string;
-  tidalId?: string;
+  providerId?: string;
   downloadPath?: string;
   onProgress?: (progress: {
     phase: "importing" | "finalizing";
@@ -38,7 +38,7 @@ type OrganizeRequest = {
 
 export type OrganizeResult = {
   type: OrganizeType;
-  tidalId: string;
+  providerId: string;
   processedTrackIds: string[];   // Track IDs that were successfully organized
   totalTracksInStaging: number;  // How many media files were found in the download workspace
   expectedTracks?: number;       // How many tracks the album should have (for albums)
@@ -1017,12 +1017,12 @@ export class OrganizerService {
           raw.type === "DownloadTrack" ? "track" :
             (raw.type as OrganizeType);
 
-    const tidalId = raw.tidalId;
-    if (!tidalId) {
+    const providerId = raw.providerId;
+    if (!providerId) {
       throw new Error("Missing tidal id for organizer");
     }
 
-    const downloadPath = raw.downloadPath || getDownloadWorkspacePath(type as OrganizeType, tidalId);
+    const downloadPath = raw.downloadPath || getDownloadWorkspacePath(type as OrganizeType, providerId);
     const onProgress = raw.onProgress;
     const metadataConfig = Config.getMetadataConfig();
 
@@ -1033,7 +1033,7 @@ export class OrganizerService {
     [musicRoot, spatialRoot, videoRoot].forEach((root) => this.ensureDir(root));
 
     if (type === "album") {
-      const albumIds = tidalId.split(";").filter(Boolean);
+      const albumIds = providerId.split(";").filter(Boolean);
       if (albumIds.length === 0) throw new Error("Missing tidal id");
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
       for (const albumIdVal of albumIds) {
@@ -1067,18 +1067,18 @@ export class OrganizerService {
 
       const sourceAlbumDir = downloadPath;
       if (!fs.existsSync(sourceAlbumDir)) {
-        throw new Error(`[Organizer] Could not locate download folder for album ${tidalId} in ${downloadPath}`);
+        throw new Error(`[Organizer] Could not locate download folder for album ${providerId} in ${downloadPath}`);
       }
 
       const files = this.findFilesRecursively(sourceAlbumDir);
       if (files.length === 0) {
-        throw new Error(`[Organizer] No media files found for album ${tidalId} in ${sourceAlbumDir}`);
+        throw new Error(`[Organizer] No media files found for album ${providerId} in ${sourceAlbumDir}`);
       }
 
       const audioFiles = files.filter((file) => this.AUDIO_EXTENSIONS.has(path.extname(file).toLowerCase()));
-      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(tidalId, audioFiles);
+      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(providerId, audioFiles);
       if (audioFiles.length > 0 && matchedTrackIdsByFile.size === 0) {
-        throw new Error(`[Organizer] Could not match downloaded album files for ${tidalId} to Discogenius tracks in ${sourceAlbumDir}`);
+        throw new Error(`[Organizer] Could not match downloaded album files for ${providerId} to Discogenius tracks in ${sourceAlbumDir}`);
       }
 
       const unmatchedAudioFiles = audioFiles.filter((srcFile) => {
@@ -1094,7 +1094,7 @@ export class OrganizerService {
 
       if (unmatchedAudioFiles.length > 0) {
         throw new Error(
-          `[Organizer] Could not match ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded album file(s) for ${tidalId}; keeping the download workspace for review.`
+          `[Organizer] Could not match ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded album file(s) for ${providerId}; keeping the download workspace for review.`
         );
       }
 
@@ -1121,9 +1121,9 @@ export class OrganizerService {
           if (!processedEmbeddedVideoIds.has(idFromName)) {
             processedEmbeddedVideoIds.add(idFromName);
             try {
-              await this.organizeDownload({ type: "video", tidalId: idFromName, downloadPath: sourceAlbumDir });
+              await this.organizeDownload({ type: "video", providerId: idFromName, downloadPath: sourceAlbumDir });
             } catch (error) {
-              console.warn(`[Organizer] Skipping embedded video ${idFromName} while organizing album ${tidalId}:`, error);
+              console.warn(`[Organizer] Skipping embedded video ${idFromName} while organizing album ${providerId}:`, error);
             }
           }
           continue;
@@ -1458,7 +1458,7 @@ export class OrganizerService {
 
       return {
         type: "album",
-        tidalId,
+        providerId,
         processedTrackIds: destFiles.map((file) => file.trackId),
         totalTracksInStaging: files.length,
         expectedTracks,
@@ -1468,14 +1468,14 @@ export class OrganizerService {
     if (type === "track") {
       const allFiles = this.findFilesRecursively(downloadPath);
       const src =
-        allFiles.find(f => path.basename(f, path.extname(f)) === tidalId) ||
+        allFiles.find(f => path.basename(f, path.extname(f)) === providerId) ||
         (allFiles.length === 1 ? allFiles[0] : null) ||
-        allFiles.find(f => path.basename(f).includes(tidalId));
+        allFiles.find(f => path.basename(f).includes(providerId));
       if (!src) {
-        throw new Error(`[Organizer] Could not locate downloaded file for track ${tidalId} in ${downloadPath}`);
+        throw new Error(`[Organizer] Could not locate downloaded file for track ${providerId} in ${downloadPath}`);
       }
 
-      const trackData = await this.fetchProviderTrack(tidalId);
+      const trackData = await this.fetchProviderTrack(providerId);
       onProgress?.({
         phase: "importing",
         currentFileNum: 0,
@@ -1484,7 +1484,7 @@ export class OrganizerService {
         statusMessage: "Importing downloaded track",
       });
       const albumId = trackData?.album_id ? String(trackData.album_id) : null;
-      if (!albumId) throw new Error(`Track ${tidalId} missing album_id`);
+      if (!albumId) throw new Error(`Track ${providerId} missing album_id`);
 
       // Ensure album + tracks in DB for naming and to locate track metadata.
       const { RefreshAlbumService } = await import("./refresh-album-service.js");
@@ -1493,8 +1493,8 @@ export class OrganizerService {
       const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
       if (!album) throw new Error(`Album ${albumId} not found in DB after scan`);
 
-      const trackRow = db.prepare("SELECT * FROM ProviderMedia WHERE id = ?").get(tidalId) as any;
-      if (!trackRow) throw new Error(`Track ${tidalId} not found in DB after scan`);
+      const trackRow = db.prepare("SELECT * FROM ProviderMedia WHERE id = ?").get(providerId) as any;
+      if (!trackRow) throw new Error(`Track ${providerId} not found in DB after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
@@ -1514,7 +1514,7 @@ export class OrganizerService {
       const canonicalPosition = resolveCanonicalTrackPosition({
         artistId,
         albumId,
-        mediaId: tidalId,
+        mediaId: providerId,
         fileType: "track",
         quality: trackRow.quality || album.quality,
         libraryRoot: targetRoot,
@@ -1522,7 +1522,7 @@ export class OrganizerService {
       const canonicalIdentity = resolveLibraryFileIdentity({
         artistId,
         albumId,
-        mediaId: tidalId,
+        mediaId: providerId,
         fileType: "track",
         quality: trackRow.quality || album.quality,
         libraryRoot: targetRoot,
@@ -1557,7 +1557,7 @@ export class OrganizerService {
         albumVersion: canonicalAlbum ? null : album.version || null,
         releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
         trackTitle,
-        trackId: tidalId,
+        trackId: providerId,
         trackMbId: trackRow.mbid || null,
         trackArtistName: resolvedTrackArtistName,
         trackArtistMbId,
@@ -1579,7 +1579,7 @@ export class OrganizerService {
         spatialRoot,
         mustDisambiguate: this.hasConflictingMediaDestination(
           path.join(targetRoot, artistFolder, `${renderedTrackPath}${ext}`),
-          tidalId,
+          providerId,
           "track",
         ),
       });
@@ -1596,7 +1596,7 @@ export class OrganizerService {
         const libraryFileId = this.upsertLibraryFile({
           artistId,
           albumId,
-          mediaId: tidalId,
+          mediaId: providerId,
           filePath: dest,
           libraryRoot: targetRoot,
           fileType: "track",
@@ -1615,7 +1615,7 @@ export class OrganizerService {
           recordHistoryEvent({
             artistId,
             albumId,
-            mediaId: tidalId,
+            mediaId: providerId,
             libraryFileId,
             eventType: HISTORY_EVENT_TYPES.TrackFileImported,
             quality: derivedQuality,
@@ -1625,12 +1625,12 @@ export class OrganizerService {
             },
           });
         } catch (historyError) {
-          console.warn(`[Organizer] Failed to record track import history for ${tidalId}:`, historyError);
+          console.warn(`[Organizer] Failed to record track import history for ${providerId}:`, historyError);
         }
 
         // Keep the track branch aligned with album/video organization so quality
         // changes replace the previous file instead of leaving duplicates behind.
-        this.cleanupOldMediaFiles(tidalId, dest, "track");
+        this.cleanupOldMediaFiles(providerId, dest, "track");
         this.cleanupSiblingMediaVariants(dest, "track");
       })();
 
@@ -1639,21 +1639,21 @@ export class OrganizerService {
           const lrcPath = this.relocateLinkedSidecar({
             artistId,
             albumId,
-            mediaId: tidalId,
+            mediaId: providerId,
             mediaPath: dest,
             libraryRoot: targetRoot,
             fileType: "lyrics",
             quality: trackRow?.quality || album.quality,
           });
           if (!fs.existsSync(lrcPath)) {
-            await saveLyricsFile(tidalId, lrcPath);
+            await saveLyricsFile(providerId, lrcPath);
           }
 
           if (fs.existsSync(lrcPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId,
-              mediaId: tidalId,
+              mediaId: providerId,
               filePath: lrcPath,
               libraryRoot: targetRoot,
               fileType: "lyrics",
@@ -1809,8 +1809,8 @@ export class OrganizerService {
       // Return result for track
       return {
         type: "track",
-        tidalId,
-        processedTrackIds: [tidalId],
+        providerId,
+        processedTrackIds: [providerId],
         totalTracksInStaging: 1,
       };
     }
@@ -1818,9 +1818,9 @@ export class OrganizerService {
     if (type === "video") {
       const allFiles = this.findFilesRecursively(downloadPath);
       const src =
-        allFiles.find(f => path.basename(f, path.extname(f)) === tidalId) ||
+        allFiles.find(f => path.basename(f, path.extname(f)) === providerId) ||
         (allFiles.length === 1 ? allFiles[0] : null) ||
-        allFiles.find(f => path.basename(f).includes(tidalId));
+        allFiles.find(f => path.basename(f).includes(providerId));
       if (!src) {
         if (allFiles.length === 0) {
           throw new Error(`Download failed: No files were downloaded. The video might be unavailable or DRM protected.`);
@@ -1830,16 +1830,16 @@ export class OrganizerService {
 
       // Ensure video exists in DB
       let fetchedVideoData: any | null = null;
-      let video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
+      let video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(providerId) as any;
       if (!video) {
-        fetchedVideoData = await this.fetchProviderVideo(tidalId);
+        fetchedVideoData = await this.fetchProviderVideo(providerId);
         const videoData = fetchedVideoData;
         const videoCoverId = videoData.image_id || null;
 
         // Ensure artist exists
         const videoArtistId = videoData.artist_id ? String(videoData.artist_id) : null;
         if (!videoArtistId || !/^\d+$/.test(videoArtistId)) {
-          throw new Error(`[Organizer] Video ${tidalId} missing valid artist_id`);
+          throw new Error(`[Organizer] Video ${providerId} missing valid artist_id`);
         }
 
         const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
@@ -1875,7 +1875,7 @@ export class OrganizerService {
             popularity=excluded.popularity,
             cover=COALESCE(excluded.cover, cover)
         `).run(
-          tidalId,
+          providerId,
           videoArtistId,
           videoData.album_id || null,
           videoData.title,
@@ -1888,9 +1888,9 @@ export class OrganizerService {
           videoCoverId,
         );
 
-        video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(tidalId) as any;
+        video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(providerId) as any;
       }
-      if (!video) throw new Error(`Video ${tidalId} not found in DB after fetch`);
+      if (!video) throw new Error(`Video ${providerId} not found in DB after fetch`);
 
       onProgress?.({
         phase: "importing",
@@ -1937,8 +1937,8 @@ export class OrganizerService {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
-        trackId: tidalId,
-        videoId: tidalId,
+        trackId: providerId,
+        videoId: providerId,
         videoTitle: video.title,
         explicit: video.explicit === 1,
         quality: sourceVideoQuality,
@@ -1953,7 +1953,7 @@ export class OrganizerService {
         id: -1,
         artist_id: artistId as unknown as number,
         album_id: video.album_id ? video.album_id as unknown as number : null,
-        media_id: tidalId as unknown as number,
+        media_id: providerId as unknown as number,
         file_path: separatedDest,
         relative_path: path.relative(videoRoot, separatedDest),
         library_root: videoRoot,
@@ -1987,7 +1987,7 @@ export class OrganizerService {
         const libraryFileId = this.upsertLibraryFile({
           artistId,
           albumId: video.album_id ? String(video.album_id) : null,
-          mediaId: tidalId,
+          mediaId: providerId,
           filePath: dest,
           libraryRoot: organizedVideoRoot,
           fileType: "video",
@@ -2005,7 +2005,7 @@ export class OrganizerService {
           recordHistoryEvent({
             artistId,
             albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: tidalId,
+            mediaId: providerId,
             libraryFileId,
             eventType: HISTORY_EVENT_TYPES.TrackFileImported,
             quality: derivedVideoQuality,
@@ -2015,11 +2015,11 @@ export class OrganizerService {
             },
           });
         } catch (historyError) {
-          console.warn(`[Organizer] Failed to record video import history for ${tidalId}:`, historyError);
+          console.warn(`[Organizer] Failed to record video import history for ${providerId}:`, historyError);
         }
 
         // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-        this.cleanupOldMediaFiles(tidalId, dest, "video");
+        this.cleanupOldMediaFiles(providerId, dest, "video");
         this.cleanupSiblingMediaVariants(dest, "video");
       })();
 
@@ -2028,7 +2028,7 @@ export class OrganizerService {
           ? this.relocateLinkedSidecar({
             artistId,
             albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: tidalId,
+            mediaId: providerId,
             mediaPath: dest,
             libraryRoot: organizedVideoRoot,
             fileType: "video_thumbnail",
@@ -2041,11 +2041,11 @@ export class OrganizerService {
         let coverId = video.cover ? String(video.cover) : (fetchedVideoData?.image_id || null);
         if (!coverId) {
           try {
-            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(tidalId);
+            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(providerId);
             coverId = fetchedVideoData?.image_id || null;
             if (coverId) {
               db.prepare("UPDATE ProviderMedia SET cover = COALESCE(?, cover) WHERE id = ? AND type = 'Music Video'")
-                .run(coverId, tidalId);
+                .run(coverId, providerId);
               video.cover = coverId;
             }
           } catch {
@@ -2064,7 +2064,7 @@ export class OrganizerService {
           this.upsertLibraryFile({
             artistId,
             albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: tidalId,
+            mediaId: providerId,
             filePath: persistentCoverPath,
             libraryRoot: organizedVideoRoot,
             fileType: "video_thumbnail",
@@ -2086,11 +2086,11 @@ export class OrganizerService {
       if (metadataConfig.save_nfo) {
         const videoNfoPath = path.join(path.dirname(dest), `${path.parse(dest).name}.nfo`);
         try {
-          await saveVideoNfoFile(tidalId, videoNfoPath);
+          await saveVideoNfoFile(providerId, videoNfoPath);
           this.upsertLibraryFile({
             artistId,
             albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: tidalId,
+            mediaId: providerId,
             filePath: videoNfoPath,
             libraryRoot: organizedVideoRoot,
             fileType: "nfo",
@@ -2099,7 +2099,7 @@ export class OrganizerService {
             expectedPath: videoNfoPath,
           });
         } catch (error) {
-          console.warn(`[Organizer] Failed to write video NFO for ${tidalId}:`, error);
+          console.warn(`[Organizer] Failed to write video NFO for ${providerId}:`, error);
         }
       }
 
@@ -2114,8 +2114,8 @@ export class OrganizerService {
       // Return result for video
       return {
         type: "video",
-        tidalId,
-        processedTrackIds: [tidalId],
+        providerId,
+        processedTrackIds: [providerId],
         totalTracksInStaging: 1,
       };
     }

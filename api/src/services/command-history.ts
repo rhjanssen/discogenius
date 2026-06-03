@@ -270,7 +270,7 @@ function collectDescriptionLookupIds(
 
         const refId = String(
             job.ref_id
-            || payload.tidalId
+            || payload.providerId
             || payload.artistId
             || payload.albumId
             || "",
@@ -344,7 +344,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
     const jobType = String(job.type || "");
     if (payload.description) return payload.description;
 
-    const tidalId = job.ref_id || payload?.tidalId || payload?.artistId || payload?.albumId || null;
+    const providerId = job.ref_id || payload?.providerId || payload?.artistId || payload?.albumId || null;
     const workflowLabel = getArtistWorkflowLabel(payload.workflow);
     const resolveArtistName = () => {
         const direct = String(payload.artistName || "").trim();
@@ -352,9 +352,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             return direct;
         }
 
-        if (tidalId) {
-            if (context?.artistNameById.has(tidalId)) {
-                const cached = String(context.artistNameById.get(tidalId) || "").trim();
+        if (providerId) {
+            if (context?.artistNameById.has(providerId)) {
+                const cached = String(context.artistNameById.get(providerId) || "").trim();
                 if (cached && cached.toLowerCase() !== "unknown artist") {
                     return cached;
                 }
@@ -362,9 +362,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             }
 
             try {
-                const row = db.prepare(`SELECT name FROM Artists WHERE id = ?`).get(tidalId) as any;
+                const row = db.prepare(`SELECT name FROM Artists WHERE id = ?`).get(providerId) as any;
                 const resolved = String(row?.name || "").trim();
-                context?.artistNameById.set(tidalId, resolved || null);
+                context?.artistNameById.set(providerId, resolved || null);
                 if (resolved && resolved.toLowerCase() !== "unknown artist") {
                     return resolved;
                 }
@@ -384,8 +384,8 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         if (payload.albumTitle && payload.artistName) {
             return `${formatAlbumTitle(payload.albumTitle, payload.albumVersion)} by ${payload.artistName}`;
         }
-        if (tidalId) {
-            const cached = context?.albumById.get(tidalId);
+        if (providerId) {
+            const cached = context?.albumById.get(providerId);
             if (cached !== undefined) {
                 if (cached?.title) {
                     const albumTitle = formatAlbumTitle(cached.title, cached.version);
@@ -400,8 +400,8 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
                     FROM ProviderAlbums a
                     LEFT JOIN Artists ar ON ar.id = a.artist_id
                     WHERE a.id = ?
-                `).get(tidalId) as any;
-                context?.albumById.set(tidalId, row?.title ? {
+                `).get(providerId) as any;
+                context?.albumById.set(providerId, row?.title ? {
                     title: row.title,
                     version: row.version,
                     artistName: row.artist_name,
@@ -516,11 +516,11 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return `${payload.title} by ${payload.artist}`;
     }
 
-    if (!tidalId) return payload.title || job.type;
+    if (!providerId) return payload.title || job.type;
 
     try {
         if (job.type === "DownloadAlbum") {
-            const cached = tidalId ? context?.albumById.get(tidalId) : undefined;
+            const cached = providerId ? context?.albumById.get(providerId) : undefined;
             if (cached !== undefined) {
                 const albumTitle = formatAlbumTitle(cached?.title || payload.title || "Unknown", cached?.version || null);
                 const artistName = cached?.artistName || payload.artist || "Unknown";
@@ -532,9 +532,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
                 FROM ProviderAlbums a
                 LEFT JOIN Artists ar ON ar.id = a.artist_id
                 WHERE a.id = ?
-            `).get(tidalId) as any;
-            if (tidalId) {
-                context?.albumById.set(tidalId, row?.title ? {
+            `).get(providerId) as any;
+            if (providerId) {
+                context?.albumById.set(providerId, row?.title ? {
                     title: row.title,
                     version: row.version,
                     artistName: row.artist_name,
@@ -546,7 +546,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         }
 
         if (job.type === "DownloadTrack") {
-            const cached = tidalId ? context?.trackById.get(tidalId) : undefined;
+            const cached = providerId ? context?.trackById.get(providerId) : undefined;
             if (cached !== undefined) {
                 const trackTitle = cached?.trackTitle
                     ? formatTrackTitle(cached.trackTitle, cached.trackVersion || null)
@@ -569,9 +569,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
                 LEFT JOIN ProviderAlbums a ON a.id = m.album_id
                 LEFT JOIN Artists ar ON ar.id = a.artist_id
                 WHERE m.id = ?
-            `).get(tidalId) as any;
-            if (tidalId) {
-                context?.trackById.set(tidalId, row?.track_title ? {
+            `).get(providerId) as any;
+            if (providerId) {
+                context?.trackById.set(providerId, row?.track_title ? {
                     trackTitle: row.track_title,
                     trackVersion: row.track_version,
                     albumTitle: row.album_title,
@@ -590,7 +590,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         }
 
         if (job.type === "DownloadVideo") {
-            const cached = tidalId ? context?.videoById.get(tidalId) : undefined;
+            const cached = providerId ? context?.videoById.get(providerId) : undefined;
             if (cached !== undefined) {
                 const title = cached?.title || payload.title || "Unknown Video";
                 const artistName = cached?.artistName || payload.artist || "Unknown";
@@ -602,9 +602,9 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
                 FROM ProviderMedia m
                 LEFT JOIN Artists ar ON ar.id = m.artist_id
                 WHERE m.id = ? AND m.type = 'Music Video'
-            `).get(tidalId) as any;
-            if (tidalId) {
-                context?.videoById.set(tidalId, row?.title ? {
+            `).get(providerId) as any;
+            if (providerId) {
+                context?.videoById.set(providerId, row?.title ? {
                     title: row.title,
                     artistName: row.artist_name,
                 } : null);
@@ -635,7 +635,7 @@ const parseSqliteDate = (value: unknown) => {
 export const mapJob = (job: Job, options: { queuePosition?: number; descriptionContext?: DescriptionLookupContext } = {}) => {
     const payload = job.payload && typeof job.payload === "object"
         ? {
-            tidalId: job.ref_id || job.payload.tidalId,
+            providerId: job.ref_id || job.payload.providerId,
             type: job.payload.type,
             title: job.payload.title,
             artist: job.payload.artist,

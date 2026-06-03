@@ -13,10 +13,10 @@ export type QueueStatusContextType = {
   stats: QueueStatsSummary;
   isPaused: boolean;
   progressByJobId: Map<number, DownloadProgress>;
-  progressByTidalId: Map<string, DownloadProgress>;
+  progressByProviderId: Map<string, DownloadProgress>;
   getProgress: (jobId: number) => DownloadProgress | undefined;
-  getProgressByTidalId: (tidalId: string) => DownloadProgress | undefined;
-  addToQueue: (url: string | null | undefined, type: string, tidalId?: string | null, options?: AddToQueueOptions) => Promise<void>;
+  getProgressByProviderId: (providerId: string) => DownloadProgress | undefined;
+  addToQueue: (url: string | null | undefined, type: string, providerId?: string | null, options?: AddToQueueOptions) => Promise<void>;
   processItem: (id: number) => Promise<void>;
   retryItem: (id: number) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;

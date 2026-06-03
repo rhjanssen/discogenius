@@ -28,17 +28,17 @@ function buildRetryResponse(jobType: string, message?: string) {
 
 function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPayload, priority: number, trigger: number) {
     const mediaType = payload.type;
-    const tidalId = payload.tidalId;
-    if (!mediaType || !tidalId) {
-        throw new Error('Import retry is missing the media type or TIDAL ID needed to queue a re-download.');
+    const providerId = payload.providerId;
+    if (!mediaType || !providerId) {
+        throw new Error('Import retry is missing the media type or provider ID needed to queue a re-download.');
     }
     if (mediaType !== 'track' && mediaType !== 'video' && mediaType !== 'album') {
         throw new Error(`Import retry has unsupported media type: ${mediaType}`);
     }
 
-    const url = buildStreamingMediaUrl(mediaType, tidalId);
+    const url = buildStreamingMediaUrl(mediaType, providerId);
     const existingJob = TaskQueueService.getByRefId(
-        tidalId,
+        providerId,
         mediaType === 'video'
             ? JobTypes.DownloadVideo
             : mediaType === 'album'
@@ -52,7 +52,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
         switch (mediaType) {
             case 'album': {
                 queuedJobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-                    tidalId,
+                    providerId,
                     url,
                     type: mediaType,
                     title: payload.resolved?.title ?? payload.title,
@@ -62,12 +62,12 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
                     artist_id: payload.artist_id ?? payload.artistId,
                     quality: payload.quality ?? null,
                     qualityProfile: payload.qualityProfile,
-                } satisfies DownloadAlbumJobPayload, tidalId, priority, trigger);
+                } satisfies DownloadAlbumJobPayload, providerId, priority, trigger);
                 break;
             }
             case 'video': {
                 queuedJobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
-                    tidalId,
+                    providerId,
                     url,
                     type: mediaType,
                     title: payload.resolved?.title ?? payload.title,
@@ -77,13 +77,13 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
                     artist_id: payload.artist_id ?? payload.artistId,
                     quality: payload.quality ?? null,
                     qualityProfile: payload.qualityProfile,
-                } satisfies DownloadVideoJobPayload, tidalId, priority, trigger);
+                } satisfies DownloadVideoJobPayload, providerId, priority, trigger);
                 break;
             }
             case 'track':
             default: {
                 queuedJobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
-                    tidalId,
+                    providerId,
                     url,
                     type: mediaType,
                     title: payload.resolved?.title ?? payload.title,
@@ -93,14 +93,14 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
                     artist_id: payload.artist_id ?? payload.artistId,
                     quality: payload.quality ?? null,
                     qualityProfile: payload.qualityProfile,
-                } satisfies DownloadTrackJobPayload, tidalId, priority, trigger);
+                } satisfies DownloadTrackJobPayload, providerId, priority, trigger);
                 break;
             }
         }
     }
 
     if (queuedJobId === undefined || queuedJobId < 0) {
-        throw new Error(`Failed to queue a new ${mediaType} download for ${tidalId}.`);
+        throw new Error(`Failed to queue a new ${mediaType} download for ${providerId}.`);
     }
 
     downloadProcessor.processQueue().catch(err => {
@@ -256,7 +256,7 @@ router.get('/queue/details', async (req: Request, res: Response) => {
             .split(',')
             .map((value) => value.trim())
             .filter(Boolean);
-        const tidalIds = String(req.query.tidalIds || '')
+        const providerIds = String(req.query.providerIds || '')
             .split(',')
             .map((value) => value.trim())
             .filter(Boolean);
@@ -264,7 +264,7 @@ router.get('/queue/details', async (req: Request, res: Response) => {
         res.json(DownloadQueueQueryService.getQueueDetails({
             artistId,
             albumIds,
-            tidalIds,
+            providerIds,
         }));
     } catch (error: any) {
         console.error('[QUEUE-API] Error getting queue details:', error);
@@ -382,14 +382,13 @@ router.post('/queue', async (req: Request, res: Response) => {
         const url = getQueueRequestString(body.url);
         const requestedType = normalizeDownloadMediaType(body.type);
         const requestedProviderId = getQueueRequestString(body.providerId);
-        const requestedTidalId = getQueueRequestString(body.tidalId);
 
         const parsedUrl = url ? parseStreamingUrl(url) : null;
         const contentType = requestedType ?? parsedUrl?.type ?? 'track';
         const releaseGroupMbid = getQueueRequestString(body.releaseGroupMbid);
         let canonicalTrackMbid = getQueueRequestString(body.canonicalTrackMbid);
         const canonicalRecordingMbid = getQueueRequestString(body.canonicalRecordingMbid);
-        let resolvedProviderId = requestedProviderId ?? requestedTidalId ?? parsedUrl?.sourceId ?? null;
+        let resolvedProviderId = requestedProviderId ?? parsedUrl?.sourceId ?? null;
         let resolvedProvider = getQueueRequestString(body.provider) ?? parsedUrl?.streamingSource ?? 'tidal';
         let resolvedSlot = getQueueRequestString(body.slot);
         let resolvedQuality = getQueueRequestString(body.quality);
@@ -420,9 +419,9 @@ router.post('/queue', async (req: Request, res: Response) => {
             resolvedQuality = resolvedQuality ?? resolvedTrack.quality;
         }
 
-        if (!url && !requestedProviderId && !requestedTidalId && !resolvedProviderId) {
+        if (!url && !requestedProviderId && !resolvedProviderId) {
             return res.status(400).json({
-                error: 'Either url, providerId, tidalId, or a resolvable canonical track is required',
+                error: 'Either url, providerId, or a resolvable canonical track is required',
             });
         }
 
@@ -433,7 +432,6 @@ router.post('/queue', async (req: Request, res: Response) => {
         const payload = {
             provider: resolvedProvider,
             providerId: resolvedProviderId,
-            tidalId: resolvedProviderId,
             url: url || buildStreamingMediaUrl(contentType, resolvedProviderId),
             type: contentType,
             releaseGroupMbid: releaseGroupMbid ?? undefined,

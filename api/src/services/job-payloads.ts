@@ -53,9 +53,8 @@ export interface ResolvedDownloadMetadata {
 export interface QueuePayloadCommon {
   id?: string;
   ids?: number[];
-  tidalId?: string;
-  provider?: string;
   providerId?: string;
+  provider?: string;
   releaseGroupMbid?: string;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
@@ -186,7 +185,7 @@ export interface RescanFoldersJobPayload extends QueuePayloadCommon {
 
 export interface ImportDownloadJobPayload extends QueuePayloadCommon {
   type: DownloadMediaType;
-  tidalId: string;
+  providerId: string;
   resolved?: ResolvedDownloadMetadata;
   originalJobId?: number;
 }

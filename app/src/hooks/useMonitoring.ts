@@ -40,7 +40,7 @@ export const useMonitoring = () => {
             });
             dispatchMonitorStateChanged({
                 type: variables.type,
-                tidalId: variables.id,
+                providerId: variables.id,
                 monitored,
             });
             dispatchLibraryUpdated();

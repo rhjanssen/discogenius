@@ -33,7 +33,7 @@ type ImportHistoryContext = {
     quality: string | null;
 };
 
-function resolveImportHistoryContext(type: string, tidalId: string): ImportHistoryContext {
+function resolveImportHistoryContext(type: string, providerId: string): ImportHistoryContext {
     const fallback: ImportHistoryContext = {
         artistId: null,
         albumId: null,
@@ -42,7 +42,7 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
     };
 
     if (type === "album") {
-        const albumIds = tidalId.split(";").filter(Boolean);
+        const albumIds = providerId.split(";").filter(Boolean);
         if (albumIds.length === 0) {
             return fallback;
         }
@@ -69,7 +69,7 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
             SELECT id, artist_id, album_id, quality
             FROM ProviderMedia
             WHERE id = ?
-        `).get(tidalId) as {
+        `).get(providerId) as {
             id: number;
             artist_id: number;
             album_id: number | null;
@@ -91,9 +91,9 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
     return fallback;
 }
 
-function clearUpgradeQueue(type: string, tidalId: string) {
+function clearUpgradeQueue(type: string, providerId: string) {
     if (type === "album") {
-        const albumIds = tidalId.split(";").filter(Boolean);
+        const albumIds = providerId.split(";").filter(Boolean);
         if (albumIds.length > 0) {
             const placeholders = albumIds.map(() => '?').join(', ');
             db.prepare(`DELETE FROM upgrade_queue WHERE album_id IN (${placeholders})`).run(...albumIds);
@@ -101,32 +101,32 @@ function clearUpgradeQueue(type: string, tidalId: string) {
         return;
     }
 
-    db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(tidalId);
+    db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(providerId);
 }
 
-function resolveAffectedArtistId(type: string, tidalId: string): number | null {
+function resolveAffectedArtistId(type: string, providerId: string): number | null {
     if (type === "album") {
-        const albumIds = tidalId.split(";").filter(Boolean);
+        const albumIds = providerId.split(";").filter(Boolean);
         if (albumIds.length === 0) return null;
         return (db.prepare(`SELECT artist_id FROM ProviderAlbums WHERE id = ?`).get(albumIds[0]) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
     }
 
-    return (db.prepare(`SELECT artist_id FROM ProviderMedia WHERE id = ?`).get(tidalId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+    return (db.prepare(`SELECT artist_id FROM ProviderMedia WHERE id = ?`).get(providerId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
 }
 
-function reconcileImportedDownload(type: string, tidalId: string, organizeResult: OrganizeResult) {
+function reconcileImportedDownload(type: string, providerId: string, organizeResult: OrganizeResult) {
     if (type === "album") {
         const processedIds = organizeResult.processedTrackIds;
         if (processedIds.length === 0) {
-            throw new Error(`No tracks were successfully organized for album ${tidalId}`);
+            throw new Error(`No tracks were successfully organized for album ${providerId}`);
         }
 
         const expected = organizeResult.expectedTracks || 0;
         if (processedIds.length < expected) {
-            console.warn(`[ImportDownload] Album ${tidalId}: only ${processedIds.length}/${expected} tracks were imported. Partial download.`);
+            console.warn(`[ImportDownload] Album ${providerId}: only ${processedIds.length}/${expected} tracks were imported. Partial download.`);
         }
 
-        const albumIds = tidalId.split(";").filter(Boolean);
+        const albumIds = providerId.split(";").filter(Boolean);
         for (const albumId of albumIds) {
             updateAlbumDownloadStatus(String(albumId));
         }
@@ -134,16 +134,16 @@ function reconcileImportedDownload(type: string, tidalId: string, organizeResult
     }
 
     if (type === "video") {
-        updateArtistDownloadStatusFromMedia(String(tidalId));
+        updateArtistDownloadStatusFromMedia(String(providerId));
         return;
     }
 
     try {
-        const albumRow = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(tidalId) as { album_id?: number | null } | undefined;
+        const albumRow = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(providerId) as { album_id?: number | null } | undefined;
         if (albumRow?.album_id) {
             updateAlbumDownloadStatus(String(albumRow.album_id));
         } else {
-            updateArtistDownloadStatusFromMedia(String(tidalId));
+            updateArtistDownloadStatusFromMedia(String(providerId));
         }
     } catch {
         // Best-effort: skip album update if lookup fails.
@@ -157,17 +157,17 @@ export class DownloadedTracksImportService {
             updateState: (state: ImportDownloadState) => void;
         },
     ): Promise<void> {
-    const { type, tidalId, resolved, originalJobId, path: payloadPath } = job.payload;
+    const { type, providerId, resolved, originalJobId, path: payloadPath } = job.payload;
 
-    if (!type || !tidalId) {
-        throw new Error("ImportDownload job is missing the type or TIDAL ID required to finish import.");
+    if (!type || !providerId) {
+        throw new Error("ImportDownload job is missing the type or provider ID required to finish import.");
     }
 
     if (type !== "album" && type !== "track" && type !== "video") {
         throw new Error(`ImportDownload job has unsupported media type: ${type}`);
     }
 
-    const downloadPath = payloadPath || getDownloadWorkspacePath(type, tidalId);
+    const downloadPath = payloadPath || getDownloadWorkspacePath(type, providerId);
     let shouldCleanupDownloadPath = false;
 
     options.updateState({
@@ -180,15 +180,15 @@ export class DownloadedTracksImportService {
     try {
         let organizeResult: OrganizeResult;
         if (!fs.existsSync(downloadPath)) {
-            const recoveredMediaIds = getExistingLibraryMediaIds(type, tidalId);
+            const recoveredMediaIds = getExistingLibraryMediaIds(type, providerId);
 
             if (recoveredMediaIds.length === 0) {
-                throw new Error(`Import files for ${type} ${tidalId} are no longer available. Re-download the item to retry import.`);
+                throw new Error(`Import files for ${type} ${providerId} are no longer available. Re-download the item to retry import.`);
             }
 
             let expectedTracks = 1;
             if (type === "album") {
-                const albumIds = tidalId.split(";").filter(Boolean);
+                const albumIds = providerId.split(";").filter(Boolean);
                 if (albumIds.length > 0) {
                     const placeholders = albumIds.map(() => '?').join(', ');
                     expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || recoveredMediaIds.length);
@@ -199,7 +199,7 @@ export class DownloadedTracksImportService {
 
             organizeResult = {
                 type,
-                tidalId,
+                providerId,
                 processedTrackIds: recoveredMediaIds,
                 totalTracksInStaging: recoveredMediaIds.length,
                 expectedTracks,
@@ -213,7 +213,7 @@ export class DownloadedTracksImportService {
                 statusMessage: "Recovering import from existing library files",
                 state: "importing",
             });
-            console.warn(`[ImportDownload] Download workspace missing for ${type} ${tidalId}, but imported library file(s) already exist. Recovering import job.`);
+            console.warn(`[ImportDownload] Download workspace missing for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             options.updateState({
                 progress: 15,
@@ -223,7 +223,7 @@ export class DownloadedTracksImportService {
             });
             organizeResult = await OrganizerService.organizeDownload({
                 type,
-                tidalId,
+                providerId,
                 downloadPath,
                 onProgress: (progress) => {
                     const normalizedProgress = progress.phase === "finalizing"
@@ -256,10 +256,10 @@ export class DownloadedTracksImportService {
             state: "importing",
         });
 
-        reconcileImportedDownload(type, tidalId, organizeResult);
-        clearUpgradeQueue(type, tidalId);
+        reconcileImportedDownload(type, providerId, organizeResult);
+        clearUpgradeQueue(type, providerId);
 
-        const affectedArtistId = resolveAffectedArtistId(type, tidalId);
+        const affectedArtistId = resolveAffectedArtistId(type, providerId);
         if (affectedArtistId) {
             options.updateState({
                 progress: 82,
@@ -294,7 +294,7 @@ export class DownloadedTracksImportService {
 
             try {
                 if (type === "album") {
-                    const albumIds = tidalId.split(";").filter(Boolean);
+                    const albumIds = providerId.split(";").filter(Boolean);
                     for (const albumId of albumIds) {
                         try {
                             await MetadataIdentityService.resolveAlbum(albumId, { includeTracks: true });
@@ -303,10 +303,10 @@ export class DownloadedTracksImportService {
                         }
                     }
                 } else {
-                    await MetadataIdentityService.resolveTrack(tidalId);
+                    await MetadataIdentityService.resolveTrack(providerId);
                 }
             } catch (error) {
-                console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${tidalId}:`, error);
+                console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
             }
 
             options.updateState({
@@ -322,16 +322,16 @@ export class DownloadedTracksImportService {
                 const retagResult = await AudioTagService.applyForMediaIds(organizeResult.processedTrackIds);
                 if (retagResult.errors.length > 0) {
                     console.warn(
-                        `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${tidalId}:`,
+                        `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${providerId}:`,
                         retagResult.errors,
                     );
                 }
             } catch (error) {
-                console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${tidalId}:`, error);
+                console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${providerId}:`, error);
             }
         }
 
-        const historyContext = resolveImportHistoryContext(type, tidalId);
+        const historyContext = resolveImportHistoryContext(type, providerId);
         try {
             recordHistoryEvent({
                 artistId: historyContext.artistId,
@@ -339,10 +339,10 @@ export class DownloadedTracksImportService {
                 mediaId: historyContext.mediaId,
                 eventType: HISTORY_EVENT_TYPES.DownloadImported,
                 quality: historyContext.quality,
-                sourceTitle: String(resolved?.title || tidalId),
+                sourceTitle: String(resolved?.title || providerId),
                 data: {
                     type,
-                    tidalId,
+                    providerId,
                     originalJobId: originalJobId ?? null,
                     processedTrackIds: {
                         count: organizeResult.processedTrackIds.length,
@@ -351,7 +351,7 @@ export class DownloadedTracksImportService {
                 },
             });
         } catch (historyError) {
-            console.warn(`[ImportDownload] Failed to write DownloadImported history event for ${type} ${tidalId}:`, historyError);
+            console.warn(`[ImportDownload] Failed to write DownloadImported history event for ${type} ${providerId}:`, historyError);
         }
 
         const expectedProcessedTracks = organizeResult.expectedTracks ?? 0;
@@ -363,10 +363,10 @@ export class DownloadedTracksImportService {
                     mediaId: historyContext.mediaId,
                     eventType: HISTORY_EVENT_TYPES.AlbumImportIncomplete,
                     quality: historyContext.quality,
-                    sourceTitle: String(resolved?.title || tidalId),
+                    sourceTitle: String(resolved?.title || providerId),
                     data: {
                         type,
-                        tidalId,
+                        providerId,
                         originalJobId: originalJobId ?? null,
                         processedTrackIds: {
                             count: organizeResult.processedTrackIds.length,
@@ -375,7 +375,7 @@ export class DownloadedTracksImportService {
                     },
                 });
             } catch (historyError) {
-                console.warn(`[ImportDownload] Failed to write AlbumImportIncomplete history event for ${type} ${tidalId}:`, historyError);
+                console.warn(`[ImportDownload] Failed to write AlbumImportIncomplete history event for ${type} ${providerId}:`, historyError);
             }
         }
 
@@ -391,12 +391,12 @@ export class DownloadedTracksImportService {
         shouldCleanupDownloadPath = true;
     } catch (error) {
         try {
-            clearUpgradeQueue(type, tidalId);
+            clearUpgradeQueue(type, providerId);
         } catch (cleanupError) {
-            console.error(`[ImportDownload] Failed to reset upgrade_queue after import failure for ${type} ${tidalId}:`, cleanupError);
+            console.error(`[ImportDownload] Failed to reset upgrade_queue after import failure for ${type} ${providerId}:`, cleanupError);
         }
 
-        const historyContext = resolveImportHistoryContext(type, tidalId);
+        const historyContext = resolveImportHistoryContext(type, providerId);
         const message = error instanceof Error ? error.message : String(error);
         try {
             recordHistoryEvent({
@@ -405,16 +405,16 @@ export class DownloadedTracksImportService {
                 mediaId: historyContext.mediaId,
                 eventType: HISTORY_EVENT_TYPES.DownloadFailed,
                 quality: historyContext.quality,
-                sourceTitle: String(resolved?.title || tidalId),
+                sourceTitle: String(resolved?.title || providerId),
                 data: {
                     type,
-                    tidalId,
+                    providerId,
                     originalJobId: originalJobId ?? null,
                     error: message,
                 },
             });
         } catch (historyError) {
-            console.warn(`[ImportDownload] Failed to write DownloadFailed history event for ${type} ${tidalId}:`, historyError);
+            console.warn(`[ImportDownload] Failed to write DownloadFailed history event for ${type} ${providerId}:`, historyError);
         }
 
         throw error;

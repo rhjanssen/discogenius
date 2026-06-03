@@ -202,7 +202,7 @@ export class ImportService {
     /**
      * Manually maps a local group to a specific provider album/video and imports it.
      */
-    async mapGroup(groupId: string, tidalId: string): Promise<boolean> {
+    async mapGroup(groupId: string, providerId: string): Promise<boolean> {
         const candidate = this.candidates.find(c => c.group.id === groupId);
         if (!candidate) {
             throw new Error(`Group not found: ${groupId}`);
@@ -214,13 +214,13 @@ export class ImportService {
         if (isVideo) {
             let providerVideo;
             try {
-                providerVideo = await provider.getVideo?.(tidalId);
+                providerVideo = await provider.getVideo?.(providerId);
             } catch (e) {
-                throw new Error(`Failed to fetch ${provider.name} video ${tidalId}`);
+                throw new Error(`Failed to fetch ${provider.name} video ${providerId}`);
             }
 
             if (!providerVideo) {
-                throw new Error(`${provider.name} video ${tidalId} not found`);
+                throw new Error(`${provider.name} video ${providerId} not found`);
             }
 
             candidate.matches = [{
@@ -232,13 +232,13 @@ export class ImportService {
         } else {
             let providerAlbum;
             try {
-                providerAlbum = await provider.getAlbum(tidalId);
+                providerAlbum = await provider.getAlbum(providerId);
             } catch (e) {
-                throw new Error(`Failed to fetch ${provider.name} album ${tidalId}`);
+                throw new Error(`Failed to fetch ${provider.name} album ${providerId}`);
             }
 
             if (!providerAlbum) {
-                throw new Error(`${provider.name} album ${tidalId} not found`);
+                throw new Error(`${provider.name} album ${providerId} not found`);
             }
 
             candidate.matches = [{
@@ -255,11 +255,11 @@ export class ImportService {
     }
 
     /**
-     * Maps an array of explicitly specified file->tidalId pairs.
-     * This bypasses the fuzzy matching and strictly maps the given files to the given Tidal tracks,
+     * Maps an array of explicitly specified file->providerId pairs.
+     * This bypasses the fuzzy matching and strictly maps the given files to the given provider tracks,
      * registering them in the system and cleaning them from the unmapped_files table.
      */
-    async bulkImportUnmapped(items: { id: number, tidalId: string }[]): Promise<void> {
+    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<void> {
         await manualImportService.bulkImportUnmapped(items);
     }
 

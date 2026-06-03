@@ -104,7 +104,7 @@ export class UnmappedFilesService {
         return files.length;
     }
 
-    async bulkMap(items: Array<{ id: number; tidalId: string }>): Promise<void> {
+    async bulkMap(items: Array<{ id: number; providerId: string }>): Promise<void> {
         await this.importService.bulkImportUnmapped(items);
     }
 
@@ -204,13 +204,13 @@ export class UnmappedFilesService {
         const filesById = new Map(files.map((file) => [file.id, file]));
         const trackIdsByFilePath: Record<string, string> = {};
 
-        for (const [fileId, tidalId] of Object.entries(mappedTracks)) {
+        for (const [fileId, providerId] of Object.entries(mappedTracks)) {
             const file = filesById.get(Number(fileId));
             if (!file) {
                 continue;
             }
 
-            trackIdsByFilePath[file.file_path] = tidalId;
+            trackIdsByFilePath[file.file_path] = providerId;
         }
 
         return trackIdsByFilePath;
@@ -356,9 +356,9 @@ export class UnmappedFilesService {
             return 0;
         }
 
-        const items = Object.entries(bestMatch.trackIdsByFilePath || {}).map(([filePath, tidalId]) => ({
+        const items = Object.entries(bestMatch.trackIdsByFilePath || {}).map(([filePath, providerId]) => ({
             id: folderFiles.find((file) => file.file_path === filePath)?.id || 0,
-            tidalId,
+            providerId,
         })).filter((item) => item.id > 0);
 
         if (items.length === 0) {

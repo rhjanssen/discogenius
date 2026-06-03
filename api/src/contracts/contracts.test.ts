@@ -301,7 +301,7 @@ test("status contract parsers validate queue and status overview payloads", () =
       {
         id: 7,
         url: "https://tidal.com/album/243864035",
-        tidalId: "243864035",
+        providerId: "243864035",
         type: "album",
         status: "processing",
         progress: 55,
