@@ -61,7 +61,7 @@ export const TIDAL_DL_NG_TOKEN_FILE = path.join(TIDAL_DL_NG_CONFIG_DIR, "token.j
 
 export type TidalDlNgAudioQuality = "LOW" | "HIGH" | "LOSSLESS" | "HI_RES_LOSSLESS";
 export type TidalDlNgVideoQuality = "360" | "480" | "720" | "1080";
-export type TidalDlNgDownloadType = "album" | "track" | "video" | "playlist";
+export type TidalDlNgDownloadType = "album" | "track" | "video";
 
 export function shouldExtractFlac(audioQuality: TidalDlNgAudioQuality): boolean {
     return audioQuality === "LOSSLESS" || audioQuality === "HI_RES_LOSSLESS";
@@ -592,8 +592,6 @@ export function getDownloadSourcePath(type: TidalDlNgDownloadType, tidalId: stri
             return path.join(downloadRoot, "tracks", tidalId);
         case "video":
             return path.join(downloadRoot, "videos", tidalId);
-        case "playlist":
-            return path.join(downloadRoot, "playlists", tidalId);
         default:
             return downloadRoot;
     }
@@ -797,7 +795,6 @@ export function getTidalDlNgCapabilitySnapshot(): BackendCapabilitySnapshot {
             video: true,
             spatialAudio: true,
             highResAudio: true,
-            playlists: true,
         },
         checks,
         notes,
@@ -822,11 +819,11 @@ export interface TidalDlNgProgress {
     isComplete: boolean;
     /** Whether download is just starting (e.g., session switch) */
     isStarting: boolean;
-    /** Current track number in album/playlist (if applicable) */
+    /** Current track number in album downloads (if applicable) */
     currentTrack?: number;
-    /** Total tracks in album/playlist (if applicable) */
+    /** Total tracks in album downloads (if applicable) */
     totalTracks?: number;
-    /** Album/playlist name (if downloading a collection) */
+    /** Album name (if downloading a collection) */
     listName?: string;
     /** Whether this is a list completion message */
     isListComplete?: boolean;

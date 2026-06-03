@@ -23,7 +23,7 @@
 - Video quality: 1080 (fhd), 720 (hd), 480 (sd)
 
 ## Orpheus Integration
-- Use Orpheus for music downloads: albums, tracks, and playlists.
+- Use Orpheus for music downloads: albums and tracks.
 - Runtime/bootstrap and session handling live in api/src/services/orpheus.ts.
 - Orpheus session state lives under /config/orpheusdl/config/loginstorage.bin and must be written atomically; a zero-byte file will crash Orpheus with EOFError.
 - Before starting an Orpheus download, sync the stored TIDAL token into Orpheus session storage.

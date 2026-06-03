@@ -253,7 +253,7 @@ import { TaskQueueService } from "@/services/queue";
 | Base repository | `api/src/repositories/BaseRepository.ts` |
 | Task queue | `api/src/services/queue.ts` |
 | Download processor | `api/src/services/download-processor.ts` |
-| Metadata refresh services | `api/src/services/refresh-artist-service.ts`, `api/src/services/refresh-album-service.ts`, `api/src/services/refresh-playlist-service.ts`, `api/src/services/refresh-video-service.ts`, `api/src/services/media-seed-service.ts` |
+| Metadata refresh services | `api/src/services/refresh-artist-service.ts`, `api/src/services/refresh-album-service.ts`, `api/src/services/refresh-video-service.ts`, `api/src/services/media-seed-service.ts` |
 | Organizer | `api/src/services/organizer.ts` |
 
 ---

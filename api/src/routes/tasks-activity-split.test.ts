@@ -64,7 +64,7 @@ function getGetHandler(router: any, pathName: string): (req: any, res: any) => v
 }
 
 test("/api/tasks defaults to pending+processing+completed+failed+cancelled and supports explicit status override", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "playlist-pending" }, "playlist-pending");
+    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
     const processingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "library" });
     const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.BulkRefreshArtist, {});
@@ -110,7 +110,7 @@ test("/api/tasks defaults to pending+processing+completed+failed+cancelled and s
 });
 
 test("/api/tasks rejects unsupported filters", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "playlist-pending" }, "playlist-pending");
+    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
 
     const tasksHandler = getGetHandler(tasksRouter as any, "/");
 
@@ -195,7 +195,7 @@ test("/api/activity rejects unsupported filters", () => {
 });
 
 test("/api/activity/events returns merged event log sorted newest-first with pagination metadata", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "playlist-events" }, "playlist-events");
+    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-events" }, "album-events");
     const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.fail(failedId, "health failed");
 

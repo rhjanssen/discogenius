@@ -21,7 +21,7 @@ import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "./cano
 import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
 
 
-type OrganizeType = "album" | "track" | "video" | "playlist";
+type OrganizeType = "album" | "track" | "video";
 
 type OrganizeRequest = {
   type: OrganizeType | string;

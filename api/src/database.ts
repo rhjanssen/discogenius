@@ -358,44 +358,6 @@ function rebuildUpgradeQueueWithProviderReferences(): void {
   `);
 }
 
-function rebuildPlaylistTracksWithProviderReferences(): void {
-  if (!exactTableExists("playlist_tracks") || !exactTableExists("playlists")) {
-    return;
-  }
-
-  const foreignKeys = db.prepare("PRAGMA foreign_key_list(playlist_tracks)").all() as Array<{ table: string }>;
-  if (foreignKeys.some((foreignKey) => foreignKey.table === "ProviderMedia")) {
-    return;
-  }
-
-  db.exec(`
-    ALTER TABLE playlist_tracks RENAME TO playlist_tracks_legacy;
-
-    CREATE TABLE playlist_tracks (
-      playlist_uuid TEXT NOT NULL,
-      track_id INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      PRIMARY KEY (playlist_uuid, position),
-      FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-      FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
-    );
-
-    INSERT OR IGNORE INTO playlist_tracks (playlist_uuid, track_id, position)
-    SELECT playlist_uuid, track_id, position
-    FROM playlist_tracks_legacy
-    WHERE EXISTS (
-      SELECT 1 FROM playlists
-      WHERE playlists.uuid = playlist_tracks_legacy.playlist_uuid
-    )
-      AND EXISTS (
-        SELECT 1 FROM ProviderMedia
-        WHERE CAST(ProviderMedia.id AS TEXT) = CAST(playlist_tracks_legacy.track_id AS TEXT)
-      );
-
-    DROP TABLE playlist_tracks_legacy;
-  `);
-}
-
 function ensureProviderCompatibilityTablesUseCurrentNames(): void {
   withForeignKeysDisabled(() => {
     normalizeTableNameCase("Artists");
@@ -874,78 +836,8 @@ const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [
   },
   {
     // 6
-    description: "migrate playlist_tracks primary key to playlist position and add playlist track lookup index",
-    up: () => {
-      if (!tableExists("playlist_tracks")) {
-        return;
-      }
-
-      const columns = db.prepare("PRAGMA table_info(playlist_tracks)").all() as Array<{
-        name: string;
-        notnull: number;
-        pk: number;
-      }>;
-
-      const primaryKey = columns
-        .filter((column) => column.pk > 0)
-        .sort((left, right) => left.pk - right.pk)
-        .map((column) => column.name);
-      const positionColumn = columns.find((column) => column.name === "position");
-
-      const hasDesiredSchema =
-        primaryKey.length === 2
-        && primaryKey[0] === "playlist_uuid"
-        && primaryKey[1] === "position"
-        && positionColumn?.notnull === 1;
-
-      if (hasDesiredSchema) {
-        db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)");
-        return;
-      }
-
-      db.pragma("foreign_keys = OFF");
-      try {
-        db.exec("BEGIN");
-        db.exec(`
-          ALTER TABLE playlist_tracks RENAME TO playlist_tracks_legacy;
-
-          CREATE TABLE playlist_tracks (
-            playlist_uuid TEXT NOT NULL,
-            track_id INTEGER NOT NULL,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (playlist_uuid, position),
-            FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-            FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
-          );
-
-          INSERT INTO playlist_tracks (playlist_uuid, track_id, position)
-          WITH ranked_tracks AS (
-            SELECT
-              playlist_uuid,
-              track_id,
-              ROW_NUMBER() OVER (
-                PARTITION BY playlist_uuid
-                ORDER BY
-                  CASE WHEN position IS NULL THEN 1 ELSE 0 END,
-                  position,
-                  rowid
-              ) - 1 AS normalized_position
-            FROM playlist_tracks_legacy
-          )
-          SELECT playlist_uuid, track_id, normalized_position
-          FROM ranked_tracks;
-
-          DROP TABLE playlist_tracks_legacy;
-        `);
-        db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)");
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      } finally {
-        db.pragma("foreign_keys = ON");
-      }
-    },
+    description: "reserved for removed pre-2.0 provider collection migration",
+    up: () => {},
   },
   {
     // 7
@@ -1157,7 +1049,6 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     version: 11,
     description: "add missing foreign key and path indexes for cascade deletes and lookup performance",
     up: () => {
-      db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track_id ON playlist_tracks(track_id)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON ProviderAlbumArtists(album_id)");
@@ -2458,7 +2349,7 @@ export function initDatabase() {
       codec TEXT,                        -- Audio codec (FLAC, AAC, etc)
       
       -- Content Type
-      file_type TEXT NOT NULL,           -- track, video, cover, video_cover, video_thumbnail, bio, review, lyrics, playlist
+      file_type TEXT NOT NULL,           -- track, video, cover, video_cover, video_thumbnail, bio, review, lyrics
       quality TEXT,                      -- LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS, etc
       
       -- Naming & Organization
@@ -2655,49 +2546,6 @@ export function initDatabase() {
   `);
 
   // ====================================================================
-  // INDEXES
-  // ====================================================================
-  // PLAYLISTS TABLE
-  // Stores provider playlists that have been added for monitoring/download.
-  // ====================================================================
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS playlists (
-        uuid TEXT PRIMARY KEY,
-        tidal_id TEXT UNIQUE,
-        title TEXT NOT NULL,
-        description TEXT,
-        creator_name TEXT,
-        creator_id TEXT,
-        cover_id TEXT,
-        square_cover_id TEXT,
-        num_tracks INTEGER DEFAULT 0,
-        num_videos INTEGER DEFAULT 0,
-        duration INTEGER DEFAULT 0,
-        created TEXT,
-        last_updated TEXT,
-        type TEXT DEFAULT 'PLAYLIST',
-        public_playlist INTEGER DEFAULT 0,
-        monitored INTEGER DEFAULT 0,
-        downloaded INTEGER DEFAULT 0,
-        user_date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_scanned DATETIME
-      )
-    `);
-
-  db.exec(`
-      CREATE TABLE IF NOT EXISTS playlist_tracks (
-        playlist_uuid TEXT NOT NULL,
-        track_id INTEGER NOT NULL,
-        position INTEGER NOT NULL,
-        PRIMARY KEY (playlist_uuid, position),
-        FOREIGN KEY (playlist_uuid) REFERENCES playlists(uuid) ON DELETE CASCADE,
-        FOREIGN KEY (track_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE
-      )
-    `);
-
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_uuid_track_id ON playlist_tracks(playlist_uuid, track_id)`);
-
-  // ====================================================================
   // MIGRATIONS — must run before indexes so migration-added columns exist
   // ====================================================================
   // Integrity check
@@ -2815,7 +2663,6 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
 
   // Foreign key and lookup performance indexes
-  db.exec("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track_id ON playlist_tracks(track_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON ProviderAlbumArtists(album_id)");

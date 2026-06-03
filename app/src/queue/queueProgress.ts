@@ -23,7 +23,6 @@ const DOWNLOAD_QUEUE_JOB_TYPES = new Set([
   "DownloadAlbum",
   "DownloadTrack",
   "DownloadVideo",
-  "DownloadPlaylist",
   "ImportDownload",
 ]);
 

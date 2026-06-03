@@ -8,7 +8,7 @@ export type ArtistWorkflowValue =
 
 export type MonitoringPassWorkflowValue = "full-cycle" | "curation-cycle" | "root-scan-cycle";
 
-export type DownloadMediaType = "track" | "video" | "album" | "playlist";
+export type DownloadMediaType = "track" | "video" | "album";
 
 export type DownloadTrackStatus = "queued" | "downloading" | "completed" | "error" | "skipped";
 
@@ -74,8 +74,6 @@ export interface QueuePayloadCommon {
   album?: string;
   album_id?: string;
   artist_id?: string;
-  playlistId?: string;
-  playlistName?: string;
   workflow?: ArtistWorkflowValue;
   monitoringCycle?: MonitoringPassWorkflowValue;
   monitor?: boolean;
@@ -134,11 +132,6 @@ export interface RefreshAlbumJobPayload extends QueuePayloadCommon {
   forceUpdate?: boolean;
 }
 
-export interface ScanPlaylistJobPayload extends QueuePayloadCommon {
-  tidalId: string;
-  forceUpdate?: boolean;
-}
-
 export interface RefreshMetadataJobPayload extends QueuePayloadCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
@@ -165,10 +158,6 @@ export interface DownloadVideoJobPayload extends QueuePayloadCommon {
 
 export interface DownloadAlbumJobPayload extends QueuePayloadCommon {
   type?: "album";
-}
-
-export interface DownloadPlaylistJobPayload extends QueuePayloadCommon {
-  type?: "playlist";
 }
 
 export interface CurateArtistJobPayload extends QueuePayloadCommon {

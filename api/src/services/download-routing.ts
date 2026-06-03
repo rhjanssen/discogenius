@@ -3,14 +3,13 @@ import { Config } from "./config.js";
 import { streamingProviderManager } from "./providers/index.js";
 
 export type StreamingSourceId = string;
-export type DownloadMediaType = "album" | "track" | "video" | "playlist";
+export type DownloadMediaType = "album" | "track" | "video";
 export type DownloadBackendId = "orpheus" | "tidal-dl-ng";
 
 const DOWNLOAD_FOLDERS: Record<DownloadMediaType, string> = {
     album: "albums",
     track: "tracks",
     video: "videos",
-    playlist: "playlists",
 };
 
 export function getDefaultStreamingSource(): StreamingSourceId {

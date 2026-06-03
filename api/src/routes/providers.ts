@@ -17,7 +17,6 @@ function serializeProvider(provider: ReturnType<typeof streamingProviderManager.
       canAuthenticate: provider.capabilities.providerIds && provider.id === "tidal",
       canDisconnect: Boolean(provider.logout),
       canImportFollowedArtists: provider.capabilities.followedArtists && Boolean(provider.getFollowedArtists),
-      canImportPlaylists: provider.capabilities.playlists && Boolean(provider.getUserPlaylists),
       canPreviewTracks: provider.capabilities.audioPreviews && Boolean(provider.getPlaybackInfo),
       canPreviewVideos: provider.capabilities.videoPreviews && Boolean(provider.getVideoPlaybackInfo),
       canDownloadMusic: provider.capabilities.audioDownloads,

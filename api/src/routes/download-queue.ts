@@ -9,7 +9,6 @@ import { DownloadQueueQueryService } from '../services/download-queue-query-serv
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../services/provider-track-resolver.js';
 import type {
     DownloadAlbumJobPayload,
-    DownloadPlaylistJobPayload,
     DownloadTrackJobPayload,
     DownloadVideoJobPayload,
     ImportDownloadJobPayload,
@@ -33,6 +32,9 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
     if (!mediaType || !tidalId) {
         throw new Error('Import retry is missing the media type or TIDAL ID needed to queue a re-download.');
     }
+    if (mediaType !== 'track' && mediaType !== 'video' && mediaType !== 'album') {
+        throw new Error(`Import retry has unsupported media type: ${mediaType}`);
+    }
 
     const url = buildStreamingMediaUrl(mediaType, tidalId);
     const existingJob = TaskQueueService.getByRefId(
@@ -41,9 +43,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
             ? JobTypes.DownloadVideo
             : mediaType === 'album'
                 ? JobTypes.DownloadAlbum
-                : mediaType === 'playlist'
-                    ? JobTypes.DownloadPlaylist
-                    : JobTypes.DownloadTrack,
+                : JobTypes.DownloadTrack,
     );
 
     let queuedJobId = existingJob?.id;
@@ -78,20 +78,6 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
                     quality: payload.quality ?? null,
                     qualityProfile: payload.qualityProfile,
                 } satisfies DownloadVideoJobPayload, tidalId, priority, trigger);
-                break;
-            }
-            case 'playlist': {
-                queuedJobId = TaskQueueService.addJob(JobTypes.DownloadPlaylist, {
-                    tidalId,
-                    url,
-                    type: mediaType,
-                    title: payload.resolved?.title ?? payload.title,
-                    cover: payload.resolved?.cover ?? payload.cover,
-                    playlistId: tidalId,
-                    playlistName: payload.playlistName ?? payload.resolved?.title ?? payload.title,
-                    quality: payload.quality ?? null,
-                    qualityProfile: payload.qualityProfile,
-                } satisfies DownloadPlaylistJobPayload, tidalId, priority, trigger);
                 break;
             }
             case 'track':
@@ -196,7 +182,6 @@ router.delete('/remove-finished', async (_req: Request, res: Response) => {
             JobTypes.DownloadAlbum,
             JobTypes.DownloadTrack,
             JobTypes.DownloadVideo,
-            JobTypes.DownloadPlaylist,
             JobTypes.ImportDownload,
         ]);
         res.sendStatus(204);
@@ -323,7 +308,7 @@ function getQueueRequestStringArray(value: unknown): string[] | undefined {
 
 function normalizeDownloadMediaType(value: unknown): DownloadMediaType | null {
     const normalized = getQueueRequestString(value)?.toLowerCase();
-    return normalized === 'track' || normalized === 'video' || normalized === 'album' || normalized === 'playlist'
+    return normalized === 'track' || normalized === 'video' || normalized === 'album'
         ? normalized
         : null;
 }
@@ -483,11 +468,6 @@ router.post('/queue', async (req: Request, res: Response) => {
                 ...payload,
                 type: 'video',
             } satisfies DownloadVideoJobPayload, queueRefId);
-        } else if (contentType === 'playlist') {
-            jobId = TaskQueueService.addJob(JobTypes.DownloadPlaylist, {
-                ...payload,
-                type: 'playlist',
-            } satisfies DownloadPlaylistJobPayload, queueRefId);
         } else {
             jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
                 ...payload,
@@ -649,7 +629,6 @@ router.post('/queue/clear-completed', async (_req: Request, res: Response) => {
             JobTypes.DownloadAlbum,
             JobTypes.DownloadTrack,
             JobTypes.DownloadVideo,
-            JobTypes.DownloadPlaylist,
             JobTypes.ImportDownload,
         ]);
         res.json({ message: 'Finished download jobs cleared' });

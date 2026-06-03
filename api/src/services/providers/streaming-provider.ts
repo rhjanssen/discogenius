@@ -2,7 +2,6 @@ export interface ProviderCapabilities {
   catalogSearch: boolean;
   artistCatalog: boolean;
   followedArtists: boolean;
-  playlists: boolean;
   audioPreviews: boolean;
   audioDownloads: boolean;
   lossyStereo: boolean;
@@ -40,10 +39,6 @@ export interface StreamingProvider {
   getPlaybackInfo?(id: string | number, preferredQuality?: string): Promise<ProviderPlaybackInfo | null>;
   getVideoPlaybackInfo?(id: string | number): Promise<ProviderVideoPlaybackInfo | null>;
 
-  getPlaylist?(id: string | number): Promise<any>;
-  getPlaylistTracks?(id: string | number): Promise<ProviderTrack[]>;
-  getUserPlaylists?(): Promise<any[]>;
-  
   getArtistBio?(id: string | number): Promise<string | null>;
   getSimilarArtists?(id: string | number): Promise<ProviderArtist[]>;
   getAlbumReview?(id: string | number): Promise<string | null>;
@@ -69,7 +64,7 @@ export interface StreamingProvider {
   parseMediaUrl?(url: string): { type: string; providerId: string } | null;
   downloadItem?(
     providerId: string,
-    entityType: "album" | "track" | "video" | "playlist",
+    entityType: "album" | "track" | "video",
     downloadPath: string,
     options?: ProviderDownloadOptions
   ): Promise<void>;

@@ -34,7 +34,6 @@ test("followed artist import uses the requested streaming provider", async () =>
       catalogSearch: false,
       artistCatalog: false,
       followedArtists: true,
-      playlists: false,
       audioPreviews: false,
       audioDownloads: false,
       lossyStereo: false,

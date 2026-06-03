@@ -45,14 +45,13 @@ function humanizeJobType(type: string): string {
 
 function normalizeDescription(description: string): string {
     return description
-        .replace(/^Download(Album|Track|Video|Playlist):\s*/i, "")
+        .replace(/^Download(Album|Track|Video):\s*/i, "")
         .replace(/^ImportDownload:\s*/i, "")
         .replace(/^(Downloading|Upgrading|Importing|Processing|Refreshing|Scanning|Curating|Cleaning Up)\s+/i, "")
         .replace(/^(Monitoring|Library refresh|Library scan|Metadata refresh|Curation):\s*/i, "")
         .replace(/^album:\s*/i, "Album: ")
         .replace(/^track:\s*/i, "Track: ")
         .replace(/^video:\s*/i, "Video: ")
-        .replace(/^playlist:\s*/i, "Playlist: ")
         .replace(/^artist:\s*/i, "Artist: ")
         .trim();
 }
@@ -125,12 +124,8 @@ export function formatJobType(job: JobLike): string {
             return "Download Track";
         case "DownloadVideo":
             return "Download Video";
-        case "DownloadPlaylist":
-            return "Download Playlist";
         case "ImportDownload":
             return getImportDownloadLabel(job);
-        case "ImportPlaylist":
-            return "Import Playlist";
         case "RefreshArtist":
             return "Refresh Artist";
         case "RefreshMetadata":
@@ -146,8 +141,6 @@ export function formatJobType(job: JobLike): string {
         case "RefreshAlbum":
         case "ScanAlbum":
             return "Refresh Album";
-        case "ScanPlaylist":
-            return "Scan Playlist";
         case "RescanFolders": {
             const rescanPayload = getJobPayload(job);
             return rescanPayload?.addNewArtists ? "Scan Library" : "Rescan Folders";
@@ -179,7 +172,7 @@ export function formatJobDescription(job: JobLike): string {
     const type = job.type || "";
     const payload = getJobPayload(job);
     const resolved = payload?.resolved || null;
-    const title = resolved?.title || payload?.title || payload?.playlistName || "";
+    const title = resolved?.title || payload?.title || "";
     const artist = resolved?.artist || payload?.artist || payload?.artistName || "";
     const album = payload?.albumTitle || payload?.album || resolved?.albumTitle || "";
     const desc = normalizeDescription(job.description || "");
@@ -191,8 +184,6 @@ export function formatJobDescription(job: JobLike): string {
             return title ? joinSubject(title, artist, album) : stripLabel("Track", desc);
         case "DownloadVideo":
             return title ? joinSubject(title, artist) : stripLabel("Video", desc);
-        case "DownloadPlaylist":
-            return title || stripLabel("Playlist", desc);
         case "ImportDownload": {
             const importedType = payload?.type;
             if (importedType === "album") return joinSubject(title, artist) || stripLabel("Album", desc);
@@ -201,8 +192,6 @@ export function formatJobDescription(job: JobLike): string {
             if (payload?.files?.length) return `Imported ${pluralize(payload.files.length, "file")}`;
             return desc || "Imported files from a completed download";
         }
-        case "ImportPlaylist":
-            return title || stripLabel("Playlist", desc) || "Imported playlist files";
         case "RefreshArtist":
         case "CurateArtist":
         case "RescanFolders": {
@@ -231,8 +220,6 @@ export function formatJobDescription(job: JobLike): string {
         case "RefreshAlbum":
         case "ScanAlbum":
             return title ? joinSubject(title, artist) : stripLabel("Album", desc);
-        case "ScanPlaylist":
-            return title || stripLabel("Playlist", desc) || "Playlist";
         case "RefreshMetadata":
         case "ApplyCuration":
         case "DownloadMissing":
@@ -305,12 +292,11 @@ export function matchesActivityFilter(job: any, filter: string): boolean {
                 'DownloadAlbum',
                 'DownloadTrack',
                 'DownloadVideo',
-                'DownloadPlaylist',
                 'DownloadMissing',
                 'CheckUpgrades',
             ].includes(type);
         case 'imports':
-            return type === 'ImportDownload' || type === 'ImportPlaylist';
+            return type === 'ImportDownload';
         case 'metadata':
             return [
                 'RefreshArtist',
@@ -318,7 +304,6 @@ export function matchesActivityFilter(job: any, filter: string): boolean {
                 'RescanFolders',
                 'RefreshAlbum',
                 'ScanAlbum',
-                'ScanPlaylist',
                 'MoveArtist',
                 'RenameArtist',
                 'RenameFiles',

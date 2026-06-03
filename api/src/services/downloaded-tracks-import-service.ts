@@ -92,10 +92,6 @@ function resolveImportHistoryContext(type: string, tidalId: string): ImportHisto
 }
 
 function clearUpgradeQueue(type: string, tidalId: string) {
-    if (type === "playlist") {
-        return;
-    }
-
     if (type === "album") {
         const albumIds = tidalId.split(";").filter(Boolean);
         if (albumIds.length > 0) {
@@ -119,10 +115,6 @@ function resolveAffectedArtistId(type: string, tidalId: string): number | null {
 }
 
 function reconcileImportedDownload(type: string, tidalId: string, organizeResult: OrganizeResult) {
-    if (type === "playlist") {
-        return;
-    }
-
     if (type === "album") {
         const processedIds = organizeResult.processedTrackIds;
         if (processedIds.length === 0) {
@@ -171,7 +163,11 @@ export class DownloadedTracksImportService {
         throw new Error("ImportDownload job is missing the type or TIDAL ID required to finish import.");
     }
 
-    const downloadPath = payloadPath || getDownloadWorkspacePath(type as "album" | "track" | "video" | "playlist", tidalId);
+    if (type !== "album" && type !== "track" && type !== "video") {
+        throw new Error(`ImportDownload job has unsupported media type: ${type}`);
+    }
+
+    const downloadPath = payloadPath || getDownloadWorkspacePath(type, tidalId);
     let shouldCleanupDownloadPath = false;
 
     options.updateState({

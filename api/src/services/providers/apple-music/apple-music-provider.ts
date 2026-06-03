@@ -19,7 +19,6 @@ export class AppleMusicProvider implements StreamingProvider {
     catalogSearch: true,
     artistCatalog: true,
     followedArtists: false,
-    playlists: false,
     audioPreviews: true,
     audioDownloads: true,
     lossyStereo: true,
@@ -297,7 +296,7 @@ export class AppleMusicProvider implements StreamingProvider {
 
   async downloadItem(
     providerId: string,
-    entityType: "album" | "track" | "video" | "playlist",
+    entityType: "album" | "track" | "video",
     downloadPath: string,
     options?: ProviderDownloadOptions
   ): Promise<void> {

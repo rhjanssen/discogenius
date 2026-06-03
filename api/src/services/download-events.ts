@@ -144,12 +144,12 @@ class DownloadEventEmitter extends EventEmitter {
  * Download progress data interface
  *
  * Progress is reported at two levels:
- * 1. Overall progress (album/playlist level): currentFileNum / totalFiles
+ * 1. Overall progress (album level): currentFileNum / totalFiles
  * 2. Item progress (current track): trackProgress 0-100
  */
 export interface DownloadProgressData {
     tidalId: string;
-    type: 'track' | 'video' | 'album' | 'playlist';
+    type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
     artist?: string;
@@ -167,7 +167,7 @@ export interface DownloadProgressData {
     /** Current file being downloaded (full path or name) */
     currentFile?: string;
 
-    /** Total number of files to download (for albums/playlists) */
+    /** Total number of files to download (for albums) */
     totalFiles?: number;
 
     /** Current file number being downloaded (1-based) */
@@ -188,7 +188,7 @@ export interface DownloadProgressData {
     /** Overall download state */
     state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
 
-    /** Track list for album/playlist downloads with per-track status */
+    /** Track list for album downloads with per-track status */
     tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
 
     /** Size information */
@@ -198,7 +198,7 @@ export interface DownloadProgressData {
 
 export interface DownloadStartedData {
     tidalId: string;
-    type: 'track' | 'video' | 'album' | 'playlist';
+    type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
     artist?: string;
@@ -207,7 +207,7 @@ export interface DownloadStartedData {
 
 export interface DownloadCompletedData {
     tidalId: string;
-    type: 'track' | 'video' | 'album' | 'playlist';
+    type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
     artist?: string;
@@ -217,7 +217,7 @@ export interface DownloadCompletedData {
 
 export interface DownloadFailedData {
     tidalId: string;
-    type: 'track' | 'video' | 'album' | 'playlist';
+    type: 'track' | 'video' | 'album';
     quality?: string | null;
     title?: string;
     artist?: string;

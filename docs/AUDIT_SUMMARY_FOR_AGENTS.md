@@ -297,7 +297,7 @@ Maintain these updates:
 ### Backend Low-Hanging Fruit
 
 1. **Service Validation Consistency**
-   - scanAlbum uses different validation than scanPlaylist
+   - Album/video refresh services should share parsing helpers where their provider payloads overlap
    - Create shared parsing helpers for metadata
 
 2. **Job Payload Standardization**

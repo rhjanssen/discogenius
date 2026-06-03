@@ -25,7 +25,7 @@ description: Backend workflow for Discogenius (Express + TypeScript) covering Or
 ### Lidarr-Inspired Design
 Discogenius follows Lidarr-style patterns:
 - **Command System** (`api/src/services/command.ts`): Defines command exclusivity rules (type-exclusive, disk-intensive, globally exclusive)
-- **Download Processor**: Handles exact media download jobs only: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist`
+- **Download Processor**: Handles exact media download jobs only: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`
 - **Scheduler**: Handles all non-download jobs including `DownloadMissing`, `RefreshMetadata`, `RefreshArtist`, `RefreshAlbum`, `CurateArtist`, `RescanFolders`, `ImportDownload`, `ConfigPrune`, `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, and `RetagFiles`
 - **Task Queue Service** (`api/src/services/queue.ts`): Persistent task queue in SQLite
 - **Manual Import Flow**: `import-discovery.ts` + `import-matcher-service.ts` + `manual-import-service.ts` + `import-finalize-service.ts` + `import-service.ts` + unmapped routes + `identification-service.ts`
@@ -35,16 +35,16 @@ Discogenius follows Lidarr-style patterns:
 | Command | Type Exclusive | Disk Intensive | Notes |
 |---------|----------------|----------------|-------|
 | DownloadTrack / DownloadVideo | No | No | Small media downloads |
-| DownloadAlbum / DownloadPlaylist | No | No | Larger media downloads |
+| DownloadAlbum | No | No | Larger music downloads |
 | RefreshArtist | Yes | No | Only one artist refresh at a time |
-| RefreshAlbum / ScanPlaylist | No | No | Metadata scans can run in parallel |
+| RefreshAlbum | No | No | Metadata scans can run in parallel |
 | CurateArtist | Yes | No | Per-artist curation pass |
 | RescanFolders / RescanAllRoots | No / Yes | Yes | Disk reconciliation for artist or full-library passes |
 | MoveArtist / RenameArtist / RenameFiles / RetagArtist / RetagFiles | Yes | Yes | Queue maintenance work instead of running it inline |
 | ConfigPrune / Housekeeping / CheckHealth | Yes | Yes | Cleanup and maintenance passes |
 
 ## Download backends
-- Use Orpheus for music downloads (`album`, `track`, `playlist`) and tidal-dl-ng for `video` downloads.
+- Use Orpheus for music downloads (`album`, `track`) and tidal-dl-ng for `video` downloads.
 - Do not route music downloads through tidal-dl-ng. Discogenius keeps Orpheus specifically for music handling, including Atmos-capable paths that tidal-dl-ng can no longer cover reliably.
 - Keep backend routing logic in `api/src/services/download-routing.ts`.
 
@@ -81,7 +81,7 @@ Discogenius follows Lidarr-style patterns:
 - For manual import and locally added files, prefer the existing fingerprint + AcoustID/MusicBrainz path over adding ad hoc matching logic.
 
 ## Queue + scheduler
-- `DownloadProcessor` handles `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, and `DownloadPlaylist` with real-time progress streaming
+- `DownloadProcessor` handles `DownloadTrack`, `DownloadVideo`, and `DownloadAlbum` with real-time progress streaming
 - Before Orpheus downloads, make sure the TIDAL token is synced into Orpheus session storage; the session file must not be left empty or partially written.
 - `Scheduler` handles all other job types with command exclusivity checks
 - Use `CommandManager.canStartCommand()` to check if a job can run
@@ -101,8 +101,8 @@ Discogenius follows Lidarr-style patterns:
 - The schema already tracks file fingerprints and AcoustID-related import settings; preserve that path when extending manual import.
 
 ## Job Types
-- `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist`
-- `RefreshArtist`, `RefreshAlbum`, `ScanPlaylist`, `RefreshMetadata`
+- `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`
+- `RefreshArtist`, `RefreshAlbum`, `RefreshMetadata`
 - `ApplyCuration`, `DownloadMissing`, `CheckUpgrades`, `Housekeeping`
 - `CurateArtist`, `RescanFolders`, `RescanAllRoots`, `ImportDownload`, `ConfigPrune`
 - `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, `RetagFiles`

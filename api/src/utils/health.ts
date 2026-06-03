@@ -22,7 +22,6 @@ export interface BackendCapabilitySnapshot {
     video: boolean;
     spatialAudio: boolean;
     highResAudio: boolean;
-    playlists: boolean;
   };
   checks: HealthCheckResult[];
   notes: string[];

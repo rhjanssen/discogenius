@@ -1507,13 +1507,11 @@ const SettingsPage = () => {
         { label: "Catalog search", enabled: Boolean(provider.capabilities.catalogSearch) },
         { label: "Artist catalog", enabled: Boolean(provider.capabilities.artistCatalog) },
         { label: "Followed artists", enabled: Boolean(provider.capabilities.followedArtists) },
-        { label: "Playlists", enabled: Boolean(provider.capabilities.playlists) },
-        { label: "Audio previews", enabled: Boolean(provider.capabilities.audioPreviews) },
-        { label: "Audio downloads", enabled: Boolean(provider.capabilities.audioDownloads) },
-        { label: "Lossy stereo", enabled: Boolean(provider.capabilities.lossyStereo) },
-        { label: "Lossless stereo", enabled: Boolean(provider.capabilities.losslessStereo) },
-        { label: "Hi-res stereo", enabled: Boolean(provider.capabilities.hiResStereo) },
-        { label: "Spatial audio", enabled: Boolean(provider.capabilities.spatialAudio) },
+        { label: "Track previews", enabled: Boolean(provider.capabilities.audioPreviews) },
+        { label: "Music downloads", enabled: Boolean(provider.capabilities.audioDownloads) },
+        { label: "Lossless FLAC", enabled: Boolean(provider.capabilities.losslessStereo) },
+        { label: "Hi-res FLAC", enabled: Boolean(provider.capabilities.hiResStereo) },
+        { label: "Dolby Atmos", enabled: Boolean(provider.capabilities.spatialAudio) },
         { label: "Lyrics", enabled: Boolean(provider.capabilities.lyrics) },
         { label: "Music videos", enabled: Boolean(provider.capabilities.musicVideos) },
         { label: "Video previews", enabled: Boolean(provider.capabilities.videoPreviews) },
@@ -1521,13 +1519,13 @@ const SettingsPage = () => {
         { label: "Artwork", enabled: Boolean(provider.capabilities.artwork) },
         { label: "Editorial metadata", enabled: Boolean(provider.capabilities.editorialMetadata) },
         { label: "Provider IDs", enabled: Boolean(provider.capabilities.providerIds) },
-    ];
+    ].filter((capability) => capability.enabled);
 
     const streamingProvidersSection = (
         <SettingsSection
             id="streaming-providers"
             title="Streaming Providers"
-            description="Manage availability, previews, followed-artist import, playlist import, downloads, and provider capabilities."
+            description="Manage availability, previews, followed-artist import, downloads, and provider metadata supplements."
             className={styles.section}
         >
             <div className={styles.card}>
@@ -1615,16 +1613,16 @@ const SettingsPage = () => {
                                 <div className={styles.rowContent}>
                                     <Text weight="semibold">Capabilities</Text>
                                     <div className={styles.capabilityGrid}>
-                                        {getProviderCapabilities(provider).map((capability) => (
+                                        {getProviderCapabilities(provider).length > 0 ? getProviderCapabilities(provider).map((capability) => (
                                             <div key={capability.label} className={styles.capabilityRow}>
                                                 <span className={styles.capabilityValue}>
-                                                    {capability.enabled
-                                                        ? <Checkmark24Regular className={styles.capabilityIconOn} />
-                                                        : <Dismiss24Regular className={styles.capabilityIconOff} />}
+                                                    <Checkmark24Regular className={styles.capabilityIconOn} />
                                                 </span>
                                                 <Text size={200} className={styles.capabilityLabel}>{capability.label}</Text>
                                             </div>
-                                        ))}
+                                        )) : (
+                                            <Caption1 className={styles.mutedText}>No active provider capabilities are exposed yet.</Caption1>
+                                        )}
                                     </div>
                                 </div>
                             </div>

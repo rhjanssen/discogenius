@@ -22,7 +22,7 @@ export type DownloadStateContract =
   | "importPending"
   | "importing"
   | "importFailed";
-export type DownloadContentTypeContract = "track" | "video" | "album" | "playlist";
+export type DownloadContentTypeContract = "track" | "video" | "album";
 
 export interface DownloadTrackProgressContract {
   title: string;

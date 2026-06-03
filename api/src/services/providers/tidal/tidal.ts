@@ -839,10 +839,10 @@ export async function tidalApiRequestPaginatedSafe(endpoint: string, label: stri
   }
 }
 
-type TidalSearchType = "artists" | "albums" | "tracks" | "videos" | "playlists";
+type TidalSearchType = "artists" | "albums" | "tracks" | "videos";
 
 function normalizeSearchTypes(type: string | string[]): TidalSearchType[] {
-  const allSearchTypes: TidalSearchType[] = ["artists", "albums", "tracks", "videos", "playlists"];
+  const allSearchTypes: TidalSearchType[] = ["artists", "albums", "tracks", "videos"];
   const normalized: TidalSearchType[] = (Array.isArray(type) ? type : String(type || "all").split(","))
     .map((value) => value.trim().toLowerCase())
     .flatMap<TidalSearchType>((value) => {
@@ -853,7 +853,6 @@ function normalizeSearchTypes(type: string | string[]): TidalSearchType[] {
       if (value === "album") return ["albums"];
       if (value === "track") return ["tracks"];
       if (value === "video") return ["videos"];
-      if (value === "playlist") return ["playlists"];
       return allSearchTypes.includes(value as TidalSearchType)
         ? [value as TidalSearchType]
         : [];
@@ -868,7 +867,6 @@ export async function searchTidal(query: string, type: string | string[], limit:
     albums: "ALBUMS",
     tracks: "TRACKS",
     videos: "VIDEOS",
-    playlists: "PLAYLISTS",
   };
   const searchTypes = normalizeSearchTypes(type);
   const typesParam = searchTypes.map((value) => typeMap[value]).join(",");
@@ -1617,63 +1615,6 @@ export async function getAlbumOtherVersions(albumId: string): Promise<string[]> 
     return [];
   } catch (e) {
     console.warn(`[TIDAL] Failed to get other versions for album ${albumId}:`, e);
-    return [];
-  }
-}
-
-// ====================================================================
-// PLAYLIST FUNCTIONS
-// ====================================================================
-
-export async function getPlaylist(playlistId: string) {
-  const cc = getCountryCode();
-  try {
-    const data = await tidalApiRequest(`/playlists/${playlistId}?countryCode=${cc}`) as any;
-    if (!data || !data.uuid) return null;
-    return data;
-  } catch (e) {
-    console.error(`[TIDAL] Error fetching playlist ${playlistId}:`, e);
-    return null;
-  }
-}
-
-export async function getPlaylistTracks(playlistId: string) {
-  const cc = getCountryCode();
-  try {
-    const data = await tidalApiRequestPaginated(`/playlists/${playlistId}/tracks?countryCode=${cc}`);
-    return data || [];
-  } catch (e) {
-    console.error(`[TIDAL] Error fetching playlist tracks:`, e);
-    return [];
-  }
-}
-
-export async function getUserPlaylists() {
-  const token = loadToken();
-  if (!token?.user?.userId) {
-    throw new Error("Not authenticated");
-  }
-  const cc = getCountryCode();
-  try {
-    const data = await tidalApiRequestPaginated(`/users/${token.user.userId}/playlists?countryCode=${cc}`);
-    return data || [];
-  } catch (e) {
-    console.error(`[TIDAL] Error fetching user playlists:`, e);
-    return [];
-  }
-}
-
-export async function getUserFavoritePlaylists() {
-  const token = loadToken();
-  if (!token?.user?.userId) {
-    throw new Error("Not authenticated");
-  }
-  const cc = getCountryCode();
-  try {
-    const data = await tidalApiRequestPaginated(`/users/${token.user.userId}/favorites/playlists?countryCode=${cc}`);
-    return data || [];
-  } catch (e) {
-    console.error(`[TIDAL] Error fetching favorite playlists:`, e);
     return [];
   }
 }

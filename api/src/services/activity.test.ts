@@ -32,10 +32,10 @@ after(() => {
 });
 
 test("activity page supports pagination and category/status filters", () => {
-    const scanPlaylistId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.ScanPlaylist,
-        { tidalId: "p1", playlistName: "Playlist One" },
-        "p1",
+    const refreshAlbumId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.RefreshAlbum,
+        { albumId: "album-1" },
+        "album-1",
     );
     const applyCurationId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.ApplyCuration,
@@ -71,7 +71,7 @@ test("activity page supports pagination and category/status filters", () => {
     assert.equal(pendingScans.total, 2);
     assert.deepEqual(
         pendingScans.items.map((item) => item.id),
-        [scanPlaylistId, applyCurationId],
+        [refreshAlbumId, applyCurationId],
     );
     assert.deepEqual(
         pendingScans.items.map((item) => item.queuePosition),
@@ -101,7 +101,7 @@ test("activity page supports pagination and category/status filters", () => {
 });
 
 test("activity summary returns command-surface counts without download queue duplication", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "p2", playlistName: "Playlist Two" }, "p2");
+    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-2" }, "album-2");
 
     const metadataId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "all" });
     queueModule.TaskQueueService.markProcessing(metadataId);
@@ -124,9 +124,9 @@ test("activity summary returns command-surface counts without download queue dup
 });
 
 test("activity page computes absolute pending queue positions without scanning the full page set", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-1" }, "qp-1");
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-2" }, "qp-2");
-    const pendingThirdId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "qp-3" }, "qp-3");
+    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-1" }, "qp-1");
+    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-2" }, "qp-2");
+    const pendingThirdId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-3" }, "qp-3");
     const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.complete(completedId);
 
@@ -186,7 +186,7 @@ test("activity page prioritizes processing downloads ahead of newer pending down
 });
 
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "events-playlist" }, "events-playlist");
+    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "events-album" }, "events-album");
     const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
     queueModule.TaskQueueService.complete(completedId);
 
@@ -222,7 +222,7 @@ test("activity events page merges task and history events with deterministic new
 });
 
 test("activity events page pagination returns limit/offset/hasMore consistently", () => {
-    const taskId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ScanPlaylist, { tidalId: "events-pagination" }, "events-pagination");
+    const taskId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "events-pagination" }, "events-pagination");
     const historyOneId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
         sourceTitle: "Imported A",

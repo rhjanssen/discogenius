@@ -1,7 +1,6 @@
 import { JobTypes, TaskQueueService, Job, NON_DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES } from "./queue.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
-import { RefreshPlaylistService } from "./refresh-playlist-service.js";
 import { CurationService } from "./curation-service.js";
 import { CommandManager } from "./command.js";
 import { DiskScanService } from "./library-scan.js";
@@ -298,18 +297,6 @@ export class Scheduler {
                         seedSimilarAlbums: false,
                     });
                     break;
-                case JobTypes.ScanPlaylist:
-                    {
-                        const playlistId = job.payload.tidalId;
-                        if (!playlistId) {
-                            throw new Error('ScanPlaylist job missing tidalId');
-                        }
-
-                        await RefreshPlaylistService.scan(String(playlistId), {
-                            forceUpdate: Boolean(job.payload?.forceUpdate),
-                        });
-                        break;
-                    }
                 case JobTypes.RefreshMetadata: {
                     const baseLabel = "Managed artists";
                     this.updateJobDescription(job, {
@@ -706,7 +693,6 @@ export class Scheduler {
         }
     }
 }
-
 
 
 

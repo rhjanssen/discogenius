@@ -22,11 +22,9 @@ import fs from "fs";
 import path from "path";
 import { db } from "../../../database.js";
 import { Config } from "../../config.js";
-import { buildStreamingMediaUrl, getDownloadBackendForMediaType } from "../../download-routing.js";
 import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgCommand, parseProgress } from "./tidal-dl-ng.js";
 import { loadStoredTidalToken, syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../orpheus.js";
-import { MediaSeedService } from "../../media-seed-service.js";
 
 export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
@@ -35,10 +33,9 @@ export class TidalProvider implements StreamingProvider {
     catalogSearch: true,
     artistCatalog: true,
     followedArtists: true,
-    playlists: true,
     audioPreviews: true,
     audioDownloads: true,
-    lossyStereo: true,
+    lossyStereo: false,
     losslessStereo: true,
     hiResStereo: true,
     spatialAudio: true,
@@ -137,21 +134,6 @@ export class TidalProvider implements StreamingProvider {
 
   async getVideoPlaybackInfo(id: string | number) {
     return getVideoPlaybackInfo(String(id));
-  }
-
-  async getPlaylist(id: string | number) {
-    return tidal.getPlaylist(String(id));
-  }
-
-  async getPlaylistTracks(id: string | number): Promise<any[]> {
-    const res = await tidal.getPlaylistTracks(String(id));
-    const items = Array.isArray(res) ? res : (res?.items || []);
-    return items.map((t: any) => this.mapTrack(t));
-  }
-
-  async getUserPlaylists(): Promise<any[]> {
-    const res = await tidal.getUserPlaylists();
-    return Array.isArray(res) ? res : (res?.items || []);
   }
 
   async getArtistBio(id: string | number): Promise<string | null> {
@@ -370,7 +352,7 @@ export class TidalProvider implements StreamingProvider {
 
   parseMediaUrl(url: string): { type: string; providerId: string } | null {
     const match = url.match(
-      /^https?:\/\/(?:listen\.)?tidal\.com\/(?:browse\/)?(track|album|video|playlist)\/([A-Za-z0-9-]+)\/?/i,
+      /^https?:\/\/(?:listen\.)?tidal\.com\/(?:browse\/)?(track|album|video)\/([A-Za-z0-9-]+)\/?/i,
     );
     if (!match) {
       return null;
@@ -383,7 +365,7 @@ export class TidalProvider implements StreamingProvider {
 
   async downloadItem(
     providerId: string,
-    entityType: "album" | "track" | "video" | "playlist",
+    entityType: "album" | "track" | "video",
     downloadPath: string,
     options?: ProviderDownloadOptions
   ): Promise<void> {
@@ -396,7 +378,7 @@ export class TidalProvider implements StreamingProvider {
     await fs.promises.mkdir(path.dirname(downloadPath), { recursive: true });
 
     const albumIds = providerId.split(";").filter(Boolean);
-    const backend = getDownloadBackendForMediaType(entityType);
+    const backend = entityType === "video" ? "tidal-dl-ng" : "orpheus";
 
     let lastProgress = 0;
     let completedTracks = 0;
@@ -493,7 +475,7 @@ export class TidalProvider implements StreamingProvider {
     const downloadSingleAlbum = (currentAlbumId: string): Promise<void> => {
       return new Promise((resolveSingle, rejectSingle) => {
         (async () => {
-          const currentTidalUrl = buildStreamingMediaUrl(entityType, currentAlbumId);
+          const currentTidalUrl = this.getMediaUrl(entityType, currentAlbumId);
         let settled = false;
         let hardTimeout: NodeJS.Timeout | undefined;
         let idleTimeout: NodeJS.Timeout | undefined;
@@ -552,7 +534,7 @@ export class TidalProvider implements StreamingProvider {
             await syncTokenToOrpheusSession(token);
             await syncOrpheusSettings(downloadPath);
             console.log(`[TidalProvider] Running: orpheus.py download tidal ${entityType} ${currentAlbumId}`);
-            downloadProcess = await spawnOrpheusDownload(entityType as 'track' | 'album' | 'playlist', currentAlbumId, downloadPath);
+            downloadProcess = await spawnOrpheusDownload(entityType as 'track' | 'album', currentAlbumId, downloadPath);
           }
 
           if (options?.signal) {

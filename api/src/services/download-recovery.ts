@@ -8,7 +8,7 @@ import { JobTypes, type Job } from "./queue.js";
 const REDOWNLOAD_IMPORT_HINT = 're-download the item to retry import';
 
 function isDownloadMediaType(value: unknown): value is DownloadMediaType {
-    return value === 'album' || value === 'track' || value === 'video' || value === 'playlist';
+    return value === 'album' || value === 'track' || value === 'video';
 }
 
 function isImportDownloadJob(job: Job): job is Job & { type: typeof JobTypes.ImportDownload; payload: ImportDownloadJobPayload } {
@@ -19,10 +19,6 @@ export function getExistingLibraryMediaIds(
     type: DownloadMediaType,
     tidalId: string,
 ): string[] {
-    if (type === 'playlist') {
-        return [];
-    }
-
     const albumIds = tidalId.split(";").filter(Boolean);
     const rows = type === 'album'
         ? (albumIds.length > 0

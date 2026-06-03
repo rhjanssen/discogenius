@@ -72,8 +72,6 @@ function getJobMediaType(job: ActivityJob): string {
             return "track";
         case "DownloadVideo":
             return "video";
-        case "DownloadPlaylist":
-            return "playlist";
         default:
             return "";
     }
@@ -176,7 +174,7 @@ const ActivityTab = ({
 
     const isRetryableJob = (job: ActivityJob) => {
         const type = job?.type || "";
-        return type.startsWith("Download") || type === "ImportDownload" || type === "ImportPlaylist";
+        return type.startsWith("Download") || type === "ImportDownload";
     };
 
     const hasSupersedingSuccess = useCallback((job: ActivityJob) => {

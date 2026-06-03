@@ -25,7 +25,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 1. Keep download backends split by media type:
 
-- Orpheus for music (album, track, playlist)
+- Orpheus for music (album, track)
 - tidal-dl-ng for video
 
 1. Preserve explicit workflow boundaries:
@@ -138,7 +138,6 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 - api/src/services/refresh-artist-service.ts: Lidarr-style artist metadata orchestration (basic/shallow/deep refresh)
 - api/src/services/refresh-album-service.ts: Lidarr-style album metadata orchestration
-- api/src/services/refresh-playlist-service.ts: playlist metadata and membership refresh
 - api/src/services/refresh-video-service.ts: video upsert/refresh helpers for artist catalog scans
 - api/src/services/media-seed-service.ts: small targeted metadata seed flows for single track/video intake
 - api/src/services/metadata-identity-service.ts: MusicBrainz and AcoustID identity enrichment for artists, albums, tracks, and videos during scan/import

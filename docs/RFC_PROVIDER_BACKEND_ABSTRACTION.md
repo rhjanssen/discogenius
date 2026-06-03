@@ -7,7 +7,7 @@ Status: Approved direction for phased implementation
 
 Discogenius currently hardcodes backend selection around the TIDAL-specific split in `api/src/services/download-routing.ts`:
 
-- music (`album`, `track`, `playlist`) -> Orpheus
+- music (`album`, `track`) -> Orpheus
 - `video` -> tidal-dl-ng
 
 That works for the current production path, but it does not scale to:
@@ -62,7 +62,7 @@ All new backend-facing work should identify remote media with a provider-neutral
 ```ts
 export interface ProviderRef {
   provider: string; // "tidal", "apple-music", ...
-  mediaType: "artist" | "album" | "track" | "video" | "playlist";
+  mediaType: "artist" | "album" | "track" | "video";
   externalId: string;
 }
 ```
@@ -75,7 +75,7 @@ Routing decisions need normalized facts about the media, not provider marketing 
 
 ```ts
 export interface MediaTraits {
-  mediaType: "track" | "album" | "video" | "playlist";
+  mediaType: "track" | "album" | "video";
   audioMode?: "stereo" | "spatial";
   codec?: string | null;
   container?: string | null;
@@ -97,7 +97,7 @@ Each backend declares what it can do:
 ```ts
 export interface DownloadBackendCapability {
   providers: string[];
-  mediaTypes: Array<"track" | "album" | "video" | "playlist">;
+  mediaTypes: Array<"track" | "album" | "video">;
   audioModes?: Array<"stereo" | "spatial">;
   supportsHiRes?: boolean;
   supportsVideo?: boolean;
@@ -237,7 +237,7 @@ This replaces the current `video ? tidal-dl-ng : orpheus` branching model.
 ### Orpheus
 
 - provider support: `tidal`
-- media support: `track`, `album`, `playlist`
+- media support: `track`, `album`
 - audio modes: `stereo`, `spatial`
 - structured progress: not natively; adapter required
 - current production role: primary music backend

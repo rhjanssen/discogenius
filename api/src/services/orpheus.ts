@@ -237,7 +237,6 @@ function buildOrpheusSettings(downloadPath: string) {
             },
             formatting: {
                 album_format: "{id}",
-                playlist_format: "{creator}/{name}{explicit}",
                 track_filename_format: "{track_number}",
                 single_full_path_format: "{album_id}/{track_number}",
                 enable_zfill: true,
@@ -266,11 +265,6 @@ function buildOrpheusSettings(downloadPath: string) {
                 external_compression: "low",
                 external_resolution: mainResolution,
                 save_animated_cover: false,
-            },
-            playlist: {
-                save_m3u: false,
-                paths_m3u: "absolute",
-                extended_m3u: false,
             },
             advanced: {
                 advanced_login_system: false,
@@ -438,7 +432,6 @@ export function getOrpheusCapabilitySnapshot(): BackendCapabilitySnapshot {
             video: false,
             spatialAudio: true,
             highResAudio: true,
-            playlists: true,
         },
         checks,
         notes,
@@ -523,7 +516,7 @@ export function clearOrpheusSession(): void {
 }
 
 export interface OrpheusProgress {
-    entityType?: "album" | "playlist" | "track";
+    entityType?: "album" | "track";
     entityName?: string;
     currentTrack?: number;
     totalTracks?: number;
@@ -585,10 +578,10 @@ export function parseOrpheusProgress(output: string): OrpheusProgress | null {
         return null;
     }
 
-    const entityStartMatch = normalized.match(/^=== Downloading (album|playlist|track) (.+?) \(([^)]+)\) ===$/i);
+    const entityStartMatch = normalized.match(/^=== Downloading (album|track) (.+?) \(([^)]+)\) ===$/i);
     if (entityStartMatch) {
         return {
-            entityType: entityStartMatch[1].toLowerCase() as "album" | "playlist" | "track",
+            entityType: entityStartMatch[1].toLowerCase() as "album" | "track",
             entityName: entityStartMatch[2],
             statusMessage: normalized,
         };
@@ -642,11 +635,11 @@ export function parseOrpheusProgress(output: string): OrpheusProgress | null {
         };
     }
 
-    const entityDoneMatch = normalized.match(/^=== (Album|Playlist) (.+?) downloaded ===$/i);
+    const entityDoneMatch = normalized.match(/^=== Album (.+?) downloaded ===$/i);
     if (entityDoneMatch) {
         return {
-            entityType: entityDoneMatch[1].toLowerCase() as "album" | "playlist",
-            entityName: entityDoneMatch[2],
+            entityType: "album",
+            entityName: entityDoneMatch[1],
             isEntityComplete: true,
             statusMessage: normalized,
         };
@@ -655,7 +648,6 @@ export function parseOrpheusProgress(output: string): OrpheusProgress | null {
     if (
         normalized.includes("Downloading track file")
         || normalized.startsWith("Downloading album cover")
-        || normalized.startsWith("Downloading playlist cover")
         || normalized.startsWith("Retrieving lyrics")
         || normalized.startsWith("Retrieving credits")
     ) {
@@ -666,7 +658,7 @@ export function parseOrpheusProgress(output: string): OrpheusProgress | null {
 }
 
 export async function spawnOrpheusDownload(
-    type: "album" | "track" | "playlist",
+    type: "album" | "track",
     sourceId: string,
     downloadPath: string,
     moduleName: string = "tidal",

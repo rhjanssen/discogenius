@@ -81,9 +81,9 @@ Examples:
 - `api/src/utils/url-helpers.ts` is entirely TIDAL-specific
 - `api/src/services/audio-tag-service.ts` writes a `TIDAL_URL` tag directly from `media_id`
 
-### Playlists are closer, but not fully there
+### Provider collections are out of scope for 2.0
 
-The `playlists` table is directionally better because it has a stable local row keyed by `uuid`, while remote identity is also stored in `tidal_id`. But right now those two values are the same in `api/src/routes/playlists.ts`, so playlists are only conceptually closer to the target model.
+Provider-owned collection management is not part of the 2.0 identity model. Discogenius should first keep artist, album, track, and video identity clean before adding any new collection domain.
 
 ## Comparison with Lidarr
 
@@ -111,7 +111,6 @@ Discogenius should use app-owned local `Id` values as the durable IDs for:
 - artists
 - albums
 - media
-- playlists
 
 The local ID should be the app truth for:
 
@@ -128,7 +127,7 @@ Remote/provider identifiers should move to a normalized mapping table.
 Proposed logical model:
 
 ```ts
-type EntityType = "artist" | "album" | "media" | "playlist";
+type EntityType = "artist" | "album" | "media";
 
 interface ProviderMapping {
   entityType: EntityType;
@@ -166,7 +165,6 @@ The target tables should look like this conceptually:
 - `Artists.Id INTEGER PRIMARY KEY` or equivalent Lidarr-style local ID
 - canonical MusicBrainz `Albums` remain release-group MBIDs, matching the Lidarr-style metadata graph
 - `ProviderAlbums.id TEXT PRIMARY KEY` and `ProviderMedia.id TEXT PRIMARY KEY` are replaced by provider offer rows keyed through a provider identity map
-- `playlists.Id INTEGER PRIMARY KEY` or equivalent Lidarr-style local ID
 - provider identity rows reference those internal IDs
 
 Foreign keys in tables like `TrackFiles`, `history_events`, `upgrade_queue`, `ProviderAlbumArtists`, and `ProviderMediaArtists` should all reference internal IDs or canonical MBIDs, not provider IDs.
@@ -202,7 +200,7 @@ New app-core flows should use a provider-neutral remote reference:
 ```ts
 interface ProviderRef {
   provider: string;
-  entityType: "artist" | "album" | "track" | "video" | "playlist";
+  entityType: "artist" | "album" | "track" | "video";
   externalId: string;
 }
 ```
@@ -213,7 +211,7 @@ Queue and history paths should eventually prefer a local entity reference:
 
 ```ts
 interface LocalEntityRef {
-  entityType: "artist" | "album" | "media" | "playlist";
+  entityType: "artist" | "album" | "media";
   id: string; // internal Discogenius Id
 }
 ```
@@ -263,7 +261,6 @@ Highest-risk code and schema areas that the migration must explicitly cover:
 - `api/src/routes/albums.ts`
 - `api/src/routes/videos.ts`
 - `api/src/routes/unmapped.ts`
-- `api/src/routes/playlists.ts`
 - `api/src/utils/url-helpers.ts`
 - `api/src/services/audio-tag-service.ts`
 - `api/src/services/artist-query-service.ts`
@@ -274,16 +271,6 @@ Highest-risk code and schema areas that the migration must explicitly cover:
 - backend capability routing
 - multi-provider auth and metadata interfaces
 - provider-neutral playback/download requests
-
-## Playlist Direction
-
-Playlists need to follow the same pattern eventually:
-
-- add internal `playlists.id`
-- keep remote provider playlist IDs in provider identity rows, not canonical playlist rows
-- stop assuming the local playlist ID is identical to `tidal_id`
-
-The current playlist table is still useful because it already proves Discogenius can keep a provider-specific identifier alongside a separate local record.
 
 ## Migration Plan
 
@@ -337,7 +324,7 @@ Required safety rules:
 ### Automated
 
 - migration smoke test from current TIDAL-primary schema to additive local-ID shadow columns
-- provider mapping backfill test for artists/albums/media/playlists
+- provider mapping backfill test for artists/albums/media
 - queue payload tests covering `entity`, `ref`, and legacy `tidalId`
 - search/history/status contract tests proving local-ID-first behavior
 
@@ -350,13 +337,12 @@ Required safety rules:
   - library file linkage
   - history/event linkage
   - queue retry/import behavior
-  - playlist sync lookup behavior
 
 ### Manual
 
 - import/scan an existing TIDAL-managed library
 - retry a failed import
-- navigate artist/album/video/playlists after migration
+- navigate artist/album/video after migration
 - verify rename/retag and playback still resolve correctly
 
 ## Decision

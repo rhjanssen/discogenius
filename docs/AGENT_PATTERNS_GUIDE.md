@@ -553,7 +553,7 @@ this.transaction(() => {
 **Key Service Categories**:
 
 #### Download Backend Services
-- **orpheus.ts**: Music downloads (album, track, playlist)
+- **orpheus.ts**: Music downloads (album, track)
   - Exports: `ensureOrpheusRuntime()`, `spawnOrpheusDownload()`, `parseOrpheusProgress()`
   - Pattern: Bootstrap runtime, spawn child process, parse progress JSON
 - **tidal-dl-ng.ts**: Video downloads
@@ -570,7 +570,7 @@ this.transaction(() => {
   - Jobs: DownloadMissing, RefreshMetadata, CurateArtist, RescanFolders, MoveArtist, RenameArtist, RenameFiles, RetagArtist, RetagFiles
 
 #### Scanning & Import
-- **refresh-artist-service.ts / refresh-album-service.ts / refresh-playlist-service.ts / refresh-video-service.ts / media-seed-service.ts**: provider-backed metadata refresh and targeted intake
+- **refresh-artist-service.ts / refresh-album-service.ts / refresh-video-service.ts / media-seed-service.ts**: provider-backed metadata refresh and targeted intake
   - Exports: focused refresh/seed entry points such as `RefreshArtistService.scanDeep()`, `RefreshAlbumService.scanShallow()`, and `MediaSeedService.seedTrack()`
   - Tiers: BASIC (IDs only) → SHALLOW (metadata) → DEEP (full scan)
 - **import-discovery.ts**: Local file scanning
@@ -644,8 +644,7 @@ export interface DownloadVideoJobPayload extends BaseJobPayload {
 export type DownloadJobPayload = 
   | DownloadTrackJobPayload 
   | DownloadVideoJobPayload 
-  | DownloadAlbumJobPayload 
-  | DownloadPlaylistJobPayload;
+  | DownloadAlbumJobPayload;
 ```
 
 **Usage in Route**:

@@ -11,7 +11,6 @@ import type {
     DownloadAlbumJobPayload,
     DownloadMissingJobPayload,
     DownloadMissingForceJobPayload,
-    DownloadPlaylistJobPayload,
     DownloadTrackJobPayload,
     DownloadVideoJobPayload,
     HousekeepingJobPayload,
@@ -24,7 +23,6 @@ import type {
     RenameArtistJobPayload,
     RenameFilesJobPayload,
     RescanFoldersJobPayload,
-    ScanPlaylistJobPayload,
     RescanAllRootsJobPayload,
     RetagArtistJobPayload,
     RetagFilesJobPayload,
@@ -34,7 +32,6 @@ import type {
 export const JobTypes = {
     RefreshArtist: 'RefreshArtist',
     RefreshAlbum: 'RefreshAlbum',
-    ScanPlaylist: 'ScanPlaylist',
     RefreshMetadata: 'RefreshMetadata',
     ApplyCuration: 'ApplyCuration',
     DownloadMissing: 'DownloadMissing',
@@ -43,7 +40,6 @@ export const JobTypes = {
     DownloadTrack: 'DownloadTrack',
     DownloadVideo: 'DownloadVideo',
     DownloadAlbum: 'DownloadAlbum',
-    DownloadPlaylist: 'DownloadPlaylist',
     CurateArtist: 'CurateArtist',
     RescanFolders: 'RescanFolders',
     ImportDownload: 'ImportDownload',
@@ -68,7 +64,6 @@ export const DOWNLOAD_JOB_TYPES = [
     JobTypes.DownloadTrack,
     JobTypes.DownloadVideo,
     JobTypes.DownloadAlbum,
-    JobTypes.DownloadPlaylist,
 ] as const;
 
 export const DOWNLOAD_OR_IMPORT_JOB_TYPES = [
@@ -89,7 +84,6 @@ export const ARTIST_WORKFLOW_JOB_TYPES = [
 export const NON_DOWNLOAD_JOB_TYPES = [
     JobTypes.RefreshArtist,
     JobTypes.RefreshAlbum,
-    JobTypes.ScanPlaylist,
     JobTypes.RefreshMetadata,
     JobTypes.ApplyCuration,
     JobTypes.DownloadMissing,
@@ -125,7 +119,6 @@ export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'can
 export interface JobPayloadMap {
     [JobTypes.RefreshArtist]: RefreshArtistJobPayload;
     [JobTypes.RefreshAlbum]: RefreshAlbumJobPayload;
-    [JobTypes.ScanPlaylist]: ScanPlaylistJobPayload;
     [JobTypes.RefreshMetadata]: RefreshMetadataJobPayload;
     [JobTypes.ApplyCuration]: ApplyCurationJobPayload;
     [JobTypes.DownloadMissing]: DownloadMissingJobPayload;
@@ -134,7 +127,6 @@ export interface JobPayloadMap {
     [JobTypes.DownloadTrack]: DownloadTrackJobPayload;
     [JobTypes.DownloadVideo]: DownloadVideoJobPayload;
     [JobTypes.DownloadAlbum]: DownloadAlbumJobPayload;
-    [JobTypes.DownloadPlaylist]: DownloadPlaylistJobPayload;
     [JobTypes.CurateArtist]: CurateArtistJobPayload;
     [JobTypes.RescanFolders]: RescanFoldersJobPayload;
     [JobTypes.ImportDownload]: ImportDownloadJobPayload;
@@ -245,7 +237,6 @@ function getDownloadContentType(type: string, payload: QueuePayloadCommon): stri
     if (type === JobTypes.DownloadTrack) return "track";
     if (type === JobTypes.DownloadVideo) return "video";
     if (type === JobTypes.DownloadAlbum) return "album";
-    if (type === JobTypes.DownloadPlaylist) return "playlist";
     if (type === JobTypes.ImportDownload) {
         const payloadType = String((payload as Partial<ImportDownloadJobPayload>).type || "").trim();
         return payloadType || null;

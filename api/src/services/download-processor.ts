@@ -17,7 +17,6 @@ import type {
     DownloadAlbumJobPayload,
     DownloadMediaType,
     ImportDownloadJobPayload,
-    DownloadPlaylistJobPayload,
     DownloadTrackJobPayload,
     DownloadVideoJobPayload,
     ResolvedDownloadMetadata,
@@ -25,8 +24,8 @@ import type {
 import { DownloadedTracksImportService } from './downloaded-tracks-import-service.js';
 import { appEvents, AppEvent, type JobEventPayload } from './app-events.js';
 
-type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload | DownloadPlaylistJobPayload;
-type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album' | 'playlist'>;
+type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload;
+type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
 type DownloadOrImportJobPayload = DownloadJobPayload | ImportDownloadJobPayload;
 
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_DOWNLOAD_POLL_MS', 2000, 1); // 2 seconds default
@@ -100,7 +99,8 @@ export class DownloadProcessor {
     private dispatchImportJob(job: ReturnType<typeof TaskQueueService.getNextJobByTypes> & {}): void {
         const importPayload = job.payload as ImportDownloadJobPayload;
         const tidalId = String(importPayload?.tidalId || job.ref_id || '');
-        const type = (importPayload?.type || 'track') as DownloadJobType;
+        const rawType = String(importPayload?.type || 'track');
+        const type: DownloadJobType = rawType === 'album' || rawType === 'video' ? rawType : 'track';
 
         if (!tidalId || tidalId === 'undefined' || tidalId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid tidalId: ${tidalId}`);
@@ -319,7 +319,7 @@ export class DownloadProcessor {
 
     private async ensureMetadataReady(
         tidalId: string,
-        type: 'track' | 'video' | 'album' | 'playlist',
+        type: 'track' | 'video' | 'album',
     ): Promise<void> {
         switch (type) {
             case 'album': {
@@ -685,9 +685,7 @@ export class DownloadProcessor {
             ? 'video'
             : job.type === JobTypes.DownloadAlbum
                 ? 'album'
-                : job.type === JobTypes.DownloadPlaylist
-                    ? 'playlist'
-                    : 'track';
+                : 'track';
 
         if (!type) {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.type}`);

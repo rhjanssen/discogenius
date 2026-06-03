@@ -52,13 +52,11 @@ const COMMAND_QUEUE_CATEGORY_TYPES = {
     JobTypes.DownloadTrack,
     JobTypes.DownloadVideo,
     JobTypes.DownloadAlbum,
-    JobTypes.DownloadPlaylist,
     JobTypes.ImportDownload,
   ],
   scans: [
     JobTypes.RefreshArtist,
     JobTypes.RefreshAlbum,
-    JobTypes.ScanPlaylist,
     JobTypes.RefreshMetadata,
     JobTypes.ApplyCuration,
     JobTypes.DownloadMissing,
@@ -158,14 +156,6 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.DownloadPlaylist]: {
-    type: JobTypes.DownloadPlaylist,
-    name: "Download Playlist",
-    requiresDiskAccess: false,
-    isTypeExclusive: false,
-    isExclusive: false,
-    isLongRunning: true,
-  },
   [JobTypes.RefreshArtist]: {
     type: JobTypes.RefreshArtist,
     name: "Refresh Artist",
@@ -179,14 +169,6 @@ export const COMMAND_DEFINITIONS = {
   [JobTypes.RefreshAlbum]: {
     type: JobTypes.RefreshAlbum,
     name: "Refresh Album",
-    requiresDiskAccess: false,
-    isTypeExclusive: false,
-    isExclusive: false,
-    isLongRunning: false,
-  },
-  [JobTypes.ScanPlaylist]: {
-    type: JobTypes.ScanPlaylist,
-    name: "Scan Playlist",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
@@ -567,5 +549,4 @@ export function runSystemTaskById(id: string): number {
 export function runCommandByName(commandName: string): number {
   return findSystemTaskDefinitionByCommandName(commandName)?.run() ?? -1;
 }
-
 

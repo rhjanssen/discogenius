@@ -82,13 +82,9 @@ function resolveQueueItemContentType(job: QueueJobRow): QueueItemContract["type"
     return "album";
   }
 
-  if (job.type === JobTypes.DownloadPlaylist) {
-    return "playlist";
-  }
-
   if (job.type === JobTypes.ImportDownload) {
     const payloadType = getOptionalString(job.payload?.type);
-    if (payloadType === "video" || payloadType === "album" || payloadType === "playlist") {
+    if (payloadType === "video" || payloadType === "album") {
       return payloadType;
     }
   }
@@ -459,7 +455,6 @@ export class DownloadQueueQueryService {
     const tidalId = getJobTidalId(job);
 
     let title = getOptionalString(job.payload?.title)
-      ?? getOptionalString(job.payload?.playlistName)
       ?? getOptionalString((job.payload?.resolved as Record<string, unknown> | undefined)?.title)
       ?? undefined;
     let artist = getOptionalString(job.payload?.artist)
@@ -527,19 +522,6 @@ export class DownloadQueueQueryService {
           albumId ||= getOptionalString(row?.album_id);
           albumTitle ||= row?.album_title ?? null;
           quality ||= row?.quality ?? null;
-        } else if (contentType === "playlist") {
-          const row = db.prepare(`
-            SELECT p.title, p.square_cover_id, p.cover_id
-            FROM playlists p
-            WHERE p.tidal_id = ? OR p.uuid = ?
-          `).get(tidalId, tidalId) as {
-            title?: string;
-            square_cover_id?: string | null;
-            cover_id?: string | null;
-          } | undefined;
-
-          title ||= row?.title;
-          if (cover === null) cover = row?.square_cover_id ?? row?.cover_id ?? null;
         } else {
           const row = db.prepare(`
             SELECT m.title, m.version as version, ar.name as artist_name, a.cover as album_cover, a.id as album_id, a.title as album_title, m.quality

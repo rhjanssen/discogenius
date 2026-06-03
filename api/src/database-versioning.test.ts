@@ -95,7 +95,7 @@ test("fresh database initializes with correct schema version", () => {
     "Artists", "ProviderAlbums", "ProviderMedia", "ProviderMediaArtists", "TrackFiles",
     "MetadataFiles", "LyricFiles", "ExtraFiles",
     "UnmappedFiles", "config", "job_queue", "quality_profiles",
-    "upgrade_queue", "playlists", "playlist_tracks", "history_events",
+    "upgrade_queue", "history_events",
     "database_version_history", "MediaCoverProxyCache",
     "ArtistMetadata", "Albums", "AlbumReleases", "AlbumReleaseMedia",
     "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",

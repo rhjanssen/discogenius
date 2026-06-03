@@ -415,10 +415,6 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return "Unknown Album";
     }
 
-    if (jobType === "ScanPlaylist") {
-        return payload.playlistName || "Playlist";
-    }
-
     if (jobType === "RefreshMetadata") {
         return payload.expectedArtists
             ? `Metadata refresh for ${payload.expectedArtists} managed artist(s)`
@@ -644,7 +640,6 @@ export const mapJob = (job: Job, options: { queuePosition?: number; descriptionC
             title: job.payload.title,
             artist: job.payload.artist,
             albumTitle: job.payload.albumTitle || job.payload.album,
-            playlistName: job.payload.playlistName,
             artistName: job.payload.artistName,
             reason: job.payload.reason,
             files: Array.isArray(job.payload.files) ? job.payload.files : undefined,

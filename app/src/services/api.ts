@@ -150,7 +150,6 @@ export type StreamingProviderStatus = {
     catalogSearch: boolean;
     artistCatalog: boolean;
     followedArtists: boolean;
-    playlists: boolean;
     audioPreviews: boolean;
     audioDownloads: boolean;
     lossyStereo: boolean;
@@ -170,7 +169,6 @@ export type StreamingProviderStatus = {
     canAuthenticate: boolean;
     canDisconnect: boolean;
     canImportFollowedArtists: boolean;
-    canImportPlaylists: boolean;
     canPreviewTracks: boolean;
     canPreviewVideos: boolean;
     canDownloadMusic: boolean;
@@ -958,42 +956,6 @@ class ApiClient {
     return resp.text();
   }
 
-  // Playlist endpoints
-  async getPlaylists(params?: { limit?: number; offset?: number; search?: string; monitored?: boolean }) {
-    const queryParams = new URLSearchParams();
-    if (params?.limit) queryParams.set('limit', params.limit.toString());
-    if (params?.offset) queryParams.set('offset', params.offset.toString());
-    if (params?.search) queryParams.set('search', params.search);
-    if (params?.monitored !== undefined) queryParams.set('monitored', params.monitored.toString());
-    const query = queryParams.toString();
-    return this.request(`/playlists${query ? `?${query}` : ''}`);
-  }
-
-  async getPlaylist(playlistId: string) {
-    return this.request(`/playlists/${playlistId}`);
-  }
-
-  async addPlaylist(tidalIdOrUrl: string) {
-    const body = tidalIdOrUrl.includes('/')
-      ? { url: tidalIdOrUrl }
-      : { id: tidalIdOrUrl };
-    return this.request(`/playlists`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-  }
-
-  async updatePlaylist(playlistId: string, updates: any) {
-    return this.request(`/playlists/${playlistId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    });
-  }
-
-  async deletePlaylist(playlistId: string) {
-    return this.request(`/playlists/${playlistId}`, { method: 'DELETE' });
-  }
-
   // Manual import / unmapped file endpoints
   async getUnmappedFiles(params?: { limit?: number; offset?: number }) {
     const queryParams = new URLSearchParams();
@@ -1022,18 +984,6 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ ids, action }),
     });
-  }
-
-  async syncPlaylist(playlistId: string) {
-    return this.request(`/playlists/${playlistId}/sync`, { method: 'POST' });
-  }
-
-  async downloadPlaylist(playlistId: string) {
-    return this.request(`/playlists/${playlistId}/download`, { method: 'POST' });
-  }
-
-  async importUserPlaylists() {
-    return this.request(`/playlists/import-user`, { method: 'POST' });
   }
 
   async scanArtist(artistId: string, options?: { forceUpdate?: boolean }) {

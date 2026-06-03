@@ -28,7 +28,7 @@ Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it 
 ## Hard Rules
 - **TypeScript**: Use TypeScript for runtime code in `api/src` and `app/src`, and keep Playwright tests in `e2e/` in TypeScript. Use JavaScript only where tooling or external config conventions make it the better fit.
 - **Backend**: Use `better-sqlite3` synchronously. Never use async DB wrappers.
-- **Backend**: Use Orpheus for music downloads (`album`, `track`, `playlist`) and tidal-dl-ng for `video` downloads. Do not route music downloads through tidal-dl-ng; Atmos-capable music handling depends on the Orpheus path.
+- **Backend**: Use Orpheus for music downloads (`album`, `track`) and tidal-dl-ng for `video` downloads. Do not route music downloads through tidal-dl-ng; Atmos-capable music handling depends on the Orpheus path.
 - **Backend**: Resolve tidal-dl-ng via `Config.getTidalDlNgPath()`/`buildTidalDlNgEnv()` from `api/src/services/tidal-dl-ng.ts`, and keep Orpheus session/runtime handling in `api/src/services/orpheus.ts`.
 - **Backend**: Prefer a repo-local `.venv` for `tidal-dl-ng` during local development. Keep the auto-detection/path bootstrap aligned with that convention before adding new per-machine flags.
 - **Backend**: Quality profiles map to tidal-dl-ng: `HI_RES_LOSSLESS` (Max), `LOSSLESS` (High), `HIGH` (Normal AAC 320k), `LOW` (AAC 96k).
@@ -65,7 +65,7 @@ Skills live in `.github/skills` and should be loaded when relevant:
 |---------|---------|
 | `tidal-dl-ng.ts` | tidal-dl-ng CLI wrapper for video downloads, environment setup, progress parsing |
 | `orpheus.ts` | Orpheus runtime bootstrap, TIDAL session sync, and music download spawning |
-| `download-processor.ts` | Handles exact media download jobs: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum`, `DownloadPlaylist` |
+| `download-processor.ts` | Handles exact media download jobs: `DownloadTrack`, `DownloadVideo`, `DownloadAlbum` |
 | `scheduler.ts` | Handles non-download jobs: `DownloadMissing`, `RefreshMetadata`, `CurateArtist`, `RescanFolders`, `ImportDownload`, `MoveArtist`, `RenameArtist`, `RenameFiles`, `RetagArtist`, `RetagFiles` and operator commands: `BulkRefreshArtist`, `DownloadMissingForce`, `RescanAllRoots`, `CheckHealth`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` |
 | `health.ts` | Collects runtime/path/tool/backend diagnostics used by startup preflight and the real `CheckHealth` scheduler command |
 | `playback.ts` / `playback-segment-worker.ts` | Provides signed browser-safe playback, preferring BTS/progressive and falling back to DASH segment streaming when needed |
@@ -75,7 +75,6 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `organizer.ts` | Moves downloaded files to library with proper naming |
 | `refresh-artist-service.ts` | Lidarr-style artist metadata orchestration (basic/shallow/deep refresh) |
 | `refresh-album-service.ts` | Lidarr-style album metadata orchestration and track hydration |
-| `refresh-playlist-service.ts` | Playlist metadata and membership refresh |
 | `refresh-video-service.ts` | Video upsert/refresh helpers for artist catalog scans |
 | `media-seed-service.ts` | Targeted metadata seed flows for single track/video intake |
 | `providers/` | Provider interface and provider implementations; TIDAL-specific catalog logic belongs here |

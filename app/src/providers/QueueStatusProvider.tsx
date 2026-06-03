@@ -343,7 +343,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       const payloadTidalId = typeof payload.tidalId === "string" ? payload.tidalId : undefined;
       const payloadProviderId = typeof payload.providerId === "string" ? payload.providerId : undefined;
       const resolvedTidalId = String(payloadProviderId || payloadTidalId || tidalId || "").trim();
-      const normalizedType = type === "video" || type === "album" || type === "playlist" || type === "track"
+      const normalizedType = type === "video" || type === "album" || type === "track"
         ? type
         : "track";
       if (response?.id && resolvedTidalId) {

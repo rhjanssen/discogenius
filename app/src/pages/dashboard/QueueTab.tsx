@@ -323,8 +323,6 @@ function getQueueHistoryMediaBadge(item: QueueItem): QueueHistoryMediaBadge | nu
             return { kind: 'album' };
         case 'video':
             return { kind: 'video' };
-        case 'playlist':
-            return { kind: 'track', label: 'Playlist' };
         case 'track':
             return { kind: 'track' };
         default:
