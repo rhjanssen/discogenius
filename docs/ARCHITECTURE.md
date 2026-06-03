@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-05-25
+Last updated: 2026-06-03
 
 ## Purpose
 
@@ -35,7 +35,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 - scanning/import and organization
 - curation/dedup and download queueing
 
-1. Treat `TrackFiles` as canonical on-disk inventory for managed playable media. Treat `MetadataFiles`, `LyricFiles`, and `ExtraFiles` as the Lidarr-style sidecar inventories; `TrackFiles` still carries sidecar projection rows during the transition.
+1. Treat `TrackFiles` as canonical on-disk inventory for managed playable media. Treat `MetadataFiles`, `LyricFiles`, and `ExtraFiles` as the Lidarr-style sidecar inventories for artwork, NFO, lyrics, and other sidecars.
 
 1. Respect lock semantics (monitor_lock) as intentional user state.
 
@@ -192,7 +192,7 @@ MusicBrainz identity behavior:
 - MusicBrainz/Lidarr release-group metadata is stored in `Albums`; provider album IDs do not define album identity.
 - Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes canonical MBIDs to `Tracks`/`Recordings` and imported-file provenance to `TrackFiles`.
 - MusicBrainz video recordings are synced into `Recordings` with `IsVideo = 1` where MusicBrainz exposes them. Provider videos are represented as provisional local recordings when they do not yet have an MBID, and provider acquisition IDs stay in `ProviderItems`/`ProviderMedia`.
-- Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside TIDAL metadata.
+- Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside provider provenance.
 - `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
 - Artwork resolution is metadata-source first: SkyHook/Lidarr and Cover Art Archive URLs are preferred for artist/album art, while provider artwork remains a fallback or selected-offer supplement. Album cover settings use CAA-friendly `Original`, `1200`, `500`, and `250` sizes rather than TIDAL-only size names.
 

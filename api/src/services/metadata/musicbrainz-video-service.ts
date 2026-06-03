@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../fingerprint.js";
 
 type MusicBrainzRecording = {
   id?: string;
@@ -22,7 +23,6 @@ type BrowseRecordingsResponse = {
 };
 
 const MUSICBRAINZ_BASE_URL = "https://musicbrainz.org/ws/2";
-const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.6 (https://github.com/discogenius/discogenius)";
 const MUSICBRAINZ_PAGE_SIZE = 100;
 const MUSICBRAINZ_FETCH_ATTEMPTS = 2;
 
@@ -96,13 +96,15 @@ async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
 
   for (let attempt = 1; attempt <= MUSICBRAINZ_FETCH_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetch(`${MUSICBRAINZ_BASE_URL}${path}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": MUSICBRAINZ_USER_AGENT,
-        },
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await scheduleMusicBrainzRequest(() =>
+        fetch(`${MUSICBRAINZ_BASE_URL}${path}`, {
+          headers: {
+            Accept: "application/json",
+            ...getMusicBrainzHeaders(),
+          },
+          signal: AbortSignal.timeout(20_000),
+        }),
+      );
 
       if (!response.ok) {
         throw new Error(`MusicBrainz request failed (${response.status} ${response.statusText}): ${path}`);

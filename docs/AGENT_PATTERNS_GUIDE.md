@@ -570,12 +570,12 @@ this.transaction(() => {
   - Jobs: DownloadMissing, RefreshMetadata, CurateArtist, RescanFolders, MoveArtist, RenameArtist, RenameFiles, RetagArtist, RetagFiles
 
 #### Scanning & Import
-- **refresh-artist-service.ts / refresh-album-service.ts / refresh-playlist-service.ts / refresh-video-service.ts / media-seed-service.ts**: TIDAL metadata refresh and targeted intake
+- **refresh-artist-service.ts / refresh-album-service.ts / refresh-playlist-service.ts / refresh-video-service.ts / media-seed-service.ts**: provider-backed metadata refresh and targeted intake
   - Exports: focused refresh/seed entry points such as `RefreshArtistService.scanDeep()`, `RefreshAlbumService.scanShallow()`, and `MediaSeedService.seedTrack()`
   - Tiers: BASIC (IDs only) → SHALLOW (metadata) → DEEP (full scan)
 - **import-discovery.ts**: Local file scanning
   - Exports: Group unmapped files into import candidates
-- **import-matcher-service.ts**: TIDAL candidate scoring
+- **import-matcher-service.ts**: provider candidate scoring
   - Exports: Score candidates via fuzzy matching, fingerprinting, or direct ID
 - **import-service.ts**: Orchestrate discovery → match → apply → finalize
 - **manual-import-service.ts**: Apply strict manual mappings

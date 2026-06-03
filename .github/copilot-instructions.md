@@ -42,7 +42,7 @@ Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it 
 - **Frontend**: Use `@tanstack/react-query` for data fetching.
 - **Frontend**: Theme state must come from `FluentThemeProvider`/`useTheme`; do not duplicate dark-mode detection in layout components.
 - **General**: Use Yarn only. Do not switch this repo to npm or pnpm.
-- **General**: Pre-1.0, prefer deleting stale compatibility paths over carrying aliases, legacy job types, or old route names forward.
+- **General**: For the 2.0 MusicBrainz/Lidarr architecture, prefer deleting stale compatibility paths over carrying aliases, legacy job types, or old route names forward.
 - **General**: Do not introduce parallel implementations or long-lived compatibility layers without a documented migration/removal plan. When a new path replaces an old path, delete or consolidate the superseded path as part of the work whenever feasible.
 - **General**: After meaningful frontend/backend changes, validate with `yarn --cwd app build && yarn --cwd api build`, and when packaging/runtime behavior matters, rebuild and run the Docker container with `docker compose up --build -d`.
 
@@ -56,7 +56,7 @@ Discogenius should stay architecturally close to Lidarr (/.ref_lidarr) where it 
 ## Skills
 Skills live in `.github/skills` and should be loaded when relevant:
 - `discogenius-backend` for auth flows, tidal-dl-ng integration, task queue, command system, and database schema.
-- `discogenius-frontend` for Fluent UI patterns, theming, and Tidal image/video rules.
+- `discogenius-frontend` for Fluent UI patterns, theming, and provider artwork/video rules.
 - `discogenius-architecture` for architecture boundaries, queue/event/datastore separation, and documentation update rules.
 - `discogenius-theming` for centralized Fluent theme and dynamic brand handling.
 
@@ -80,21 +80,21 @@ Skills live in `.github/skills` and should be loaded when relevant:
 | `media-seed-service.ts` | Targeted metadata seed flows for single track/video intake |
 | `providers/` | Provider interface and provider implementations; TIDAL-specific catalog logic belongs here |
 | `metadata/lidarr-metadata-service.ts` | Lidarr metadata API cache for MusicBrainz artist/release-group/release/track graph |
-| `tidal.ts` | Low-level TIDAL API client used by the TIDAL provider and legacy compatibility paths only |
+| `tidal.ts` | Low-level TIDAL API client used by the TIDAL provider only; new catalog/search work must route through provider interfaces |
 | `import-discovery.ts` | Scans local/root folders into grouped local import candidates and derives common tags |
-| `import-matcher-service.ts` | Resolves TIDAL candidates (direct IDs, search, fingerprint evidence), scores matches, and applies auto-import policy |
-| `manual-import-service.ts` | Applies strict manual import mappings and updates artists/albums/media/library_files with dedup safeguards |
+| `import-matcher-service.ts` | Resolves provider candidates (direct IDs, search, fingerprint evidence), scores matches, and applies auto-import policy |
+| `manual-import-service.ts` | Applies strict manual import mappings and updates artists/albums/media/TrackFiles with dedup safeguards |
 | `import-finalize-service.ts` | Finalizes imported directory moves, sidecar reconciliation, and post-import rename hooks |
 | `import-service.ts` | Orchestrates root-folder scan/import flows and delegates matching/apply/finalize services |
 | `library-media-metrics.ts` | Shared unmapped-media metric extraction used by scan/import review persistence |
 | `library-scan-root-review.ts` | Handles root-folder review cleanup and unmapped review-candidate persistence |
-| `library-scan-relink.ts` | Repairs unresolved `library_files` rows by relinking to known media via injected scan dependencies |
+| `library-scan-relink.ts` | Repairs unresolved `TrackFiles` rows by relinking to known media via injected scan dependencies |
 | `task-scheduler.ts` | Orchestrates scheduled task passes (Lidarr-aligned per-artist pipeline) and queue lifecycle |
 | `task-state.ts` | Persists scheduled-task runtime progress and resolves active-workflow state from queue/runtime |
 | `schedule-policy.ts` | Schedule normalization, staleness/due policy helpers, and include-decision helpers |
 | `curation-service.ts` | Artist-level curation engine: category filtering, version-group selection, ISRC/subset dedup, monitor propagation, download candidate generation |
 | `library-metadata-backfill.ts` | Handles artist/album/track/video metadata file backfill and tracked metadata-sidecar updates |
-| `identification-service.ts` | Assigns manual import candidates to TIDAL tracks using file/title matching |
+| `identification-service.ts` | Assigns manual import candidates to provider tracks using file/title matching |
 | `fingerprint.ts` / `audioUtils.ts` | Chromaprint/AcoustID helpers for audio identification and enrichment |
 
 ## Repository Maintenance

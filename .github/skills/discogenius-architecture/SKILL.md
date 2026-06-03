@@ -20,7 +20,7 @@ Use this skill when changes touch one or more of:
 1. Keep routes thin; queue long-running work.
 2. Keep download and non-download orchestration separated.
 3. Keep event-driven handoffs explicit (scan completion -> curation, etc.).
-4. Keep file inventory canonical in library_files.
+4. Keep file inventory canonical in TrackFiles.
 5. Keep lock semantics authoritative (monitor_lock rows are intentional user state).
 
 ## Queue and workflow guidance
@@ -45,7 +45,7 @@ Use this skill when changes touch one or more of:
 
 ## Scan/import/curation boundaries
 
-- refresh-artist-service.ts + refresh-album-service.ts + refresh-playlist-service.ts + refresh-video-service.ts + media-seed-service.ts: TIDAL metadata refresh and targeted intake boundaries.
+- refresh-artist-service.ts + refresh-album-service.ts + refresh-playlist-service.ts + refresh-video-service.ts + media-seed-service.ts: provider catalog refresh and targeted intake boundaries.
 - library-scan.ts + import services: disk/import reconciliation and apply/finalize workflow.
 - curation-service.ts + artist-workflow.ts: curation and dedup decisions plus queue coupling.
 - task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline).

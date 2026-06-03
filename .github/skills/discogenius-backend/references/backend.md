@@ -40,32 +40,34 @@
 - The main TypeScript backend risks here are weak runtime validation, route-heavy business logic, and hidden state transitions in long-running jobs.
 
 ### Core tables
-- artists: artist metadata, monitoring status, biography
-- albums: album metadata with monitoring/lock mechanism, library categorization
-- media: unified table for tracks and videos (distinguish via type)
-- job_queue: unified persistent task queue for exact download jobs, monitoring/control jobs like DownloadMissing and RescanAllRoots, and maintenance jobs like MoveArtist/RenameFiles/RetagFiles
-- library_files: local file tracking for tracks, videos, covers, etc.
-- unmapped_files: pre-existing local files awaiting Manual Import mapping
+- `Artists` / `ArtistMetadata`: managed artist state plus canonical MusicBrainz artist metadata
+- `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, `Recordings`: canonical MusicBrainz/Lidarr-style metadata graph
+- `ProviderItems` / `ReleaseGroupSlots`: provider availability, offer matching, and selected release-group slots
+- `ProviderAlbums` / `ProviderMedia`: provider-primary compatibility cache while remaining read paths are retired
+- `job_queue`: unified persistent task queue for exact download jobs, monitoring/control jobs like DownloadMissing and RescanAllRoots, and maintenance jobs like MoveArtist/RenameFiles/RetagFiles
+- `TrackFiles`: local playable file tracking for tracks and videos
+- `MetadataFiles`, `LyricFiles`, `ExtraFiles`: sidecar inventories
+- `UnmappedFiles`: pre-existing local files awaiting Manual Import mapping
 
 ### Key relationships
-- artists (1) -> albums (many) via artist_id
-- albums (1) -> media (many) via album_id
-- artists (1) -> media (many) via artist_id
-- library_files -> artists (required), optionally -> albums and/or media
+- `Artists.mbid` links managed artists to `ArtistMetadata.mbid`.
+- `Albums.mbid` is a MusicBrainz Release Group MBID.
+- `AlbumReleases.release_group_mbid` links releases to release groups.
+- `Tracks.release_mbid` and `Tracks.recording_mbid` link release tracks to recordings.
+- `TrackFiles` stores canonical MBIDs plus provider provenance (`provider`, `provider_entity_type`, `provider_id`).
 
 ### Junction tables
-- album_artists: multi-artist album relationships and category (album, ep, single, live, compilation, remix)
-- media_artists: multi-artist track/media relationships
+- `AlbumArtists` and `ArtistReleaseGroups`: canonical MusicBrainz artist credit and release-group scope
+- `ProviderAlbumArtists` and `ProviderMediaArtists`: compatibility artist relationships while provider-primary tables remain
 
-### library_files columns and types
-- file_path TEXT UNIQUE (absolute path)
-- relative_path TEXT (relative to library root)
-- library_root TEXT (music, spatial_music, music_videos)
-- file_type TEXT (track, video, cover, bio, review, lyrics, playlist)
-- media_id INT (link to media)
-- naming_template TEXT
-- expected_path TEXT
-- needs_rename BOOLEAN
+### TrackFiles columns and types
+- `file_path` TEXT UNIQUE (absolute path)
+- `relative_path` TEXT (relative to library root)
+- `library_root` TEXT (music, spatial_music, music_videos)
+- `file_type` TEXT (`track` or `video` for playable media)
+- canonical MBID columns (`canonical_artist_mbid`, `canonical_release_group_mbid`, `canonical_release_mbid`, `canonical_track_mbid`, `canonical_recording_mbid`)
+- provider provenance (`provider`, `provider_entity_type`, `provider_id`)
+- `naming_template`, `expected_path`, `needs_rename`
 
 ### Manual import surfaces
 - `api/src/routes/unmapped.ts`: unmapped file list, identify, ignore/delete/map actions, and bulk mapping

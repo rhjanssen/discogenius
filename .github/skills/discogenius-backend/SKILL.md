@@ -76,8 +76,8 @@ Discogenius follows Lidarr-style patterns:
 - Import finalization helpers (sidecars/rename hooks) use `api/src/services/import-finalize-service.ts`.
 - Import orchestration and root-folder coordination use `api/src/services/import-service.ts`.
 - Download organization uses `api/src/services/organizer.ts`.
-- Metadata fetch: prefer `RefreshAlbumService.scanShallow()` / `RefreshArtistService.scan*()` plus helpers in `api/src/services/tidal.ts`.
-- Keep `library_files` paths relative to the configured library roots in `Config`.
+- Metadata fetch: prefer provider-layer refresh entry points such as `RefreshAlbumService.scanShallow()` / `RefreshArtistService.scan*()`; new catalog calls should route through `api/src/services/providers/`.
+- Keep `TrackFiles` paths relative to the configured library roots in `Config`.
 - For manual import and locally added files, prefer the existing fingerprint + AcoustID/MusicBrainz path over adding ad hoc matching logic.
 
 ## Queue + scheduler
@@ -87,7 +87,7 @@ Discogenius follows Lidarr-style patterns:
 - Use `CommandManager.canStartCommand()` to check if a job can run
 - Emit progress events via `downloadEvents` when changing download flow.
 - Current queue/job names live in `api/src/services/queue.ts` and `api/src/services/command.ts`; do not reintroduce stale names like `SCAN_ARTIST`, `LIBRARY_SCAN`, or `REDUNDANCY_CHECK` in new code.
-- `RefreshArtist` refreshes TIDAL metadata. `CurateArtist` is the per-artist task behind the user-facing Curation action.
+- `RefreshArtist` refreshes provider-backed metadata around the MusicBrainz artist. `CurateArtist` is the per-artist task behind the user-facing Curation action.
 - Queue long-running maintenance actions such as rename apply and retag apply so they appear in `/api/status` activity immediately.
 
 ## Monitoring, stats, and locks

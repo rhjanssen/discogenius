@@ -4,7 +4,7 @@
 
 <h1 align="center">Discogenius</h1>
 
-<p align="center">A self-hosted TIDAL library manager for building and maintaining a local, curated discography.</p>
+<p align="center">A self-hosted MusicBrainz/Lidarr-style library manager for building and maintaining a local, curated discography with provider-backed availability and downloads.</p>
 
 <p align="center">
   <a href="https://github.com/rhjanssen/discogenius/releases" target="_blank">
@@ -38,14 +38,15 @@
 > [!WARNING]
 > **Disclaimer**
 >
-> - Discogenius is an independent project and is **not affiliated with, endorsed by, or associated with TIDAL**.
-> - This software is provided for personal use only and requires your own active TIDAL subscription. You are responsible for complying with service terms and applicable copyright and intellectual property laws.
+> - Discogenius is an independent project and is **not affiliated with, endorsed by, or associated with TIDAL, MusicBrainz, MetaBrainz, or Lidarr**.
+> - Provider-backed download features currently require your own active TIDAL subscription. You are responsible for complying with service terms and applicable copyright and intellectual property laws.
 > - **Do not use Discogenius to distribute or pirate music.**
 
 ## Features
 
-- **Curated Discography Management**: Build and maintain your personal music collection.
-- **TIDAL Integration**: Curate and auto-download complete or partial artist discographies.
+- **MusicBrainz/Lidarr-style Library Identity**: Manage artists, release groups, releases, tracks, and recordings using canonical MusicBrainz metadata.
+- **Provider-backed Availability & Downloads**: Use TIDAL as the first provider for availability, previews, lyrics, music downloads through Orpheus, and video downloads through tidal-dl-ng.
+- **Curated Discography Management**: Curate complete or partial artist discographies with monitored release-group slots.
 - **Smart Library Organization**: Automatic file organization, metadata enrichment, fingerprint-based identification, and deduplication.
 - **Download Management**: Queue with Lidarr-style command exclusivity, background scheduling, and quality profiles.
 - **Manual Import Flow**: Dashboard interface for identifying and importing local music files.
@@ -129,7 +130,7 @@ docker compose pull
 docker compose up -d
 ```
 
-**Note**: Some platforms cache `latest` aggressively. Pin a release tag (e.g., `rhjanssen/discogenius:1.0.5`) if redeploying continues to use an older image.
+**Note**: Some platforms cache `latest` aggressively. Pin a release tag (e.g., `rhjanssen/discogenius:2.0.0`) if redeploying continues to use an older image.
 
 ### Local Development
 
@@ -201,7 +202,6 @@ That means:
 - AI can make serious mistakes, including subtle logic bugs that are easy to miss.
 
 Please review code carefully before deploying in production.
-
 
 
 

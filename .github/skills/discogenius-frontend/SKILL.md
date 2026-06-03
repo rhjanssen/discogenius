@@ -1,6 +1,6 @@
 ---
 name: discogenius-frontend
-description: Frontend workflow for Discogenius (React + Vite) using Fluent UI v9, UltraBlur theming, and react-query. Use when building UI, pages, hooks, or API integrations, including TIDAL image/video display and responsive layouts.
+description: Frontend workflow for Discogenius (React + Vite) using Fluent UI v9, UltraBlur theming, and react-query. Use when building UI, pages, hooks, or API integrations, including provider artwork/video display and responsive layouts.
 ---
 
 # Discogenius Frontend

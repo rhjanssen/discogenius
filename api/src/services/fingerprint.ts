@@ -6,6 +6,7 @@ import { gzipSync } from 'zlib';
 import { spawn } from 'child_process';
 import { resolveAcoustIdClientId } from './provider-client-config.js';
 import { Config } from './config.js';
+import { getDiscogeniusUserAgent } from './user-agent.js';
 
 export interface MusicBrainzRecording {
     id: string;
@@ -47,14 +48,13 @@ interface AcoustIdBatchInput {
     duration: number;
 }
 
-const MUSICBRAINZ_USER_AGENT = "Discogenius/1.2.6 (metadata identity; https://github.com/rhjanssen/discogenius)";
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 let musicBrainzRequestChain: Promise<void> = Promise.resolve();
 let lastMusicBrainzRequestAt = 0;
 
-function getMusicBrainzHeaders() {
+export function getMusicBrainzHeaders() {
     return {
-        "User-Agent": MUSICBRAINZ_USER_AGENT,
+        "User-Agent": getDiscogeniusUserAgent("metadata identity"),
     };
 }
 
@@ -62,7 +62,7 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function requestMusicBrainzJson<T = any>(url: string): Promise<T> {
+export async function scheduleMusicBrainzRequest<T>(request: () => Promise<T>): Promise<T> {
     const run = musicBrainzRequestChain.then(async () => {
         const elapsed = Date.now() - lastMusicBrainzRequestAt;
         if (elapsed < MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS) {
@@ -70,15 +70,21 @@ export async function requestMusicBrainzJson<T = any>(url: string): Promise<T> {
         }
 
         lastMusicBrainzRequestAt = Date.now();
+        return request();
+    });
+
+    musicBrainzRequestChain = run.then(() => undefined, () => undefined);
+    return run;
+}
+
+export async function requestMusicBrainzJson<T = any>(url: string): Promise<T> {
+    return scheduleMusicBrainzRequest(async () => {
         const response = await axios.get(url, {
             timeout: 10000,
             headers: getMusicBrainzHeaders(),
         });
         return response.data as T;
     });
-
-    musicBrainzRequestChain = run.then(() => undefined, () => undefined);
-    return run;
 }
 
 function mapMusicBrainzArtistCredits(rawCredits: unknown): MusicBrainzArtistCredit[] {

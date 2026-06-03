@@ -77,26 +77,10 @@ test("initDatabase normalizes legacy semver schema baseline to integer versionin
   assert.ok(latestHistory);
   assert.equal(latestHistory?.schemaFrom, 10000);
   assert.equal(latestHistory?.schemaTo, CURRENT_SCHEMA_VERSION);
-  assert.match(latestHistory?.migrationNotes ?? "", /baseline current schema as 1/);
-  assert.match(latestHistory?.migrationNotes ?? "", /add reverse media_artists lookup index/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /queue ordering column/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /artist path column/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /lidarr-aligned names/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /MusicBrainz identity status/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /provider mapping scaffold/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /library slot selections/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /superseded provider-neutral identity/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /canonical MusicBrainz and provider identity/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /missing foreign key and path indexes/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /drop superseded provider identity tables/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /Lidarr-aligned TrackFiles/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /legacy provider table collisions/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /extra file tables/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /retire sidecar projection/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /normalize legacy metadata source labels/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /redirect guest and similar artists/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /MediaCoverProxyCache/i);
-  assert.match(latestHistory?.migrationNotes ?? "", /serialized images columns/i);
+  assert.equal(
+    latestHistory?.migrationNotes,
+    `baseline current schema as ${CURRENT_SCHEMA_VERSION} (PRAGMA user_version=${CURRENT_SCHEMA_VERSION})`,
+  );
 });
 
 // ====================================================================
@@ -112,7 +96,7 @@ test("fresh database initializes with correct schema version", () => {
     "MetadataFiles", "LyricFiles", "ExtraFiles",
     "UnmappedFiles", "config", "job_queue", "quality_profiles",
     "upgrade_queue", "playlists", "playlist_tracks", "history_events",
-    "database_version_history",
+    "database_version_history", "MediaCoverProxyCache",
     "ArtistMetadata", "Albums", "AlbumReleases", "AlbumReleaseMedia",
     "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",
   ];
@@ -182,6 +166,105 @@ test("migration from integer schema v1 runs pending migrations", () => {
   // v3 migration adds job_queue.queue_order
   const jobCols = dbModule.db.prepare("PRAGMA table_info(job_queue)").all() as Array<{ name: string }>;
   assert.ok(jobCols.some((c) => c.name === "queue_order"), "Expected job_queue table to have 'queue_order' column");
+});
+
+test("provider compatibility rows are mirrored into ProviderItems", () => {
+  const artistId = "provider-backfill-artist";
+  const artistMbid = "provider-backfill-artist-mbid";
+  const releaseGroupMbid = "provider-backfill-rg";
+  const releaseMbid = "provider-backfill-release";
+  const trackMbid = "provider-backfill-track";
+  const recordingMbid = "provider-backfill-recording";
+  const albumProviderId = "provider-backfill-album";
+  const trackProviderId = "provider-backfill-track-provider";
+
+  dbModule.db.prepare("DELETE FROM ProviderItems WHERE provider_id IN (?, ?)").run(albumProviderId, trackProviderId);
+  dbModule.db.prepare("DELETE FROM ProviderMedia WHERE id = ?").run(trackProviderId);
+  dbModule.db.prepare("DELETE FROM ProviderAlbums WHERE id = ?").run(albumProviderId);
+  dbModule.db.prepare("DELETE FROM Tracks WHERE mbid = ?").run(trackMbid);
+  dbModule.db.prepare("DELETE FROM Recordings WHERE mbid = ?").run(recordingMbid);
+  dbModule.db.prepare("DELETE FROM AlbumReleases WHERE mbid = ?").run(releaseMbid);
+  dbModule.db.prepare("DELETE FROM Albums WHERE mbid = ?").run(releaseGroupMbid);
+  dbModule.db.prepare("DELETE FROM Artists WHERE id = ?").run(artistId);
+  dbModule.db.prepare("DELETE FROM ArtistMetadata WHERE mbid = ?").run(artistMbid);
+
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run(artistMbid, "Provider Backfill Artist");
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid)
+    VALUES (?, ?, ?)
+  `).run(artistId, "Provider Backfill Artist", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title)
+    VALUES (?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Provider Backfill Release Group");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?)
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Provider Backfill Release");
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `).run(recordingMbid, "Provider Backfill Recording");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
+    ) VALUES (?, ?, ?, 1, 1, '1', ?)
+  `).run(trackMbid, releaseMbid, recordingMbid, "Provider Backfill Track");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, upc, mbid, mb_release_group_id
+    ) VALUES (?, ?, ?, '2026-01-01', 'ALBUM', 0, 'LOSSLESS', 1, 1, 0, 180, '123456789012', ?, ?)
+  `).run(albumProviderId, artistId, "Provider Backfill Album", releaseMbid, releaseGroupMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, type, explicit, quality,
+      track_number, volume_number, duration, isrc, mbid
+    ) VALUES (?, ?, ?, ?, 'Track', 0, 'LOSSLESS', 1, 1, 180, 'USRC17607839', ?)
+  `).run(trackProviderId, artistId, albumProviderId, "Provider Backfill Track", trackMbid);
+
+  dbModule.initDatabase();
+
+  const rows = dbModule.db.prepare(`
+    SELECT entity_type as entityType, provider_id as providerId, release_group_mbid as releaseGroupMbid,
+           release_mbid as releaseMbid, track_mbid as trackMbid, recording_mbid as recordingMbid,
+           library_slot as librarySlot
+    FROM ProviderItems
+    WHERE provider = 'tidal' AND provider_id IN (?, ?)
+    ORDER BY entity_type
+  `).all(albumProviderId, trackProviderId) as Array<{
+    entityType: string;
+    providerId: string;
+    releaseGroupMbid: string | null;
+    releaseMbid: string | null;
+    trackMbid: string | null;
+    recordingMbid: string | null;
+    librarySlot: string;
+  }>;
+
+  assert.deepEqual(rows, [
+    {
+      entityType: "album",
+      providerId: albumProviderId,
+      releaseGroupMbid,
+      releaseMbid,
+      trackMbid: null,
+      recordingMbid: null,
+      librarySlot: "stereo",
+    },
+    {
+      entityType: "track",
+      providerId: trackProviderId,
+      releaseGroupMbid,
+      releaseMbid,
+      trackMbid,
+      recordingMbid,
+      librarySlot: "stereo",
+    },
+  ]);
 });
 
 test("migration from integer schema v3 runs the v4-v5 tail migrations", () => {

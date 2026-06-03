@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { getRegisteredMediaCoverProxyUrl } from "../services/metadata/media-cover-service.js";
+import { getDiscogeniusUserAgent } from "../services/user-agent.js";
 
 const router = Router();
 
@@ -38,7 +39,7 @@ router.get("/:hash/:filename", async (req, res) => {
     const response = await fetch(url, {
       redirect: "follow",
       headers: {
-        "User-Agent": "Discogenius",
+        "User-Agent": getDiscogeniusUserAgent("artwork proxy"),
       },
     });
 

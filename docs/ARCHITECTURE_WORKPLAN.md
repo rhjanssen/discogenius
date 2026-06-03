@@ -1,6 +1,6 @@
 # Discogenius Architecture Workplan
 
-Last updated: 2026-05-25
+Last updated: 2026-06-03
 
 ## Purpose
 
@@ -27,9 +27,9 @@ Measured 2026-03-13:
 - api/src/services/import-service.ts (~835 lines): orchestration + policy blending
 - api/src/services/scheduler.ts (~776 lines): per-job extraction still incomplete
 
-## Pre-1.0 Work Items
+## 2.0 Release Work Items
 
-1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 1.0.x schema baseline now uses an independent integer `PRAGMA user_version` starting at `1`, with app/api/schema provenance tracked in `database_version_history`.
+1. ~~Add a database migration runner in api/src/database.ts (user_version-gated).~~ **Done** — legacy numbered migrations remain for old local databases, and the 2.0 schema baseline now starts fresh databases at integer `PRAGMA user_version` 20, with app/api/schema provenance tracked in `database_version_history`.
 2. ~~Add a persistent history table and write path for key file lifecycle events.~~ **Done** — `history_events` table, backend write path, and `/api/history` endpoint are implemented.
 3. ~~Phase 1: Add 8 manually-triggerable scheduler commands~~ **Done** — `RefreshAllMonitored`, `DownloadMissingForce`, `RescanAllRoots`, `HealthCheck`, `CompactDatabase`, `CleanupTempFiles`, `UpdateLibraryMetadata`, `ConfigPrune` are integrated into [api/src/services/command.ts](api/src/services/command.ts) and [api/src/services/scheduler.ts](api/src/services/scheduler.ts) with full payload typing, exclusivity rules, and REST route handlers via [api/src/routes/command.ts](api/src/routes/command.ts). ~~Phase 2: Extend UI in Dashboard/Settings to expose Phase 1 commands and allow periodic scheduling configuration.~~ **Partially done** — the backend exposes a typed `/api/system-task` catalog for scheduled tasks plus manual operator tasks, and the Dashboard overflow now surfaces selected run-now actions. Settings does not currently ship a general System Tasks control plane or editable per-task schedule UI.
 4. Continue route thinning in high-traffic routes so route files remain adapters.
@@ -40,7 +40,7 @@ Measured 2026-03-13:
 9. ~~Consolidate quality normalization paths to one authoritative implementation.~~ **Done** — `HIRES_LOSSLESS` is canonical throughout; `HI_RES_LOSSLESS` alias and `QUALITY_ALIASES` map removed from `quality.ts`.
 10. Split the new system-task catalog into a dedicated command registry plus thinner activity/command routes so `/api/command`, `/api/system-task`, and `/api/status` stop sharing definition logic indirectly.
 
-## Post-1.0 Work Items
+## Post-2.0 Work Items
 
 - Root folder entity with richer root metadata and free-space checks.
 - Rich UI history timeline backed by persistent history data.
@@ -71,7 +71,7 @@ The schema now keeps the Lidarr-style MusicBrainz graph separate from provider a
 - The canonical MusicBrainz tables now have Lidarr-style local `Id` and `Foreign*Id` columns. Existing snake_case MBID columns still power many read paths until the provider-primary compatibility tables are retired.
 - `Recordings` now covers audio recordings, MusicBrainz video recordings, provider-only provisional video recordings, and spatial/alternate mixes; `RecordingRelations` stores MusicBrainz and inferred recording-to-recording links.
 - Lyrics are sidecar files rather than payload rows. Existing lyric sidecars are tracked in `LyricFiles` and can be reused across stereo/spatial counterpart recordings, with `RecordingRelations` storing only the sharing evidence.
-- `ProviderItems` caches provider availability/offers and match evidence; it is not a catalog truth table.
+- `ProviderItems` caches provider availability/offers and match evidence; it is not a catalog truth table. Startup mirrors remaining `ProviderAlbums`/`ProviderMedia` compatibility rows into `ProviderItems` so future read-path migration has a populated provider-neutral cache to target.
 - `ReleaseGroupSlots` selects the provider offer that can satisfy a MusicBrainz release group and library slot.
 - `ProviderAlbums` and `ProviderMedia` remain as compatibility tables for provider-primary download/import paths that still need to be retired.
 - `TrackFiles` stores imported playable file inventory with canonical MBIDs plus provider provenance. `MetadataFiles`, `LyricFiles`, and `ExtraFiles` now receive generated/imported sidecar writes using Lidarr-style names and TypeScript service boundaries.
@@ -91,7 +91,7 @@ A TIDAL 16-bit album and a TIDAL 24-bit album of the same record are different T
 | Abstract album | `mb_release_group_id` | The "album concept" — cross-provider join key |
 | Artist identity | `Artists.mbid` | Cross-provider artist join key |
 
-**Path to full multi-provider support (post-1.0):**
+**Path to full multi-provider support (post-2.0):**
 
 1. Keep MusicBrainz/Lidarr metadata as the only curation source for release groups, releases, and tracks.
 2. Keep provider offer data in `ProviderItems`/`ReleaseGroupSlots`, not in canonical metadata tables.

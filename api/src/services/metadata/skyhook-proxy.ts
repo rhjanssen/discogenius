@@ -2,6 +2,7 @@ import { db } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
+import { getDiscogeniusUserAgent } from "../user-agent.js";
 
 export interface LidarrArtist {
   id: string;
@@ -145,7 +146,7 @@ export class SkyHookProxy {
     const res = await fetch(`${this.baseUrl}${path}`, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "Discogenius/1.2.6",
+        "User-Agent": getDiscogeniusUserAgent("metadata proxy"),
       },
       signal: AbortSignal.timeout(12_000),
     });

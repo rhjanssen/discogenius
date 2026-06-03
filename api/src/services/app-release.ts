@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { REPO_ROOT } from "./config.js";
+import { getDiscogeniusUserAgent } from "./user-agent.js";
 
 export type CurrentAppReleaseInfo = {
   version: string;
@@ -124,7 +125,7 @@ async function fetchLatestReleaseLookup(): Promise<LatestReleaseLookup> {
   const response = await fetch(`https://api.github.com/repos/${DEFAULT_RELEASE_REPO}/releases/latest`, {
     headers: {
       Accept: "application/vnd.github+json",
-      "User-Agent": "Discogenius/1.0",
+      "User-Agent": getDiscogeniusUserAgent("release check"),
     },
     signal: AbortSignal.timeout(5000),
   });

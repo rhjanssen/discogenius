@@ -121,19 +121,19 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 1;
+const BASE_SCHEMA_VERSION = 20;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
 // ====================================================================
 // SCHEMA MIGRATIONS
-// Discogenius 1.0.x resets the schema baseline so SQLite `user_version`
-// tracks an independent integer schema series starting at `1`.
+// Discogenius 2.0 resets the fresh-install schema baseline so SQLite
+// `user_version` starts at the current MusicBrainz/Lidarr-aligned schema.
 //
 // The legacy numbered migrations remain so older local databases can still
 // be lifted to the current schema before the baseline is normalized.
-// Future schema migrations should increment the integer schema version.
+// Future schema migrations should increment the integer schema version above 20.
 // ====================================================================
 export function hasTable(tableName: string): boolean {
   const row = db
@@ -609,6 +609,124 @@ function backfillCanonicalMusicBrainzTablesFromLegacy(): void {
           SELECT 1 FROM Recordings
           WHERE Recordings.mbid = mb_tracks.recording_mbid
         )
+    `);
+  }
+}
+
+function providerLibrarySlotSql(qualityColumn: string, fallback = "'stereo'"): string {
+  return `
+    CASE
+      WHEN UPPER(COALESCE(${qualityColumn}, '')) IN ('DOLBY_ATMOS', 'ATMOS', 'SONY_360RA', '360RA')
+        OR UPPER(COALESCE(${qualityColumn}, '')) LIKE '%SPATIAL%'
+        OR UPPER(COALESCE(${qualityColumn}, '')) LIKE '%SURROUND%'
+        OR UPPER(COALESCE(${qualityColumn}, '')) LIKE '%IMMERSIVE%'
+        OR UPPER(COALESCE(${qualityColumn}, '')) LIKE '%ATMOS%'
+      THEN 'spatial'
+      ELSE ${fallback}
+    END
+  `;
+}
+
+function backfillProviderItemsFromCompatibilityTables(): void {
+  if (!tableExists("ProviderItems")) {
+    return;
+  }
+
+  if (tableExists("ProviderAlbums")) {
+    db.exec(`
+      INSERT OR IGNORE INTO ProviderItems (
+        provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+        title, version, explicit, quality, upc, duration, release_date, availability,
+        library_slot, artist_metadata_id, album_id, album_release_id, provider_url, asset_id,
+        match_status, match_method, updated_at
+      )
+      SELECT
+        'tidal',
+        'album',
+        CAST(provider_album.id AS TEXT),
+        NULLIF(artist.mbid, ''),
+        NULLIF(provider_album.mb_release_group_id, ''),
+        NULLIF(provider_album.mbid, ''),
+        provider_album.title,
+        provider_album.version,
+        provider_album.explicit,
+        provider_album.quality,
+        provider_album.upc,
+        provider_album.duration,
+        provider_album.release_date,
+        'available',
+        ${providerLibrarySlotSql("provider_album.quality")},
+        artist_metadata.Id,
+        release_group.Id,
+        album_release.Id,
+        'https://tidal.com/album/' || CAST(provider_album.id AS TEXT),
+        provider_album.cover,
+        COALESCE(provider_album.musicbrainz_status, 'provider_only'),
+        provider_album.musicbrainz_match_method,
+        COALESCE(provider_album.last_scanned, provider_album.user_date_added, CURRENT_TIMESTAMP)
+      FROM ProviderAlbums provider_album
+      LEFT JOIN Artists artist ON CAST(artist.id AS TEXT) = CAST(provider_album.artist_id AS TEXT)
+      LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = artist.mbid
+      LEFT JOIN Albums release_group ON release_group.mbid = provider_album.mb_release_group_id
+      LEFT JOIN AlbumReleases album_release ON album_release.mbid = provider_album.mbid
+      WHERE provider_album.id IS NOT NULL
+        AND TRIM(CAST(provider_album.id AS TEXT)) != ''
+    `);
+  }
+
+  if (tableExists("ProviderMedia")) {
+    db.exec(`
+      INSERT OR IGNORE INTO ProviderItems (
+        provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+        track_mbid, recording_mbid, title, version, explicit, quality, isrc, duration,
+        release_date, availability, library_slot, artist_metadata_id, album_id,
+        album_release_id, track_id, recording_id, provider_url, asset_id,
+        match_status, match_method, updated_at
+      )
+      SELECT
+        'tidal',
+        CASE WHEN provider_media.type = 'Music Video' THEN 'video' ELSE 'track' END,
+        CAST(provider_media.id AS TEXT),
+        NULLIF(artist.mbid, ''),
+        COALESCE(NULLIF(provider_album.mb_release_group_id, ''), album_release.release_group_mbid),
+        album_release.mbid,
+        CASE WHEN provider_media.type = 'Music Video' THEN NULL ELSE COALESCE(track.mbid, NULLIF(provider_media.mbid, '')) END,
+        COALESCE(track.recording_mbid, CASE WHEN provider_media.type = 'Music Video' THEN NULLIF(provider_media.mbid, '') ELSE NULL END),
+        provider_media.title,
+        provider_media.version,
+        provider_media.explicit,
+        provider_media.quality,
+        provider_media.isrc,
+        provider_media.duration,
+        provider_media.release_date,
+        'available',
+        CASE
+          WHEN provider_media.type = 'Music Video' THEN 'video'
+          ELSE ${providerLibrarySlotSql("provider_media.quality")}
+        END,
+        artist_metadata.Id,
+        release_group.Id,
+        album_release.Id,
+        track.Id,
+        recording.Id,
+        'https://tidal.com/' || CASE WHEN provider_media.type = 'Music Video' THEN 'video/' ELSE 'track/' END || CAST(provider_media.id AS TEXT),
+        provider_media.cover,
+        COALESCE(provider_media.musicbrainz_status, 'provider_only'),
+        provider_media.musicbrainz_match_method,
+        COALESCE(provider_media.last_scanned, provider_media.user_date_added, CURRENT_TIMESTAMP)
+      FROM ProviderMedia provider_media
+      LEFT JOIN ProviderAlbums provider_album ON CAST(provider_album.id AS TEXT) = CAST(provider_media.album_id AS TEXT)
+      LEFT JOIN Artists artist ON CAST(artist.id AS TEXT) = CAST(provider_media.artist_id AS TEXT)
+      LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = artist.mbid
+      LEFT JOIN Tracks track ON track.mbid = provider_media.mbid
+      LEFT JOIN AlbumReleases album_release ON album_release.mbid = COALESCE(track.release_mbid, provider_album.mbid)
+      LEFT JOIN Albums release_group ON release_group.mbid = COALESCE(provider_album.mb_release_group_id, album_release.release_group_mbid)
+      LEFT JOIN Recordings recording ON recording.mbid = COALESCE(
+        track.recording_mbid,
+        CASE WHEN provider_media.type = 'Music Video' THEN provider_media.mbid ELSE NULL END
+      )
+      WHERE provider_media.id IS NOT NULL
+        AND TRIM(CAST(provider_media.id AS TEXT)) != ''
     `);
   }
 }
@@ -1210,14 +1328,7 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     version: 19,
     description: "create persistent MediaCoverProxyCache table for remote artwork proxy",
     up: () => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS MediaCoverProxyCache (
-          hash TEXT PRIMARY KEY,
-          url TEXT NOT NULL,
-          expires_at INTEGER NOT NULL
-        )
-      `);
-      db.exec("CREATE INDEX IF NOT EXISTS idx_media_cover_proxy_expires ON MediaCoverProxyCache(expires_at)");
+      ensureMediaCoverProxyCacheSchema();
     },
   },
   {
@@ -1569,6 +1680,17 @@ function ensureExtraFileSchema(): void {
   `);
 }
 
+function ensureMediaCoverProxyCacheSchema(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS MediaCoverProxyCache (
+      hash TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_media_cover_proxy_expires ON MediaCoverProxyCache(expires_at)");
+}
+
 function ensureMusicBrainzProviderSchema(): void {
   ensureProviderCompatibilityTablesUseCurrentNames();
   ensureProviderIdentityTablesUseCurrentNames();
@@ -1838,6 +1960,7 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
 
   backfillCanonicalMusicBrainzTablesFromLegacy();
+  backfillProviderItemsFromCompatibilityTables();
 }
 
 function dropSupersededProviderIdentityTables(): void {
@@ -2369,6 +2492,8 @@ export function initDatabase() {
   ensureMetadataIdentitySchema();
   ensureMusicBrainzProviderSchema();
   ensureTrackFileCanonicalIdentitySchema();
+  ensureExtraFileSchema();
+  ensureMediaCoverProxyCacheSchema();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (local files not mapped to canonical metadata/provider evidence)

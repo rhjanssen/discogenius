@@ -528,33 +528,6 @@ const Auth = () => {
     return popup;
   };
 
-  const connectAppleMusic = async () => {
-    setConnecting(true);
-    try {
-      const status: any = await api.request("/auth/status?provider=apple-music");
-      if (status.connected) {
-        toast({
-          title: "Connected to Apple Music!",
-          description: "Discogenius Apple Music provider is ready.",
-        });
-        const appStatus = await api.getAuthStatus();
-        setAuthStatus(appStatus);
-        refreshProviderAuthStatusCache(appStatus);
-        navigateAfterAuth();
-      } else {
-        throw new Error(status.message || "Failed to verify connection");
-      }
-    } catch (e: any) {
-      toast({
-        title: "Connection Failed",
-        description: e.message,
-        variant: "destructive",
-      });
-    } finally {
-      setConnecting(false);
-    }
-  };
-
   const connectTidal = async () => {
     if (authStatus && !authStatus.canAuthenticate) {
       toast({
@@ -729,8 +702,7 @@ const Auth = () => {
     name: "Apple Music",
     className: styles.appleButton,
     logoUrl: appleIcon,
-    available: true,
-    onClick: connectAppleMusic,
+    available: false,
   }, {
     key: "amazon", name: "Amazon Music", className: styles.amazonButton, logoUrl: amazonIcon, available: false,
   }, {
