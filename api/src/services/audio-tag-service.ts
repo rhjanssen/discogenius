@@ -139,7 +139,7 @@ function buildProviderTrackUrl(row: RetagTrackRow): string {
   try {
     return buildStreamingMediaUrl("track", providerTrackId, provider);
   } catch {
-    return `https://tidal.com/browse/track/${providerTrackId}`;
+    return "";
   }
 }
 

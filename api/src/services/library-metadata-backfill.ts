@@ -16,6 +16,7 @@ import {
 import { embedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "./canonical-album-metadata.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 
 export interface MetadataFillResult {
     downloaded: number;
@@ -503,6 +504,13 @@ class LibraryMetadataBackfillService {
                     : video.media_title;
                 const copyright = video.media_copyright || video.album_copyright || undefined;
 
+                let providerVideoUrl: string | undefined;
+                try {
+                    providerVideoUrl = buildStreamingMediaUrl("video", String(video.media_id));
+                } catch {
+                    providerVideoUrl = undefined;
+                }
+
                 try {
                     const proposedTags = {
                         title: videoTitle || undefined,
@@ -510,7 +518,7 @@ class LibraryMetadataBackfillService {
                         album_artist: video.artist_name || undefined,
                         album: video.album_title || undefined,
                         date,
-                        comment: `https://listen.tidal.com/video/${video.media_id}`,
+                        comment: providerVideoUrl,
                         copyright,
                     };
                     // Skip if every proposed field is empty/undefined

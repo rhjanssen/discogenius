@@ -47,7 +47,7 @@ export function buildStreamingMediaUrl(
         return provider.getMediaUrl(type, sourceId);
     }
 
-    return `https://tidal.com/browse/${type}/${sourceId}`;
+    throw new Error(`Streaming provider ${streamingSource} cannot build media URLs`);
 }
 
 export function parseStreamingUrl(url: string): {

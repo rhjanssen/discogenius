@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../database.js';
 import { streamingProviderManager } from "./providers/index.js";
+import { buildStreamingMediaUrl } from "./download-routing.js";
 import { getLyricsForProviderMedia } from "./extras/lyrics/lyric-service.js";
 import {
     albumProviderArtworkCandidatesFromRow,
@@ -129,7 +130,13 @@ async function getAlbumForNfo(albumId: string) {
         return {
             id: String(row.id),
             title: row.title || "Unknown Album",
-            url: `https://tidal.com/album/${row.id}`,
+            url: (() => {
+                try {
+                    return buildStreamingMediaUrl("album", String(row.id));
+                } catch {
+                    return null;
+                }
+            })(),
             cover: row.cover || null,
             releaseDate: row.release_date || null,
             release_date: row.release_date || null,
@@ -230,7 +237,13 @@ async function getVideoForNfo(videoId: string) {
             quality: row.quality || "MP4_1080P",
             explicit: Boolean(row.explicit),
             popularity: row.popularity || 0,
-            url: `https://listen.tidal.com/video/${row.id}`,
+            url: (() => {
+                try {
+                    return buildStreamingMediaUrl("video", String(row.id));
+                } catch {
+                    return null;
+                }
+            })(),
             type: "Music Video",
         };
     }

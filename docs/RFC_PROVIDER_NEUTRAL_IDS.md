@@ -79,7 +79,7 @@ Examples:
 - `api/src/services/command-history.ts` resolves titles by `job.ref_id || payload.providerId`
 - `api/src/routes/search.ts` checks monitored/in-library state by `id = providerId`
 - `api/src/utils/url-helpers.ts` is entirely TIDAL-specific
-- `api/src/services/audio-tag-service.ts` writes a `TIDAL_URL` tag directly from `media_id`
+- `api/src/services/audio-tag-service.ts` writes a provider-neutral `PROVIDER_URL` tag through the provider URL builder
 
 ### Provider collections are out of scope for 2.0
 
