@@ -219,6 +219,30 @@ function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrack
     });
 }
 
+function getMatchedTargets1to1(targetTracks: TargetTrack[], providerTracks: ProviderTrackDetail[]): Set<number> {
+    const usedProviderIndices = new Set<number>();
+    const matchedTargetIndices = new Set<number>();
+    
+    for (let targetIdx = 0; targetIdx < targetTracks.length; targetIdx++) {
+        const target = targetTracks[targetIdx];
+        let bestScore = -1;
+        let bestIdx = -1;
+        for (let i = 0; i < providerTracks.length; i++) {
+            if (usedProviderIndices.has(i)) continue;
+            const score = scoreTrackMatch(target, providerTracks[i]);
+            if (score >= 0.55 && score > bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx !== -1) {
+            matchedTargetIndices.add(targetIdx);
+            usedProviderIndices.add(bestIdx);
+        }
+    }
+    return matchedTargetIndices;
+}
+
 function sortCandidatesForSlot(slot: ReleaseGroupLibrarySlot, candidates: ProviderAlbumCandidateWithTracks[]): void {
     candidates.sort((a, b) => {
         const qA = qualityScore(slot, a.album.quality);
@@ -441,7 +465,7 @@ export function selectReleaseGroupSlotAlbums(
 
         // 2. Check if any candidates are "Full covers"
         const fullCovers = candidatesWithTracks.filter(c =>
-            targetTrackList.every(target => isTrackCovered(target, c.tracks))
+            getMatchedTargets1to1(targetTrackList, c.tracks).size === targetTrackList.length
         );
 
         if (fullCovers.length > 0) {
@@ -468,39 +492,28 @@ export function selectReleaseGroupSlotAlbums(
 
         const primary = candidatesWithTracks[0];
         const selectedCandidates = [primary];
-        const coveredTargets = new Set<number>();
-
-        targetTrackList.forEach((target, index) => {
-            if (isTrackCovered(target, primary.tracks)) {
-                coveredTargets.add(index);
-            }
-        });
+        let currentCovered = getMatchedTargets1to1(targetTrackList, primary.tracks);
 
         for (let i = 1; i < candidatesWithTracks.length; i++) {
-            if (coveredTargets.size === targetTrackList.length) {
+            if (currentCovered.size === targetTrackList.length) {
                 break;
             }
             const candidate = candidatesWithTracks[i];
             if (candidate.provider !== primary.provider) {
                 continue; // Only combine candidates from the same provider
             }
-            let coversNewTrack = false;
-            const newlyCovered: number[] = [];
 
-            targetTrackList.forEach((target, index) => {
-                if (!coveredTargets.has(index) && isTrackCovered(target, candidate.tracks)) {
-                    coversNewTrack = true;
-                    newlyCovered.push(index);
-                }
-            });
+            // Check if combining this candidate covers new target tracks 1-to-1
+            const combinedTracks = selectedCandidates.concat(candidate).flatMap(c => c.tracks);
+            const combinedCovered = getMatchedTargets1to1(targetTrackList, combinedTracks);
 
-            if (coversNewTrack) {
+            if (combinedCovered.size > currentCovered.size) {
                 selectedCandidates.push(candidate);
-                newlyCovered.forEach(index => coveredTargets.add(index));
+                currentCovered = combinedCovered;
             }
         }
 
-        if (coveredTargets.size < targetTrackList.length) {
+        if (currentCovered.size < targetTrackList.length) {
             continue;
         }
 
@@ -517,8 +530,9 @@ export function selectReleaseGroupSlotAlbums(
 
         selectedCandidates.sort((left, right) => {
             const firstCoveredTarget = (candidate: ProviderAlbumCandidateWithTracks) => {
-                const index = targetTrackList.findIndex((target) => isTrackCovered(target, candidate.tracks));
-                return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+                const covered = getMatchedTargets1to1(targetTrackList, candidate.tracks);
+                if (covered.size === 0) return Number.MAX_SAFE_INTEGER;
+                return Math.min(...covered);
             };
             return firstCoveredTarget(left) - firstCoveredTarget(right);
         });
