@@ -124,12 +124,34 @@ type ManagedEventSource = EventSource & {
   __discogeniusClosed?: boolean;
 };
 
+const managedEventSources = new Set<ManagedEventSource>();
+let eventSourceUnloadListenerRegistered = false;
+
+function registerEventSourceUnloadHandler(): void {
+  if (eventSourceUnloadListenerRegistered || typeof window === "undefined") {
+    return;
+  }
+
+  eventSourceUnloadListenerRegistered = true;
+  window.addEventListener("beforeunload", () => {
+    for (const eventSource of managedEventSources) {
+      eventSource.__discogeniusClosed = true;
+      eventSource.close();
+    }
+    managedEventSources.clear();
+  });
+}
+
 function createManagedEventSource(url: string): ManagedEventSource {
+  registerEventSourceUnloadHandler();
   const eventSource = new EventSource(url, { withCredentials: false }) as ManagedEventSource;
   const close = eventSource.close.bind(eventSource);
 
+  managedEventSources.add(eventSource);
+
   eventSource.close = () => {
     eventSource.__discogeniusClosed = true;
+    managedEventSources.delete(eventSource);
     close();
   };
 
@@ -137,7 +159,9 @@ function createManagedEventSource(url: string): ManagedEventSource {
 }
 
 function isExpectedEventSourceClose(eventSource: ManagedEventSource): boolean {
-  return eventSource.__discogeniusClosed === true || eventSource.readyState === EventSource.CLOSED;
+  return eventSource.__discogeniusClosed === true
+    || eventSource.readyState === EventSource.CLOSED
+    || (typeof document !== "undefined" && document.visibilityState === "hidden");
 }
 
 export type StreamingProviderStatus = {
@@ -1374,6 +1398,9 @@ class ApiClient {
       if (isExpectedEventSourceClose(eventSource)) {
         return;
       }
+      if (eventSource.readyState === EventSource.CONNECTING) {
+        return;
+      }
 
       console.error('Download progress SSE error:', error);
       // Close to prevent native auto-reconnect storm; caller handles reconnect with backoff
@@ -1419,6 +1446,9 @@ class ApiClient {
     eventSource.onerror = (error) => {
       // Ignore expected abort/error notifications after the client closes the stream.
       if (isExpectedEventSourceClose(eventSource)) {
+        return;
+      }
+      if (eventSource.readyState === EventSource.CONNECTING) {
         return;
       }
 

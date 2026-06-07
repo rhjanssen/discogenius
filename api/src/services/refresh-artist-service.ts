@@ -98,6 +98,21 @@ function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArt
     };
 }
 
+function parseJsonObject(value: unknown): Record<string, any> {
+    if (!value) {
+        return {};
+    }
+    if (typeof value === "object") {
+        return value as Record<string, any>;
+    }
+    try {
+        const parsed = JSON.parse(String(value));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
 function providerArtistArtworkSnapshot(artist: ProviderArtist): string {
     return JSON.stringify({
         picture: artist.picture || null,
@@ -777,6 +792,135 @@ export class RefreshArtistService {
         })();
     }
 
+    private static buildStoredProviderAlbumSelections(
+        artistMbid: string | null,
+    ): Array<{ provider: string; album: ProviderAlbumSlotCandidate; match: ProviderReleaseGroupMatch }> {
+        if (!artistMbid) {
+            return [];
+        }
+
+        const rows = db.prepare(`
+            SELECT
+                pi.provider,
+                pi.provider_id,
+                pi.title,
+                pi.version,
+                pi.explicit,
+                pi.quality,
+                pi.release_date,
+                pi.release_group_mbid,
+                pi.release_mbid,
+                pi.match_status,
+                pi.match_confidence,
+                pi.match_method,
+                pi.match_evidence,
+                pi.data,
+                rg.title AS release_group_title,
+                rg.primary_type,
+                rg.secondary_types,
+                rg.first_release_date,
+                rg.disambiguation
+            FROM ProviderItems pi
+            JOIN Albums rg
+              ON rg.mbid = pi.release_group_mbid
+            LEFT JOIN ArtistReleaseGroups scope
+              ON scope.release_group_mbid = rg.mbid
+             AND scope.artist_mbid = ?
+            WHERE pi.entity_type = 'album'
+              AND pi.release_group_mbid IS NOT NULL
+              AND pi.match_status IN ('verified', 'probable')
+              AND (
+                pi.artist_mbid = ?
+                OR rg.artist_mbid = ?
+                OR scope.artist_mbid IS NOT NULL
+              )
+        `).all(artistMbid, artistMbid, artistMbid) as Array<{
+            provider: string;
+            provider_id: string | number;
+            title: string | null;
+            version: string | null;
+            explicit: number | null;
+            quality: string | null;
+            release_date: string | null;
+            release_group_mbid: string;
+            release_mbid: string | null;
+            match_status: ProviderReleaseGroupMatch["status"];
+            match_confidence: number | null;
+            match_method: string | null;
+            match_evidence: string | null;
+            data: string | null;
+            release_group_title: string;
+            primary_type: string | null;
+            secondary_types: string | null;
+            first_release_date: string | null;
+            disambiguation: string | null;
+        }>;
+
+        return rows.map((row) => {
+            const evidence = parseJsonObject(row.match_evidence);
+            const data = parseJsonObject(row.data);
+            let secondaryTypes: string[] = [];
+            try {
+                const parsed = JSON.parse(String(row.secondary_types || "[]"));
+                secondaryTypes = Array.isArray(parsed) ? parsed.map((type) => String(type)) : [];
+            } catch {
+                secondaryTypes = [];
+            }
+
+            const providerId = String(row.provider_id);
+            const providerTrackCount = Number(evidence.providerTrackCount || data.trackCount || data.num_tracks || 0);
+            const providerVolumeCount = Number(evidence.providerVolumeCount || data.volumeCount || data.num_volumes || 0);
+            const evidencePayload: Record<string, any> & { providerTitle: string } = {
+                providerTitle: row.title || "",
+                ...evidence,
+            };
+
+            return {
+                provider: row.provider,
+                album: {
+                    providerId,
+                    title: row.title || "",
+                    version: row.version || null,
+                    releaseDate: row.release_date || null,
+                    quality: row.quality || null,
+                    explicit: row.explicit,
+                    trackCount: providerTrackCount > 0 ? providerTrackCount : null,
+                    volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
+                    raw: data,
+                },
+                match: {
+                    providerId,
+                    status: row.match_status,
+                    confidence: Number(row.match_confidence || 0),
+                    method: row.match_method || "stored-provider-offer",
+                    releaseMbid: row.release_mbid || evidencePayload.matchedReleaseMbid || null,
+                    releaseGroup: {
+                        mbid: row.release_group_mbid,
+                        title: row.release_group_title,
+                        primaryType: row.primary_type,
+                        secondaryTypes,
+                        firstReleaseDate: row.first_release_date,
+                        disambiguation: row.disambiguation,
+                    },
+                    evidence: evidencePayload as ProviderReleaseGroupMatch["evidence"],
+                },
+            };
+        });
+    }
+
+    static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
+        const candidates = this.buildStoredProviderAlbumSelections(artistMbid);
+        if (candidates.length === 0) {
+            return { stereo: 0, spatial: 0 };
+        }
+
+        return ReleaseGroupSlotService.syncProviderAlbumSelections({
+            artistMbid,
+            candidates,
+            clearProviders: [],
+        });
+    }
+
     private static normalizeProviderMatchText(value: unknown): string {
         return String(value || "")
             .normalize("NFD")
@@ -1020,23 +1164,83 @@ export class RefreshArtistService {
                 picture,
                 bio_text,
                 last_scanned,
-                (SELECT COUNT(*) FROM ProviderAlbumArtists WHERE artist_id = ?) AS album_count,
-                (SELECT COUNT(*) FROM ProviderMedia WHERE artist_id = ? AND type = 'Music Video') AS video_count
+                mbid,
+                (
+                    SELECT COUNT(DISTINCT rg.mbid)
+                    FROM Albums rg
+                    LEFT JOIN ArtistReleaseGroups scope
+                      ON scope.release_group_mbid = rg.mbid
+                    WHERE rg.artist_mbid = Artists.mbid
+                       OR scope.artist_mbid = Artists.mbid
+                ) AS release_group_count,
+                (
+                    SELECT COUNT(DISTINCT release.mbid)
+                    FROM AlbumReleases release
+                    JOIN Albums rg ON rg.mbid = release.release_group_mbid
+                    LEFT JOIN ArtistReleaseGroups scope
+                      ON scope.release_group_mbid = rg.mbid
+                    WHERE rg.artist_mbid = Artists.mbid
+                       OR scope.artist_mbid = Artists.mbid
+                ) AS release_count,
+                (
+                    SELECT COUNT(DISTINCT track.mbid)
+                    FROM Tracks track
+                    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+                    JOIN Albums rg ON rg.mbid = release.release_group_mbid
+                    LEFT JOIN ArtistReleaseGroups scope
+                      ON scope.release_group_mbid = rg.mbid
+                    WHERE rg.artist_mbid = Artists.mbid
+                       OR scope.artist_mbid = Artists.mbid
+                ) AS track_count,
+                (
+                    SELECT COUNT(*)
+                    FROM Recordings recording
+                    WHERE recording.IsVideo = 1
+                      AND recording.artist_mbid = Artists.mbid
+                ) AS video_count,
+                (
+                    SELECT COUNT(*)
+                    FROM ProviderItems item
+                    WHERE item.entity_type IN ('album', 'video')
+                      AND item.match_status IN ('verified', 'probable')
+                      AND (
+                        item.artist_mbid = Artists.mbid
+                        OR EXISTS (
+                            SELECT 1
+                            FROM Albums rg
+                            LEFT JOIN ArtistReleaseGroups scope
+                              ON scope.release_group_mbid = rg.mbid
+                            WHERE rg.mbid = item.release_group_mbid
+                              AND (rg.artist_mbid = Artists.mbid OR scope.artist_mbid = Artists.mbid)
+                        )
+                      )
+                ) AS provider_offer_count
             FROM Artists
             WHERE id = ?
-        `).get(artistId, artistId, artistId) as {
+        `).get(artistId) as {
             id?: string;
             name?: string | null;
             bio_text?: string | null;
-            album_count?: number;
+            release_group_count?: number;
+            release_count?: number;
+            track_count?: number;
             video_count?: number;
+            provider_offer_count?: number;
         } | undefined;
 
         if (!artist) {
             return ScanLevel.NONE;
         }
 
-        if (Number(artist.album_count || 0) > 0 || Number(artist.video_count || 0) > 0) {
+        const releaseGroupCount = Number(artist.release_group_count || 0);
+        const releaseCount = Number(artist.release_count || 0);
+        const trackCount = Number(artist.track_count || 0);
+        const videoCount = Number(artist.video_count || 0);
+        const providerOfferCount = Number(artist.provider_offer_count || 0);
+        if (
+            (releaseGroupCount > 0 && (releaseCount > 0 || trackCount > 0 || providerOfferCount > 0))
+            || videoCount > 0
+        ) {
             return ScanLevel.DEEP;
         }
 
@@ -1244,10 +1448,14 @@ export class RefreshArtistService {
             });
         }
 
+        let artistMbid = (db.prepare("SELECT mbid FROM Artists WHERE id = ?")
+            .get(artistId) as { mbid?: string | null } | undefined)?.mbid
+            || (isMusicBrainzMbid(artistId) ? artistId : null);
+
         if (shouldHydrateCatalog) {
             const monitoredArtist = db.prepare("SELECT monitor FROM Artists WHERE id = ?")
                 .get(artistId) as { monitor?: number | null } | undefined;
-            const artistMbid = await this.syncArtistMusicBrainzCatalog(
+            artistMbid = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
                 Boolean(monitoredArtist?.monitor),
@@ -1386,6 +1594,10 @@ export class RefreshArtistService {
             }
         } else {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
+            const slotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
+            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
+                console.log(`[RefreshArtistService] Rebuilt provider selections from stored offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
+            }
         }
 
         db.prepare(`

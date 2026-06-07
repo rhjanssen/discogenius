@@ -28,6 +28,28 @@ type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | Do
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
 type DownloadOrImportJobPayload = DownloadJobPayload | ImportDownloadJobPayload;
 
+type CanonicalProviderOffer = {
+    provider?: string | null;
+    provider_id?: string | null;
+    entity_type?: string | null;
+    artist_mbid?: string | null;
+    release_group_mbid?: string | null;
+    release_mbid?: string | null;
+    track_mbid?: string | null;
+    recording_mbid?: string | null;
+    provider_title?: string | null;
+    provider_quality?: string | null;
+    asset_id?: string | null;
+    provider_data?: string | null;
+    slot_provider_data?: string | null;
+    slot_quality?: string | null;
+    selected_release_mbid?: string | null;
+    canonical_album_title?: string | null;
+    canonical_track_title?: string | null;
+    canonical_recording_title?: string | null;
+    artist_name?: string | null;
+};
+
 const POLL_INTERVAL = readIntEnv('DISCOGENIUS_DOWNLOAD_POLL_MS', 2000, 1); // 2 seconds default
 const MAX_RETRY_ATTEMPTS = readIntEnv('DISCOGENIUS_DOWNLOAD_MAX_RETRY_ATTEMPTS', 3, 1);
 const DOWNLOAD_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_TIMEOUT_MS', 4 * 60 * 60 * 1000, 0); // 0 = disabled
@@ -267,7 +289,149 @@ export class DownloadProcessor {
         this.currentDownloadPath = undefined;
     }
 
-    private hasAlbumMetadataReady(albumId: string): boolean {
+    private parseProviderData(value: unknown): Record<string, unknown> {
+        if (!value) return {};
+        if (typeof value === 'object' && !Array.isArray(value)) {
+            return value as Record<string, unknown>;
+        }
+        if (typeof value !== 'string') return {};
+
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? parsed as Record<string, unknown>
+                : {};
+        } catch {
+            return {};
+        }
+    }
+
+    private pickString(value: unknown): string | null {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return String(value);
+        }
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
+        return null;
+    }
+
+    private pickNestedString(record: Record<string, unknown>, key: string): string | null {
+        return this.pickString(record[key]);
+    }
+
+    private resolveCanonicalProviderOffer(
+        providerId: string,
+        type: DownloadJobType,
+        payload?: DownloadJobPayload,
+    ): CanonicalProviderOffer | null {
+        const entityType = type === 'album' ? 'album' : type === 'video' ? 'video' : 'track';
+        const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid);
+        const slot = this.pickString(payload?.slot) || 'stereo';
+
+        if (type === 'album') {
+            const row = db.prepare(`
+                SELECT
+                    pi.provider,
+                    pi.provider_id,
+                    pi.entity_type,
+                    pi.artist_mbid,
+                    pi.release_group_mbid,
+                    pi.release_mbid,
+                    pi.title AS provider_title,
+                    pi.quality AS provider_quality,
+                    pi.asset_id,
+                    pi.data AS provider_data,
+                    rgs.provider_data AS slot_provider_data,
+                    rgs.quality AS slot_quality,
+                    rgs.selected_release_mbid,
+                    rg.title AS canonical_album_title,
+                    am.name AS artist_name
+                FROM ProviderItems pi
+                LEFT JOIN ReleaseGroupSlots rgs
+                  ON rgs.selected_provider = pi.provider
+                 AND rgs.selected_provider_id = pi.provider_id
+                 AND rgs.release_group_mbid = pi.release_group_mbid
+                 AND (? IS NULL OR rgs.slot = ?)
+                LEFT JOIN Albums rg
+                  ON rg.mbid = COALESCE(pi.release_group_mbid, rgs.release_group_mbid)
+                LEFT JOIN ArtistMetadata am
+                  ON am.mbid = COALESCE(pi.artist_mbid, rgs.artist_mbid, rg.artist_mbid)
+                WHERE pi.provider_id = ?
+                  AND pi.entity_type = 'album'
+                  AND (? IS NULL OR pi.release_group_mbid = ?)
+                ORDER BY CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END, pi.updated_at DESC
+                LIMIT 1
+            `).get(slot, slot, providerId, releaseGroupMbid, releaseGroupMbid, slot) as CanonicalProviderOffer | undefined;
+
+            if (row) return row;
+
+            if (releaseGroupMbid) {
+                const slotRow = db.prepare(`
+                    SELECT
+                        rgs.selected_provider AS provider,
+                        rgs.selected_provider_id AS provider_id,
+                        'album' AS entity_type,
+                        rgs.artist_mbid,
+                        rgs.release_group_mbid,
+                        rgs.selected_release_mbid AS release_mbid,
+                        rgs.provider_data AS slot_provider_data,
+                        rgs.quality AS slot_quality,
+                        rgs.selected_release_mbid,
+                        rg.title AS canonical_album_title,
+                        am.name AS artist_name
+                    FROM ReleaseGroupSlots rgs
+                    LEFT JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
+                    LEFT JOIN ArtistMetadata am ON am.mbid = COALESCE(rgs.artist_mbid, rg.artist_mbid)
+                    WHERE rgs.release_group_mbid = ?
+                      AND rgs.selected_provider_id = ?
+                      AND rgs.slot = ?
+                    LIMIT 1
+                `).get(releaseGroupMbid, providerId, slot) as CanonicalProviderOffer | undefined;
+                return slotRow ?? null;
+            }
+
+            return null;
+        }
+
+        const row = db.prepare(`
+            SELECT
+                pi.provider,
+                pi.provider_id,
+                pi.entity_type,
+                pi.artist_mbid,
+                pi.release_group_mbid,
+                pi.release_mbid,
+                pi.track_mbid,
+                pi.recording_mbid,
+                pi.title AS provider_title,
+                pi.quality AS provider_quality,
+                pi.asset_id,
+                pi.data AS provider_data,
+                rg.title AS canonical_album_title,
+                t.title AS canonical_track_title,
+                r.title AS canonical_recording_title,
+                am.name AS artist_name
+            FROM ProviderItems pi
+            LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
+            LEFT JOIN Tracks t ON t.mbid = pi.track_mbid
+            LEFT JOIN Recordings r ON r.mbid = pi.recording_mbid
+            LEFT JOIN ArtistMetadata am ON am.mbid = pi.artist_mbid
+            WHERE pi.provider_id = ?
+              AND pi.entity_type = ?
+            ORDER BY pi.updated_at DESC
+            LIMIT 1
+        `).get(providerId, entityType) as CanonicalProviderOffer | undefined;
+        return row ?? null;
+    }
+
+    private hasAlbumMetadataReady(albumId: string, payload?: DownloadJobPayload): boolean {
+        const canonicalOffer = this.resolveCanonicalProviderOffer(albumId, 'album', payload);
+        if (canonicalOffer) {
+            return true;
+        }
+
         const row = db.prepare(`
             SELECT
                 a.id,
@@ -296,7 +460,16 @@ export class DownloadProcessor {
         return trackCount >= expectedTracks;
     }
 
-    private hasTrackMetadataReady(trackId: string): boolean {
+    private hasTrackMetadataReady(trackId: string, payload?: DownloadJobPayload): boolean {
+        const canonicalOffer = this.resolveCanonicalProviderOffer(trackId, 'track', payload);
+        if (canonicalOffer) {
+            return Boolean(
+                canonicalOffer.provider_id
+                && (canonicalOffer.provider_title || canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title)
+                && (canonicalOffer.artist_mbid || canonicalOffer.artist_name)
+            );
+        }
+
         const row = db.prepare(`
             SELECT m.id, m.title, m.artist_id, m.album_id, a.id as album_exists
             FROM ProviderMedia m
@@ -307,7 +480,16 @@ export class DownloadProcessor {
         return Boolean(row?.id && row?.title && row?.artist_id && row?.album_id && row?.album_exists);
     }
 
-    private hasVideoMetadataReady(videoId: string): boolean {
+    private hasVideoMetadataReady(videoId: string, payload?: DownloadJobPayload): boolean {
+        const canonicalOffer = this.resolveCanonicalProviderOffer(videoId, 'video', payload);
+        if (canonicalOffer) {
+            return Boolean(
+                canonicalOffer.provider_id
+                && (canonicalOffer.provider_title || canonicalOffer.canonical_recording_title)
+                && (canonicalOffer.artist_mbid || canonicalOffer.artist_name)
+            );
+        }
+
         const row = db.prepare(`
             SELECT id, title, artist_id
             FROM ProviderMedia
@@ -320,12 +502,13 @@ export class DownloadProcessor {
     private async ensureMetadataReady(
         providerId: string,
         type: 'track' | 'video' | 'album',
+        payload?: DownloadJobPayload,
     ): Promise<void> {
         switch (type) {
             case 'album': {
                 const albumIds = providerId.split(";").filter(Boolean);
                 for (const subAlbumId of albumIds) {
-                    if (!this.hasAlbumMetadataReady(subAlbumId)) {
+                    if (!this.hasAlbumMetadataReady(subAlbumId, payload)) {
                         console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; running album scan before download`);
                         await RefreshAlbumService.scanShallow(subAlbumId, {
                             includeSimilarAlbums: false,
@@ -336,7 +519,7 @@ export class DownloadProcessor {
                 return;
             }
             case 'track':
-                if (!this.hasTrackMetadataReady(providerId)) {
+                if (!this.hasTrackMetadataReady(providerId, payload)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Track ${providerId} is missing metadata; seeding track before download`);
                     await MediaSeedService.seedTrack(providerId, {
                         includeSimilarArtists: false,
@@ -347,7 +530,7 @@ export class DownloadProcessor {
                 }
                 return;
             case 'video':
-                if (!this.hasVideoMetadataReady(providerId)) {
+                if (!this.hasVideoMetadataReady(providerId, payload)) {
                     console.log(`[DOWNLOAD-PROCESSOR] Video ${providerId} is missing metadata; seeding video before download`);
                     await MediaSeedService.seedVideo(providerId, {
                         includeSimilarArtists: false,
@@ -372,6 +555,36 @@ export class DownloadProcessor {
         const fallbackCover = payload?.cover ?? null;
 
         try {
+            const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
+            if (canonicalOffer) {
+                const providerData = this.parseProviderData(canonicalOffer.provider_data);
+                const slotProviderData = this.parseProviderData(canonicalOffer.slot_provider_data);
+                const providerArtist = this.parseProviderData(providerData.artist);
+                const slotArtist = this.parseProviderData(slotProviderData.artist);
+                const title = type === 'album'
+                    ? canonicalOffer.canonical_album_title
+                    : type === 'video'
+                        ? canonicalOffer.canonical_recording_title
+                        : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
+                const cover = fallbackCover
+                    ?? this.pickNestedString(slotProviderData, 'cover')
+                    ?? canonicalOffer.asset_id
+                    ?? this.pickNestedString(providerData, 'cover')
+                    ?? null;
+
+                return {
+                    title: fallbackTitle || title || canonicalOffer.provider_title || 'Unknown',
+                    artist: fallbackArtist
+                        || canonicalOffer.artist_name
+                        || this.pickNestedString(slotArtist, 'name')
+                        || this.pickNestedString(providerArtist, 'name')
+                        || this.pickNestedString(slotProviderData, 'artist')
+                        || this.pickNestedString(providerData, 'artist')
+                        || 'Unknown',
+                    cover,
+                };
+            }
+
             if (type === 'album') {
                 const albumIds = providerId.split(";").filter(Boolean);
                 const titles: string[] = [];
@@ -443,6 +656,11 @@ export class DownloadProcessor {
         }
 
         try {
+            const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
+            if (canonicalOffer) {
+                return canonicalOffer.slot_quality ?? canonicalOffer.provider_quality ?? null;
+            }
+
             if (type === 'album') {
                 const firstId = providerId.split(";")[0];
                 const row = db.prepare(`
@@ -462,6 +680,99 @@ export class DownloadProcessor {
         } catch {
             return null;
         }
+    }
+
+    private getCanonicalAlbumDownloadProgress(
+        providerId: string,
+        payload: DownloadJobPayload,
+    ): { total: number; done: number } | null {
+        const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, 'album', payload);
+        const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
+        const releaseMbid = this.pickString(payload?.releaseMbid)
+            || canonicalOffer?.selected_release_mbid
+            || canonicalOffer?.release_mbid;
+        const slot = this.pickString(payload?.slot) || 'stereo';
+
+        if (!releaseGroupMbid && !releaseMbid) {
+            return null;
+        }
+
+        const row = releaseMbid
+            ? db.prepare(`
+                SELECT
+                    COUNT(DISTINCT t.mbid) AS total,
+                    COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS done
+                FROM Tracks t
+                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+                LEFT JOIN TrackFiles lf
+                  ON (
+                    lf.canonical_track_mbid = t.mbid
+                    OR (
+                      lf.canonical_track_mbid IS NULL
+                      AND lf.canonical_recording_mbid = t.recording_mbid
+                    )
+                  )
+                 AND lf.file_type = 'track'
+                 AND lf.library_slot = ?
+                WHERE t.release_mbid = ?
+                  AND COALESCE(r.IsVideo, 0) = 0
+            `).get(slot, releaseMbid) as { total?: number; done?: number } | undefined
+            : db.prepare(`
+                SELECT
+                    COUNT(DISTINCT pi.provider_id) AS total,
+                    COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN pi.provider_id END) AS done
+                FROM ProviderItems pi
+                LEFT JOIN TrackFiles lf
+                  ON lf.provider = pi.provider
+                 AND lf.provider_entity_type = pi.entity_type
+                 AND lf.provider_id = pi.provider_id
+                 AND lf.file_type = 'track'
+                 AND lf.library_slot = pi.library_slot
+                WHERE pi.release_group_mbid = ?
+                  AND pi.entity_type = 'track'
+                  AND pi.library_slot = ?
+            `).get(releaseGroupMbid, slot) as { total?: number; done?: number } | undefined;
+
+        if (!row) return null;
+        return {
+            total: Number(row.total || 0),
+            done: Number(row.done || 0),
+        };
+    }
+
+    private isCanonicalProviderItemDownloaded(
+        providerId: string,
+        type: Extract<DownloadJobType, 'track' | 'video'>,
+        payload: DownloadJobPayload,
+    ): boolean {
+        const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
+        if (!canonicalOffer) {
+            return false;
+        }
+
+        const fileType = type === 'video' ? 'video' : 'track';
+        const row = db.prepare(`
+            SELECT 1
+            FROM TrackFiles lf
+            WHERE lf.file_type = ?
+              AND (
+                (lf.provider = ? AND lf.provider_entity_type = ? AND lf.provider_id = ?)
+                OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
+                OR (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
+              )
+            LIMIT 1
+        `).get(
+            fileType,
+            canonicalOffer.provider,
+            canonicalOffer.entity_type,
+            providerId,
+            canonicalOffer.track_mbid,
+            canonicalOffer.track_mbid,
+            canonicalOffer.recording_mbid,
+            canonicalOffer.recording_mbid,
+        ) as { 1?: number } | undefined;
+
+        return Boolean(row);
     }
 
     private persistDownloadState(jobId: number, state: {
@@ -735,7 +1046,7 @@ export class DownloadProcessor {
                 statusMessage: 'Preparing metadata...',
             });
 
-            await this.ensureMetadataReady(providerId, type);
+            await this.ensureMetadataReady(providerId, type, payload as DownloadJobPayload);
 
             resolved = this.resolveDownloadMetadata(providerId, type, payload);
             const resolvedQuality = this.resolveDownloadQuality(providerId, type, payload);
@@ -771,7 +1082,8 @@ export class DownloadProcessor {
                 // tidal-dl-ng exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
-                    const row = db.prepare(
+                    const canonicalProgress = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadJobPayload);
+                    const row = canonicalProgress ?? db.prepare(
                         `SELECT COUNT(DISTINCT m.id) as total,
                                 COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) as done
                          FROM ProviderMedia m
@@ -791,7 +1103,7 @@ export class DownloadProcessor {
                         );
 
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
-                        updateAlbumDownloadStatus(String(providerId));
+                        updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
 
                         TaskQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
@@ -807,7 +1119,8 @@ export class DownloadProcessor {
                         return;
                     }
                 } else if (type === 'track' || type === 'video') {
-                    const row = db.prepare(`
+                    const canonicalRow = this.isCanonicalProviderItemDownloaded(providerId, type, payload as DownloadJobPayload);
+                    const row = canonicalRow || db.prepare(`
                         SELECT 1
                         FROM TrackFiles
                         WHERE media_id = ?

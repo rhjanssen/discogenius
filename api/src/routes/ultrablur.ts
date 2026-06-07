@@ -102,6 +102,11 @@ function hexToRgb(hex: string): RGB {
   };
 }
 
+function parseHexQuery(value: unknown, fallback: string): string {
+  const raw = String(value ?? fallback).trim();
+  return /^[#]?[0-9a-fA-F]{6}$/.test(raw) ? `#${raw.replace("#", "").toUpperCase()}` : fallback;
+}
+
 function rgbToHsl({ r, g, b }: RGB): HSL {
   const rn = r / 255;
   const gn = g / 255;
@@ -131,6 +136,25 @@ function rgbToHsl({ r, g, b }: RGB): HSL {
   }
 
   return { h, s: clamp01(s), l: clamp01(l) };
+}
+
+function fnv1a32(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function hslToRgb({ h, s, l }: HSL): RGB {
@@ -164,6 +188,56 @@ function mixRgb01(a: RGB01, b: RGB01, t: number): RGB01 {
     g: a.g + (b.g - a.g) * tt,
     b: a.b + (b.b - a.b) * tt,
   };
+}
+
+function renderUltraBlurImage(colors: UltraBlurColors, width: number, height: number): Buffer {
+  const png = new PNG({ width, height });
+  const tl = hexToRgb(colors.topLeft);
+  const tr = hexToRgb(colors.topRight);
+  const bl = hexToRgb(colors.bottomLeft);
+  const br = hexToRgb(colors.bottomRight);
+  const tlLin = { r: srgbToLinear(tl.r / 255), g: srgbToLinear(tl.g / 255), b: srgbToLinear(tl.b / 255) };
+  const trLin = { r: srgbToLinear(tr.r / 255), g: srgbToLinear(tr.g / 255), b: srgbToLinear(tr.b / 255) };
+  const blLin = { r: srgbToLinear(bl.r / 255), g: srgbToLinear(bl.g / 255), b: srgbToLinear(bl.b / 255) };
+  const brLin = { r: srgbToLinear(br.r / 255), g: srgbToLinear(br.g / 255), b: srgbToLinear(br.b / 255) };
+  const rand = mulberry32(fnv1a32(`${width}x${height}:${colors.topLeft}:${colors.topRight}:${colors.bottomLeft}:${colors.bottomRight}`));
+  const invW = width > 1 ? 1 / (width - 1) : 0;
+  const invH = height > 1 ? 1 / (height - 1) : 0;
+  const falloff = 4.6;
+
+  let i = 0;
+  for (let y = 0; y < height; y += 1) {
+    const ny = y * invH;
+    const dy0 = ny * ny;
+    const dy1 = (1 - ny) * (1 - ny);
+    for (let x = 0; x < width; x += 1) {
+      const nx = x * invW;
+      const dx0 = nx * nx;
+      const dx1 = (1 - nx) * (1 - nx);
+      const wTL = Math.exp(-falloff * (dx0 + dy0));
+      const wTR = Math.exp(-falloff * (dx1 + dy0));
+      const wBL = Math.exp(-falloff * (dx0 + dy1));
+      const wBR = Math.exp(-falloff * (dx1 + dy1));
+      const sum = wTL + wTR + wBL + wBR || 1;
+      const noise = (rand() - 0.5) * 0.035;
+      const rLin = clamp01(((tlLin.r * wTL + trLin.r * wTR + blLin.r * wBL + brLin.r * wBR) / sum) * 0.84 + noise);
+      const gLin = clamp01(((tlLin.g * wTL + trLin.g * wTR + blLin.g * wBL + brLin.g * wBR) / sum) * 0.84 + noise);
+      const bLin = clamp01(((tlLin.b * wTL + trLin.b * wTR + blLin.b * wBL + brLin.b * wBR) / sum) * 0.84 + noise);
+
+      png.data[i++] = linear01ToSrgb8(rLin);
+      png.data[i++] = linear01ToSrgb8(gLin);
+      png.data[i++] = linear01ToSrgb8(bLin);
+      png.data[i++] = 255;
+    }
+  }
+
+  return PNG.sync.write(png, { colorType: 6 });
+}
+
+function linear01ToSrgb8(lin: number): number {
+  const l = clamp01(lin);
+  const c = l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+  return Math.round(clamp01(c) * 255);
 }
 
 function isPng(bytes: Uint8Array): boolean {
@@ -700,6 +774,27 @@ router.get("/colors", async (req, res) => {
     const safeUrl = ensureHttpUrl(resolvedUrl);
     const colors = await extractUltraBlurColorsFromUrl(safeUrl.toString());
     res.json(colors);
+  } catch (error: any) {
+    const message = error?.message || String(error);
+    res.status(400).json({ detail: message });
+  }
+});
+
+router.get("/image", (req, res) => {
+  const colors: UltraBlurColors = {
+    topLeft: parseHexQuery(req.query.topLeft, "#173B57"),
+    topRight: parseHexQuery(req.query.topRight, "#5E2A6E"),
+    bottomLeft: parseHexQuery(req.query.bottomLeft, "#083A3C"),
+    bottomRight: parseHexQuery(req.query.bottomRight, "#6A3B1F"),
+  };
+  const width = Math.max(320, Math.min(1920, Number(req.query.width || 1280) || 1280));
+  const height = Math.max(180, Math.min(1080, Number(req.query.height || 720) || 720));
+
+  try {
+    const buffer = renderUltraBlurImage(colors, Math.round(width), Math.round(height));
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(buffer);
   } catch (error: any) {
     const message = error?.message || String(error);
     res.status(400).json({ detail: message });

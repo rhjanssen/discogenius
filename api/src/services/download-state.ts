@@ -61,6 +61,10 @@ function releaseGroupCacheKey(releaseGroupMbid: string, slot?: string | null) {
   return `release-group:${slot || "any"}:${releaseGroupMbid}`;
 }
 
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => "?").join(", ");
+}
+
 function toAlbumStats(albumId: string, totalTracks: number, downloadedTracks: number): AlbumDownloadStats {
   const normalizedTotalTracks = Math.max(0, totalTracks);
   const normalizedDownloadedTracks = Math.max(0, downloadedTracks);
@@ -96,6 +100,7 @@ function toArtistStats(artistId: string, totalItems: number, downloadedItems: nu
 export function invalidateAlbumDownloadStatus(albumId: string): void {
   if (!albumId) return;
   albumStatsCache.delete(String(albumId));
+  invalidateReleaseGroupDownloadStatus(String(albumId));
 
   const album = db.prepare(`
     SELECT mb_release_group_id
@@ -152,17 +157,36 @@ export function getMediaDownloadStateMap(
   }
 
   if (missing.length > 0) {
-    const placeholders = missing.map(() => "?").join(", ");
+    const values = missing.map(() => "(?)").join(", ");
     const rows = db.prepare(`
-      SELECT DISTINCT CAST(media_id AS TEXT) AS media_id
-      FROM TrackFiles
-      WHERE file_type = ?
-        AND media_id IN (${placeholders})
-    `).all(fileType, ...missing) as Array<{ media_id: string }>;
+      WITH target_ids(id) AS (
+        VALUES ${values}
+      )
+      SELECT
+        CAST(target_ids.id AS TEXT) AS id,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM TrackFiles lf
+          WHERE lf.file_type = ?
+            AND (
+              CAST(lf.media_id AS TEXT) = CAST(target_ids.id AS TEXT)
+              OR CAST(lf.provider_id AS TEXT) = CAST(target_ids.id AS TEXT)
+              OR (? = 'track' AND lf.canonical_track_mbid = CAST(target_ids.id AS TEXT))
+              OR lf.canonical_recording_mbid = CAST(target_ids.id AS TEXT)
+              OR CAST(lf.canonical_recording_mbid AS TEXT) = (
+                SELECT r.mbid
+                FROM Recordings r
+                WHERE CAST(r.Id AS TEXT) = CAST(target_ids.id AS TEXT)
+                LIMIT 1
+              )
+            )
+        ) THEN 1 ELSE 0 END AS downloaded
+      FROM target_ids
+    `).all(...missing, fileType, fileType) as Array<{ id: string; downloaded: number }>;
 
-    const downloadedIds = new Set(rows.map((row) => String(row.media_id)));
+    const downloadedById = new Map(rows.map((row) => [String(row.id), Boolean(row.downloaded)]));
     for (const id of missing) {
-      const isDownloaded = downloadedIds.has(id);
+      const isDownloaded = downloadedById.get(id) ?? false;
       setCached(mediaDownloadCache, mediaCacheKey(id, fileType), isDownloaded);
       result.set(id, isDownloaded);
     }
@@ -190,26 +214,76 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
   }
 
   if (missing.length > 0) {
-    const placeholders = missing.map(() => "?").join(", ");
-    const rows = db.prepare(`
+    const canonicalValues = missing.map(() => "(?)").join(", ");
+    const canonicalRows = db.prepare(`
+      WITH target_release_groups(release_group_mbid) AS (
+        VALUES ${canonicalValues}
+      ),
+      selected_releases AS (
+        SELECT
+          rgs.release_group_mbid,
+          rgs.slot,
+          rgs.selected_release_mbid AS release_mbid
+        FROM target_release_groups trg
+        JOIN ReleaseGroupSlots rgs
+          ON rgs.release_group_mbid = trg.release_group_mbid
+         AND rgs.slot IN ('stereo', 'spatial')
+         AND rgs.selected_release_mbid IS NOT NULL
+      )
       SELECT
-        CAST(m.album_id AS TEXT) AS album_id,
-        COUNT(DISTINCT m.id) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-      FROM ProviderMedia m
+        sr.release_group_mbid AS album_id,
+        COUNT(DISTINCT sr.slot || ':' || t.mbid) AS total_tracks,
+        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN sr.slot || ':' || t.mbid END) AS downloaded_tracks
+      FROM selected_releases sr
+      LEFT JOIN Tracks t
+        ON t.release_mbid = sr.release_mbid
+      LEFT JOIN Recordings r
+        ON r.mbid = t.recording_mbid
       LEFT JOIN TrackFiles lf
-        ON lf.media_id = m.id
+        ON (
+          lf.canonical_track_mbid = t.mbid
+          OR (
+            lf.canonical_track_mbid IS NULL
+            AND lf.canonical_recording_mbid = t.recording_mbid
+          )
+        )
        AND lf.file_type = 'track'
-      WHERE m.album_id IN (${placeholders})
-        AND m.type != 'Music Video'
-      GROUP BY m.album_id
+       AND lf.library_slot = sr.slot
+      WHERE COALESCE(r.IsVideo, 0) = 0
+      GROUP BY sr.release_group_mbid
     `).all(...missing) as Array<{
       album_id: string;
       total_tracks: number;
       downloaded_tracks: number;
     }>;
 
-    const statsByAlbumId = new Map(rows.map((row) => [String(row.album_id), row]));
+    const statsByAlbumId = new Map(canonicalRows.map((row) => [String(row.album_id), row]));
+    const legacyMissing = missing.filter((albumId) => !statsByAlbumId.has(albumId));
+
+    if (legacyMissing.length > 0) {
+      const legacyPlaceholders = placeholders(legacyMissing);
+      const legacyRows = db.prepare(`
+        SELECT
+          CAST(m.album_id AS TEXT) AS album_id,
+          COUNT(DISTINCT m.id) AS total_tracks,
+          COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
+        FROM ProviderMedia m
+        LEFT JOIN TrackFiles lf
+          ON lf.media_id = m.id
+         AND lf.file_type = 'track'
+        WHERE m.album_id IN (${legacyPlaceholders})
+          AND m.type != 'Music Video'
+        GROUP BY m.album_id
+      `).all(...legacyMissing) as Array<{
+        album_id: string;
+        total_tracks: number;
+        downloaded_tracks: number;
+      }>;
+
+      for (const row of legacyRows) {
+        statsByAlbumId.set(String(row.album_id), row);
+      }
+    }
 
     for (const albumId of missing) {
       const row = statsByAlbumId.get(albumId);
@@ -325,79 +399,115 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
   if (missing.length > 0) {
     const values = missing.map(() => "(?)").join(", ");
     const rows = db.prepare(`
-      WITH target_artists(artist_id) AS (
+      WITH input_artists(input_id) AS (
         VALUES ${values}
       ),
-      monitored_albums AS (
+      target_artists AS (
         SELECT
-          CAST(aa.artist_id AS TEXT) AS artist_id,
-          CAST(al.id AS TEXT) AS album_id,
-          COUNT(DISTINCT m.id) AS total_tracks,
-          COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-        FROM ProviderAlbumArtists aa
-        JOIN ProviderAlbums al ON al.id = aa.album_id
-        LEFT JOIN ProviderMedia m
-          ON m.album_id = al.id
-         AND m.type != 'Music Video'
-        LEFT JOIN TrackFiles lf
-          ON lf.media_id = m.id
-         AND lf.file_type = 'track'
-        WHERE CAST(aa.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
-          AND (
-            al.monitor = 1
-            OR COALESCE(al.monitor_lock, 0) = 1
-          )
-        GROUP BY aa.artist_id, al.id
+          CAST(input_artists.input_id AS TEXT) AS input_id,
+          CAST(managed_artist.id AS TEXT) AS artist_id,
+          COALESCE(managed_artist.mbid, artist_metadata.mbid, CAST(input_artists.input_id AS TEXT)) AS artist_mbid,
+          artist_metadata.Id AS artist_metadata_id
+        FROM input_artists
+        LEFT JOIN Artists managed_artist
+          ON CAST(managed_artist.id AS TEXT) = CAST(input_artists.input_id AS TEXT)
+          OR managed_artist.mbid = CAST(input_artists.input_id AS TEXT)
+        LEFT JOIN ArtistMetadata artist_metadata
+          ON artist_metadata.mbid = COALESCE(managed_artist.mbid, CAST(input_artists.input_id AS TEXT))
+          OR CAST(artist_metadata.Id AS TEXT) = CAST(input_artists.input_id AS TEXT)
       ),
-      monitored_media AS (
+      monitored_release_slots AS (
         SELECT
-          CAST(m.artist_id AS TEXT) AS artist_id,
-          CAST(m.id AS TEXT) AS media_id,
+          target_artists.input_id,
+          rgs.release_group_mbid,
+          rgs.slot,
+          rgs.selected_release_mbid
+        FROM target_artists
+        JOIN ReleaseGroupSlots rgs
+          ON rgs.artist_mbid = target_artists.artist_mbid
+        WHERE (rgs.wanted = 1 OR COALESCE(rgs.monitor_lock, 0) = 1)
+          AND rgs.slot IN ('stereo', 'spatial')
+          AND rgs.selected_release_mbid IS NOT NULL
+      ),
+      release_slot_stats AS (
+        SELECT
+          mrs.input_id,
+          mrs.release_group_mbid,
+          mrs.slot,
+          COUNT(DISTINCT track.mbid) AS total_tracks,
+          COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN track.mbid END) AS downloaded_tracks
+        FROM monitored_release_slots mrs
+        LEFT JOIN Tracks track
+          ON track.release_mbid = mrs.selected_release_mbid
+        LEFT JOIN Recordings recording
+          ON recording.mbid = track.recording_mbid
+        LEFT JOIN TrackFiles lf
+          ON (
+            lf.canonical_track_mbid = track.mbid
+            OR (
+              lf.canonical_track_mbid IS NULL
+              AND lf.canonical_recording_mbid = track.recording_mbid
+            )
+          )
+         AND lf.file_type = 'track'
+         AND lf.library_slot = mrs.slot
+        WHERE COALESCE(recording.IsVideo, 0) = 0
+        GROUP BY mrs.input_id, mrs.release_group_mbid, mrs.slot
+      ),
+      monitored_videos AS (
+        SELECT
+          target_artists.input_id,
+          recording.Id AS recording_id,
           CASE WHEN EXISTS (
             SELECT 1
             FROM TrackFiles lf
-            WHERE lf.media_id = m.id
-              AND lf.file_type = CASE WHEN m.type = 'Music Video' THEN 'video' ELSE 'track' END
+            WHERE lf.file_type = 'video'
+              AND (
+                (recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = recording.mbid)
+                OR CAST(lf.provider_id AS TEXT) IN (
+                  SELECT CAST(pi.provider_id AS TEXT)
+                  FROM ProviderItems pi
+                  WHERE pi.entity_type = 'video'
+                    AND (
+                      pi.recording_id = recording.Id
+                      OR (recording.mbid IS NOT NULL AND pi.recording_mbid = recording.mbid)
+                    )
+                )
+              )
           ) THEN 1 ELSE 0 END AS is_downloaded
-        FROM ProviderMedia m
-        LEFT JOIN ProviderAlbums al ON al.id = m.album_id
-        WHERE CAST(m.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
-          AND (
-            m.monitor = 1
-            OR COALESCE(m.monitor_lock, 0) = 1
+        FROM target_artists
+        JOIN Recordings recording
+          ON recording.IsVideo = 1
+         AND (COALESCE(recording.Monitor, 0) = 1 OR COALESCE(recording.MonitorLock, 0) = 1)
+         AND (
+          recording.artist_mbid = target_artists.artist_mbid
+          OR (
+            target_artists.artist_metadata_id IS NOT NULL
+            AND recording.ArtistMetadataId = target_artists.artist_metadata_id
           )
-          AND (
-            m.type = 'Music Video'
-            OR al.id IS NULL
-            OR NOT (
-              COALESCE(al.monitor, 0) = 1
-              OR COALESCE(al.monitor_lock, 0) = 1
-            )
-          )
-      ),
-      album_totals AS (
-        SELECT
-          artist_id,
-          COUNT(*) AS total_album_items,
-          SUM(CASE WHEN total_tracks > 0 AND downloaded_tracks >= total_tracks THEN 1 ELSE 0 END) AS downloaded_album_items
-        FROM monitored_albums
-        GROUP BY artist_id
-      ),
-      media_totals AS (
-        SELECT
-          artist_id,
-          COUNT(*) AS total_media_items,
-          SUM(is_downloaded) AS downloaded_media_items
-        FROM monitored_media
-        GROUP BY artist_id
+         )
       )
       SELECT
-        ta.artist_id AS artist_id,
-        COALESCE(at.total_album_items, 0) + COALESCE(mt.total_media_items, 0) AS total_items,
-        COALESCE(at.downloaded_album_items, 0) + COALESCE(mt.downloaded_media_items, 0) AS downloaded_items
-      FROM target_artists ta
-      LEFT JOIN album_totals at ON at.artist_id = ta.artist_id
-      LEFT JOIN media_totals mt ON mt.artist_id = ta.artist_id
+        target_artists.input_id AS artist_id,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM release_slot_stats rss
+          WHERE rss.input_id = target_artists.input_id
+        ), 0) + COALESCE((
+          SELECT COUNT(*)
+          FROM monitored_videos mv
+          WHERE mv.input_id = target_artists.input_id
+        ), 0) AS total_items,
+        COALESCE((
+          SELECT SUM(CASE WHEN rss.total_tracks > 0 AND rss.downloaded_tracks >= rss.total_tracks THEN 1 ELSE 0 END)
+          FROM release_slot_stats rss
+          WHERE rss.input_id = target_artists.input_id
+        ), 0) + COALESCE((
+          SELECT SUM(mv.is_downloaded)
+          FROM monitored_videos mv
+          WHERE mv.input_id = target_artists.input_id
+        ), 0) AS downloaded_items
+      FROM target_artists
     `).all(...missing) as Array<{
       artist_id: string;
       total_items: number;
@@ -492,91 +602,24 @@ export function countDownloadedVideos(): number {
 
 export function countDownloadedManagedArtists(): number {
   const completionPredicate = buildArtistCompletionPredicate("a");
-  const row = db.prepare(`
-    WITH target_artists AS (
-      SELECT CAST(a.id AS TEXT) AS artist_id
-      FROM Artists a
-      WHERE ${completionPredicate}
-    ),
-    monitored_albums AS (
-      SELECT
-        CAST(aa.artist_id AS TEXT) AS artist_id,
-        CAST(al.id AS TEXT) AS album_id,
-        COUNT(DISTINCT m.id) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-      FROM ProviderAlbumArtists aa
-      JOIN ProviderAlbums al ON al.id = aa.album_id
-      LEFT JOIN ProviderMedia m
-        ON m.album_id = al.id
-       AND m.type != 'Music Video'
-      LEFT JOIN TrackFiles lf
-        ON lf.media_id = m.id
-       AND lf.file_type = 'track'
-      WHERE CAST(aa.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
-        AND (
-          al.monitor = 1
-          OR COALESCE(al.monitor_lock, 0) = 1
-        )
-      GROUP BY aa.artist_id, al.id
-    ),
-    monitored_media AS (
-      SELECT
-        CAST(m.artist_id AS TEXT) AS artist_id,
-        CAST(m.id AS TEXT) AS media_id,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM TrackFiles lf
-          WHERE lf.media_id = m.id
-            AND lf.file_type = CASE WHEN m.type = 'Music Video' THEN 'video' ELSE 'track' END
-        ) THEN 1 ELSE 0 END AS is_downloaded
-      FROM ProviderMedia m
-      LEFT JOIN ProviderAlbums al ON al.id = m.album_id
-      WHERE CAST(m.artist_id AS TEXT) IN (SELECT artist_id FROM target_artists)
-        AND (
-          m.monitor = 1
-          OR COALESCE(m.monitor_lock, 0) = 1
-        )
-        AND (
-          m.type = 'Music Video'
-          OR al.id IS NULL
-          OR NOT (
-            COALESCE(al.monitor, 0) = 1
-            OR COALESCE(al.monitor_lock, 0) = 1
-          )
-        )
-    ),
-    album_totals AS (
-      SELECT
-        artist_id,
-        COUNT(*) AS total_album_items,
-        SUM(CASE WHEN total_tracks > 0 AND downloaded_tracks >= total_tracks THEN 1 ELSE 0 END) AS downloaded_album_items
-      FROM monitored_albums
-      GROUP BY artist_id
-    ),
-    media_totals AS (
-      SELECT
-        artist_id,
-        COUNT(*) AS total_media_items,
-        SUM(is_downloaded) AS downloaded_media_items
-      FROM monitored_media
-      GROUP BY artist_id
-    ),
-    artist_progress AS (
-      SELECT
-        ta.artist_id,
-        COALESCE(at.total_album_items, 0) + COALESCE(mt.total_media_items, 0) AS total_items,
-        COALESCE(at.downloaded_album_items, 0) + COALESCE(mt.downloaded_media_items, 0) AS downloaded_items
-      FROM target_artists ta
-      LEFT JOIN album_totals at ON at.artist_id = ta.artist_id
-      LEFT JOIN media_totals mt ON mt.artist_id = ta.artist_id
-    )
-    SELECT COUNT(*) AS count
-    FROM artist_progress
-    WHERE total_items > 0
-      AND downloaded_items >= total_items
-  `).get() as { count: number } | undefined;
+  const rows = db.prepare(`
+    SELECT CAST(a.id AS TEXT) AS artist_id
+    FROM Artists a
+    WHERE ${completionPredicate}
+  `).all() as Array<{ artist_id: string }>;
+  if (rows.length === 0) {
+    return 0;
+  }
 
-  return Number(row?.count || 0);
+  const stats = getArtistDownloadStatsMap(rows.map((row) => row.artist_id));
+  let count = 0;
+  for (const row of rows) {
+    if (stats.get(String(row.artist_id))?.isDownloaded) {
+      count++;
+    }
+  }
+
+  return count;
 }
 
 export function updateAlbumDownloadStatus(albumId: string): void {
@@ -595,6 +638,25 @@ export function updateArtistDownloadStatusFromAlbum(albumId: string): void {
 
   invalidateAlbumDownloadStatus(albumId);
 
+  const canonicalArtistIds = db.prepare(`
+    SELECT DISTINCT CAST(a.id AS TEXT) AS artist_id
+    FROM Albums rg
+    LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+    WHERE rg.mbid = ?
+    UNION
+    SELECT DISTINCT CAST(a.id AS TEXT) AS artist_id
+    FROM ReleaseGroupSlots rgs
+    LEFT JOIN Artists a ON a.mbid = rgs.artist_mbid
+    WHERE rgs.release_group_mbid = ?
+      AND a.id IS NOT NULL
+  `).all(albumId, albumId) as Array<{ artist_id: string | null }>;
+
+  for (const row of canonicalArtistIds) {
+    if (row.artist_id) {
+      invalidateArtistDownloadStatus(String(row.artist_id));
+    }
+  }
+
   const artistIds = db.prepare(`
     SELECT DISTINCT CAST(artist_id AS TEXT) AS artist_id
     FROM ProviderAlbumArtists
@@ -610,6 +672,47 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
   if (!mediaId) return;
 
   invalidateMediaDownloadState(mediaId);
+
+  const canonicalRows = db.prepare(`
+    SELECT DISTINCT
+      CAST(a.id AS TEXT) AS artist_id,
+      rg.mbid AS release_group_mbid
+    FROM ProviderItems pi
+    LEFT JOIN Artists a ON a.mbid = pi.artist_mbid
+    LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
+    WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+      AND pi.entity_type IN ('track', 'video')
+    UNION
+    SELECT DISTINCT
+      CAST(a.id AS TEXT) AS artist_id,
+      release_group.mbid AS release_group_mbid
+    FROM Tracks track
+    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+    JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
+    LEFT JOIN Artists a ON a.mbid = release_group.artist_mbid
+    WHERE track.mbid = ?
+       OR track.recording_mbid = ?
+    UNION
+    SELECT DISTINCT
+      CAST(a.id AS TEXT) AS artist_id,
+      NULL AS release_group_mbid
+    FROM Recordings recording
+    LEFT JOIN Artists a ON a.mbid = recording.artist_mbid
+    WHERE recording.mbid = ?
+       OR CAST(recording.Id AS TEXT) = CAST(? AS TEXT)
+  `).all(mediaId, mediaId, mediaId, mediaId, mediaId) as Array<{
+    artist_id?: string | null;
+    release_group_mbid?: string | null;
+  }>;
+
+  for (const row of canonicalRows) {
+    if (row.release_group_mbid) {
+      invalidateReleaseGroupDownloadStatus(String(row.release_group_mbid));
+    }
+    if (row.artist_id) {
+      invalidateArtistDownloadStatus(String(row.artist_id));
+    }
+  }
 
   const media = db.prepare(`
     SELECT artist_id, album_id

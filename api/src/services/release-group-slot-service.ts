@@ -113,16 +113,30 @@ function scoreCandidate(
     const evidence = match.evidence ?? {};
     const targetTrackCount = Number(evidence.targetTrackCount || 0);
     const targetVolumeCount = Number(evidence.targetVolumeCount || 0);
+    const expandedTitleCoversTargetTracks = Boolean(
+        evidence.titleExpansionMatched
+        && targetTrackCount > 0
+        && tracks >= targetTrackCount,
+    );
+    const expandedTitleCoversTargetVolumes = Boolean(
+        evidence.titleExpansionMatched
+        && targetVolumeCount > 0
+        && volumes >= targetVolumeCount,
+    );
     const trackShapeBonus = evidence.trackCountMatched
         ? 160
-        : targetTrackCount > 0 && tracks > 0
-            ? -Math.min(240, Math.max(1, Math.abs(targetTrackCount - tracks)) * 36)
-            : 0;
+        : expandedTitleCoversTargetTracks
+            ? 80
+            : targetTrackCount > 0 && tracks > 0
+                ? -Math.min(240, Math.max(1, Math.abs(targetTrackCount - tracks)) * 36)
+                : 0;
     const volumeShapeBonus = evidence.volumeCountMatched
         ? 32
-        : targetVolumeCount > 0 && volumes > 0
-            ? -Math.min(80, Math.max(1, Math.abs(targetVolumeCount - volumes)) * 20)
-            : 0;
+        : expandedTitleCoversTargetVolumes
+            ? 16
+            : targetVolumeCount > 0 && volumes > 0
+                ? -Math.min(80, Math.max(1, Math.abs(targetVolumeCount - volumes)) * 20)
+                : 0;
     const typeBonus = evidence.typeMatched ? 60 : -60;
 
     return Number((
@@ -327,13 +341,16 @@ export function selectReleaseGroupSlotAlbums(
                 : [candidate.match.releaseMbid || ""])
             .map((releaseMbid) => String(releaseMbid || "").trim())
             .filter(Boolean);
-        const preferredReleaseRow = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid)
-            || MusicBrainzReleaseSelectionService.selectRepresentativeRelease(
+        const preferredReleaseRow = requireProviderAvailability
+            ? MusicBrainzReleaseSelectionService.selectRepresentativeRelease(
                 releaseGroupMbid,
-                requireProviderAvailability
-                    ? { availableReleaseMbids: providerMatchedReleaseMbids }
-                    : {},
-            );
+                { availableReleaseMbids: providerMatchedReleaseMbids }
+              )
+            : (MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid)
+                || MusicBrainzReleaseSelectionService.selectRepresentativeRelease(
+                    releaseGroupMbid,
+                    { availableReleaseMbids: providerMatchedReleaseMbids }
+                ));
         if (requireProviderAvailability && !preferredReleaseRow) {
             continue;
         }

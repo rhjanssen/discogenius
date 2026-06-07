@@ -11,7 +11,19 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
+let configModule: typeof import("./config.js");
 let slotServiceModule: typeof import("./release-group-slot-service.js");
+
+function writeTestConfig(overrides?: {
+  filtering?: Partial<any>;
+}) {
+  const config = configModule.readConfig();
+  config.filtering = {
+    ...config.filtering,
+    require_provider_availability: overrides?.filtering?.require_provider_availability ?? false,
+  };
+  configModule.writeConfig(config);
+}
 
 function buildMatch(releaseGroupMbid: string, providerId: string): ProviderReleaseGroupMatch {
   return {
@@ -55,7 +67,9 @@ function insertReleaseGroup(releaseGroupMbid: string): void {
 before(async () => {
   dbModule = await import("../database.js");
   dbModule.initDatabase();
+  configModule = await import("./config.js");
   slotServiceModule = await import("./release-group-slot-service.js");
+  writeTestConfig();
 });
 
 beforeEach(() => {
@@ -687,4 +701,94 @@ test("provider slot selection falls back to metadata matching when track details
 
   assert.ok(slot);
   assert.equal(slot.selected_provider_id, "provider-album-fallback");
+});
+
+test("provider slot selection selects available digital release when require_provider_availability is true and vinyl is overall best representative", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-availability-vinyl-vs-digital";
+  insertReleaseGroup(releaseGroupMbid);
+
+  // Set require_provider_availability = true
+  writeTestConfig({
+    filtering: {
+      require_provider_availability: true,
+    },
+  });
+
+  // Insert vinyl release: Official, Vinyl format (which is not digital media, and has 15 tracks - ranked higher globally)
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-vinyl", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 15, 1);
+
+  // Insert digital release: Official, Digital Media (available, has 12 tracks)
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-digital", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 12, 1);
+
+  db.prepare(`
+    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
+    VALUES (?, ?, ?)
+  `).run("release-digital", "Digital Media", 1);
+
+  // Insert Recordings for digital release
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (let i = 1; i <= 12; i++) {
+    insertRecording.run(`rec-avail-${i}`, `Track ${i}`, JSON.stringify([`ISRC_AVAIL_${i}`]));
+    insertTrack.run(`track-avail-${i}`, "release-digital", `rec-avail-${i}`, `Track ${i}`, i, 1, 150000);
+  }
+
+  // provider offers matches only digital release
+  const match = {
+    ...buildMatch(releaseGroupMbid, "provider-album-digital"),
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-album-digital").evidence,
+      targetTrackCount: 12,
+      availableReleaseMbids: ["release-digital"],
+    },
+  };
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "provider-album-digital",
+      title: "A Night at the Opera",
+      quality: "LOSSLESS",
+      trackCount: 12,
+      volumeCount: 1,
+      tracks: Array.from({ length: 12 }, (_, i) => ({
+        mbid: `rec-avail-${i + 1}`,
+        isrc: `ISRC_AVAIL_${i + 1}`,
+        title: `Track ${i + 1}`,
+        track_number: i + 1,
+        volume_number: 1,
+        duration: 150,
+      })),
+    }],
+    matches: new Map([["provider-album-digital", match]]),
+  });
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id, selected_release_mbid
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(releaseGroupMbid) as { selected_provider_id: string | null; selected_release_mbid: string | null } | undefined;
+
+  assert.ok(slot);
+  assert.equal(slot.selected_provider_id, "provider-album-digital");
+  assert.equal(slot.selected_release_mbid, "release-digital");
+
+  // Restore config to default (false)
+  writeTestConfig({
+    filtering: {
+      require_provider_availability: false,
+    },
+  });
 });

@@ -26,6 +26,86 @@ import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgC
 import { loadStoredTidalToken, syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../orpheus.js";
 
+export type TidalAlbumDownloadTrackInfo = {
+  title: string;
+  version?: string | null;
+  track_num: number | null;
+  volume_num: number | null;
+  artist_name?: string | null;
+};
+
+export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbumDownloadTrackInfo[] {
+  const albumIds = providerIds.map((id) => String(id || "").trim()).filter(Boolean);
+  if (albumIds.length === 0) {
+    return [];
+  }
+
+  const values = albumIds.map(() => "(?, ?)").join(", ");
+  const params = albumIds.flatMap((albumId, index) => [albumId, index]);
+  const canonicalRows = db.prepare(`
+    WITH input_albums(provider_id, ord) AS (
+      VALUES ${values}
+    ),
+    matched_releases AS (
+      SELECT DISTINCT
+        input_albums.provider_id,
+        input_albums.ord,
+        COALESCE(provider_item.release_mbid, selected_slot.selected_release_mbid) AS release_mbid
+      FROM input_albums
+      LEFT JOIN ProviderItems provider_item
+        ON provider_item.provider = 'tidal'
+       AND provider_item.entity_type = 'album'
+       AND CAST(provider_item.provider_id AS TEXT) = input_albums.provider_id
+      LEFT JOIN ReleaseGroupSlots selected_slot
+        ON selected_slot.selected_provider = 'tidal'
+       AND (
+         selected_slot.selected_provider_id = input_albums.provider_id
+         OR selected_slot.selected_provider_id LIKE input_albums.provider_id || ';%'
+         OR selected_slot.selected_provider_id LIKE '%;' || input_albums.provider_id || ';%'
+         OR selected_slot.selected_provider_id LIKE '%;' || input_albums.provider_id
+       )
+    )
+    SELECT
+      track.title,
+      NULL AS version,
+      track.position AS track_num,
+      COALESCE(track.medium_position, 1) AS volume_num,
+      COALESCE(release_artist.name, canonical_artist.name) AS artist_name,
+      matched_releases.ord
+    FROM matched_releases
+    JOIN Tracks track
+      ON track.release_mbid = matched_releases.release_mbid
+    LEFT JOIN Recordings recording
+      ON recording.mbid = track.recording_mbid
+    LEFT JOIN AlbumReleases release
+      ON release.mbid = track.release_mbid
+    LEFT JOIN ArtistMetadata release_artist
+      ON release_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
+    LEFT JOIN Artists canonical_artist
+      ON canonical_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
+    WHERE matched_releases.release_mbid IS NOT NULL
+      AND COALESCE(recording.IsVideo, 0) = 0
+    ORDER BY matched_releases.ord ASC, COALESCE(track.medium_position, 1) ASC, track.position ASC
+  `).all(...params) as Array<TidalAlbumDownloadTrackInfo & { ord: number }>;
+
+  if (canonicalRows.length > 0) {
+    return canonicalRows.map(({ ord: _ord, ...row }) => row);
+  }
+
+  const legacyPlaceholders = albumIds.map(() => "?").join(", ");
+  return db.prepare(`
+    SELECT m.title,
+           m.version,
+           m.track_number AS track_num,
+           COALESCE(m.volume_number, 1) AS volume_num,
+           ar.name AS artist_name
+    FROM ProviderMedia m
+    LEFT JOIN Artists ar ON ar.id = m.artist_id
+    WHERE m.album_id IN (${legacyPlaceholders}) AND m.type != 'Music Video'
+    ORDER BY m.volume_number, m.track_number
+  `).all(...albumIds) as TidalAlbumDownloadTrackInfo[];
+}
+
 export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
   readonly name = "TIDAL";
@@ -392,18 +472,7 @@ export class TidalProvider implements StreamingProvider {
     let currentTrackIndex = -1;
     if (entityType === 'album') {
       try {
-        const placeholders = albumIds.map(() => '?').join(', ');
-        const rows = db.prepare(`
-            SELECT m.title,
-                   m.version,
-                   m.track_number as track_num,
-                   COALESCE(m.volume_number, 1) as volume_num,
-                   ar.name as artist_name
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            WHERE m.album_id IN (${placeholders}) AND m.type != 'Music Video'
-            ORDER BY m.volume_number, m.track_number
-        `).all(...albumIds) as any[];
+        const rows = getTidalAlbumDownloadTrackInfo(albumIds);
         if (rows.length > 0) {
           totalTracks = rows.length;
           const hasMultipleVolumes = rows.some((row) => Number(row.volume_num || 1) > 1);

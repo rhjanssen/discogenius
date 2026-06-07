@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { db } from "../database.js";
-import { updateArtistDownloadStatusFromMedia } from "../services/download-state.js";
 import { MediaSeedService } from "../services/media-seed-service.js";
 import { getVideoDetail, listVideos } from "../services/video-query-service.js";
 import {
@@ -35,21 +34,6 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
 
   return undefined;
 }
-
-function refreshVideoState(videoId: string) {
-  if (!videoId) return;
-  updateArtistDownloadStatusFromMedia(videoId);
-}
-
-/**
- * Videos routes - queries the unified 'media' table with type='Music Video'
- * Updated for new schema where:
- * - 'media' table replaces 'videos' table
- * - 'id' is the primary key (INT, TIDAL video id)
- * - 'quality' is surfaced from the current video file when available,
- *   falling back to the source quality stored on media
- * - 'monitor' replaces 'monitored'
- */
 
 router.get("/", (req, res) => {
   try {
@@ -108,14 +92,23 @@ router.post("/", async (req, res) => {
 
     const videoData = await MediaSeedService.seedVideo(providerId, { monitorArtist: true });
 
-    db.prepare(`
-      UPDATE ProviderMedia
-      SET monitor = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-      WHERE id = ? AND type = 'Music Video'
-    `).run(providerId);
+    const providerItem = db.prepare(`
+      SELECT recording_id AS recordingId
+      FROM ProviderItems
+      WHERE entity_type = 'video' AND provider_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(providerId) as { recordingId?: number | null } | undefined;
 
-    refreshVideoState(providerId);
+    if (providerItem?.recordingId) {
+      db.prepare(`
+        UPDATE Recordings
+        SET Monitor = CASE WHEN MonitorLock = 1 THEN Monitor ELSE 1 END,
+            MonitoredAt = COALESCE(MonitoredAt, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE Id = ?
+      `).run(providerItem.recordingId);
+    }
 
     res.json({ success: true, message: "Video added", video: videoData });
   } catch (error: any) {
@@ -157,16 +150,24 @@ router.patch("/:videoId", (req, res) => {
 
     values.push(videoId);
 
-    const result = db.prepare(`UPDATE ProviderMedia SET ${updates.join(", ")} WHERE id = ? AND type = 'Music Video'`)
-      .run(...values);
+    const canonicalUpdates = updates
+      .map((update) => update
+        .replace(/^monitor = \?$/, "Monitor = ?")
+        .replace(/^monitor_lock = \?$/, "MonitorLock = ?")
+        .replace(/^locked_at = /, "LockedAt = "))
+      .concat("updated_at = CURRENT_TIMESTAMP");
 
-    if (result.changes === 0) {
-      return res.status(404).json({ detail: "Video not found" });
+    const canonicalResult = db.prepare(`
+      UPDATE Recordings
+      SET ${canonicalUpdates.join(", ")}
+      WHERE IsVideo = 1 AND CAST(Id AS TEXT) = CAST(? AS TEXT)
+    `).run(...values);
+
+    if (canonicalResult.changes > 0) {
+      return res.json({ success: true });
     }
 
-    refreshVideoState(videoId);
-
-    res.json({ success: true });
+    return res.status(404).json({ detail: "Video not found" });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

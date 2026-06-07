@@ -1,14 +1,8 @@
 import { db } from "../database.js";
-import { streamingProviderManager } from "./providers/index.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
-import { updateAlbumDownloadStatus } from "./download-state.js";
+import { invalidateReleaseGroupDownloadStatus } from "./download-state.js";
 import { getConfigSection } from "./config.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
-
-function refreshAlbumState(albumId: string) {
-    if (!albumId) return;
-    updateAlbumDownloadStatus(albumId);
-}
 
 type AlbumSlotSelection = {
     slot: "stereo" | "spatial";
@@ -48,6 +42,33 @@ export class AlbumCommandService {
             upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, wantedInt);
         }
 
+        return true;
+    }
+
+    private static setReleaseGroupLock(releaseGroupMbid: string, locked: boolean): boolean {
+        const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
+        if (!releaseGroup) {
+            return false;
+        }
+
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
+        const lockedInt = locked ? 1 : 0;
+        const upsert = db.prepare(`
+            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitor_lock, locked_at, updated_at)
+            VALUES (?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+            ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
+              artist_mbid = excluded.artist_mbid,
+              monitor_lock = excluded.monitor_lock,
+              locked_at = excluded.locked_at,
+              updated_at = CURRENT_TIMESTAMP
+        `);
+
+        for (const slot of slots) {
+            upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, lockedInt, lockedInt);
+        }
+
+        invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
         return true;
     }
 
@@ -109,82 +130,98 @@ export class AlbumCommandService {
 
     /** Set release-group slot wanted state. Provider albums are selected offers, not catalog identity. */
     static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
-        let targetMbid = albumId;
-        const providerAlbum = db.prepare("SELECT mb_release_group_id FROM ProviderAlbums WHERE id = ?").get(albumId) as { mb_release_group_id?: string | null } | undefined;
-        if (providerAlbum?.mb_release_group_id) {
-            targetMbid = providerAlbum.mb_release_group_id;
-        }
-
-        if (this.setReleaseGroupWanted(targetMbid, monitored)) {
+        if (this.setReleaseGroupWanted(albumId, monitored)) {
+            invalidateReleaseGroupDownloadStatus(albumId);
             return { success: true, albumId, monitored };
         }
 
-        const localProviderAlbum = db.prepare("SELECT id FROM ProviderAlbums WHERE id = ?").get(albumId);
-        if (localProviderAlbum) {
-            const wantedInt = monitored ? 1 : 0;
-            db.prepare("UPDATE ProviderAlbums SET monitor = ? WHERE id = ?").run(wantedInt, albumId);
-            db.prepare("UPDATE ProviderMedia SET monitor = ? WHERE album_id = ? AND type != 'Music Video'").run(wantedInt, albumId);
-            return { success: true, albumId, monitored };
-        }
-
-        return { success: false, albumId, monitored, message: 'Album or Release group not found', status: 404 };
+        return { success: false, albumId, monitored, message: 'Release group not found', status: 404 };
     }
 
     /** Monitor + lock a single track, optionally queue download */
     static async monitorTrack(trackId: string, shouldDownload: boolean): Promise<{ success: boolean; monitored_track?: string; trackId?: string; albumId?: string; jobId?: number | null; message?: string; status?: number }> {
-        const providerTrack = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
-        const trackData = (providerTrack.raw && typeof providerTrack.raw === "object")
-            ? providerTrack.raw as any
-            : providerTrack as any;
-        const albumId = trackData?.album_id ? String(trackData.album_id) : null;
-        if (!albumId) {
-            return { success: false, message: 'Track missing album info', status: 404 };
-        }
+        const track = db.prepare(`
+            SELECT
+              CAST(t.Id AS TEXT) AS local_track_id,
+              t.mbid,
+              t.title,
+              t.release_mbid,
+              t.recording_mbid,
+              ar.release_group_mbid,
+              ar.artist_mbid,
+              album.title AS album_title,
+              artist.name AS artist_name,
+              pi.provider,
+              pi.provider_id,
+              pi.title AS provider_title,
+              pi.version,
+              pi.quality
+            FROM Tracks t
+            JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+            JOIN Albums album ON album.mbid = ar.release_group_mbid
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = ar.artist_mbid
+            LEFT JOIN ProviderItems pi
+              ON pi.entity_type IN ('track', 'recording')
+             AND (
+                pi.track_id = t.Id
+                OR pi.track_mbid = t.mbid
+                OR pi.recording_mbid = t.recording_mbid
+             )
+            WHERE t.mbid = ? OR CAST(t.Id AS TEXT) = ?
+            ORDER BY
+              CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
+              COALESCE(pi.match_confidence, 0) DESC,
+              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+              pi.updated_at DESC
+            LIMIT 1
+        `).get(trackId, trackId) as any;
 
-        const trackInDb = db.prepare("SELECT id FROM ProviderMedia WHERE id = ?").get(trackId) as any;
-        if (!trackInDb) {
-            TaskQueueService.addJob(JobTypes.RefreshAlbum, { albumId, forceUpdate: false }, albumId, 1, 1);
-            return { success: true, trackId, albumId, message: 'Track not yet in library; album scan queued', status: 202 };
-        }
-
-        const result = db.prepare(`
-      UPDATE ProviderMedia
-      SET monitor = 1,
-          monitor_lock = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-          locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)
-      WHERE id = ? AND album_id IS NOT NULL
-    `).run(trackId);
-
-        if (result.changes === 0) {
+        if (!track) {
             return { success: false, message: 'Track not found', status: 404 };
         }
 
-        refreshAlbumState(albumId);
-
-        const track = db.prepare(`
-      SELECT m.id, m.title, m.quality, m.album_id, ar.name as artist_name, a.cover as album_cover
-      FROM ProviderMedia m
-      LEFT JOIN Artists ar ON ar.id = m.artist_id
-      LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-      WHERE m.id = ?
-    `).get(trackId) as any;
+        this.setReleaseGroupWanted(String(track.release_group_mbid), true);
+        invalidateReleaseGroupDownloadStatus(String(track.release_group_mbid));
 
         let jobId: number | null = null;
         if (shouldDownload) {
-            const trackProviderId = String(trackId);
+            if (!track.provider_id) {
+                return {
+                    success: true,
+                    monitored_track: track.mbid || trackId,
+                    trackId,
+                    albumId: String(track.release_group_mbid),
+                    jobId: null,
+                    message: "Track monitored; no provider offer is selected for download",
+                    status: 202,
+                };
+            }
+            const trackProviderId = String(track.provider_id);
+            const provider = track.provider || "tidal";
+            const title = String(track.title || track.provider_title || "Unknown").trim();
+            const version = String(track.version || "").trim();
+            const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
+                ? `${title} (${version})`
+                : title;
+            const artistName = track.artist_name || "Unknown";
             jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
-                url: buildStreamingMediaUrl("track", trackProviderId),
+                url: buildStreamingMediaUrl("track", trackProviderId, provider as any),
                 type: 'track',
-                provider: "tidal",
-                title: track?.title || trackData.title || 'Unknown',
-                artist: track?.artist_name || trackData.artist_name || 'Unknown',
-                cover: track?.album_cover || null,
+                provider,
+                providerId: trackProviderId,
+                canonicalTrackId: String(track.local_track_id),
+                canonicalTrackMbid: track.mbid || null,
+                canonicalRecordingMbid: track.recording_mbid || null,
+                releaseGroupMbid: track.release_group_mbid || undefined,
+                releaseMbid: track.release_mbid || null,
+                title: displayTitle,
+                artist: artistName,
+                albumTitle: track.album_title || null,
                 quality: track?.quality || null,
-            }, trackProviderId, 0, 1);
+            }, String(track.local_track_id), 0, 1);
         }
 
-        return { success: true, monitored_track: trackId, jobId };
+        return { success: true, monitored_track: track.mbid || trackId, trackId, albumId: String(track.release_group_mbid), jobId };
     }
 
     /** Mark a release group wanted and queue its selected provider offer. */
@@ -250,6 +287,9 @@ export class AlbumCommandService {
         if (this.releaseGroupExists(albumId)) {
             if (monitored !== undefined) {
                 this.setReleaseGroupWanted(albumId, monitored);
+            }
+            if (monitorLock !== undefined) {
+                this.setReleaseGroupLock(albumId, monitorLock);
             }
             return { success: true, albumId, monitored };
         }

@@ -1,9 +1,14 @@
 import { db } from "../database.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
-import { updateAlbumDownloadStatus, updateArtistDownloadStatus, updateArtistDownloadStatusFromMedia } from "./download-state.js";
+import {
+    invalidateArtistDownloadStatus,
+    invalidateReleaseGroupDownloadStatus,
+    updateArtistDownloadStatus,
+} from "./download-state.js";
 import { CurationService } from "./curation-service.js";
 import { JobTypes, TaskQueueService } from "./queue.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
+import { getConfigSection } from "./config.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -33,6 +38,8 @@ export interface LibraryBulkActionResult {
 
 type EntityRow = {
     id: string | number;
+    local_id?: string | number | null;
+    mbid?: string | null;
     name?: string | null;
     title?: string | null;
     album_title?: string | null;
@@ -47,6 +54,13 @@ type EntityRow = {
     quality?: string | null;
     cover?: string | null;
     artist_name?: string | null;
+    artist_mbid?: string | null;
+    release_group_mbid?: string | null;
+    release_mbid?: string | null;
+    recording_mbid?: string | null;
+    provider?: string | null;
+    provider_id?: string | null;
+    provider_title?: string | null;
 };
 
 function uniqueIds(ids: string[]): string[] {
@@ -84,29 +98,68 @@ function fetchRows(query: string, params: string[]): EntityRow[] {
     return db.prepare(query).all(...params) as EntityRow[];
 }
 
-function refreshAlbums(albumIds: string[]) {
-    for (const albumId of uniqueIds(albumIds)) {
-        updateAlbumDownloadStatus(albumId);
-    }
-}
-
 function refreshArtists(artistIds: string[]) {
     for (const artistId of uniqueIds(artistIds)) {
         updateArtistDownloadStatus(artistId);
     }
 }
 
-function refreshArtistsFromMedia(mediaIds: string[]) {
-    for (const mediaId of uniqueIds(mediaIds)) {
-        updateArtistDownloadStatusFromMedia(mediaId);
+function canonicalRowsByRequestedId(rows: EntityRow[], requestedIds: string[]): Map<string, EntityRow> {
+    const rowsByKey = new Map<string, EntityRow>();
+    for (const row of rows) {
+        for (const key of [row.id, row.local_id, row.mbid]) {
+            const normalized = toNumberId(key);
+            if (normalized) {
+                rowsByKey.set(normalized, row);
+            }
+        }
     }
+
+    const matched = new Map<string, EntityRow>();
+    for (const id of requestedIds) {
+        const row = rowsByKey.get(id);
+        if (row) {
+            matched.set(id, row);
+        }
+    }
+
+    return matched;
+}
+
+function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: boolean): void {
+    const normalizedReleaseGroupMbids = uniqueIds(releaseGroupMbids);
+    if (normalizedReleaseGroupMbids.length === 0) {
+        return;
+    }
+
+    const includeSpatial = getConfigSection("filtering").include_spatial === true;
+    const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
+    const wanted = monitored ? 1 : 0;
+    const upsert = db.prepare(`
+        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
+        SELECT artist_mbid, mbid, ?, ?, CURRENT_TIMESTAMP
+        FROM Albums
+        WHERE mbid = ?
+        ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
+          artist_mbid = excluded.artist_mbid,
+          wanted = excluded.wanted,
+          updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const tx = db.transaction(() => {
+        for (const releaseGroupMbid of normalizedReleaseGroupMbids) {
+            for (const slot of slots) {
+                upsert.run(slot, wanted, releaseGroupMbid);
+            }
+        }
+    });
+
+    tx();
 }
 
 function applyArtistMonitorState(artistIds: string[], monitored: boolean): void {
     const nextStatus = monitored ? 1 : 0;
     const artistPlaceholders = buildPlaceholders(artistIds.length);
-    const albumArtistPlaceholders = buildPlaceholders(artistIds.length);
-    const mediaArtistPlaceholders = buildPlaceholders(artistIds.length);
 
     const tx = db.transaction(() => {
         db.prepare(`
@@ -116,93 +169,45 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
             WHERE id IN (${artistPlaceholders})
         `).run(nextStatus, nextStatus, ...artistIds);
 
-        db.prepare(`
-            UPDATE ProviderAlbums
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE (
-                artist_id IN (${artistPlaceholders})
-                OR id IN (
-                    SELECT album_id
-                    FROM ProviderAlbumArtists
-                    WHERE artist_id IN (${albumArtistPlaceholders})
+        if (!monitored) {
+            db.prepare(`
+                UPDATE ReleaseGroupSlots
+                SET wanted = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE artist_mbid IN (
+                    SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
                 )
-            )
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, ...artistIds, ...artistIds);
+                  AND COALESCE(monitor_lock, 0) = 0
+            `).run(...artistIds);
 
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE type != 'Music Video'
-              AND album_id IN (
-                  SELECT id
-                  FROM ProviderAlbums
-                  WHERE artist_id IN (${artistPlaceholders})
-                     OR id IN (
-                        SELECT album_id
-                        FROM ProviderAlbumArtists
-                        WHERE artist_id IN (${albumArtistPlaceholders})
-                     )
-              )
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, ...artistIds, ...artistIds);
-
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE type = 'Music Video'
-              AND artist_id IN (${mediaArtistPlaceholders})
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, ...artistIds);
+            db.prepare(`
+                UPDATE Recordings
+                SET Monitor = 0
+                WHERE IsVideo = 1
+                  AND artist_mbid IN (
+                    SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
+                  )
+                  AND COALESCE(MonitorLock, 0) = 0
+            `).run(...artistIds);
+        }
     });
 
     tx();
 }
 
-function applyAlbumMonitorState(albumIds: string[], monitored: boolean): void {
-    const nextStatus = monitored ? 1 : 0;
-    const albumPlaceholders = buildPlaceholders(albumIds.length);
-
-    const tx = db.transaction(() => {
-        db.prepare(`
-            UPDATE ProviderAlbums
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE id IN (${albumPlaceholders})
-        `).run(nextStatus, nextStatus, ...albumIds);
-
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE album_id IN (${albumPlaceholders})
-              AND type != 'Music Video'
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, ...albumIds);
-    });
-
-    tx();
+function applyAlbumMonitorState(releaseGroupMbids: string[], monitored: boolean): void {
+    applyReleaseGroupWantedState(releaseGroupMbids, monitored);
 }
 
 function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
-    const nextStatus = monitored ? 1 : 0;
-    const trackPlaceholders = buildPlaceholders(trackIds.length);
+    const rows = fetchRows(`
+        SELECT DISTINCT ar.release_group_mbid AS id
+        FROM Tracks t
+        JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+        WHERE CAST(t.Id AS TEXT) IN (${buildPlaceholders(trackIds.length)})
+           OR t.mbid IN (${buildPlaceholders(trackIds.length)})
+    `, [...trackIds, ...trackIds]);
 
-    const tx = db.transaction(() => {
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE id IN (${trackPlaceholders})
-              AND album_id IS NOT NULL
-              AND type != 'Music Video'
-        `).run(nextStatus, nextStatus, ...trackIds);
-    });
-
-    tx();
+    applyReleaseGroupWantedState(rows.map((row) => String(row.id)), monitored);
 }
 
 function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
@@ -211,54 +216,28 @@ function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
+            UPDATE Recordings
+            SET Monitor = ?,
+                MonitoredAt = CASE WHEN ? = 1 THEN COALESCE(MonitoredAt, CURRENT_TIMESTAMP) ELSE MonitoredAt END
             WHERE id IN (${videoPlaceholders})
-              AND type = 'Music Video'
+              AND IsVideo = 1
         `).run(nextStatus, nextStatus, ...videoIds);
     });
 
     tx();
 }
 
-function applyAlbumLockState(albumIds: string[], locked: boolean): void {
+function applyAlbumLockState(releaseGroupMbids: string[], locked: boolean): void {
     const nextStatus = locked ? 1 : 0;
-    const albumPlaceholders = buildPlaceholders(albumIds.length);
+    const albumPlaceholders = buildPlaceholders(releaseGroupMbids.length);
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE ProviderAlbums
+            UPDATE ReleaseGroupSlots
             SET monitor_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
-            WHERE id IN (${albumPlaceholders})
-        `).run(nextStatus, nextStatus, ...albumIds);
-
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor_lock = ?,
-                locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
-            WHERE album_id IN (${albumPlaceholders})
-              AND type != 'Music Video'
-        `).run(nextStatus, nextStatus, ...albumIds);
-    });
-
-    tx();
-}
-
-function applyTrackLockState(trackIds: string[], locked: boolean): void {
-    const nextStatus = locked ? 1 : 0;
-    const trackPlaceholders = buildPlaceholders(trackIds.length);
-
-    const tx = db.transaction(() => {
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor_lock = ?,
-                locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
-            WHERE id IN (${trackPlaceholders})
-              AND album_id IS NOT NULL
-              AND type != 'Music Video'
-        `).run(nextStatus, nextStatus, ...trackIds);
+            WHERE release_group_mbid IN (${albumPlaceholders})
+        `).run(nextStatus, nextStatus, ...releaseGroupMbids);
     });
 
     tx();
@@ -270,60 +249,88 @@ function applyVideoLockState(videoIds: string[], locked: boolean): void {
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor_lock = ?,
-                locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
+            UPDATE Recordings
+            SET MonitorLock = ?,
+                LockedAt = CASE WHEN ? = 1 THEN COALESCE(LockedAt, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE id IN (${videoPlaceholders})
-              AND type = 'Music Video'
+              AND IsVideo = 1
         `).run(nextStatus, nextStatus, ...videoIds);
     });
 
     tx();
 }
 
-function queueAlbumDownloads(albumIds: string[]): number[] {
+function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
     const queuedJobIds: number[] = [];
 
-    for (const albumId of albumIds) {
-        const album = db.prepare(`
-            SELECT a.id, a.title, a.version, a.cover, a.quality, ar.name as artist_name
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE a.id = ?
-        `).get(albumId) as EntityRow | undefined;
+    for (const releaseGroupMbid of releaseGroupMbids) {
+        const selections = db.prepare(`
+            SELECT
+                rgs.slot,
+                rgs.selected_provider,
+                rgs.selected_provider_id,
+                rgs.quality,
+                rgs.provider_data,
+                rg.title,
+                artist.name AS artist_name
+            FROM ReleaseGroupSlots rgs
+            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
+            WHERE rgs.release_group_mbid = ?
+              AND rgs.wanted = 1
+              AND rgs.selected_provider IS NOT NULL
+              AND rgs.selected_provider_id IS NOT NULL
+            ORDER BY CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+        `).all(releaseGroupMbid) as Array<EntityRow & {
+            slot?: string | null;
+            selected_provider?: string | null;
+            selected_provider_id?: string | number | null;
+            provider_data?: string | null;
+        }>;
 
-        if (!album) {
-            continue;
-        }
+        for (const album of selections) {
+            if (album.selected_provider_id == null) {
+                continue;
+            }
 
-        const albumArtists = db.prepare(`
-            SELECT a.name
-            FROM ProviderAlbumArtists aa
-            JOIN ArtistMetadata a ON a.mbid = aa.artist_id
-            WHERE aa.album_id = ?
-        `).all(albumId) as Array<{ name?: string | null }>;
-        const artistNames = albumArtists.map((row) => String(row.name || "").trim()).filter(Boolean);
-        const title = String(album.title || "Unknown Album").trim();
-        const version = String(album.version || "").trim();
-        const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
-            ? `${title} (${version})`
-            : title;
-        const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
+            let providerData: any = null;
+            try {
+                providerData = album.provider_data ? JSON.parse(String(album.provider_data)) : null;
+            } catch {
+                providerData = null;
+            }
 
-        const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
-            url: buildStreamingMediaUrl("album", albumId),
-            type: "album",
-            provider: "tidal",
-            title: displayTitle,
-            artist: primaryArtist,
-            artists: artistNames,
-            cover: album.cover || null,
-            quality: album.quality || null,
-            description: `${displayTitle} by ${primaryArtist}`,
-        }, albumId);
+            const providerAlbumId = String(album.selected_provider_id);
+            const provider = album.selected_provider || "tidal";
+            const slot = String(album.slot || "stereo");
+            const artistNames = [String(album.artist_name || providerData?.artist?.name || "").trim()].filter(Boolean);
+            const title = String(providerData?.title || album.title || "Unknown Album").trim();
+            const version = String(providerData?.version || album.version || "").trim();
+            const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
+                ? `${title} (${version})`
+                : title;
+            const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
 
-        if (jobId > 0) {
-            queuedJobIds.push(jobId);
+            const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+                url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
+                type: "album",
+                provider,
+                providerId: providerAlbumId,
+                releaseGroupMbid,
+                albumId: releaseGroupMbid,
+                libraryRoot: slot === "spatial" ? "spatial" : "music",
+                slot,
+                title: displayTitle,
+                artist: primaryArtist,
+                artists: artistNames,
+                cover: providerData?.cover || album.cover || null,
+                quality: album.quality || providerData?.quality || null,
+                description: `${displayTitle} by ${primaryArtist} (${slot})`,
+            }, `${releaseGroupMbid}:${slot}`);
+
+            if (jobId > 0) {
+                queuedJobIds.push(jobId);
+            }
         }
     }
 
@@ -336,50 +343,70 @@ function queueTrackDownloads(trackIds: string[]): number[] {
     for (const trackId of trackIds) {
         const track = db.prepare(`
             SELECT
-                m.id,
-                m.title,
-                m.version,
-                m.quality,
-                a.title as album_title,
-                a.version as album_version,
-                a.cover as album_cover,
-                a.quality as album_quality,
-                ar.name as artist_name
-            FROM ProviderMedia m
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            WHERE m.id = ? AND m.album_id IS NOT NULL AND m.type != 'Music Video'
-        `).get(trackId) as EntityRow | undefined;
+                CAST(t.Id AS TEXT) AS id,
+                t.mbid,
+                t.title,
+                t.release_mbid,
+                t.recording_mbid,
+                ar.release_group_mbid,
+                album.title AS album_title,
+                artist.name AS artist_name,
+                pi.provider,
+                pi.provider_id,
+                pi.title AS provider_title,
+                pi.version,
+                pi.quality,
+                pi.data AS provider_data
+            FROM Tracks t
+            JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+            JOIN Albums album ON album.mbid = ar.release_group_mbid
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = ar.artist_mbid
+            LEFT JOIN ProviderItems pi
+              ON pi.entity_type IN ('track', 'recording')
+             AND (
+                pi.track_id = t.Id
+                OR pi.track_mbid = t.mbid
+                OR pi.recording_mbid = t.recording_mbid
+             )
+            WHERE (CAST(t.Id AS TEXT) = ? OR t.mbid = ?)
+            ORDER BY
+              CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
+              COALESCE(pi.match_confidence, 0) DESC,
+              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+              pi.updated_at DESC
+            LIMIT 1
+        `).get(trackId, trackId) as EntityRow | undefined;
 
-        if (!track) {
+        if (!track?.provider_id) {
             continue;
         }
 
-        const title = String(track.title || "Unknown Track").trim();
+        const title = String(track.title || track.provider_title || "Unknown Track").trim();
         const version = String(track.version || "").trim();
         const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
             ? `${title} (${version})`
             : title;
         const albumTitle = String(track.album_title || "Unknown Album").trim();
-        const albumVersion = String(track.album_version || "").trim();
-        const displayAlbumTitle = albumVersion && !albumTitle.toLowerCase().includes(albumVersion.toLowerCase())
-            ? `${albumTitle} (${albumVersion})`
-            : albumTitle;
         const artistName = String(track.artist_name || "Unknown").trim() || "Unknown";
 
         const jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
-            url: buildStreamingMediaUrl("track", trackId),
+            url: buildStreamingMediaUrl("track", String(track.provider_id)),
             type: "track",
-            provider: "tidal",
+            provider: track.provider || "tidal",
+            canonicalTrackId: String(track.id),
+            canonicalTrackMbid: track.mbid || null,
+            canonicalRecordingMbid: track.recording_mbid || null,
+            providerId: String(track.provider_id),
             title: displayTitle,
             artist: artistName,
             cover: track.album_cover || null,
             quality: track.quality || track.album_quality || null,
             artists: [artistName],
-            albumId: String(track.album_id || ""),
-            albumTitle: displayAlbumTitle,
-            description: `${displayTitle} on ${displayAlbumTitle} by ${artistName}`,
-        }, trackId);
+            releaseGroupMbid: track.release_group_mbid || undefined,
+            releaseMbid: track.release_mbid || null,
+            albumTitle,
+            description: `${displayTitle} on ${albumTitle} by ${artistName}`,
+        }, String(track.id || trackId));
 
         if (jobId > 0) {
             queuedJobIds.push(jobId);
@@ -395,35 +422,53 @@ function queueVideoDownloads(videoIds: string[]): number[] {
     for (const videoId of videoIds) {
         const video = db.prepare(`
             SELECT
-                m.id,
-                m.title,
-                m.quality,
-                ar.name as artist_name,
-                a.cover as album_cover
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            WHERE m.id = ? AND m.type = 'Music Video'
+                CAST(r.Id AS TEXT) AS id,
+                r.mbid,
+                r.title,
+                r.artist_mbid,
+                artist.name as artist_name,
+                pi.provider,
+                pi.provider_id,
+                pi.quality,
+                pi.title AS provider_title
+            FROM Recordings r
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
+            LEFT JOIN ProviderItems pi
+              ON pi.entity_type = 'video'
+             AND (
+                pi.recording_id = r.Id
+                OR (r.mbid IS NOT NULL AND pi.recording_mbid = r.mbid)
+             )
+            WHERE CAST(r.Id AS TEXT) = ? AND r.IsVideo = 1
+            ORDER BY
+              CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
+              COALESCE(pi.match_confidence, 0) DESC,
+              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+              pi.updated_at DESC
+            LIMIT 1
         `).get(videoId) as EntityRow | undefined;
 
-        if (!video) {
+        if (!video?.provider_id) {
             continue;
         }
 
-        const title = String(video.title || "Unknown Video").trim();
+        const title = String(video.title || video.provider_title || "Unknown Video").trim();
         const artistName = String(video.artist_name || "Unknown").trim() || "Unknown";
 
         const jobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
-            url: buildStreamingMediaUrl("video", videoId),
+            url: buildStreamingMediaUrl("video", String(video.provider_id)),
             type: "video",
-            provider: "tidal",
+            provider: video.provider || "tidal",
+            canonicalRecordingId: String(video.id),
+            canonicalRecordingMbid: video.mbid || null,
+            providerId: String(video.provider_id),
             title,
             artist: artistName,
             cover: video.album_cover || null,
             quality: video.quality || null,
             artists: [artistName],
             description: `${title} by ${artistName}`,
-        }, videoId);
+        }, String(video.id || videoId));
 
         if (jobId > 0) {
             queuedJobIds.push(jobId);
@@ -519,16 +564,17 @@ export class LibraryBulkActionService {
 
         const albumRows = fetchRows(
             `
-                SELECT DISTINCT CAST(a.id AS TEXT) AS id
-                FROM ProviderAlbums a
-                LEFT JOIN ProviderAlbumArtists aa ON aa.album_id = a.id
-                WHERE a.artist_id IN (${buildPlaceholders(foundIds.length)})
-                   OR aa.artist_id IN (${buildPlaceholders(foundIds.length)})
+                SELECT DISTINCT rg.mbid AS id
+                FROM Albums rg
+                JOIN Artists a ON a.mbid = rg.artist_mbid
+                WHERE a.id IN (${buildPlaceholders(foundIds.length)})
             `,
-            [...foundIds, ...foundIds],
+            foundIds,
         );
 
-        refreshAlbums(albumRows.map((row) => String(row.id)));
+        for (const releaseGroupMbid of albumRows.map((row) => String(row.id))) {
+            invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
+        }
         refreshArtists(foundIds);
 
         if (monitored) {
@@ -567,7 +613,7 @@ export class LibraryBulkActionService {
 
     private static applyAlbumAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id FROM ProviderAlbums WHERE id IN (${buildPlaceholders(ids.length)})`,
+            `SELECT mbid AS id FROM Albums WHERE mbid IN (${buildPlaceholders(ids.length)})`,
             ids,
         );
         const foundIds = rows.map((row) => String(row.id));
@@ -602,7 +648,9 @@ export class LibraryBulkActionService {
 
         if (action === "monitor" || action === "unmonitor") {
             applyAlbumMonitorState(foundIds, action === "monitor");
-            refreshAlbums(foundIds);
+            for (const id of foundIds) {
+                invalidateReleaseGroupDownloadStatus(id);
+            }
             for (const id of foundIds) {
                 result.items.push({
                     id,
@@ -616,7 +664,9 @@ export class LibraryBulkActionService {
 
         if (action === "lock" || action === "unlock") {
             applyAlbumLockState(foundIds, action === "lock");
-            refreshAlbums(foundIds);
+            for (const id of foundIds) {
+                invalidateReleaseGroupDownloadStatus(id);
+            }
             for (const id of foundIds) {
                 result.items.push({
                     id,
@@ -633,15 +683,26 @@ export class LibraryBulkActionService {
 
     private static applyTrackAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id, album_id FROM ProviderMedia WHERE id IN (${buildPlaceholders(ids.length)}) AND album_id IS NOT NULL AND type != 'Music Video'`,
-            ids,
+            `
+                SELECT
+                  CAST(t.Id AS TEXT) AS id,
+                  CAST(t.Id AS TEXT) AS local_id,
+                  t.mbid,
+                  ar.release_group_mbid,
+                  ar.artist_mbid
+                FROM Tracks t
+                JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+                WHERE CAST(t.Id AS TEXT) IN (${buildPlaceholders(ids.length)})
+                   OR t.mbid IN (${buildPlaceholders(ids.length)})
+            `,
+            [...ids, ...ids],
         );
-        const foundIds = rows.map((row) => String(row.id));
-        const foundSet = new Set(foundIds);
+        const rowsByRequestedId = canonicalRowsByRequestedId(rows, ids);
+        const foundIds = Array.from(rowsByRequestedId.keys());
         result.matched = foundIds.length;
 
         for (const id of ids) {
-            if (!foundSet.has(id)) {
+            if (!rowsByRequestedId.has(id)) {
                 result.items.push({ id, status: "missing", message: "Track not found" });
                 result.missing += 1;
             }
@@ -657,8 +718,8 @@ export class LibraryBulkActionService {
             for (const id of foundIds) {
                 result.items.push({
                     id,
-                    status: "queued",
-                    message: "Track download queued",
+                    status: jobIds.length > 0 ? "queued" : "noop",
+                    message: jobIds.length > 0 ? "Track download queued" : "No provider offer available for track",
                 });
             }
             result.updated += foundIds.length;
@@ -667,7 +728,9 @@ export class LibraryBulkActionService {
 
         if (action === "monitor" || action === "unmonitor") {
             applyTrackMonitorState(foundIds, action === "monitor");
-            refreshAlbums(Array.from(new Set(rows.map((row) => toNumberId(row.album_id)).filter((value): value is string => value !== null))));
+            for (const releaseGroupMbid of uniqueIds(rows.map((row) => String(row.release_group_mbid || "")))) {
+                invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
+            }
             for (const id of foundIds) {
                 result.items.push({
                     id,
@@ -680,17 +743,7 @@ export class LibraryBulkActionService {
         }
 
         if (action === "lock" || action === "unlock") {
-            applyTrackLockState(foundIds, action === "lock");
-            refreshAlbums(Array.from(new Set(rows.map((row) => toNumberId(row.album_id)).filter((value): value is string => value !== null))));
-            for (const id of foundIds) {
-                result.items.push({
-                    id,
-                    status: "updated",
-                    message: action === "lock" ? "Track locked" : "Track unlocked",
-                });
-                result.updated += 1;
-            }
-            return result;
+            return markUnsupported(result, foundIds, "Track locking is not supported; track availability is derived from the monitored release slot");
         }
 
         return result;
@@ -698,7 +751,19 @@ export class LibraryBulkActionService {
 
     private static applyVideoAction(result: LibraryBulkActionResult, ids: string[], action: LibraryBulkAction): LibraryBulkActionResult {
         const rows = fetchRows(
-            `SELECT id, artist_id FROM ProviderMedia WHERE id IN (${buildPlaceholders(ids.length)}) AND type = 'Music Video'`,
+            `
+                SELECT
+                  CAST(r.Id AS TEXT) AS id,
+                  CAST(r.Id AS TEXT) AS local_id,
+                  r.mbid,
+                  r.artist_mbid,
+                  artist.Id AS artist_id
+                FROM Recordings r
+                LEFT JOIN ArtistMetadata metadata ON metadata.mbid = r.artist_mbid
+                LEFT JOIN Artists artist ON artist.mbid = metadata.mbid
+                WHERE CAST(r.Id AS TEXT) IN (${buildPlaceholders(ids.length)})
+                  AND r.IsVideo = 1
+            `,
             ids,
         );
         const foundIds = rows.map((row) => String(row.id));
@@ -722,8 +787,8 @@ export class LibraryBulkActionService {
             for (const id of foundIds) {
                 result.items.push({
                     id,
-                    status: "queued",
-                    message: "Video download queued",
+                    status: jobIds.length > 0 ? "queued" : "noop",
+                    message: jobIds.length > 0 ? "Video download queued" : "No provider offer available for video",
                 });
             }
             result.updated += foundIds.length;
@@ -732,7 +797,9 @@ export class LibraryBulkActionService {
 
         if (action === "monitor" || action === "unmonitor") {
             applyVideoMonitorState(foundIds, action === "monitor");
-            refreshArtistsFromMedia(foundIds);
+            for (const artistId of uniqueIds(rows.map((row) => String(row.artist_id || "")))) {
+                invalidateArtistDownloadStatus(artistId);
+            }
             for (const id of foundIds) {
                 result.items.push({
                     id,
@@ -746,7 +813,9 @@ export class LibraryBulkActionService {
 
         if (action === "lock" || action === "unlock") {
             applyVideoLockState(foundIds, action === "lock");
-            refreshArtistsFromMedia(foundIds);
+            for (const artistId of uniqueIds(rows.map((row) => String(row.artist_id || "")))) {
+                invalidateArtistDownloadStatus(artistId);
+            }
             for (const id of foundIds) {
                 result.items.push({
                     id,

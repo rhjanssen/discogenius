@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
     Button,
+    Badge,
     Card,
     Menu,
     MenuItem,
@@ -28,6 +30,7 @@ import {
     Filter24Regular,
     ArrowSortDownLines24Regular,
     ArrowDownload24Regular,
+    Warning24Regular,
 } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
@@ -47,6 +50,7 @@ import ManualImportTab from "./ManualImportTab";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 import { formatCompactNumber } from "@/utils/format";
 import { useSystemTasks } from "@/hooks/useSystemTasks";
+import { useProviderConnection } from "@/hooks/useProviderConnection";
 import type { OverflowAction } from "@/components/overflow/ActionOverflowMenu";
 import {
     compactDetailActionButtonStyles,
@@ -172,6 +176,49 @@ const useStyles = makeStyles({
         fontSize: tokens.fontSizeBase100,
         color: tokens.colorNeutralForeground3,
     },
+    providerNotice: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalM,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        borderRadius: tokens.borderRadiusMedium,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 58%, transparent)`,
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+        "@media (max-width: 639px)": {
+            alignItems: "stretch",
+            flexDirection: "column",
+        },
+    },
+    providerNoticeMain: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalS,
+        minWidth: 0,
+    },
+    providerNoticeIcon: {
+        width: "18px",
+        height: "18px",
+        color: tokens.colorPaletteMarigoldForeground2,
+        flexShrink: 0,
+    },
+    providerNoticeText: {
+        color: tokens.colorNeutralForeground2,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        "@media (max-width: 639px)": {
+            whiteSpace: "normal",
+        },
+    },
+    providerNoticeAction: {
+        flexShrink: 0,
+        "@media (max-width: 639px)": {
+            alignSelf: "flex-start",
+        },
+    },
     headerActionButton: {
         ...compactDetailActionButtonStyles,
         ...detailActionGlassButtonStyles,
@@ -261,6 +308,7 @@ const Dashboard = () => {
     const styles = useStyles();
     const responsiveTabsStyles = useResponsiveTabsStyles({ collapseOnMobile: false });
     const { toast } = useToast();
+    const navigate = useNavigate();
     const {
         isPaused: queueIsPaused,
         pauseQueue,
@@ -273,6 +321,7 @@ const Dashboard = () => {
     const { runnableTasks, isRunningTaskId, runTask } = useSystemTasks();
     const [mobileTab, setMobileTab] = useState<"queue" | "activity" | "manualImport">(getInitialDashboardTab);
     const [activityFilter, setActivityFilter] = useState<string>('all');
+    const { canAccessShell, remoteCatalogAvailable, isSessionExpired } = useProviderConnection();
 
     useEffect(() => {
         sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, mobileTab);
@@ -309,6 +358,10 @@ const Dashboard = () => {
     const statusSyncLabel = hasStatusRefreshError
         ? (hasStatusData ? "Showing cached status" : "Status unavailable")
         : null;
+    const showProviderNotice = canAccessShell && !remoteCatalogAvailable;
+    const providerNoticeText = isSessionExpired
+        ? "Provider session expired. MusicBrainz library management still works."
+        : "No provider connected. Provider availability, previews, lyrics, and downloads are paused.";
 
     const refreshBusy = scanningAll || hasActiveJobs(['RefreshMetadata', 'RefreshArtist']);
     const curationBusy = searchingMissingAlbums || hasActiveJobs(['ApplyCuration', 'CurateArtist']);
@@ -552,6 +605,24 @@ const Dashboard = () => {
                     </Card>
                 ))}
             </div>
+
+            {showProviderNotice ? (
+                <div className={styles.providerNotice}>
+                    <div className={styles.providerNoticeMain}>
+                        <Warning24Regular className={styles.providerNoticeIcon} />
+                        <Text className={styles.providerNoticeText}>{providerNoticeText}</Text>
+                        <Badge appearance="tint" color="warning">Provider</Badge>
+                    </div>
+                    <Button
+                        appearance="subtle"
+                        size="small"
+                        className={styles.providerNoticeAction}
+                        onClick={() => navigate("/settings")}
+                    >
+                        Settings
+                    </Button>
+                </div>
+            ) : null}
 
             <div className={styles.mainCol}>
                 {/* Tab Bar */}

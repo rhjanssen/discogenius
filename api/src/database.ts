@@ -1343,6 +1343,13 @@ function ensureLidarrStyleCanonicalIdentityColumns(): void {
   addColumnIfMissing("Recordings", "artist_mbid", "TEXT");
   addColumnIfMissing("Recordings", "IsVideo", "BOOLEAN NOT NULL DEFAULT 0");
   addColumnIfMissing("Recordings", "MetadataStatus", "TEXT NOT NULL DEFAULT 'musicbrainz'");
+  addColumnIfMissing("Recordings", "ReleaseDate", "TEXT");
+  addColumnIfMissing("Recordings", "CoverImageId", "TEXT");
+  addColumnIfMissing("Recordings", "CoverImageUrl", "TEXT");
+  addColumnIfMissing("Recordings", "Monitor", "BOOLEAN NOT NULL DEFAULT 0");
+  addColumnIfMissing("Recordings", "MonitorLock", "BOOLEAN NOT NULL DEFAULT 0");
+  addColumnIfMissing("Recordings", "MonitoredAt", "DATETIME");
+  addColumnIfMissing("Recordings", "LockedAt", "DATETIME");
 
   db.exec(`
     UPDATE ArtistMetadata SET Id = rowid WHERE Id IS NULL;
@@ -1800,6 +1807,8 @@ function ensureMusicBrainzProviderSchema(): void {
       match_method TEXT,
       match_evidence TEXT,
       provider_data TEXT,
+      monitor_lock BOOLEAN NOT NULL DEFAULT 0,
+      locked_at DATETIME,
       checked_at DATETIME,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_group_mbid, slot),
@@ -1811,7 +1820,18 @@ function ensureMusicBrainzProviderSchema(): void {
 
   ensureLidarrStyleCanonicalIdentityColumns();
 
+  addColumnIfMissing("ReleaseGroupSlots", "monitor_lock", "BOOLEAN NOT NULL DEFAULT 0");
+  addColumnIfMissing("ReleaseGroupSlots", "locked_at", "DATETIME");
+
   addColumnIfMissing("ProviderItems", "library_slot", "TEXT NOT NULL DEFAULT 'stereo'");
+  addColumnIfMissing("ProviderItems", "version", "TEXT");
+  addColumnIfMissing("ProviderItems", "explicit", "BOOLEAN");
+  addColumnIfMissing("ProviderItems", "quality", "TEXT");
+  addColumnIfMissing("ProviderItems", "upc", "TEXT");
+  addColumnIfMissing("ProviderItems", "isrc", "TEXT");
+  addColumnIfMissing("ProviderItems", "duration", "INT");
+  addColumnIfMissing("ProviderItems", "release_date", "TEXT");
+  addColumnIfMissing("ProviderItems", "availability", "TEXT");
   addColumnIfMissing("ProviderItems", "artist_metadata_id", "INTEGER");
   addColumnIfMissing("ProviderItems", "album_id", "INTEGER");
   addColumnIfMissing("ProviderItems", "album_release_id", "INTEGER");

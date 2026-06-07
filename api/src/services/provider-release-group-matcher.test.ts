@@ -77,6 +77,52 @@ test("matches expanded provider editions to the MusicBrainz release group", () =
     assert.ok(match.confidence >= 0.78);
 });
 
+test("matches expanded provider editions even when they contain bonus discs", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "243863069",
+        title: "Give Me The Future + Dreams Of The Past",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        trackCount: 27,
+        volumeCount: 3,
+    }, releaseGroups);
+
+    assert.equal(match.status, "probable");
+    assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.ok(match.confidence >= 0.78);
+    assert.equal(match.evidence.candidateTitle, "give me the future");
+    assert.equal(match.releaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
+    assert.deepEqual(match.evidence.availableReleaseMbids, ["db967b8b-99c1-4adf-8d12-f0ab285390b3"]);
+});
+
+test("matches expanded provider editions with compact separators and version suffixes", () => {
+    const plusMatch = matchProviderAlbumToReleaseGroup({
+        providerId: "compact-plus",
+        title: "Give Me The Future+Dreams Of The Past",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        trackCount: 27,
+        volumeCount: 3,
+    }, releaseGroups);
+
+    assert.equal(plusMatch.status, "probable");
+    assert.equal(plusMatch.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.equal(plusMatch.evidence.candidateTitle, "give me the future");
+
+    const suffixMatch = matchProviderAlbumToReleaseGroup({
+        providerId: "dash-suffix",
+        title: "Give Me the Future - Expanded Edition",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        trackCount: 27,
+        volumeCount: 3,
+    }, releaseGroups);
+
+    assert.equal(suffixMatch.status, "probable");
+    assert.equal(suffixMatch.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.equal(suffixMatch.evidence.candidateTitle, "give me the future");
+});
+
 test("marks exact title and type matches as verified", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "214357460",
@@ -210,6 +256,35 @@ test("does not select a one-track provider single as the full release-group slot
     ]), { includeSpatial: false });
 
     assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "ep");
+});
+
+test("prefers higher quality expanded offer when it covers the representative release", () => {
+    const exact = matchProviderAlbumToReleaseGroup({
+        providerId: "exact-lossless",
+        title: "Give Me The Future",
+        releaseDate: "2022-02-04",
+        type: "ALBUM",
+        trackCount: 13,
+        volumeCount: 1,
+    }, releaseGroups);
+    const expanded = matchProviderAlbumToReleaseGroup({
+        providerId: "expanded-hires",
+        title: "Give Me The Future + Dreams Of The Past",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        trackCount: 27,
+        volumeCount: 3,
+    }, releaseGroups);
+
+    const selections = selectReleaseGroupSlotAlbums([
+        { providerId: "exact-lossless", title: "Give Me The Future", quality: "LOSSLESS", trackCount: 13, volumeCount: 1 },
+        { providerId: "expanded-hires", title: "Give Me The Future + Dreams Of The Past", quality: "HIRES_LOSSLESS", trackCount: 27, volumeCount: 3 },
+    ], new Map([
+        ["exact-lossless", exact],
+        ["expanded-hires", expanded],
+    ]), { includeSpatial: false });
+
+    assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "expanded-hires");
 });
 
 test("uses ISRC overlap and track count as fallback evidence", () => {

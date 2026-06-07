@@ -2,11 +2,9 @@ import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Button,
-  Text,
   Title3,
   makeStyles,
   tokens,
-  Badge,
   mergeClasses,
 } from "@fluentui/react-components";
 import {
@@ -16,7 +14,6 @@ import {
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { useProviderConnection } from "@/hooks/useProviderConnection";
 import GlobalSearch from "./GlobalSearch";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
@@ -279,100 +276,6 @@ const useStyles = makeStyles({
     minHeight: "100dvh",
     overflow: "hidden",
   },
-  tidalBannerWrap: {
-    maxWidth: "1320px",
-    marginTop: tokens.spacingVerticalS,
-    marginBottom: tokens.spacingVerticalNone,
-    marginLeft: "auto",
-    marginRight: "auto",
-    paddingLeft: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-left))`,
-    paddingRight: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-right))`,
-    "@media (min-width: 640px)": {
-      paddingLeft: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-left))`,
-      paddingRight: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-right))`,
-    },
-  },
-  tidalBanner: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: tokens.spacingHorizontalM,
-    borderRadius: tokens.borderRadiusLarge,
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, ${tokens.colorPaletteMarigoldBorder2} 55%, ${tokens.colorNeutralStroke2})`,
-    backgroundColor: `color-mix(in srgb, ${tokens.colorPaletteMarigoldBackground2} 65%, ${tokens.colorNeutralBackground1})`,
-    boxShadow: tokens.shadow4,
-    "@media (min-width: 640px)": {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-    },
-  },
-  tidalBannerInfo: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: tokens.spacingVerticalS,
-    flex: 1,
-    minWidth: 0,
-    "@media (min-width: 640px)": {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: tokens.spacingHorizontalM,
-    },
-  },
-  tidalBannerIcon: {
-    flexShrink: 0,
-    color: tokens.colorPaletteGoldForeground2,
-    alignSelf: "center",
-    "@media (min-width: 640px)": {
-      alignSelf: "flex-start",
-      marginTop: "2px",
-    },
-  },
-  tidalBannerText: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    minWidth: 0,
-    textAlign: "center",
-    "@media (min-width: 640px)": {
-      textAlign: "left",
-    },
-  },
-  tidalBannerTitleRow: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    "@media (min-width: 640px)": {
-      flexDirection: "row",
-      alignItems: "center",
-      flexWrap: "wrap",
-    },
-  },
-  tidalBannerActions: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: tokens.spacingHorizontalS,
-    width: "100%",
-    "@media (min-width: 640px)": {
-      display: "flex",
-      alignItems: "center",
-      width: "auto",
-      marginLeft: "auto",
-    },
-  },
-  tidalBannerBody: {
-    color: tokens.colorNeutralForeground2,
-  },
-  tidalBannerPrimaryButton: {
-    width: "100%",
-    justifyContent: "center",
-    "@media (min-width: 640px)": {
-      width: "auto",
-    },
-  },
 });
 
 const Layout = () => {
@@ -382,15 +285,8 @@ const Layout = () => {
   const { colors, isDarkMode: ultraBlurIsDarkMode } = useUltraBlurContext();
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
-  const { status, canAccessShell, remoteCatalogAvailable } = useProviderConnection();
   const isAuthRoute = location.pathname === "/auth";
   const showNavSearch = !isAuthRoute && location.pathname !== "/search";
-
-  const showProviderModeBanner = Boolean(canAccessShell && !remoteCatalogAvailable);
-  const providerModeLabel = "No provider";
-  const providerModeTitle = "Provider not connected";
-  const providerModeMessage = status?.message
-    || "You can add artists from MusicBrainz now. Provider availability, previews, followed artists, lyrics, and downloads require connecting a provider.";
 
   useEffect(() => {
     if (!isStandaloneDisplayMode()) return;
@@ -474,32 +370,6 @@ const Layout = () => {
               </div>
             </div>
           </nav>
-        ) : null}
-        {!isAuthRoute && showProviderModeBanner ? (
-          <div className={styles.tidalBannerWrap}>
-            <div className={styles.tidalBanner}>
-              <div className={styles.tidalBannerInfo}>
-                <div className={styles.tidalBannerText}>
-                  <div className={styles.tidalBannerTitleRow}>
-                    <Title3>{providerModeTitle}</Title3>
-                    <Badge appearance="filled" color="warning">
-                      {providerModeLabel}
-                    </Badge>
-                  </div>
-                  <Text className={styles.tidalBannerBody}>{providerModeMessage}</Text>
-                </div>
-              </div>
-              <div className={styles.tidalBannerActions}>
-                <Button
-                  appearance="secondary"
-                  className={styles.tidalBannerPrimaryButton}
-                  onClick={() => navigate("/search")}
-                >
-                  Search MusicBrainz
-                </Button>
-              </div>
-            </div>
-          </div>
         ) : null}
         <main className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}>
           <Outlet />

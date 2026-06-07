@@ -21,6 +21,11 @@ type LibraryFileRow = {
   artist_id: number;
   album_id: number | null;
   media_id: number | null;
+  canonical_artist_mbid?: string | null;
+  canonical_release_group_mbid?: string | null;
+  canonical_release_mbid?: string | null;
+  canonical_track_mbid?: string | null;
+  canonical_recording_mbid?: string | null;
   file_path: string;
   relative_path: string | null;
   library_root: string | null;
@@ -28,6 +33,8 @@ type LibraryFileRow = {
   extension: string;
   library_slot?: string | null;
   provider?: string | null;
+  provider_entity_type?: string | null;
+  provider_id?: string | null;
   // Quality metadata
   quality?: string | null;
   codec?: string | null;
@@ -71,7 +78,28 @@ type AudioMediaLookupRow = {
   album_quality: string | null;
 };
 
+type CanonicalVideoLookupRow = {
+  mbid: string | null;
+  title: string | null;
+  is_video: number | null;
+  metadata_status: string | null;
+};
+
+type CanonicalTrackLookupRow = {
+  mbid: string;
+  title: string | null;
+  position: number | null;
+  medium_position: number | null;
+  recording_mbid: string | null;
+  recording_title: string | null;
+  recording_artist_mbid: string | null;
+};
+
 function resolveNamingAlbumId(row: LibraryFileRow): number | null {
+  if (row.canonical_release_group_mbid && !row.album_id) {
+    return null;
+  }
+
   if (!row.album_id) {
     return null;
   }
@@ -131,6 +159,95 @@ function resolveNamingAlbumId(row: LibraryFileRow): number | null {
   }
 
   return row.album_id;
+}
+
+function getCanonicalIdentityForLibraryFile(row: LibraryFileRow): ReturnType<typeof resolveLibraryFileIdentity> {
+  return resolveLibraryFileIdentity({
+    artistId: row.artist_id,
+    albumId: row.album_id,
+    mediaId: row.media_id,
+    fileType: row.file_type,
+    quality: row.quality,
+    libraryRoot: row.library_root,
+    librarySlot: row.library_slot,
+    provider: row.provider,
+    providerEntityType: row.provider_entity_type,
+    providerId: row.provider_id,
+    canonicalArtistMbid: row.canonical_artist_mbid,
+    canonicalReleaseGroupMbid: row.canonical_release_group_mbid,
+    canonicalReleaseMbid: row.canonical_release_mbid,
+    canonicalTrackMbid: row.canonical_track_mbid,
+    canonicalRecordingMbid: row.canonical_recording_mbid,
+  });
+}
+
+function getCanonicalVideoMetadataByMbid(recordingMbid: string | null | undefined): CanonicalVideoLookupRow | null {
+  const mbid = String(recordingMbid || "").trim();
+  if (!mbid) {
+    return null;
+  }
+
+  return (db.prepare(`
+    SELECT mbid,
+           title,
+           IsVideo AS is_video,
+           MetadataStatus AS metadata_status
+    FROM Recordings
+    WHERE mbid = ?
+      AND IsVideo = 1
+    LIMIT 1
+  `).get(mbid) as CanonicalVideoLookupRow | undefined) ?? null;
+}
+
+function getCanonicalVideoMetadataForRow(row: LibraryFileRow, recordingMbid: string | null | undefined): CanonicalVideoLookupRow | null {
+  const byMbid = getCanonicalVideoMetadataByMbid(recordingMbid);
+  if (byMbid) {
+    return byMbid;
+  }
+
+  const provider = String(row.provider || "").trim();
+  const providerId = String(row.provider_id || row.media_id || "").trim();
+  if (!providerId) {
+    return null;
+  }
+
+  const providerClause = provider ? "pi.provider = ? AND" : "";
+  const params = provider ? [provider, providerId] : [providerId];
+  return (db.prepare(`
+    SELECT recording.mbid,
+           recording.title,
+           recording.IsVideo AS is_video,
+           recording.MetadataStatus AS metadata_status
+    FROM ProviderItems pi
+    JOIN Recordings recording ON recording.Id = pi.recording_id
+    WHERE ${providerClause}
+      pi.entity_type = 'video'
+      AND pi.provider_id = ?
+      AND recording.IsVideo = 1
+    ORDER BY pi.updated_at DESC
+    LIMIT 1
+  `).get(...params) as CanonicalVideoLookupRow | undefined) ?? null;
+}
+
+function getCanonicalTrackMetadata(trackMbid: string | null | undefined): CanonicalTrackLookupRow | null {
+  const mbid = String(trackMbid || "").trim();
+  if (!mbid) {
+    return null;
+  }
+
+  return (db.prepare(`
+    SELECT t.mbid,
+           t.title,
+           t.position,
+           t.medium_position,
+           t.recording_mbid,
+           r.title AS recording_title,
+           r.artist_mbid AS recording_artist_mbid
+    FROM Tracks t
+    LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+    WHERE t.mbid = ?
+    LIMIT 1
+  `).get(mbid) as CanonicalTrackLookupRow | undefined) ?? null;
 }
 
 export type RenamePreviewItem = {
@@ -653,14 +770,18 @@ export class LibraryFilesService {
   static computeExpectedPath(row: LibraryFileRow): { expectedPath: string | null; reason?: string } {
     const pathConfig = getConfigSection("path");
     const videoFolderLayout = pathConfig?.video_folder_layout || "separated";
+    const canonicalIdentity = getCanonicalIdentityForLibraryFile(row);
+    const canonicalVideo = getCanonicalVideoMetadataForRow(row, canonicalIdentity.canonicalRecordingMbid);
 
     if (videoFolderLayout === "inline" && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
       const mediaRow = db.prepare("SELECT type, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as VideoMediaLookupRow | undefined;
-      if (mediaRow && mediaRow.type === "Music Video") {
-        const recordingMbid = mediaRow.mbid || null;
+      if ((mediaRow && mediaRow.type === "Music Video") || canonicalVideo) {
+        const recordingMbid = canonicalIdentity.canonicalRecordingMbid || mediaRow?.mbid || null;
         const audioTrack = recordingMbid
           ? db.prepare(`
-            SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+            SELECT id, artist_id, album_id, media_id,
+                   canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+                   file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
             FROM TrackFiles
             WHERE canonical_recording_mbid = ? AND file_type = 'track'
             LIMIT 1
@@ -692,7 +813,7 @@ export class LibraryFilesService {
         if (!mediaAudioTrack) {
           const video = db.prepare("SELECT album_id, artist_id, title FROM ProviderMedia WHERE id = ? AND type = 'Music Video'")
             .get(row.media_id) as { album_id?: number | null; artist_id?: number | null; title?: string | null } | undefined;
-          const videoTitle = normalizeInlineVideoTitle(video?.title);
+          const videoTitle = normalizeInlineVideoTitle(canonicalVideo?.title || video?.title);
           inlineVideoTitle = videoTitle;
           const albumTracks = video?.album_id
             ? db.prepare(`
@@ -758,7 +879,9 @@ export class LibraryFilesService {
             }
           const trackedVideo = row.file_type !== "video"
             ? db.prepare(`
-                SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+                SELECT id, artist_id, album_id, media_id,
+                       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+                       file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
                 FROM TrackFiles
                 WHERE media_id = ? AND file_type = 'video'
                 LIMIT 1
@@ -814,10 +937,13 @@ export class LibraryFilesService {
       const video = row.media_id
         ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
+      if (!video && !canonicalVideo) {
+        return { expectedPath: null, reason: "video_not_found" };
+      }
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
       const context: NamingContext = {
         ...contextBase,
-        videoTitle: video?.title || "Unknown Video",
+        videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
         trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         explicit: video?.explicit === 1,
@@ -841,10 +967,13 @@ export class LibraryFilesService {
       const video = row.media_id
         ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
         : null;
+      if (!video && !canonicalVideo) {
+        return { expectedPath: null, reason: "video_not_found" };
+      }
       const ext = row.extension || "jpg";
       const context: NamingContext = {
         ...contextBase,
-        videoTitle: video?.title || "Unknown Video",
+        videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
         trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
         explicit: video?.explicit === 1,
@@ -866,13 +995,13 @@ export class LibraryFilesService {
 
     if (row.file_type === "nfo" && row.media_id) {
       const video = db.prepare("SELECT id, title, explicit, type FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
-      if (video?.type === "Music Video") {
+      if (video?.type === "Music Video" || canonicalVideo) {
         const context: NamingContext = {
           ...contextBase,
-          videoTitle: video.title || "Unknown Video",
-          trackId: video.id != null ? String(video.id) : String(row.media_id),
-          videoId: video.id != null ? String(video.id) : String(row.media_id),
-          explicit: video.explicit === 1,
+          videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
+          trackId: video?.id != null ? String(video.id) : String(row.media_id),
+          videoId: video?.id != null ? String(video.id) : String(row.media_id),
+          explicit: video?.explicit === 1,
           quality: row.quality || null,
           codec: row.codec || null,
           bitrate: row.bitrate || null,
@@ -886,7 +1015,7 @@ export class LibraryFilesService {
     }
 
     // Album-scoped types (track, lyrics, cover, NFO)
-    if (!row.album_id) {
+    if (!row.album_id && !canonicalIdentity.canonicalReleaseGroupMbid) {
       // Artist-scoped types (artist NFO and artist picture cover)
       if (row.file_type === "nfo") {
         return { expectedPath: path.join(libraryRootPath, artistFolder, "artist.nfo") };
@@ -901,8 +1030,9 @@ export class LibraryFilesService {
     }
 
     const namingAlbumId = resolveNamingAlbumId(row);
-    const album = db.prepare("SELECT id, title, type, mb_primary, mbid, mb_release_group_id, version, explicit, release_date, num_volumes FROM ProviderAlbums WHERE id = ?").get(namingAlbumId) as any;
-    if (!album) return { expectedPath: null, reason: "album_not_found" };
+    const album = namingAlbumId
+      ? db.prepare("SELECT id, title, type, mb_primary, mbid, mb_release_group_id, version, explicit, release_date, num_volumes FROM ProviderAlbums WHERE id = ?").get(namingAlbumId) as any
+      : null;
 
     const trackedIdentity = row.media_id
       ? db.prepare(`
@@ -919,19 +1049,21 @@ export class LibraryFilesService {
         } | undefined
       : undefined;
     const canonicalAlbum = getCanonicalAlbumMetadata({
-      canonicalReleaseGroupMbid: trackedIdentity?.canonical_release_group_mbid || album.mb_release_group_id,
-      canonicalReleaseMbid: trackedIdentity?.canonical_release_mbid,
+      canonicalReleaseGroupMbid: trackedIdentity?.canonical_release_group_mbid || canonicalIdentity.canonicalReleaseGroupMbid || album?.mb_release_group_id,
+      canonicalReleaseMbid: trackedIdentity?.canonical_release_mbid || canonicalIdentity.canonicalReleaseMbid,
     });
-    const releaseYear = getReleaseYear(canonicalAlbum?.releaseDate || album.release_date);
+    if (!album && !canonicalAlbum) return { expectedPath: null, reason: "album_not_found" };
+
+    const releaseYear = getReleaseYear(canonicalAlbum?.releaseDate || album?.release_date);
     const albumContext: NamingContext = {
       ...contextBase,
-      albumId: String(album.id ?? row.album_id),
-      albumTitle: canonicalAlbum?.title || album.title,
-      albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
-      albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
-      albumVersion: canonicalAlbum ? null : album.version || null,
+      albumId: String(album?.id ?? row.album_id ?? canonicalIdentity.canonicalReleaseGroupMbid ?? ""),
+      albumTitle: canonicalAlbum?.title || album?.title || "Unknown Album",
+      albumType: canonicalAlbum?.albumType || album?.type || album?.mb_primary || null,
+      albumMbId: canonicalAlbum?.albumMbid || album?.mbid || canonicalIdentity.canonicalReleaseGroupMbid || null,
+      albumVersion: canonicalAlbum ? null : album?.version || null,
       releaseYear,
-      explicit: album.explicit === 1,
+      explicit: album?.explicit === 1,
     };
 
     const pickTrackTemplate = (numVolumes: number) =>
@@ -956,7 +1088,7 @@ export class LibraryFilesService {
       return path.join(...dirSegments);
     };
 
-    const trackTemplateForAlbum = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
+    const trackTemplateForAlbum = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album?.num_volumes || 1));
     const albumDirRelative = deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
     const albumDir = path.join(libraryRootPath, artistFolder, albumDirRelative);
 
@@ -976,12 +1108,17 @@ export class LibraryFilesService {
     }
 
     if (row.file_type === "track") {
-      if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
-      if (!track) return { expectedPath: null, reason: "track_not_found" };
+      if (!row.media_id && !canonicalIdentity.canonicalTrackMbid) return { expectedPath: null, reason: "missing_media_id" };
+      const canonicalTrack = getCanonicalTrackMetadata(canonicalIdentity.canonicalTrackMbid);
+      const track = row.media_id
+        ? db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any
+        : null;
+      if (!track && !canonicalTrack) return { expectedPath: null, reason: "track_not_found" };
 
-      const trackArtist = track.artist_id != null
+      const trackArtist = track?.artist_id != null
         ? (db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(track.artist_id) as any)
+        : canonicalTrack?.recording_artist_mbid
+          ? (db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE mbid = ?").get(canonicalTrack.recording_artist_mbid) as any)
         : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
@@ -996,15 +1133,15 @@ export class LibraryFilesService {
       });
       const trackContext: NamingContext = {
         ...albumContext,
-        trackTitle: canonicalPosition?.title || track.title,
-        trackId: String(track.id ?? row.media_id),
-        trackMbId: track.mbid || null,
-        trackVersion: canonicalPosition ? null : track.version || null,
-        explicit: track.explicit === 1,
+        trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || track?.title || "Unknown Track",
+        trackId: String(track?.id ?? row.media_id ?? canonicalTrack?.mbid ?? ""),
+        trackMbId: canonicalTrack?.mbid || track?.mbid || null,
+        trackVersion: canonicalPosition ? null : track?.version || null,
+        explicit: track?.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
-        trackNumber: canonicalPosition?.trackNumber ?? track.track_number,
-        volumeNumber: canonicalPosition?.volumeNumber ?? track.volume_number,
+        trackNumber: canonicalPosition?.trackNumber ?? canonicalTrack?.position ?? track?.track_number,
+        volumeNumber: canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position ?? track?.volume_number,
         // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,
@@ -1014,7 +1151,7 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
-      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
+      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album?.num_volumes || 1));
       const renderedTrackPath = renderRelativePath(trackTemplate, trackContext);
       const baseExpectedPath = path.join(libraryRootPath, artistFolder, `${renderedTrackPath}.${ext}`);
       const relativeTrackPath = renderAudioRelativePathForLibrary({
@@ -1036,24 +1173,37 @@ export class LibraryFilesService {
     }
 
     if (row.file_type === "lyrics") {
-      if (!row.media_id) return { expectedPath: null, reason: "missing_media_id" };
+      if (!row.media_id && !canonicalIdentity.canonicalTrackMbid) return { expectedPath: null, reason: "missing_media_id" };
       const trackFile = db.prepare(`
         SELECT extension FROM TrackFiles
-        WHERE media_id = ? AND file_type = 'track' AND library_slot = ?
+        WHERE (
+            (media_id IS NOT NULL AND media_id = ?)
+            OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
+          )
+          AND file_type = 'track' AND library_slot = ?
         ORDER BY id ASC
         LIMIT 1
-      `).get(row.media_id, row.library_slot || "stereo") as any || db.prepare(`
+      `).get(row.media_id, canonicalIdentity.canonicalTrackMbid, row.library_slot || "stereo") as any || db.prepare(`
         SELECT extension FROM TrackFiles
-        WHERE media_id = ? AND file_type = 'track'
+        WHERE (
+            (media_id IS NOT NULL AND media_id = ?)
+            OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
+          )
+          AND file_type = 'track'
         ORDER BY id ASC
         LIMIT 1
-      `).get(row.media_id) as any;
+      `).get(row.media_id, canonicalIdentity.canonicalTrackMbid) as any;
 
-      const track = db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
-      if (!track) return { expectedPath: null, reason: "track_not_found" };
+      const canonicalTrack = getCanonicalTrackMetadata(canonicalIdentity.canonicalTrackMbid);
+      const track = row.media_id
+        ? db.prepare("SELECT id, title, version, track_number, volume_number, artist_id, explicit, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as any
+        : null;
+      if (!track && !canonicalTrack) return { expectedPath: null, reason: "track_not_found" };
 
-      const trackArtist = track.artist_id != null
+      const trackArtist = track?.artist_id != null
         ? (db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(track.artist_id) as any)
+        : canonicalTrack?.recording_artist_mbid
+          ? (db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE mbid = ?").get(canonicalTrack.recording_artist_mbid) as any)
         : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
@@ -1068,15 +1218,15 @@ export class LibraryFilesService {
       });
       const trackContext: NamingContext = {
         ...albumContext,
-        trackTitle: canonicalPosition?.title || track.title,
-        trackId: String(track.id ?? row.media_id),
-        trackMbId: track.mbid || null,
-        trackVersion: canonicalPosition ? null : track.version || null,
-        explicit: track.explicit === 1,
+        trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || track?.title || "Unknown Track",
+        trackId: String(track?.id ?? row.media_id ?? canonicalTrack?.mbid ?? ""),
+        trackMbId: canonicalTrack?.mbid || track?.mbid || null,
+        trackVersion: canonicalPosition ? null : track?.version || null,
+        explicit: track?.explicit === 1,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
-        trackNumber: canonicalPosition?.trackNumber ?? track.track_number,
-        volumeNumber: canonicalPosition?.volumeNumber ?? track.volume_number,
+        trackNumber: canonicalPosition?.trackNumber ?? canonicalTrack?.position ?? track?.track_number,
+        volumeNumber: canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position ?? track?.volume_number,
         // Quality metadata from TrackFiles
         quality: row.quality || null,
         codec: row.codec || null,
@@ -1086,7 +1236,7 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
-      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album.num_volumes || 1));
+      const trackTemplate = pickTrackTemplate(Number(canonicalAlbum?.volumeCount || album?.num_volumes || 1));
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderRelativePath(trackTemplate, trackContext),
         quality: row.quality,

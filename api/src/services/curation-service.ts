@@ -5,6 +5,7 @@ import { LibraryFilesService } from "./library-files.js";
 import { buildStreamingMediaUrl } from "./download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "./musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
+import { RefreshArtistService } from "./refresh-artist-service.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -23,6 +24,7 @@ type ReleaseGroupSlotRow = {
     selected_provider_id?: string | null;
     selected_release_mbid?: string | null;
     provider_data?: string | null;
+    monitor_lock?: number | null;
 };
 
 type CurationTrack = {
@@ -321,10 +323,11 @@ export class CurationService {
         }
 
         this.ensureReleaseGroupSlotRows(releaseGroups);
+        RefreshArtistService.syncProviderSelectionsFromStoredOffers(artistMbid);
 
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         const slotRows = db.prepare(`
-            SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, provider_data
+            SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, provider_data, monitor_lock
             FROM ReleaseGroupSlots
             WHERE release_group_mbid IN (${releaseGroupMbids.map(() => "?").join(",")})
         `).all(...releaseGroupMbids) as ReleaseGroupSlotRow[];
@@ -397,6 +400,12 @@ export class CurationService {
             }
 
             for (const slot of slotRows) {
+                if (Number(slot.monitor_lock || 0) === 1) {
+                    if (Number(slot.wanted || 0) === 1) {
+                        wantedSlots++;
+                    }
+                    continue;
+                }
                 const slotName = String(slot.slot || "").toLowerCase();
                 const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
                 const monitoredContext = db.prepare(`
@@ -424,76 +433,23 @@ export class CurationService {
             }
         })();
 
-        // Synchronize albums and tracks monitor status based on release group slot wanted status
-        let albumMonitorUpdates = 0;
-        let mediaMonitorUpdates = 0;
-
-        if (identity.artistId) {
-            const artistId = identity.artistId;
-            const artistAlbumRows = db.prepare(`
-                SELECT DISTINCT id
-                FROM ProviderAlbums
-                WHERE artist_id = ?
-                UNION
-                SELECT DISTINCT album_id AS id
-                FROM ProviderAlbumArtists
-                WHERE artist_id = ?
-            `).all(artistId, artistId) as Array<{ id: string | number }>;
-
-            const wantedAlbums = db.prepare(`
-                SELECT DISTINCT slot.selected_provider_id
-                FROM ReleaseGroupSlots slot
-                JOIN ArtistReleaseGroupCuration context
-                  ON context.release_group_mbid = slot.release_group_mbid
-                WHERE context.source_artist_mbid = ?
-                  AND slot.wanted = 1
-                  AND slot.selected_provider_id IS NOT NULL
-            `).all(artistMbid) as Array<{ selected_provider_id: string }>;
-            const wantedAlbumIds = new Set(
-                wantedAlbums.flatMap((r) => String(r.selected_provider_id || "").split(";").filter(Boolean))
-            );
-
-            db.transaction(() => {
-                const updateAlbumMonitor = db.prepare(`
-                    UPDATE ProviderAlbums
-                    SET monitor = ?, monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE NULL END
-                    WHERE id = ? AND (monitor_lock = 0 OR monitor_lock IS NULL) AND COALESCE(monitor, 0) != ?
-                `);
-
-                const updateMediaMonitor = db.prepare(`
-                    UPDATE ProviderMedia
-                    SET monitor = ?, monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE NULL END
-                    WHERE album_id = ? AND type != 'Music Video' AND (monitor_lock = 0 OR monitor_lock IS NULL) AND COALESCE(monitor, 0) != ?
-                `);
-
-                for (const album of artistAlbumRows) {
-                    const albumId = String(album.id);
-                    const wanted = wantedAlbumIds.has(albumId) ? 1 : 0;
-                    const albRes = updateAlbumMonitor.run(wanted, wanted, albumId, wanted);
-                    const medRes = updateMediaMonitor.run(wanted, wanted, albumId, wanted);
-                    albumMonitorUpdates += albRes.changes;
-                    mediaMonitorUpdates += medRes.changes;
-                }
-            })();
-        }
-
         const videoWanted = curationConfig.include_videos !== false ? 1 : 0;
-        const videoMonitorUpdates = identity.artistId
+        const videoMonitorUpdates = artistMbid
             ? db.prepare(`
-                UPDATE ProviderMedia
-                SET monitor = ?
-                WHERE artist_id = ?
-                  AND type = 'Music Video'
-                  AND (monitor_lock = 0 OR monitor_lock IS NULL)
-                  AND COALESCE(monitor, 0) != ?
-            `).run(videoWanted, identity.artistId, videoWanted).changes
+                UPDATE Recordings
+                SET Monitor = ?,
+                    MonitoredAt = CASE WHEN ? = 1 THEN COALESCE(MonitoredAt, CURRENT_TIMESTAMP) ELSE MonitoredAt END
+                WHERE IsVideo = 1
+                  AND artist_mbid = ?
+                  AND (MonitorLock = 0 OR MonitorLock IS NULL)
+                  AND COALESCE(Monitor, 0) != ?
+            `).run(videoWanted, videoWanted, artistMbid, videoWanted).changes
             : 0;
 
         console.log(
             `   Release groups: ${includedReleaseGroupIds.size}/${releaseGroups.length} included, ` +
             `${wantedSlots}/${slotRows.length} slots wanted, ${slotUpdates} slot updates, ` +
-            `${albumMonitorUpdates} album monitor updates, ${mediaMonitorUpdates} track monitor updates, ` +
-            `${videoMonitorUpdates} video monitor updates.`
+            `${videoMonitorUpdates} canonical video monitor updates.`
         );
 
         return { newAlbums: slotUpdates, upgradedAlbums: 0 };
@@ -553,26 +509,18 @@ export class CurationService {
                 }
             }
 
-            const placeholders = albumIds.map(() => '?').join(', ');
-            const trackWork = db.prepare(`
-                SELECT 1
-                FROM job_queue jq
-                JOIN ProviderMedia m ON m.id = jq.ref_id
-                WHERE m.album_id IN (${placeholders})
-                  AND jq.type IN ('DownloadTrack', 'ImportDownload')
-                  AND jq.status IN ('pending', 'processing')
-                LIMIT 1
-            `).get(...albumIds);
-
-            return Boolean(trackWork);
+            return false;
         };
 
-        const hasImportedVideoFile = (mediaIdColumn: string) => `
+        const hasImportedVideoFile = (recordingMbidColumn: string, providerIdColumn: string) => `
             EXISTS (
                 SELECT 1
                 FROM TrackFiles lf
-                WHERE lf.media_id = ${mediaIdColumn}
-                  AND lf.file_type = 'video'
+                WHERE lf.file_type = 'video'
+                  AND (
+                    (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = ${recordingMbidColumn})
+                    OR (lf.provider_entity_type = 'video' AND CAST(lf.provider_id AS TEXT) = CAST(${providerIdColumn} AS TEXT))
+                  )
             )
         `;
 
@@ -754,51 +702,74 @@ export class CurationService {
             }, artistNames);
         }
 
-        // Videos are still provider-discovered, but they are queued separately from
-        // MusicBrainz release-group slots because MusicBrainz video relationships are
-        // incomplete and provider video IDs remain the actionable download resource.
+        // Videos live in canonical Recordings. ProviderItems only supplies the
+        // actionable offer ID needed by the downloader.
         if (allowVideos) {
             let videosQuery = `
                 SELECT
-                    m.id as video_id,
-                    m.title as video_title,
-                    m.quality as video_quality,
-                    m.artist_id as artist_id,
-                    ar.name as artist_name,
-                    a.cover as album_cover
-                FROM ProviderMedia m
-                LEFT JOIN Artists ar ON ar.id = m.artist_id
-                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                WHERE m.type = 'Music Video'
-                  AND m.monitor = 1
-                  AND NOT ${hasImportedVideoFile('m.id')}
+                    CAST(r.Id AS TEXT) as recording_id,
+                    r.mbid as recording_mbid,
+                    r.title as video_title,
+                    r.CoverImageUrl as cover_image_url,
+                    artist.name as artist_name,
+                    pi.provider,
+                    pi.provider_id,
+                    pi.quality as video_quality
+                FROM Recordings r
+                LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
+                LEFT JOIN Artists managed_artist ON managed_artist.mbid = r.artist_mbid
+                JOIN ProviderItems pi
+                  ON pi.entity_type = 'video'
+                 AND (
+                    pi.recording_id = r.Id
+                    OR (r.mbid IS NOT NULL AND pi.recording_mbid = r.mbid)
+                 )
+                WHERE r.IsVideo = 1
+                  AND r.Monitor = 1
+                  AND pi.provider_id IS NOT NULL
+                  AND NOT ${hasImportedVideoFile('r.mbid', 'pi.provider_id')}
             `;
             const videoParams: any[] = [];
             if (artistId) {
-                videosQuery += " AND m.artist_id = ?";
+                videosQuery += " AND managed_artist.id = ?";
                 videoParams.push(artistId);
             }
+            videosQuery += `
+                ORDER BY
+                  r.title ASC,
+                  COALESCE(pi.match_confidence, 0) DESC,
+                  CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+                  pi.updated_at DESC
+            `;
 
             const videos = db.prepare(videosQuery).all(...videoParams) as any[];
+            const queuedRecordings = new Set<string>();
             for (const video of videos) {
-                const videoId = String(video.video_id);
-                if (!videoId) continue;
-                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], videoId)) continue;
+                const recordingId = String(video.recording_id || "");
+                const providerId = String(video.provider_id || "");
+                const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
+                if (!recordingId || !providerId || queuedRecordings.has(recordingId)) continue;
+                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], queueRefId)) continue;
 
                 const artistName = video.artist_name || 'Unknown';
                 const title = video.video_title || 'Unknown Video';
+                const provider = video.provider || "tidal";
 
                 TaskQueueService.addJob(JobTypes.DownloadVideo, {
-                    url: buildStreamingMediaUrl("video", videoId),
+                    url: buildStreamingMediaUrl("video", providerId, provider as any),
                     type: 'video',
-                    provider: "tidal",
+                    provider,
+                    providerId,
+                    canonicalRecordingId: recordingId,
+                    canonicalRecordingMbid: video.recording_mbid || null,
                     title,
                     artist: artistName,
-                    cover: video.album_cover || null,
+                    cover: video.cover_image_url || null,
                     quality: video.video_quality || null,
                     artists: [artistName],
                     description: `${title} by ${artistName}`,
-                }, videoId);
+                }, queueRefId);
+                queuedRecordings.add(recordingId);
                 videoJobs++;
             }
         }

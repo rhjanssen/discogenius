@@ -37,11 +37,38 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-function insertRelease(mbid: string, trackCount: number): void {
+type ReleaseInput = {
+  status?: string | null;
+  country?: string | null;
+  date?: string | null;
+  barcode?: string | null;
+  mediaCount?: number | null;
+  format?: string | null;
+};
+
+function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {}): void {
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
-    VALUES (?, 'group-mbid', 'artist-mbid', 'Album', ?)
-  `).run(mbid, trackCount);
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title,
+      status, country, date, barcode, media_count, track_count
+    )
+    VALUES (?, 'group-mbid', 'artist-mbid', 'Album', ?, ?, ?, ?, ?, ?)
+  `).run(
+    mbid,
+    input.status ?? null,
+    input.country ?? null,
+    input.date ?? null,
+    input.barcode ?? null,
+    input.mediaCount ?? 1,
+    trackCount,
+  );
+
+  if (input.format) {
+    dbModule.db.prepare(`
+      INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count)
+      VALUES (?, 1, ?, ?)
+    `).run(mbid, input.format, trackCount);
+  }
 }
 
 test("representative release defaults to the MusicBrainz release with the most tracks", () => {
@@ -54,7 +81,7 @@ test("representative release defaults to the MusicBrainz release with the most t
   assert.equal(selected?.mbid, "deluxe-release");
 });
 
-test("representative release preserves a release already represented by imported files", () => {
+test("representative release does not let imported files override the MusicBrainz track-count choice", () => {
   insertRelease("standard-release", 12);
   insertRelease("deluxe-release", 18);
   dbModule.db.prepare(`
@@ -71,7 +98,29 @@ test("representative release preserves a release already represented by imported
   const selected = selectionModule.MusicBrainzReleaseSelectionService
     .selectRepresentativeRelease("group-mbid");
 
+  assert.equal(selected?.mbid, "deluxe-release");
+  assert.equal(selected?.imported_file_count, 0);
+});
+
+test("local import release follows Lidarr by preferring releases with imported files first", () => {
+  insertRelease("standard-release", 12);
+  insertRelease("deluxe-release", 18);
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_path, relative_path, library_root, filename, extension,
+      file_type, canonical_release_mbid
+    )
+    VALUES (
+      'artist-id', '/library/standard.flac', 'standard.flac', 'stereo',
+      'standard.flac', '.flac', 'track', 'standard-release'
+    )
+  `).run();
+
+  const selected = selectionModule.MusicBrainzReleaseSelectionService
+    .selectLocalImportRelease("group-mbid");
+
   assert.equal(selected?.mbid, "standard-release");
+  assert.equal(selected?.imported_file_count, 1);
 });
 
 test("representative release applies the Lidarr-like ranking only within provider-matched releases", () => {
@@ -84,4 +133,70 @@ test("representative release applies the Lidarr-like ranking only within provide
     });
 
   assert.equal(selected?.mbid, "standard-release");
+});
+
+test("representative release prefers official digital worldwide releases when track counts tie", () => {
+  insertRelease("local-vinyl-release", 12, {
+    status: "Official",
+    country: "US",
+    date: "2020-01-01",
+    barcode: "123",
+    format: "Vinyl",
+  });
+  insertRelease("worldwide-digital-release", 12, {
+    status: "Official",
+    country: "XW",
+    date: "2020-01-01",
+    barcode: "456",
+    format: "Digital Media",
+  });
+
+  const selected = selectionModule.MusicBrainzReleaseSelectionService
+    .selectRepresentativeRelease("group-mbid");
+
+  assert.equal(selected?.mbid, "worldwide-digital-release");
+});
+
+test("representative release recognizes JSON-stored worldwide country codes", () => {
+  insertRelease("local-digital-release", 12, {
+    status: "Official",
+    country: JSON.stringify(["US"]),
+    date: "2020-01-01",
+    barcode: "123",
+    format: "Digital Media",
+  });
+  insertRelease("worldwide-digital-release", 12, {
+    status: "Official",
+    country: JSON.stringify(["XW"]),
+    date: "2020-01-01",
+    barcode: "456",
+    format: "Digital Media",
+  });
+
+  const selected = selectionModule.MusicBrainzReleaseSelectionService
+    .selectRepresentativeRelease("group-mbid");
+
+  assert.equal(selected?.mbid, "worldwide-digital-release");
+});
+
+test("representative release uses earliest dated release and stable mbid ordering as final tie breakers", () => {
+  insertRelease("later-release", 12, {
+    status: "Official",
+    country: "XW",
+    date: "2020-02-01",
+    barcode: "123",
+    format: "Digital Media",
+  });
+  insertRelease("earlier-release", 12, {
+    status: "Official",
+    country: "XW",
+    date: "2020-01-01",
+    barcode: "456",
+    format: "Digital Media",
+  });
+
+  const selected = selectionModule.MusicBrainzReleaseSelectionService
+    .selectRepresentativeRelease("group-mbid");
+
+  assert.equal(selected?.mbid, "earlier-release");
 });

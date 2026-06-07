@@ -21,6 +21,13 @@ before(async () => {
 
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM job_queue").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems").run();
+    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare("DELETE FROM Tracks").run();
+    dbModule.db.prepare("DELETE FROM Recordings").run();
+    dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+    dbModule.db.prepare("DELETE FROM Albums").run();
+    dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -229,6 +236,157 @@ test("download queue query surfaces pending, processing, and history items with 
     assert.equal(history.items[0]?.id, completedTrackId);
     assert.equal(history.items[0]?.title, "Completed Track");
     assert.equal(history.items[0]?.type, "track");
+});
+
+test("download queue query resolves canonical release-group provider offers without legacy provider catalog rows", () => {
+    const { db } = dbModule;
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-bastille", "Bastille");
+    db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+        VALUES (?, ?, ?, ?, ?)
+    `).run("rg-gmtf", "artist-bastille", "Give Me the Future", "album", "2022-02-04");
+    db.prepare(`
+        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run("release-gmtf", "rg-gmtf", "artist-bastille", "Give Me the Future", 13, 1);
+    db.prepare(`
+        INSERT INTO ProviderItems (
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            title, quality, asset_id, match_status, match_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "album",
+        "tidal-gmtf-expanded",
+        "artist-bastille",
+        "rg-gmtf",
+        "release-gmtf",
+        "Give Me The Future + Dreams Of The Past",
+        "HIRES_LOSSLESS",
+        "provider-cover",
+        "probable",
+        0.9,
+    );
+    db.prepare(`
+        INSERT INTO ReleaseGroupSlots (
+            artist_mbid, release_group_mbid, slot, wanted,
+            selected_provider, selected_provider_id, selected_release_mbid, quality,
+            match_status, match_confidence, provider_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "artist-bastille",
+        "rg-gmtf",
+        "stereo",
+        1,
+        "tidal",
+        "tidal-gmtf-expanded",
+        "release-gmtf",
+        "HIRES_LOSSLESS",
+        "probable",
+        0.9,
+        JSON.stringify({
+            title: "Give Me The Future + Dreams Of The Past",
+            cover: "provider-cover",
+            quality: "HIRES_LOSSLESS",
+            artist: { name: "Bastille" },
+        }),
+    );
+
+    const jobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        {
+            type: "album",
+            provider: "tidal",
+            providerId: "tidal-gmtf-expanded",
+            releaseGroupMbid: "rg-gmtf",
+            slot: "stereo",
+        },
+        "rg-gmtf:stereo",
+    );
+
+    const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+    assert.equal(live.total, 1);
+    assert.equal(live.items[0]?.id, jobId);
+    assert.equal(live.items[0]?.title, "Give Me the Future");
+    assert.equal(live.items[0]?.artist, "Bastille");
+    assert.equal(live.items[0]?.album_id, "rg-gmtf");
+    assert.equal(live.items[0]?.album_title, "Give Me the Future");
+    assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
+    assert.equal(live.items[0]?.cover, "provider-cover");
+
+    const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
+        artistId: "artist-bastille",
+        albumIds: ["rg-gmtf"],
+        providerIds: ["tidal-gmtf-expanded"],
+    });
+    assert.deepEqual(details.map((item) => item.id), [jobId]);
+});
+
+test("download queue query resolves canonical track provider offers without ProviderMedia rows", () => {
+    const { db } = dbModule;
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-track", "Track Artist");
+    db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+        VALUES (?, ?, ?, ?, ?)
+    `).run("rg-track", "artist-track", "Canonical Album", "album", "2024-01-01");
+    db.prepare(`
+        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run("release-track", "rg-track", "artist-track", "Canonical Album", 1, 1);
+    db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
+        .run("recording-track", "Canonical Recording");
+    db.prepare(`
+        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run("track-mbid-1", "release-track", "recording-track", "Canonical Track", 1, 1);
+    db.prepare(`
+        INSERT INTO ProviderItems (
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            track_mbid, recording_mbid, title, version, quality, asset_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "track",
+        "tidal-track-1",
+        "artist-track",
+        "rg-track",
+        "release-track",
+        "track-mbid-1",
+        "recording-track",
+        "Canonical Track",
+        "Dolby Atmos",
+        "DOLBY_ATMOS",
+        "track-cover",
+    );
+
+    const jobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadTrack,
+        {
+            type: "track",
+            provider: "tidal",
+            providerId: "tidal-track-1",
+        },
+        "tidal-track-1",
+    );
+
+    const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+    assert.equal(live.total, 1);
+    assert.equal(live.items[0]?.id, jobId);
+    assert.equal(live.items[0]?.title, "Canonical Track");
+    assert.equal(live.items[0]?.artist, "Track Artist");
+    assert.equal(live.items[0]?.album_id, "rg-track");
+    assert.equal(live.items[0]?.album_title, "Canonical Album");
+    assert.equal(live.items[0]?.quality, "DOLBY_ATMOS");
+    assert.equal(live.items[0]?.cover, "track-cover");
+
+    const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
+        artistId: "artist-track",
+        albumIds: ["rg-track"],
+        providerIds: ["tidal-track-1"],
+    });
+    assert.deepEqual(details.map((item) => item.id), [jobId]);
 });
 
 test("download queue history collapses completed download and import jobs into one logical item", () => {

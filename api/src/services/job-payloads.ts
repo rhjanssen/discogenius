@@ -56,6 +56,9 @@ export interface QueuePayloadCommon {
   providerId?: string;
   provider?: string;
   releaseGroupMbid?: string;
+  releaseMbid?: string | null;
+  canonicalTrackId?: string | null;
+  canonicalRecordingId?: string | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
   type?: string;

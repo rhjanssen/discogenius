@@ -39,6 +39,15 @@ type NormalizedQueueDetailsFilters = {
   providerIds: string[];
 };
 
+type QueueMetadata = {
+  title?: string | null;
+  artist?: string | null;
+  cover?: string | null;
+  albumId?: string | null;
+  albumTitle?: string | null;
+  quality?: string | null;
+};
+
 const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
@@ -116,6 +125,11 @@ function getJobAlbumId(job: QueueJobRow): string | null {
     return null;
   }
 
+  const providerItemAlbumId = getProviderItemAlbumId(contentType, providerId);
+  if (providerItemAlbumId) {
+    return providerItemAlbumId;
+  }
+
   if (contentType === "album") {
     return providerId;
   }
@@ -150,6 +164,11 @@ function getJobArtistId(job: QueueJobRow): string | null {
     return null;
   }
 
+  const providerItemArtistId = getProviderItemArtistId(contentType, providerId);
+  if (providerItemArtistId) {
+    return providerItemArtistId;
+  }
+
   if (contentType === "album") {
     const row = db.prepare(`
       SELECT artist_id
@@ -171,6 +190,256 @@ function getJobArtistId(job: QueueJobRow): string | null {
   }
 
   return null;
+}
+
+function getProviderItemEntityTypes(contentType: QueueItemContract["type"]): string[] {
+  if (contentType === "album") return ["album"];
+  if (contentType === "video") return ["video"];
+  return ["track"];
+}
+
+function getProviderItemAlbumId(contentType: QueueItemContract["type"], providerId: string): string | null {
+  const entityTypes = getProviderItemEntityTypes(contentType);
+  const row = db.prepare(`
+    SELECT release_group_mbid, release_mbid
+    FROM ProviderItems
+    WHERE provider_id = ?
+      AND entity_type IN (${placeholders(entityTypes)})
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(providerId, ...entityTypes) as {
+    release_group_mbid?: string | null;
+    release_mbid?: string | null;
+  } | undefined;
+
+  return getOptionalString(row?.release_group_mbid) ?? getOptionalString(row?.release_mbid);
+}
+
+function getProviderItemArtistId(contentType: QueueItemContract["type"], providerId: string): string | null {
+  const entityTypes = getProviderItemEntityTypes(contentType);
+  const row = db.prepare(`
+    SELECT artist_mbid
+    FROM ProviderItems
+    WHERE provider_id = ?
+      AND entity_type IN (${placeholders(entityTypes)})
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(providerId, ...entityTypes) as { artist_mbid?: string | null } | undefined;
+
+  return getOptionalString(row?.artist_mbid);
+}
+
+function parseProviderData(value: unknown): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value !== "string") {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function pickNestedString(record: Record<string, unknown>, key: string): string | null {
+  return getOptionalString(record[key]);
+}
+
+function resolveCanonicalAlbumMetadata(input: {
+  releaseGroupMbid?: string | null;
+  providerId?: string | null;
+  slot?: string | null;
+}): QueueMetadata | null {
+  const releaseGroupMbid = getOptionalString(input.releaseGroupMbid);
+  const providerId = getOptionalString(input.providerId);
+  if (!releaseGroupMbid && !providerId) {
+    return null;
+  }
+
+  const row = db.prepare(`
+    SELECT
+      rg.mbid AS release_group_mbid,
+      rg.title AS release_group_title,
+      COALESCE(artist.name, local_artist.name) AS artist_name,
+      slot.quality AS slot_quality,
+      slot.provider_data AS slot_provider_data,
+      provider_item.title AS provider_title,
+      provider_item.quality AS provider_quality,
+      provider_item.asset_id AS provider_asset_id,
+      provider_item.data AS provider_data
+    FROM Albums rg
+    LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
+    LEFT JOIN Artists local_artist ON local_artist.mbid = rg.artist_mbid
+    LEFT JOIN ReleaseGroupSlots slot
+      ON slot.release_group_mbid = rg.mbid
+     AND (? IS NULL OR slot.slot = ?)
+     AND (
+       ? IS NULL
+       OR slot.selected_provider_id = ?
+       OR slot.selected_provider_id LIKE ? || ';%'
+       OR slot.selected_provider_id LIKE '%;' || ? || ';%'
+       OR slot.selected_provider_id LIKE '%;' || ?
+     )
+    LEFT JOIN ProviderItems provider_item
+      ON provider_item.rowid = (
+        SELECT candidate.rowid
+        FROM ProviderItems candidate
+        WHERE candidate.entity_type = 'album'
+          AND (
+            (? IS NOT NULL AND candidate.provider_id = ?)
+            OR candidate.release_group_mbid = rg.mbid
+          )
+        ORDER BY
+          CASE WHEN ? IS NOT NULL AND candidate.provider_id = ? THEN 0 ELSE 1 END,
+          CASE candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+          candidate.updated_at DESC,
+          candidate.provider_id ASC
+        LIMIT 1
+      )
+    WHERE (? IS NOT NULL AND rg.mbid = ?)
+       OR (? IS NOT NULL AND provider_item.provider_id = ?)
+    ORDER BY CASE WHEN ? IS NOT NULL AND rg.mbid = ? THEN 0 ELSE 1 END
+    LIMIT 1
+  `).get(
+    input.slot ?? null,
+    input.slot ?? null,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    providerId,
+    releaseGroupMbid,
+    releaseGroupMbid,
+    providerId,
+    providerId,
+    releaseGroupMbid,
+    releaseGroupMbid,
+  ) as {
+    release_group_mbid?: string | null;
+    release_group_title?: string | null;
+    artist_name?: string | null;
+    slot_quality?: string | null;
+    slot_provider_data?: string | null;
+    provider_title?: string | null;
+    provider_quality?: string | null;
+    provider_asset_id?: string | null;
+    provider_data?: string | null;
+  } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const slotData = parseProviderData(row.slot_provider_data);
+  const providerData = parseProviderData(row.provider_data);
+  const slotArtist = parseProviderData(slotData.artist);
+  const providerArtist = parseProviderData(providerData.artist);
+
+  return {
+    title: row.release_group_title ?? row.provider_title ?? pickNestedString(slotData, "title"),
+    artist: row.artist_name
+      ?? pickNestedString(slotArtist, "name")
+      ?? pickNestedString(providerArtist, "name"),
+    cover: row.provider_asset_id
+      ?? pickNestedString(slotData, "cover")
+      ?? pickNestedString(providerData, "cover")
+      ?? pickNestedString(providerData, "image_id")
+      ?? pickNestedString(providerData, "imageId"),
+    albumId: row.release_group_mbid ?? null,
+    albumTitle: row.release_group_title ?? null,
+    quality: row.slot_quality ?? row.provider_quality ?? pickNestedString(slotData, "quality") ?? pickNestedString(providerData, "quality"),
+  };
+}
+
+function resolveProviderItemMetadata(input: {
+  contentType: QueueItemContract["type"];
+  providerId?: string | null;
+}): QueueMetadata | null {
+  const providerId = getOptionalString(input.providerId);
+  if (!providerId) {
+    return null;
+  }
+
+  const entityTypes = getProviderItemEntityTypes(input.contentType);
+  const row = db.prepare(`
+    SELECT
+      provider_item.entity_type,
+      provider_item.title,
+      provider_item.version,
+      provider_item.quality,
+      provider_item.asset_id,
+      provider_item.data,
+      provider_item.release_group_mbid,
+      provider_item.release_mbid,
+      release_group.title AS release_group_title,
+      COALESCE(artist.name, local_artist.name) AS artist_name,
+      track.title AS track_title,
+      recording.title AS recording_title
+    FROM ProviderItems provider_item
+    LEFT JOIN Albums release_group ON release_group.mbid = provider_item.release_group_mbid
+    LEFT JOIN ArtistMetadata artist ON artist.mbid = provider_item.artist_mbid
+    LEFT JOIN Artists local_artist ON local_artist.mbid = provider_item.artist_mbid
+    LEFT JOIN Tracks track ON track.mbid = provider_item.track_mbid
+    LEFT JOIN Recordings recording
+      ON recording.Id = provider_item.recording_id
+       OR recording.mbid = provider_item.recording_mbid
+    WHERE provider_item.provider_id = ?
+      AND provider_item.entity_type IN (${placeholders(entityTypes)})
+    ORDER BY provider_item.updated_at DESC
+    LIMIT 1
+  `).get(providerId, ...entityTypes) as {
+    entity_type?: string | null;
+    title?: string | null;
+    version?: string | null;
+    quality?: string | null;
+    asset_id?: string | null;
+    data?: string | null;
+    release_group_mbid?: string | null;
+    release_mbid?: string | null;
+    release_group_title?: string | null;
+    artist_name?: string | null;
+    track_title?: string | null;
+    recording_title?: string | null;
+  } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const data = parseProviderData(row.data);
+  const dataArtist = parseProviderData(data.artist);
+  const canonicalTitle = input.contentType === "album"
+    ? row.release_group_title
+    : row.track_title ?? row.recording_title;
+  const providerTitle = row.title
+    ? row.version && !row.title.toLowerCase().includes(row.version.toLowerCase())
+      ? `${row.title} (${row.version})`
+      : row.title
+    : null;
+
+  return {
+    title: canonicalTitle ?? providerTitle ?? pickNestedString(data, "title"),
+    artist: row.artist_name ?? pickNestedString(dataArtist, "name") ?? pickNestedString(data, "artist_name"),
+    cover: row.asset_id ?? pickNestedString(data, "cover") ?? pickNestedString(data, "image_id") ?? pickNestedString(data, "imageId"),
+    albumId: row.release_group_mbid ?? row.release_mbid ?? null,
+    albumTitle: row.release_group_title ?? null,
+    quality: row.quality ?? pickNestedString(data, "quality"),
+  };
 }
 
 function normalizeQueueDetailsFilters(filters: QueueDetailsFilters): NormalizedQueueDetailsFilters {
@@ -477,6 +746,25 @@ export class DownloadQueueQueryService {
     const slot = getOptionalString(job.payload?.slot)
       ?? getOptionalString(job.payload?.librarySlot)
       ?? null;
+
+    const canonicalMetadata = resolveCanonicalAlbumMetadata({
+      releaseGroupMbid: albumId,
+      providerId,
+      slot,
+    });
+    const providerItemMetadata = resolveProviderItemMetadata({
+      contentType,
+      providerId,
+    });
+    const offerMetadata = canonicalMetadata ?? providerItemMetadata;
+    if (offerMetadata) {
+      title ||= offerMetadata.title ?? undefined;
+      artist ||= offerMetadata.artist ?? undefined;
+      if (cover === null) cover = offerMetadata.cover ?? null;
+      albumId ||= offerMetadata.albumId ?? null;
+      albumTitle ||= offerMetadata.albumTitle ?? null;
+      quality ||= offerMetadata.quality ?? null;
+    }
 
     if (providerId && (!title || !artist || cover === null || albumId === null || albumTitle === null || quality === null)) {
       try {

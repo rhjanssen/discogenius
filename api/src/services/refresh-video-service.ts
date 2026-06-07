@@ -1,12 +1,27 @@
 import { db } from "../database.js";
 import type { ScanOptions } from "./scan-types.js";
 
+type AudioRecordingVideoMatch = {
+    id: number;
+    mbid: string | null;
+    confidence: number;
+    method: string;
+    evidence: Record<string, unknown>;
+};
+
 function normalizeVideoText(value: unknown): string {
     return String(value || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+function normalizeVideoComparableTitle(value: unknown): string {
+    return normalizeVideoText(value)
+        .replace(/\b(official|music|lyric|lyrics|audio|visualizer|visualiser|video|hd|hq|4k|remaster(?:ed)?|live|performance)\b/g, " ")
+        .replace(/\s+/g, " ")
         .trim();
 }
 
@@ -84,17 +99,6 @@ function durationMs(durationSeconds: unknown): number | null {
     return Math.round(duration * 1000);
 }
 
-function serializeArtistCredits(artists: unknown): string | null {
-    if (!Array.isArray(artists) || artists.length === 0) {
-        return null;
-    }
-
-    return JSON.stringify(artists.map((artist: any) => ({
-        id: nullableText(artist?.id ?? artist?.providerId),
-        name: nullableText(artist?.name),
-    })).filter((artist) => artist.id || artist.name));
-}
-
 function getArtistMusicBrainzId(artistId: string): string | null {
     const row = db.prepare("SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = CAST(? AS TEXT) LIMIT 1")
         .get(artistId) as { mbid?: string | null } | undefined;
@@ -125,6 +129,144 @@ function getRecordingIdByForeignId(recordingMbid: string | null): number | null 
         LIMIT 1
     `).get(recordingMbid, recordingMbid) as { Id?: number | null } | undefined;
     return row?.Id == null ? null : Number(row.Id);
+}
+
+function parseIsrcValues(value: unknown): string[] {
+    const values = new Set<string>();
+    const add = (candidate: unknown) => {
+        const normalized = String(candidate ?? "").trim().toUpperCase();
+        if (/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(normalized)) {
+            values.add(normalized);
+        }
+    };
+
+    add(value);
+    if (typeof value === "string") {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+                parsed.forEach(add);
+            }
+        } catch {
+            value.split(/[,\s;|]+/).forEach(add);
+        }
+    } else if (Array.isArray(value)) {
+        value.forEach(add);
+    }
+
+    return [...values];
+}
+
+function findRelatedAudioRecordingForVideo(video: any, artistMbid: string | null): AudioRecordingVideoMatch | null {
+    const normalizedArtistMbid = nullableText(artistMbid);
+    const videoTitle = normalizeVideoComparableTitle(video.title);
+    if (!normalizedArtistMbid || !videoTitle) {
+        return null;
+    }
+
+    const videoDurationMs = durationMs(video.duration);
+    const videoIsrcs = parseIsrcValues(video.isrc ?? video.isrcs);
+    const rows = db.prepare(`
+        SELECT Id, mbid, title, length_ms, isrcs
+        FROM Recordings
+        WHERE IsVideo = 0
+          AND artist_mbid = ?
+    `).all(normalizedArtistMbid) as Array<{
+        Id: number;
+        mbid?: string | null;
+        title?: string | null;
+        length_ms?: number | null;
+        isrcs?: string | null;
+    }>;
+
+    let best: AudioRecordingVideoMatch | null = null;
+    for (const row of rows) {
+        const audioTitle = normalizeVideoComparableTitle(row.title);
+        if (!audioTitle) {
+            continue;
+        }
+
+        const audioIsrcs = parseIsrcValues(row.isrcs);
+        const isrcOverlap = videoIsrcs.some((isrc) => audioIsrcs.includes(isrc));
+        const exactTitle = videoTitle === audioTitle;
+        const containedTitle = videoTitle.includes(audioTitle) || audioTitle.includes(videoTitle);
+        if (!isrcOverlap && !exactTitle && !containedTitle) {
+            continue;
+        }
+
+        const audioDurationMs = Number(row.length_ms || 0);
+        const durationDiffMs = videoDurationMs && audioDurationMs ? Math.abs(videoDurationMs - audioDurationMs) : null;
+        const durationCompatible = durationDiffMs == null || durationDiffMs <= 45_000;
+        if (!isrcOverlap && !durationCompatible) {
+            continue;
+        }
+
+        const confidence = isrcOverlap
+            ? 0.95
+            : exactTitle && durationCompatible
+                ? 0.84
+                : containedTitle && durationCompatible
+                    ? 0.72
+                    : 0.62;
+        if (!best || confidence > best.confidence) {
+            best = {
+                id: Number(row.Id),
+                mbid: nullableText(row.mbid),
+                confidence,
+                method: isrcOverlap
+                    ? "provider-video-isrc-recording"
+                    : exactTitle
+                        ? "provider-video-title-recording"
+                        : "provider-video-contained-title-recording",
+                evidence: {
+                    videoTitle: video.title ?? null,
+                    normalizedVideoTitle: videoTitle,
+                    audioTitle: row.title ?? null,
+                    normalizedAudioTitle: audioTitle,
+                    isrcOverlap,
+                    durationDiffMs,
+                },
+            };
+        }
+    }
+
+    return best;
+}
+
+function upsertProviderVideoAudioRelation(input: {
+    videoRecordingId: number | null;
+    videoRecordingMbid: string | null;
+    audioMatch: AudioRecordingVideoMatch | null;
+    provider: string;
+}): void {
+    if (!input.videoRecordingId || !input.audioMatch) {
+        return;
+    }
+
+    db.prepare(`
+        INSERT INTO RecordingRelations (
+            SourceRecordingId, TargetRecordingId, SourceForeignRecordingId,
+            TargetForeignRecordingId, RelationType, Source, Confidence, Data, UpdatedAt
+        ) VALUES (?, ?, ?, ?, 'provider_video_for', ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(SourceRecordingId, TargetRecordingId, RelationType) DO UPDATE SET
+            SourceForeignRecordingId = COALESCE(excluded.SourceForeignRecordingId, RecordingRelations.SourceForeignRecordingId),
+            TargetForeignRecordingId = COALESCE(excluded.TargetForeignRecordingId, RecordingRelations.TargetForeignRecordingId),
+            Source = excluded.Source,
+            Confidence = excluded.Confidence,
+            Data = excluded.Data,
+            UpdatedAt = CURRENT_TIMESTAMP
+    `).run(
+        input.videoRecordingId,
+        input.audioMatch.id,
+        input.videoRecordingMbid,
+        input.audioMatch.mbid,
+        input.provider,
+        input.audioMatch.confidence,
+        JSON.stringify({
+            method: input.audioMatch.method,
+            evidence: input.audioMatch.evidence,
+        }),
+    );
 }
 
 function ensureProviderVideoRecording(input: {
@@ -231,33 +373,19 @@ function ensureProviderVideoRecording(input: {
 
 export class RefreshVideoService {
     static upsertArtistVideos(artistId: string, videos: any[], options: ScanOptions = {}): void {
-        const forceUpdate = options.forceUpdate === true;
-        const videoInsert = db.prepare(`
-            INSERT INTO ProviderMedia (
-                id, artist_id, album_id, title, duration, release_date, version,
-                explicit, type, quality, popularity, cover, credits, monitor, mbid, last_scanned
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        `);
-
-        const videoUpdate = db.prepare(`
-            UPDATE ProviderMedia SET
-                title = ?, duration = ?, release_date = ?, version = ?,
-                explicit = ?, quality = ?, popularity = ?,
-                ${forceUpdate ? "cover = ?" : "cover = COALESCE(?, cover)"},
-                credits = COALESCE(?, credits),
-                mbid = ?,
-                last_scanned = CURRENT_TIMESTAMP
-            WHERE id = ? AND type = 'Music Video'
-        `);
-
-        const selectVideo = db.prepare(
-            "SELECT id, monitor, monitor_lock FROM ProviderMedia WHERE id = ? AND type = 'Music Video'",
-        );
         const selectProviderItem = db.prepare(`
             SELECT recording_id
             FROM ProviderItems
             WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
             LIMIT 1
+        `);
+        const updateRecordingState = db.prepare(`
+            UPDATE Recordings
+            SET
+                ReleaseDate = COALESCE(?, ReleaseDate),
+                CoverImageId = COALESCE(?, CoverImageId),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE Id = ?
         `);
         const upsertProviderItem = db.prepare(`
             INSERT INTO ProviderItems (
@@ -288,7 +416,6 @@ export class RefreshVideoService {
 
         db.transaction(() => {
             for (const video of videos) {
-                const exists = selectVideo.get(video.provider_id) as any;
                 const provider = String(video.provider || video._provider || "tidal");
                 const existingProviderItem = selectProviderItem.get(provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
                 const identity = buildVideoIdentity(video);
@@ -300,46 +427,22 @@ export class RefreshVideoService {
                     existingRecordingId: existingProviderItem?.recording_id ?? null,
                 });
 
-                let shouldMonitor = exists?.monitor || 0;
-                if (exists?.monitor_lock) {
-                    shouldMonitor = exists.monitor;
-                }
-
                 const quality = video.quality || "MP4_1080P";
                 const cover = video.image_id || null;
-                const credits = serializeArtistCredits(video.artists);
+                const audioMatch = findRelatedAudioRecordingForVideo(video, artistMbid);
 
-                if (!exists) {
-                    videoInsert.run(
-                        video.provider_id,
-                        artistId,
-                        video.album_id || null,
-                        video.title,
-                        video.duration,
-                        video.release_date,
-                        video.version || null,
-                        video.explicit ? 1 : 0,
-                        quality,
-                        video.popularity || 0,
-                        cover,
-                        credits,
-                        shouldMonitor,
-                        recordingMbid,
+                if (recordingId) {
+                    updateRecordingState.run(
+                        nullableText(video.release_date),
+                        nullableText(cover),
+                        recordingId,
                     );
-                } else {
-                    videoUpdate.run(
-                        video.title,
-                        video.duration,
-                        video.release_date,
-                        video.version || null,
-                        video.explicit ? 1 : 0,
-                        quality,
-                        video.popularity || 0,
-                        cover,
-                        credits,
-                        recordingMbid,
-                        video.provider_id,
-                    );
+                    upsertProviderVideoAudioRelation({
+                        videoRecordingId: recordingId,
+                        videoRecordingMbid: recordingMbid,
+                        audioMatch,
+                        provider,
+                    });
                 }
 
                 upsertProviderItem.run(

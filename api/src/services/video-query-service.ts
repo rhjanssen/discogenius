@@ -1,16 +1,6 @@
 import { db } from "../database.js";
-import { getMediaDownloadStateMap } from "./download-state.js";
 import type { VideoContract, VideosListResponseContract } from "../contracts/catalog.js";
 import type { VideoDetailContract } from "../contracts/media.js";
-
-const videoDownloadedPredicate = `
-  EXISTS (
-    SELECT 1
-    FROM TrackFiles lf
-    WHERE lf.media_id = media.id
-      AND lf.file_type = 'video'
-  )
-`;
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -61,20 +51,6 @@ function normalizeSortField(value: string | undefined): SortableVideoField {
       return value;
     default:
       return "releaseDate";
-  }
-}
-
-function getVideoOrderBy(sort: SortableVideoField, dir: "ASC" | "DESC"): string {
-  switch (sort) {
-    case "name":
-      return ` ORDER BY media.title ${dir}, media.id ASC`;
-    case "popularity":
-      return ` ORDER BY COALESCE(media.popularity, 0) ${dir}, media.id ASC`;
-    case "scannedAt":
-      return ` ORDER BY (media.last_scanned IS NULL) ASC, media.last_scanned ${dir}, media.id ASC`;
-    case "releaseDate":
-    default:
-      return ` ORDER BY (media.release_date IS NULL) ASC, media.release_date ${dir}, media.id ASC`;
   }
 }
 
@@ -129,94 +105,153 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
   };
 }
 
-function getVideoSelectSql(whereClause: string): string {
+function getCanonicalVideoSelectSql(whereClause: string): string {
   return `
     SELECT
-      media.*,
-      COALESCE((
-        SELECT lf.quality
+      CAST(recording.Id AS TEXT) AS id,
+      recording.title AS title,
+      COALESCE(
+        CASE
+          WHEN COALESCE(recording.length_ms, 0) > 0
+          THEN CAST(ROUND(recording.length_ms / 1000.0) AS INT)
+          ELSE NULL
+        END,
+        provider_item.duration,
+        0
+      ) AS duration,
+      COALESCE(recording.ReleaseDate, provider_item.release_date) AS release_date,
+      provider_item.version AS version,
+      provider_item.explicit AS explicit,
+      provider_item.quality AS quality,
+      provider_item.quality AS current_quality,
+      COALESCE(recording.CoverImageId, provider_item.asset_id) AS cover,
+      recording.CoverImageUrl AS cover_art_url,
+      provider_item.provider_url AS url,
+      NULL AS path,
+      CAST(COALESCE(recording.ArtistMetadataId, artist.Id) AS TEXT) AS artist_id,
+      artist.name AS artist_name,
+      COALESCE(recording.Monitor, 0) AS monitor,
+      COALESCE(recording.MonitorLock, 0) AS monitor_lock,
+      recording.updated_at AS created_at,
+      recording.updated_at AS updated_at,
+      recording.updated_at AS last_scanned,
+      NULL AS popularity,
+      CASE WHEN EXISTS (
+        SELECT 1
         FROM TrackFiles lf
-        WHERE lf.media_id = media.id
-          AND lf.file_type = 'video'
-        ORDER BY lf.verified_at DESC, lf.id DESC
+        WHERE lf.file_type = 'video'
+          AND (
+            (recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = recording.mbid)
+            OR (provider_item.provider_id IS NOT NULL AND CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT))
+          )
+      ) THEN 1 ELSE 0 END AS downloaded
+    FROM Recordings recording
+    LEFT JOIN ArtistMetadata artist
+      ON artist.Id = recording.ArtistMetadataId
+      OR (recording.artist_mbid IS NOT NULL AND artist.mbid = recording.artist_mbid)
+    LEFT JOIN ProviderItems provider_item
+      ON provider_item.rowid = (
+        SELECT candidate.rowid
+        FROM ProviderItems candidate
+        WHERE candidate.entity_type = 'video'
+          AND (
+            candidate.recording_id = recording.Id
+            OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
+          )
+        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
         LIMIT 1
-      ), media.quality) as current_quality,
-      artists.name as artist_name
-    FROM ProviderMedia media
-    LEFT JOIN Artists artists ON media.artist_id = artists.id
+      )
     ${whereClause}
   `;
 }
 
-export function listVideos(input: ListVideosQuery): VideosListResponseContract {
-  const where: string[] = ["media.type = 'Music Video'"];
+function getCanonicalVideoOrderBy(sort: SortableVideoField, dir: "ASC" | "DESC"): string {
+  switch (sort) {
+    case "name":
+      return ` ORDER BY canonical_video.title ${dir}, canonical_video.id ASC`;
+    case "popularity":
+      return ` ORDER BY COALESCE(canonical_video.popularity, 0) ${dir}, canonical_video.id ASC`;
+    case "scannedAt":
+      return ` ORDER BY (canonical_video.updated_at IS NULL) ASC, canonical_video.updated_at ${dir}, canonical_video.id ASC`;
+    case "releaseDate":
+    default:
+      return ` ORDER BY (canonical_video.release_date IS NULL) ASC, canonical_video.release_date ${dir}, canonical_video.id ASC`;
+  }
+}
+
+function buildCanonicalVideoWhere(input: ListVideosQuery): {
+  whereClause: string;
+  params: Array<string | number>;
+} {
+  const where: string[] = ["recording.IsVideo = 1"];
   const params: Array<string | number> = [];
-  const countParams: Array<string | number> = [];
 
   if (input.search) {
     const searchParam = `%${input.search}%`;
-    where.push("(media.title LIKE ? OR artists.name LIKE ?)");
+    where.push("(recording.title LIKE ? OR artist.name LIKE ?)");
     params.push(searchParam, searchParam);
-    countParams.push(searchParam, searchParam);
   }
 
   if (input.monitored !== undefined) {
-    where.push("media.monitor = ?");
-    const monitoredValue = input.monitored ? 1 : 0;
-    params.push(monitoredValue);
-    countParams.push(monitoredValue);
-  }
-
-  if (input.downloaded !== undefined) {
-    where.push(input.downloaded ? videoDownloadedPredicate : `NOT (${videoDownloadedPredicate})`);
+    where.push("COALESCE(recording.Monitor, 0) = ?");
+    params.push(input.monitored ? 1 : 0);
   }
 
   if (input.locked !== undefined) {
-    where.push("COALESCE(media.monitor_lock, 0) = ?");
-    const lockedValue = input.locked ? 1 : 0;
-    params.push(lockedValue);
-    countParams.push(lockedValue);
+    where.push("COALESCE(recording.MonitorLock, 0) = ?");
+    params.push(input.locked ? 1 : 0);
   }
 
-  const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-  const sort = normalizeSortField(input.sort);
-  const dir = normalizeSortDirection(input.dir);
-  const orderBy = getVideoOrderBy(sort, dir);
-
-  const rows = db.prepare(`
-    ${getVideoSelectSql(whereClause)}
-    ${orderBy}
-    LIMIT ? OFFSET ?
-  `).all(...params, input.limit, input.offset) as VideoRow[];
-
-  const totalResult = db.prepare(`
-    SELECT COUNT(*) as total
-    FROM ProviderMedia media
-    LEFT JOIN Artists artists ON media.artist_id = artists.id
-    ${whereClause}
-  `).get(...countParams) as { total: number };
-
-  const downloadStates = getMediaDownloadStateMap(rows.map((video) => video.id), "video");
-  const items = rows.map((video) => mapVideoRow(video, downloadStates.get(String(video.id)) ?? false));
-
   return {
-    items,
-    total: totalResult.total,
-    limit: input.limit,
-    offset: input.offset,
-    hasMore: input.offset + items.length < totalResult.total,
+    whereClause: where.length > 0 ? `WHERE ${where.join(" AND ")}` : "",
+    params,
   };
 }
 
-export function getVideoDetail(videoId: string): VideoDetailContract | null {
-  const row = db.prepare(`
-    ${getVideoSelectSql("WHERE media.id = ? AND media.type = 'Music Video'")}
-  `).get(videoId) as VideoRow | undefined;
+function listCanonicalVideos(input: ListVideosQuery): VideosListResponseContract {
+  const sort = normalizeSortField(input.sort);
+  const dir = normalizeSortDirection(input.dir);
+  const { whereClause, params } = buildCanonicalVideoWhere(input);
+  const selectSql = getCanonicalVideoSelectSql(whereClause);
 
-  if (!row) {
-    return null;
+  const rows = db.prepare(`
+    SELECT *
+    FROM (${selectSql}) canonical_video
+    ${input.downloaded === undefined ? "" : `WHERE canonical_video.downloaded = ${input.downloaded ? 1 : 0}`}
+    ${getCanonicalVideoOrderBy(sort, dir)}
+    LIMIT ? OFFSET ?
+  `).all(...params, input.limit, input.offset) as (VideoRow & { downloaded?: number })[];
+
+  const countResult = db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM (${selectSql}) canonical_video
+    ${input.downloaded === undefined ? "" : `WHERE canonical_video.downloaded = ${input.downloaded ? 1 : 0}`}
+  `).get(...params) as { total: number };
+
+  const items = rows.map((video) => mapVideoRow(video, Boolean(video.downloaded)));
+
+  return {
+    items,
+    total: countResult.total,
+    limit: input.limit,
+    offset: input.offset,
+    hasMore: input.offset + items.length < countResult.total,
+  };
+}
+
+export function listVideos(input: ListVideosQuery): VideosListResponseContract {
+  return listCanonicalVideos(input);
+}
+
+export function getVideoDetail(videoId: string): VideoDetailContract | null {
+  const canonicalRow = db.prepare(`
+    SELECT *
+    FROM (${getCanonicalVideoSelectSql("WHERE recording.IsVideo = 1 AND CAST(recording.Id AS TEXT) = CAST(? AS TEXT)")}) canonical_video
+  `).get(videoId) as (VideoRow & { downloaded?: number }) | undefined;
+
+  if (canonicalRow) {
+    return mapVideoDetail(canonicalRow, Boolean(canonicalRow.downloaded));
   }
 
-  const downloadState = getMediaDownloadStateMap([row.id], "video").get(String(row.id)) ?? false;
-  return mapVideoDetail(row, downloadState);
+  return null;
 }

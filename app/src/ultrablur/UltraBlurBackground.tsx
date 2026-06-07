@@ -1,6 +1,6 @@
 import { makeStyles, mergeClasses, shorthands, tokens } from "@fluentui/react-components";
 import { UltraBlurColors } from "@/ultrablur/colors";
-import { renderUltraBlur } from "@/ultrablur/renderUltraBlur";
+import { getApiBaseUrl } from "@/utils/apiBaseUrl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const useStyles = makeStyles({
@@ -49,18 +49,6 @@ interface UltraBlurBackgroundProps {
   transitionDuration?: number;
 }
 
-function canvasToObjectUrl(canvas: HTMLCanvasElement): Promise<string> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error("Failed to create UltraBlur image blob"));
-        return;
-      }
-      resolve(URL.createObjectURL(blob));
-    }, "image/png");
-  });
-}
-
 export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const styles = useStyles();
 
@@ -87,8 +75,6 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
       if (cleanupTimerRef.current) {
         window.clearTimeout(cleanupTimerRef.current);
       }
-      if (frontRef.current) URL.revokeObjectURL(frontRef.current);
-      if (backRef.current) URL.revokeObjectURL(backRef.current);
     };
   }, []);
 
@@ -98,37 +84,25 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     return `${colors.topLeft}|${colors.topRight}|${colors.bottomLeft}|${colors.bottomRight}`;
   }, [colors]);
 
-  // Keep a ref so the async effect always reads the latest colors without
-  // needing `colors` in the dependency array (object-reference instability
-  // would cancel in-flight crossfade rAF callbacks).
-  const colorsRef = useRef(colors);
-  colorsRef.current = colors;
-
   useEffect(() => {
     let cancelled = false;
 
-    async function run() {
-      const canvas = renderUltraBlur(colorsRef.current, {
-        width: 1920,
-        height: 1080,
-        lowResScale: 0.18,
-        blurPx: 42,
-        overlayDarken: 0,
-        vignette: 0,
-        noiseAmount: 0.2,
-        blobCount: 0,
-        seed: key,
+    function run() {
+      const params = new URLSearchParams({
+        topLeft: colors.topLeft,
+        topRight: colors.topRight,
+        bottomLeft: colors.bottomLeft,
+        bottomRight: colors.bottomRight,
+        width: "1280",
+        height: "720",
       });
-
-      const url = await canvasToObjectUrl(canvas);
+      const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
       if (cancelled) {
-        URL.revokeObjectURL(url);
         return;
       }
 
       const prevBack = backRef.current;
       if (prevBack) {
-        URL.revokeObjectURL(prevBack);
         backRef.current = null;
         setBackUrl(null);
       }
@@ -158,16 +132,12 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
         window.clearTimeout(cleanupTimerRef.current);
       }
       cleanupTimerRef.current = window.setTimeout(() => {
-        const b = backRef.current;
-        if (b) URL.revokeObjectURL(b);
         backRef.current = null;
         setBackUrl(null);
       }, transitionMs + 50);
     }
 
-    run().catch((e) => {
-      console.error("UltraBlur generation failed:", e);
-    });
+    run();
 
     return () => {
       cancelled = true;

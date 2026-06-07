@@ -13,6 +13,7 @@ let dbModule: typeof import("../database.js");
 let configModule: typeof import("./config.js");
 let curationServiceModule: typeof import("./curation-service.js");
 let albumQueryServiceModule: typeof import("./album-query-service.js");
+let queueModule: typeof import("./queue.js");
 
 function writeTestConfig(overrides?: {
   includeCompilation?: boolean;
@@ -43,13 +44,16 @@ before(async () => {
   configModule = await import("./config.js");
   curationServiceModule = await import("./curation-service.js");
   albumQueryServiceModule = await import("./album-query-service.js");
+  queueModule = await import("./queue.js");
 
   writeTestConfig();
 });
 
 beforeEach(() => {
   const { db } = dbModule;
+  db.prepare("DELETE FROM job_queue").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -70,7 +74,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("CurationService synchronizes albums and tracks monitor status", async () => {
+test("CurationService updates release-group slots and canonical videos without syncing provider monitor state", async () => {
   const { db } = dbModule;
 
   // Insert artist
@@ -113,6 +117,11 @@ test("CurationService synchronizes albums and tracks monitor status", async () =
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("video-prov-1", "artist-1", null, "Bohemian Rhapsody", 0, "Music Video", "LOSSLESS", 354, 1, 0);
 
+  db.prepare(`
+    INSERT INTO Recordings (Id, ForeignRecordingId, mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitor, MonitorLock)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(101, "video-rec-1", "video-rec-1", "artist-mbid-1", "Bohemian Rhapsody", 1, "provider_only", 1, 0);
+
   // Insert slot manually as wanted = 0, pointing to the album
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
@@ -123,21 +132,24 @@ test("CurationService synchronizes albums and tracks monitor status", async () =
   // Run curation with the local artist ID used by queued curation jobs.
   await curationServiceModule.CurationService.processAll("artist-1");
 
-  // Verify that wanted became 1 and album/media monitor status became 1
+  // Verify that wanted became 1 while provider catalog rows were not used as monitor state.
   const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 1);
 
   const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
-  assert.equal(album.monitor, 1);
+  assert.equal(album.monitor, 0);
 
   const media = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
-  assert.equal(media.monitor, 1);
+  assert.equal(media.monitor, 0);
 
-  const video = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("video-prov-1") as any;
-  assert.equal(video.monitor, 0);
+  const providerVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("video-prov-1") as any;
+  assert.equal(providerVideo.monitor, 1);
+
+  const canonicalVideo = db.prepare("SELECT Monitor FROM Recordings WHERE Id = ?").get(101) as any;
+  assert.equal(canonicalVideo.Monitor, 0);
 });
 
-test("CurationService unmonitors album and track when slot becomes unwanted", async () => {
+test("CurationService unmonitors release-group slot without mutating provider album or track rows", async () => {
   const { db } = dbModule;
 
   // Insert artist
@@ -187,15 +199,76 @@ test("CurationService unmonitors album and track when slot becomes unwanted", as
   // Run curation with the local artist ID used by queued curation jobs.
   await curationServiceModule.CurationService.processAll("artist-1");
 
-  // Verify that wanted became 0 and album/media monitor status became 0
+  // Verify that wanted became 0 while provider rows remain stale compatibility data.
   const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 0);
 
   const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
-  assert.equal(album.monitor, 0);
+  assert.equal(album.monitor, 1);
 
   const media = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
-  assert.equal(media.monitor, 0);
+  assert.equal(media.monitor, 1);
+});
+
+test("CurationService queues monitored canonical videos through provider offers", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_videos: true,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (Id, mbid, name)
+    VALUES (?, ?, ?)
+  `).run(101, "artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      Id, ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid, title, IsVideo, MetadataStatus, Monitor, MonitorLock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(501, "video-rec-1", "video-rec-1", 101, "artist-mbid-1", "Bohemian Rhapsody", 1, "provider_only", 1, 0);
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, title, quality,
+      artist_metadata_id, recording_id, match_status, match_confidence, match_method
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "tidal", "video", "tidal-video-1", "artist-mbid-1", "video-rec-1", "Bohemian Rhapsody", "HIGH",
+    101, 501, "verified", 1, "test",
+  );
+
+  db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, title, explicit, type, quality, duration, monitor, monitor_lock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("stale-provider-video", "artist-1", "Bohemian Rhapsody", 0, "Music Video", "HIGH", 354, 0, 0);
+
+  const queued = await curationServiceModule.CurationService.queueMonitoredItems("artist-1");
+  assert.equal(queued.videos, 1);
+
+  const job = db.prepare(`
+    SELECT type, ref_id AS refId, payload
+    FROM job_queue
+    WHERE type = ?
+  `).get(queueModule.JobTypes.DownloadVideo) as { type: string; refId: string; payload: string } | undefined;
+
+  assert.ok(job);
+  assert.equal(job?.refId, "recording:501:video");
+
+  const payload = JSON.parse(job?.payload || "{}") as { providerId?: string; canonicalRecordingId?: string };
+  assert.equal(payload.providerId, "tidal-video-1");
+  assert.equal(payload.canonicalRecordingId, "501");
+
+  const staleProviderVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("stale-provider-video") as { monitor: number };
+  assert.equal(staleProviderVideo.monitor, 0);
 });
 
 test("CurationService respects monitor_lock when synchronizing monitor status", async () => {
@@ -406,6 +479,51 @@ test("Album read model does not inherit release-group wanted state from artist m
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].is_monitored, false);
   assert.equal(result.items[0].monitor, 0);
+});
+
+test("Album read model exposes and filters canonical release-group slot locks", () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
+
+  db.prepare(`
+    INSERT INTO ArtistReleaseGroupCuration (source_artist_mbid, release_group_mbid, included)
+    VALUES (?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, monitor_lock)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, 1);
+
+  const locked = albumQueryServiceModule.AlbumQueryService.listAlbums({
+    limit: 10,
+    offset: 0,
+    locked: true,
+  });
+  const unlocked = albumQueryServiceModule.AlbumQueryService.listAlbums({
+    limit: 10,
+    offset: 0,
+    locked: false,
+  });
+
+  assert.equal(locked.items.length, 1);
+  assert.equal(locked.items[0].monitor_lock, true);
+  assert.equal(locked.items[0].monitor_locked, true);
+  assert.equal(unlocked.items.length, 0);
 });
 
 test("Album track read model follows release-group wanted state", async () => {

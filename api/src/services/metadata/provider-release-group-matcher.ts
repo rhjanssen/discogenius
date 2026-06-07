@@ -48,6 +48,7 @@ export type ProviderReleaseGroupMatch = {
         providerType?: string | null;
         candidateTitle?: string | null;
         titleScore?: number;
+        titleExpansionMatched?: boolean;
         yearMatched?: boolean;
         typeMatched?: boolean;
         upcMatched?: boolean;
@@ -85,14 +86,67 @@ function normalizeIsrc(value?: string | null): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+function addNormalizedCandidate(candidates: string[], value?: string | null): void {
+    const normalized = normalizeComparableText(value);
+    if (normalized) {
+        candidates.push(normalized);
+    }
+}
+
+function stripEditionSuffixes(value: string): string {
+    return value
+        .replace(/\b(?:deluxe|expanded|extended|special|complete|anniversary|bonus|remaster(?:ed)?|reissue|clean|explicit|dolby\s+atmos|atmos|spatial|hi-?res|lossless|stereo)\s+(?:edition|version|bonus tracks?|mix)?\b.*$/i, " ")
+        .replace(/\b(?:deluxe|expanded|extended|special|complete|anniversary|bonus|remaster(?:ed)?|reissue|clean|explicit|dolby\s+atmos|atmos|spatial|hi-?res|lossless|stereo)\b.*$/i, " ")
+        .trim();
+}
+
+function splitExpandedTitleParts(value: string): string[] {
+    return value
+        .split(/\s*(?:\+|\/|\\|\|)\s*/g)
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
+function prefixBeforeVersionSeparator(value: string): string | null {
+    const match = value.match(/^(.+?)\s+(?:[-:–—])\s+(.+)$/u);
+    if (!match?.[1] || !match?.[2]) {
+        return null;
+    }
+
+    const suffix = match[2].trim();
+    if (!/(?:deluxe|expanded|extended|special|complete|anniversary|bonus|remaster(?:ed)?|reissue|clean|explicit|dolby\s+atmos|atmos|spatial|hi-?res|lossless|stereo|dreams?\b|past\b)/i.test(suffix)) {
+        return null;
+    }
+
+    return match[1].trim();
+}
+
+function expandedTitleCandidates(value?: string | null): string[] {
+    const text = String(value || "").trim();
+    if (!text) {
+        return [];
+    }
+
+    const candidates: string[] = [];
+    addNormalizedCandidate(candidates, text);
+    addNormalizedCandidate(candidates, stripEditionSuffixes(text));
+    addNormalizedCandidate(candidates, prefixBeforeVersionSeparator(text));
+
+    for (const part of splitExpandedTitleParts(text)) {
+        addNormalizedCandidate(candidates, part);
+        addNormalizedCandidate(candidates, stripEditionSuffixes(part));
+        addNormalizedCandidate(candidates, prefixBeforeVersionSeparator(part));
+    }
+
+    return Array.from(new Set(candidates));
+}
+
 function providerTitleCandidates(album: ProviderAlbumForReleaseGroupMatching): string[] {
     const candidates = [
-        album.title,
-        album.version ? `${album.title} ${album.version}` : null,
-        album.version ? `${album.title} (${album.version})` : null,
-    ]
-        .map((value) => normalizeComparableText(value))
-        .filter((value): value is string => Boolean(value));
+        ...expandedTitleCandidates(album.title),
+        ...(album.version ? expandedTitleCandidates(`${album.title} ${album.version}`) : []),
+        ...(album.version ? expandedTitleCandidates(`${album.title} (${album.version})`) : []),
+    ].filter(Boolean);
 
     return Array.from(new Set(candidates));
 }
@@ -100,9 +154,9 @@ function providerTitleCandidates(album: ProviderAlbumForReleaseGroupMatching): s
 function titleCandidatesForReleaseGroup(releaseGroup: MusicBrainzReleaseGroupForMatching): string[] {
     const rawTitle = String(releaseGroup.title || "").trim();
     const candidates = [
-        normalizeComparableText(rawTitle),
-        normalizeComparableText(releaseGroup.disambiguation),
-        ...(releaseGroup.releases || []).map((release) => normalizeComparableText(release.title)),
+        ...expandedTitleCandidates(rawTitle),
+        ...expandedTitleCandidates(releaseGroup.disambiguation),
+        ...(releaseGroup.releases || []).flatMap((release) => expandedTitleCandidates(release.title)),
     ].filter((value): value is string => Boolean(value));
 
     // MusicBrainz can use symbolic release-group names. Provider APIs often
@@ -181,14 +235,6 @@ function scoreAlbumAgainstReleaseGroup(
     const volumeCountEvidence = nearestNumericMatch(album.volumeCount, releases.map((release) => release.mediaCount));
     const trackCountMatched = trackCountEvidence.matched;
     const volumeCountMatched = volumeCountEvidence.matched;
-    const availableReleases = matchedReleaseByUpc
-        ? [matchedReleaseByUpc]
-        : releases.filter((release) => {
-            const trackCount = Number(release.trackCount || 0);
-            const mediaCount = Number(release.mediaCount || 0);
-            return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
-                && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
-        });
     const releaseGroupTitleCandidates = titleCandidatesForReleaseGroup(releaseGroup);
     const titleScores = providerTitleCandidates(album)
         .flatMap((candidateTitle) => releaseGroupTitleCandidates.map((releaseGroupTitle) => ({
@@ -197,6 +243,39 @@ function scoreAlbumAgainstReleaseGroup(
         })))
         .sort((left, right) => right.titleScore - left.titleScore);
     const bestTitle = titleScores[0] || { candidateTitle: null, titleScore: 0 };
+    const normalizedProviderTitle = normalizeComparableText(album.title);
+    const titleExpansionMatched = Boolean(
+        bestTitle.titleScore === 1
+        && bestTitle.candidateTitle
+        && normalizedProviderTitle
+        && bestTitle.candidateTitle !== normalizedProviderTitle
+        && normalizedProviderTitle.startsWith(`${bestTitle.candidateTitle} `),
+    );
+    const expandedCompatibleReleases = titleExpansionMatched
+        ? releases.filter((release) => {
+            const trackCount = Number(release.trackCount || 0);
+            const mediaCount = Number(release.mediaCount || 0);
+            const providerTrackCount = Number(album.trackCount || 0);
+            const providerVolumeCount = Number(album.volumeCount || 0);
+            const trackCompatible = !providerTrackCount || !trackCount || providerTrackCount >= trackCount;
+            const volumeCompatible = !providerVolumeCount || !mediaCount || providerVolumeCount >= mediaCount;
+            const nearestTrackCompatible = !trackCountEvidence.target || !trackCount || trackCount === trackCountEvidence.target;
+            const nearestVolumeCompatible = !volumeCountEvidence.target || !mediaCount || mediaCount === volumeCountEvidence.target;
+            return trackCompatible && volumeCompatible && nearestTrackCompatible && nearestVolumeCompatible;
+        })
+        : [];
+    const availableReleases = matchedReleaseByUpc
+        ? [matchedReleaseByUpc]
+        : expandedCompatibleReleases.length > 0
+            ? expandedCompatibleReleases
+            : releases.filter((release) => {
+                const trackCount = Number(release.trackCount || 0);
+                const mediaCount = Number(release.mediaCount || 0);
+                return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
+                    && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
+            });
+    const matchedRelease = matchedReleaseByUpc
+        || (availableReleases.length === 1 ? availableReleases[0] : undefined);
     const providerYear = yearOf(album.releaseDate);
     const releaseGroupYear = yearOf(releaseGroup.firstReleaseDate);
     const yearMatched = Boolean(providerYear && releaseGroupYear && providerYear === releaseGroupYear);
@@ -223,10 +302,18 @@ function scoreAlbumAgainstReleaseGroup(
         if (!typeMatched && normalizeType(album.type) && normalizeType(releaseGroup.primaryType)) {
             confidence -= 0.12;
         }
-        if (trackCountEvidence.ratio !== null && trackCountEvidence.ratio > 0) {
+        const providerHasExtraTracks = titleExpansionMatched
+            && Number(album.trackCount || 0) > 0
+            && Number(trackCountEvidence.target || 0) > 0
+            && Number(album.trackCount || 0) >= Number(trackCountEvidence.target || 0);
+        const providerHasExtraVolumes = titleExpansionMatched
+            && Number(album.volumeCount || 0) > 0
+            && Number(volumeCountEvidence.target || 0) > 0
+            && Number(album.volumeCount || 0) >= Number(volumeCountEvidence.target || 0);
+        if (!providerHasExtraTracks && trackCountEvidence.ratio !== null && trackCountEvidence.ratio > 0) {
             confidence -= Math.min(0.32, 0.08 + trackCountEvidence.ratio * 0.36);
         }
-        if (volumeCountEvidence.ratio !== null && volumeCountEvidence.ratio > 0) {
+        if (!providerHasExtraVolumes && volumeCountEvidence.ratio !== null && volumeCountEvidence.ratio > 0) {
             confidence -= Math.min(0.12, 0.04 + volumeCountEvidence.ratio * 0.12);
         }
     }
@@ -242,11 +329,12 @@ function scoreAlbumAgainstReleaseGroup(
         isrcOverlap,
         trackCountMatched,
         volumeCountMatched,
+        titleExpansionMatched,
         providerTrackCount: album.trackCount ?? null,
         targetTrackCount: trackCountEvidence.target,
         providerVolumeCount: album.volumeCount ?? null,
         targetVolumeCount: volumeCountEvidence.target,
-        matchedReleaseMbid: matchedReleaseByUpc?.mbid ?? null,
+        matchedReleaseMbid: matchedRelease?.mbid ?? null,
         availableReleaseMbids: availableReleases.map((release) => release.mbid),
     };
 }
@@ -295,10 +383,11 @@ export function matchProviderAlbumToReleaseGroup(
         )
         .map((candidate) => candidate.releaseGroup.mbid);
     const exactTitleMatch = best.titleScore === 1;
+    const exactProviderTitleMatch = exactTitleMatch && !best.titleExpansionMatched;
     const strongIdentityMatch = best.upcMatched || best.isrcOverlap >= 4;
     const status: ProviderReleaseGroupMatchStatus = ambiguousWith.length > 0
         ? "ambiguous"
-        : (strongIdentityMatch || (exactTitleMatch && best.confidence >= 0.96))
+        : (strongIdentityMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
             ? "verified"
             : "probable";
     const method = best.upcMatched
@@ -321,6 +410,7 @@ export function matchProviderAlbumToReleaseGroup(
             providerType: album.type ?? null,
             candidateTitle: best.candidateTitle,
             titleScore: best.titleScore,
+            titleExpansionMatched: best.titleExpansionMatched,
             yearMatched: best.yearMatched,
             typeMatched: best.typeMatched,
             upcMatched: best.upcMatched,

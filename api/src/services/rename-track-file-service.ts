@@ -34,12 +34,20 @@ type RenameLibraryFileRow = {
   artist_id: number;
   album_id: number | null;
   media_id: number | null;
+  canonical_artist_mbid?: string | null;
+  canonical_release_group_mbid?: string | null;
+  canonical_release_mbid?: string | null;
+  canonical_track_mbid?: string | null;
+  canonical_recording_mbid?: string | null;
   file_path: string;
   relative_path: string | null;
   library_root: string | null;
   file_type: string;
   extension: string;
   library_slot?: string | null;
+  provider?: string | null;
+  provider_entity_type?: string | null;
+  provider_id?: string | null;
   quality?: string | null;
   codec?: string | null;
   bitrate?: number | null;
@@ -115,24 +123,44 @@ export class RenameTrackFileService {
     }
 
     const sql = `
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels
+      SELECT id, artist_id, album_id, media_id,
+             canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+             file_path, relative_path, library_root, file_type, extension, library_slot,
+             provider, provider_entity_type, provider_id,
+             quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM (
-        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
+        SELECT id, artist_id, album_id, media_id,
+               canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+               file_path, relative_path, library_root, file_type, extension, library_slot,
+               provider, provider_entity_type, provider_id,
+               quality, codec, bitrate, sample_rate, bit_depth, channels, created_at
         FROM TrackFiles
 
         UNION ALL
 
-        SELECT Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 10000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id,
+               NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+               FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot,
+               Provider AS provider, ProviderEntityType AS provider_entity_type, ProviderId AS provider_id,
+               NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM MetadataFiles
 
         UNION ALL
 
-        SELECT Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 20000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id,
+               NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+               FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, FileType AS file_type, Extension AS extension, LibrarySlot AS library_slot,
+               Provider AS provider, ProviderEntityType AS provider_entity_type, ProviderId AS provider_id,
+               NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM ExtraFiles
 
         UNION ALL
 
-        SELECT Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
+        SELECT Id + 30000000 AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id,
+               CanonicalArtistMbid AS canonical_artist_mbid, CanonicalReleaseGroupMbid AS canonical_release_group_mbid, CanonicalReleaseMbid AS canonical_release_mbid, CanonicalTrackMbid AS canonical_track_mbid, CanonicalRecordingMbid AS canonical_recording_mbid,
+               FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot,
+               Provider AS provider, ProviderEntityType AS provider_entity_type, ProviderId AS provider_id,
+               Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
         FROM LyricFiles
       ) lf
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -283,7 +311,11 @@ export class RenameTrackFileService {
       const decoded = decodeSyntheticId(syntheticId);
       if (decoded.tableName === "TrackFiles") {
         const row = db.prepare(`
-          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, extension, library_slot, quality, codec, bitrate, sample_rate, bit_depth, channels
+          SELECT id, artist_id, album_id, media_id,
+                 canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+                 file_path, relative_path, library_root, file_type, extension, library_slot,
+                 provider, provider_entity_type, provider_id,
+                 quality, codec, bitrate, sample_rate, bit_depth, channels
           FROM TrackFiles
           WHERE id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -310,7 +342,9 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "LyricFiles") {
         const row = db.prepare(`
-          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id, FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT Id AS id, ArtistId AS artist_id, AlbumId AS album_id, MediaId AS media_id,
+                 CanonicalArtistMbid AS canonical_artist_mbid, CanonicalReleaseGroupMbid AS canonical_release_group_mbid, CanonicalReleaseMbid AS canonical_release_mbid, CanonicalTrackMbid AS canonical_track_mbid, CanonicalRecordingMbid AS canonical_recording_mbid,
+                 FilePath AS file_path, RelativePath AS relative_path, LibraryRoot AS library_root, 'lyrics' AS file_type, Extension AS extension, LibrarySlot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM LyricFiles
           WHERE Id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;

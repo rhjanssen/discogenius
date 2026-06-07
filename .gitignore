@@ -31,13 +31,12 @@ api/src/**/*.js
 .ref_*/
 .ref_lidarr/
 .ref_tidarr/
-.ref_tidalrr/
-.ref_old_scripts/
 .ref_tiddl/
 .ref_tidal_dl_ng/
 .ref_tidal_dl_ng_dj/
 .ref_python_tidal/
-.ref_tidal_pages
+.ref_jellyfin
+.ref_kodi
 .ref_music/
 config/
 downloads/

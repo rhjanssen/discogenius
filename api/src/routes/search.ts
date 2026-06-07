@@ -187,12 +187,79 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("tracks")) {
                 const localTracks = db
                     .prepare(
-                        `SELECT m.id, m.title, ar.name as artist_name, m.monitor as monitored, a.cover as album_cover
-           FROM ProviderMedia m
-           LEFT JOIN Artists ar ON ar.id = m.artist_id
-           LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-           WHERE m.album_id IS NOT NULL AND m.title LIKE ? ESCAPE '\\'
-           ORDER BY m.title LIMIT ?`
+                        `SELECT
+              t.mbid AS id,
+              t.title,
+              artist.name AS artist_name,
+              COALESCE(file_quality.quality, provider_track.quality, selected_slot.quality) AS quality,
+              COALESCE(provider_track.explicit, 0) AS explicit,
+              COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
+              COALESCE(release.date, rg.first_release_date) AS release_date,
+              provider_album.asset_id AS album_cover,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM ReleaseGroupSlots monitored_slot
+                WHERE monitored_slot.release_group_mbid = rg.mbid
+                  AND monitored_slot.wanted = 1
+              ) THEN 1 ELSE 0 END AS monitored
+            FROM Tracks t
+            JOIN AlbumReleases release ON release.mbid = t.release_mbid
+            JOIN Albums rg ON rg.mbid = release.release_group_mbid
+            JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
+            JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+            LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
+            LEFT JOIN ProviderItems provider_track
+              ON provider_track.rowid = (
+                SELECT preferred_provider_track.rowid
+                FROM ProviderItems preferred_provider_track
+                WHERE preferred_provider_track.entity_type = 'track'
+                  AND (
+                    preferred_provider_track.track_mbid = t.mbid
+                    OR preferred_provider_track.recording_mbid = t.recording_mbid
+                  )
+                ORDER BY
+                  CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+                  preferred_provider_track.updated_at DESC,
+                  preferred_provider_track.provider_id ASC
+                LIMIT 1
+              )
+            LEFT JOIN ProviderItems provider_album
+              ON provider_album.rowid = (
+                SELECT preferred_provider_album.rowid
+                FROM ProviderItems preferred_provider_album
+                WHERE preferred_provider_album.entity_type = 'album'
+                  AND preferred_provider_album.release_group_mbid = rg.mbid
+                ORDER BY
+                  CASE preferred_provider_album.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+                  preferred_provider_album.updated_at DESC,
+                  preferred_provider_album.provider_id ASC
+                LIMIT 1
+              )
+            LEFT JOIN ReleaseGroupSlots selected_slot
+              ON selected_slot.release_group_mbid = rg.mbid
+             AND selected_slot.selected_release_mbid = t.release_mbid
+             AND selected_slot.id = (
+               SELECT preferred_slot.id
+               FROM ReleaseGroupSlots preferred_slot
+               WHERE preferred_slot.release_group_mbid = rg.mbid
+                 AND preferred_slot.selected_release_mbid = t.release_mbid
+               ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+               LIMIT 1
+             )
+            LEFT JOIN TrackFiles file_quality
+              ON file_quality.canonical_track_mbid = t.mbid
+             AND file_quality.file_type = 'track'
+             AND file_quality.id = (
+               SELECT preferred_file.id
+               FROM TrackFiles preferred_file
+               WHERE preferred_file.canonical_track_mbid = t.mbid
+                 AND preferred_file.file_type = 'track'
+               ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
+               LIMIT 1
+             )
+            WHERE t.title LIKE ? ESCAPE '\\'
+            ORDER BY t.title ASC, t.mbid ASC
+            LIMIT ?`
                     )
                     .all(like, limit) as any[];
 
@@ -201,6 +268,10 @@ router.get("/", async (req, res) => {
                     name: row.title,
                     artist_name: row.artist_name,
                     cover: row.album_cover,
+                    quality: row.quality,
+                    explicit: !!row.explicit,
+                    duration: row.duration,
+                    release_date: row.release_date,
                     monitored: !!row.monitored,
                     in_library: true,
                 }, 'track')));
@@ -210,23 +281,68 @@ router.get("/", async (req, res) => {
                 const localVideos = db
                     .prepare(
                         `SELECT
-              m.id,
-              m.title,
-              ar.name as artist_name,
-              m.monitor as monitored,
-              m.cover,
+              recording.Id AS id,
+              recording.title,
+              artist.name AS artist_name,
+              COALESCE(recording.Monitor, 0) AS monitored,
+              COALESCE(recording.CoverImageId, provider_video.asset_id) AS cover,
+              COALESCE(recording.ReleaseDate, provider_video.release_date) AS release_date,
               COALESCE((
                 SELECT lf.quality
                 FROM TrackFiles lf
-                WHERE lf.media_id = m.id
-                  AND lf.file_type = 'video'
+                WHERE lf.file_type = 'video'
+                  AND (
+                    CAST(lf.media_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
+                    OR CAST(lf.provider_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
+                    OR (
+                      recording.mbid IS NOT NULL
+                      AND lf.canonical_recording_mbid = recording.mbid
+                    )
+                    OR (
+                      recording.ForeignRecordingId IS NOT NULL
+                      AND lf.canonical_recording_mbid = recording.ForeignRecordingId
+                    )
+                  )
                 ORDER BY lf.verified_at DESC, lf.id DESC
                 LIMIT 1
-              ), m.quality) as current_quality
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            WHERE m.type = 'Music Video' AND m.title LIKE ? ESCAPE '\\'
-            ORDER BY m.release_date DESC LIMIT ?`
+              ), (
+                SELECT lf.quality
+                FROM TrackFiles lf
+                WHERE lf.file_type = 'video'
+                  AND CAST(lf.media_id AS TEXT) = CAST(recording.Id AS TEXT)
+                ORDER BY lf.verified_at DESC, lf.id DESC
+                LIMIT 1
+              ), provider_video.quality) AS current_quality
+            FROM Recordings recording
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = recording.artist_mbid
+            LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+            LEFT JOIN ProviderItems provider_video
+              ON provider_video.rowid = (
+                SELECT preferred_provider_video.rowid
+                FROM ProviderItems preferred_provider_video
+                WHERE preferred_provider_video.entity_type = 'video'
+                  AND (
+                    preferred_provider_video.recording_id = recording.Id
+                    OR (
+                      recording.mbid IS NOT NULL
+                      AND preferred_provider_video.recording_mbid = recording.mbid
+                    )
+                    OR (
+                      recording.ForeignRecordingId IS NOT NULL
+                      AND preferred_provider_video.provider_id = recording.ForeignRecordingId
+                    )
+                  )
+                ORDER BY
+                  preferred_provider_video.updated_at DESC,
+                  preferred_provider_video.provider ASC,
+                  preferred_provider_video.provider_id ASC
+                LIMIT 1
+              )
+            WHERE COALESCE(recording.IsVideo, 0) = 1
+              AND recording.title LIKE ? ESCAPE '\\'
+              AND (managed_artist.id IS NOT NULL OR provider_video.provider_id IS NOT NULL)
+            ORDER BY (recording.ReleaseDate IS NULL) ASC, recording.ReleaseDate DESC, recording.title ASC, recording.Id ASC
+            LIMIT ?`
                     )
                     .all(like, limit) as any[];
 
@@ -236,6 +352,7 @@ router.get("/", async (req, res) => {
                     artist_name: row.artist_name,
                     image_id: row.cover,
                     quality: row.current_quality,
+                    release_date: row.release_date,
                     monitored: !!row.monitored,
                     in_library: true,
                 }, 'video')));

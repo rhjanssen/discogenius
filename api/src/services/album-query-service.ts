@@ -11,6 +11,9 @@ import { getConfigSection } from "./config.js";
 const releaseGroupWantedExpression = `
         CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END
 `;
+const releaseGroupLockedExpression = `
+        CASE WHEN COALESCE(stereo.monitor_lock, 0) = 1 OR COALESCE(spatial.monitor_lock, 0) = 1 THEN 1 ELSE 0 END
+`;
 
 function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string {
     if (libraryFilter === "spatial") return "spatial.selected_provider_id";
@@ -80,6 +83,7 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         a.cover_image_url AS artist_cover_image_url,
         a.monitor AS artist_monitor,
         ${releaseGroupWantedExpression} AS wanted,
+        ${releaseGroupLockedExpression} AS monitor_lock,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         ${selectedProviderAlbumExpression} AS selected_provider_id,
         ${selectedProviderAlbumExpression === "spatial.selected_provider_id"
@@ -132,6 +136,8 @@ function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDow
         quality: row.selected_quality || null,
         is_monitored: monitored,
         monitor: monitored ? 1 : 0,
+        monitor_lock: Boolean(row.monitor_lock),
+        monitor_locked: Boolean(row.monitor_lock),
         downloaded: downloadedPercent,
         is_downloaded: isDownloaded,
         stereo_provider_id: row.stereo_provider_id || null,
@@ -198,7 +204,9 @@ export class AlbumQueryService {
         }
 
         if (input.locked === true) {
-            where.push("0 = 1");
+            where.push(`${releaseGroupLockedExpression} = 1`);
+        } else if (input.locked === false) {
+            where.push(`${releaseGroupLockedExpression} = 0`);
         }
 
         const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";

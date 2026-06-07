@@ -63,8 +63,17 @@ export class LibraryStatsQueryService {
                 downloaded: countDownloadedTracks(),
             },
             videos: {
-                total: (db.prepare("SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video'").get() as { count: number }).count,
-                monitored: (db.prepare("SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video' AND monitor = 1").get() as { count: number }).count,
+                total: (db.prepare(`
+                    SELECT COUNT(*) AS count
+                    FROM Recordings
+                    WHERE COALESCE(IsVideo, 0) = 1
+                `).get() as { count: number }).count,
+                monitored: (db.prepare(`
+                    SELECT COUNT(*) AS count
+                    FROM Recordings
+                    WHERE COALESCE(IsVideo, 0) = 1
+                      AND COALESCE(Monitor, 0) = 1
+                `).get() as { count: number }).count,
                 downloaded: countDownloadedVideos(),
             },
         };

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../database.js";
-import { updateAlbumDownloadStatus } from "../services/download-state.js";
+import { invalidateReleaseGroupDownloadStatus } from "../services/download-state.js";
 import {
   getTrackDetail,
   getTrackFiles,
@@ -38,20 +38,6 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
   }
 
   return undefined;
-}
-
-function refreshTrackState(trackId: string) {
-  if (!trackId) return;
-
-  const row = db.prepare(`
-    SELECT album_id
-    FROM ProviderMedia
-    WHERE id = ? AND album_id IS NOT NULL
-  `).get(trackId) as { album_id?: number | null } | undefined;
-
-  if (row?.album_id) {
-    updateAlbumDownloadStatus(String(row.album_id));
-  }
 }
 
 function getCanonicalTrackReleaseGroup(trackId: string): { release_group_mbid: string; artist_mbid: string } | null {
@@ -97,6 +83,7 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
     `).run(canonicalTrack.artist_mbid, canonicalTrack.release_group_mbid, wanted);
   }
 
+  invalidateReleaseGroupDownloadStatus(canonicalTrack.release_group_mbid);
   return true;
 }
 
@@ -156,33 +143,18 @@ router.get("/:trackId/files", (req, res) => {
   }
 });
 
-import { MediaSeedService } from "../services/media-seed-service.js";
-
 router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     const trackId = getRequiredIdentifier(body, "id");
 
-    const trackData = await MediaSeedService.seedTrack(trackId, { monitorArtist: true });
-    const albumId = String(trackData.album_id);
+    if (!setCanonicalTrackMonitoring(trackId, true)) {
+      return res.status(404).json({ detail: "Track not found" });
+    }
 
-    db.prepare(`
-      UPDATE ProviderAlbums
-      SET monitor = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-      WHERE id = ?
-    `).run(albumId);
+    const track = getTrackDetail(trackId);
 
-    db.prepare(`
-      UPDATE ProviderMedia
-      SET monitor = 1,
-          monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-      WHERE id = ? AND album_id = ? AND type != 'Music Video'
-    `).run(trackId, albumId);
-
-    refreshTrackState(trackId);
-
-    res.json({ success: true, message: "Track added", track: trackData });
+    res.json({ success: true, message: "Track added", track });
   } catch (error: any) {
     console.error(`[Tracks] Failed to add track:`, error);
     res.status(500).json({ detail: error.message });
@@ -196,19 +168,9 @@ router.post("/:trackId/monitor", (req, res) => {
     const body = getObjectBody(req.body);
     const monitored = getRequiredBoolean(body, "monitored");
 
-    if (setCanonicalTrackMonitoring(trackId, monitored)) {
-      return res.json({ success: true });
-    }
-
-    const result = db.prepare(
-      "UPDATE ProviderMedia SET monitor = ? WHERE id = ? AND album_id IS NOT NULL"
-    ).run(monitored ? 1 : 0, trackId);
-
-    if (result.changes === 0) {
+    if (!setCanonicalTrackMonitoring(trackId, monitored)) {
       return res.status(404).json({ detail: "Track not found" });
     }
-
-    refreshTrackState(trackId);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -227,48 +189,20 @@ router.patch("/:trackId", (req, res) => {
     const trackId = req.params.trackId;
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Track update");
-    const updates: string[] = [];
-    const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");
-
-    if (monitored !== undefined) {
-      updates.push("monitor = ?");
-      values.push(monitored ? 1 : 0);
-    }
-
     const monitorLock = getOptionalBoolean(body, "monitor_lock");
-    if (monitorLock !== undefined) {
-      updates.push("monitor_lock = ?");
-      values.push(monitorLock ? 1 : 0);
-      if (monitorLock) {
-        updates.push("locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP)");
-      } else {
-        updates.push("locked_at = NULL");
-      }
-    }
 
-    if (updates.length === 0) {
+    if (monitored === undefined && monitorLock === undefined) {
       return res.json({ success: true });
     }
 
-    if (hasCanonicalTrack(trackId)) {
-      if (monitored !== undefined) {
-        setCanonicalTrackMonitoring(trackId, monitored);
-      }
-      return res.json({ success: true });
-    }
-
-    values.push(trackId);
-
-    const result = db.prepare(`UPDATE ProviderMedia SET ${updates.join(", ")} WHERE id = ? AND album_id IS NOT NULL`)
-      .run(...values);
-
-    if (result.changes === 0) {
+    if (!hasCanonicalTrack(trackId)) {
       return res.status(404).json({ detail: "Track not found" });
     }
 
-    refreshTrackState(trackId);
-
+    if (monitored !== undefined) {
+      setCanonicalTrackMonitoring(trackId, monitored);
+    }
     res.json({ success: true });
   } catch (error: any) {
     if (isRequestValidationError(error)) {

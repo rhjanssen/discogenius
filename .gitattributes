@@ -1,0 +1,10 @@
+* text=auto
+
+# Linux container/runtime entrypoints must not be checked out with CRLF.
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+docker/** text eol=lf
+
+# Keep Windows helper scripts native.
+*.ps1 text eol=crlf

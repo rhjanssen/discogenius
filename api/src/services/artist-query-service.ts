@@ -1,10 +1,8 @@
 import { db } from "../database.js";
 import {
-    getAlbumDownloadStats,
-    getAlbumDownloadStatsMap,
     getArtistDownloadStats,
     getArtistDownloadStatsMap,
-    getMediaDownloadStateMap,
+    getReleaseGroupDownloadStatsMap,
 } from "./download-state.js";
 import { hydrateTrackRows } from "./track-query-service.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
@@ -73,31 +71,72 @@ type ArtistCountRow = {
     monitored_cnt: number;
 };
 
-function buildArtistCountMap(
-    table: "ProviderAlbums" | "ProviderMedia",
-    artistIds: string[],
-    options: { excludeMusicVideos?: boolean } = {},
-): Map<string, ArtistCountRow> {
-    if (artistIds.length === 0) {
+function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, ArtistCountRow> {
+    if (artistMbids.length === 0) {
         return new Map();
     }
 
-    const placeholders = artistIds.map(() => "?").join(",");
-    const whereClauses = [`artist_id IN (${placeholders})`];
-
-    if (table === "ProviderMedia" && options.excludeMusicVideos) {
-        whereClauses.push(`type != 'Music Video'`);
-    }
-
+    const placeholders = artistMbids.map(() => "?").join(",");
     const rows = db.prepare(`
         SELECT
-            CAST(artist_id AS TEXT) AS artist_id,
-            COUNT(*) as cnt,
-            SUM(CASE WHEN monitor = 1 THEN 1 ELSE 0 END) as monitored_cnt
-        FROM ${table}
-        WHERE ${whereClauses.join(" AND ")}
-        GROUP BY artist_id
-    `).all(...artistIds) as ArtistCountRow[];
+            scope.artist_mbid AS artist_id,
+            COUNT(DISTINCT scope.release_group_mbid) AS cnt,
+            COUNT(DISTINCT CASE
+                WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1
+                THEN scope.release_group_mbid
+                ELSE NULL
+            END) AS monitored_cnt
+        FROM (
+            SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
+            UNION
+            SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
+        ) scope
+        LEFT JOIN ReleaseGroupSlots stereo
+          ON stereo.release_group_mbid = scope.release_group_mbid
+         AND stereo.slot = 'stereo'
+        LEFT JOIN ReleaseGroupSlots spatial
+          ON spatial.release_group_mbid = scope.release_group_mbid
+         AND spatial.slot = 'spatial'
+        WHERE scope.artist_mbid IN (${placeholders})
+        GROUP BY scope.artist_mbid
+    `).all(...artistMbids) as ArtistCountRow[];
+
+    return new Map(rows.map((row) => [String(row.artist_id), row]));
+}
+
+function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCountRow> {
+    if (artistMbids.length === 0) {
+        return new Map();
+    }
+
+    const placeholders = artistMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+        SELECT
+            scope.artist_mbid AS artist_id,
+            COUNT(DISTINCT track.mbid) AS cnt,
+            COUNT(DISTINCT CASE
+                WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1
+                THEN track.mbid
+                ELSE NULL
+            END) AS monitored_cnt
+        FROM (
+            SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
+            UNION
+            SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
+        ) scope
+        JOIN AlbumReleases release
+          ON release.release_group_mbid = scope.release_group_mbid
+        JOIN Tracks track
+          ON track.release_mbid = release.mbid
+        LEFT JOIN ReleaseGroupSlots stereo
+          ON stereo.release_group_mbid = scope.release_group_mbid
+         AND stereo.slot = 'stereo'
+        LEFT JOIN ReleaseGroupSlots spatial
+          ON spatial.release_group_mbid = scope.release_group_mbid
+         AND spatial.slot = 'spatial'
+        WHERE scope.artist_mbid IN (${placeholders})
+        GROUP BY scope.artist_mbid
+    `).all(...artistMbids) as ArtistCountRow[];
 
     return new Map(rows.map((row) => [String(row.artist_id), row]));
 }
@@ -269,25 +308,8 @@ export class ArtistQueryService {
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
         const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
         const artistMbids = artists.map((artist) => String(artist.mbid || "")).filter(Boolean);
-        const albumCountsByArtistId = buildArtistCountMap("ProviderAlbums", artistIds);
-        const trackCountsByArtistId = buildArtistCountMap("ProviderMedia", artistIds, { excludeMusicVideos: true });
-        const releaseGroupCountsByMbid = new Map<string, number>();
-        if (artistMbids.length > 0) {
-            const placeholders = artistMbids.map(() => "?").join(",");
-            const rows = db.prepare(`
-                SELECT scope.artist_mbid, COUNT(DISTINCT scope.release_group_mbid) AS cnt
-                FROM (
-                    SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
-                    UNION
-                    SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
-                ) scope
-                WHERE scope.artist_mbid IN (${placeholders})
-                GROUP BY scope.artist_mbid
-            `).all(...artistMbids) as Array<{ artist_mbid: string; cnt: number }>;
-            for (const row of rows) {
-                releaseGroupCountsByMbid.set(String(row.artist_mbid), Number(row.cnt || 0));
-            }
-        }
+        const albumCountsByArtistMbid = buildArtistReleaseGroupCountMap(artistMbids);
+        const trackCountsByArtistMbid = buildArtistTrackCountMap(artistMbids);
         const artistDownloadStats = includeDownloadStats
             ? getArtistDownloadStatsMap(artistIds)
             : null;
@@ -295,18 +317,16 @@ export class ArtistQueryService {
         return {
             items: artists.map((artist) => {
                 const artistId = String(artist.id);
-                const albumCounts = albumCountsByArtistId.get(artistId);
-                const trackCounts = trackCountsByArtistId.get(artistId);
+                const artistMbid = String(artist.mbid || "");
+                const albumCounts = artistMbid ? albumCountsByArtistMbid.get(artistMbid) : undefined;
+                const trackCounts = artistMbid ? trackCountsByArtistMbid.get(artistMbid) : undefined;
                 const resolvedArtistPicture = proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
 
                 return {
                     ...artist,
                     picture: resolvedArtistPicture,
                     cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
-                    album_count: Math.max(
-                        Number(albumCounts?.cnt || 0),
-                        artist.mbid ? Number(releaseGroupCountsByMbid.get(String(artist.mbid)) || 0) : 0,
-                    ),
+                    album_count: Number(albumCounts?.cnt || 0),
                     monitored_album_count: Number(albumCounts?.monitored_cnt || 0),
                     track_count: Number(trackCounts?.cnt || 0),
                     monitored_track_count: Number(trackCounts?.monitored_cnt || 0),
@@ -365,24 +385,103 @@ export class ArtistQueryService {
 
     static getArtistAlbums(artistId: string): any[] {
         const artist = loadArtistWithEffectiveMonitor(artistId);
-        const queryId = artist?.mbid || artistId;
-        const albums = db.prepare(`
-      SELECT a.*, aa.type as relationship_type, aa.group_type as group_type
-      FROM ProviderAlbums a
-      JOIN ProviderAlbumArtists aa ON a.id = aa.album_id
-      WHERE aa.artist_id = ?
-      ORDER BY a.release_date DESC
-    `).all(queryId) as any[];
-        const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
+        const artistMbid = artist?.mbid ? String(artist.mbid) : "";
+        if (!artist || !artistMbid) {
+            return [];
+        }
 
-        return albums.map((album) => ({
-            ...album,
-            type: album.group_type === "COMPILATIONS" ? "APPEARS_ON" : album.type,
-            group_type: album.group_type || "ALBUMS",
-            downloaded: albumDownloadStats.get(String(album.id))?.downloadedPercent ?? 0,
-            is_monitored: Boolean(album.monitor),
-            is_downloaded: albumDownloadStats.get(String(album.id))?.isDownloaded ?? false,
-        }));
+        const rows = db.prepare(`
+      SELECT
+        rg.*,
+        COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
+        COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+        COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+        stereo.selected_provider AS stereo_provider,
+        stereo.selected_provider_id AS stereo_provider_id,
+        stereo.selected_release_mbid AS stereo_release_mbid,
+        stereo.quality AS stereo_quality,
+        stereo.match_status AS stereo_match_status,
+        stereo.match_method AS stereo_match_method,
+        stereo.provider_data AS stereo_provider_data,
+        stereo.monitor_lock AS stereo_monitor_lock,
+        spatial.selected_provider AS spatial_provider,
+        spatial.selected_provider_id AS spatial_provider_id,
+        spatial.selected_release_mbid AS spatial_release_mbid,
+        spatial.quality AS spatial_quality,
+        spatial.match_status AS spatial_match_status,
+        spatial.match_method AS spatial_match_method,
+        spatial.provider_data AS spatial_provider_data,
+        spatial.monitor_lock AS spatial_monitor_lock,
+        CASE
+          WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
+          WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
+          ELSE 0
+        END AS wanted
+      FROM Albums rg
+      LEFT JOIN ReleaseGroupSlots stereo
+        ON stereo.release_group_mbid = rg.mbid
+       AND stereo.slot = 'stereo'
+      LEFT JOIN ReleaseGroupSlots spatial
+        ON spatial.release_group_mbid = rg.mbid
+       AND spatial.slot = 'spatial'
+      WHERE rg.artist_mbid = ?
+         OR EXISTS (
+           SELECT 1
+           FROM ArtistReleaseGroups scope
+           WHERE scope.release_group_mbid = rg.mbid
+             AND scope.artist_mbid = ?
+         )
+      ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+    `).all(artistMbid, artistMbid) as any[];
+
+        const downloadStats = getReleaseGroupDownloadStatsMap(rows.map((row) => row.mbid));
+
+        return rows.map((row) => {
+            const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
+            const selectedProviderData = (() => {
+                const raw = row.stereo_provider_data || row.spatial_provider_data;
+                if (!raw) return null;
+                try {
+                    return typeof raw === "string" ? JSON.parse(raw) : raw;
+                } catch {
+                    return null;
+                }
+            })() as { explicit?: boolean | number | null } | null;
+            const coverUrl = chooseCachedAlbumArtwork({
+                skyHookData: parseJsonObject(row.data),
+                providerCandidates: albumProviderArtworkCandidatesFromRow(row),
+            });
+            const stats = downloadStats.get(String(row.mbid));
+
+            return {
+                id: String(row.mbid),
+                title: row.title,
+                artist_id: String(artist.id),
+                artist_name: String(artist.name || "Unknown Artist"),
+                mb_release_group_id: String(row.mbid),
+                release_date: row.first_release_date || null,
+                type: primaryType,
+                album_type: primaryType,
+                group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
+                explicit: Boolean(selectedProviderData?.explicit),
+                cover: coverUrl,
+                cover_id: coverUrl,
+                cover_art_url: coverUrl,
+                quality: row.selected_quality || null,
+                stereo_provider_id: row.stereo_provider_id || null,
+                stereo_release_mbid: row.stereo_release_mbid || null,
+                spatial_provider_id: row.spatial_provider_id || null,
+                spatial_release_mbid: row.spatial_release_mbid || null,
+                monitor: Boolean(row.wanted),
+                is_monitored: Boolean(row.wanted),
+                monitor_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
+                monitor_locked: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
+                downloaded: stats?.downloadedPercent ?? 0,
+                is_downloaded: stats?.isDownloaded ?? false,
+                module: releaseGroupBucket(row),
+                source: "musicbrainz",
+            };
+        });
     }
 
     static getArtistActivity(artistId: string): ArtistActivitySnapshot {
@@ -394,40 +493,49 @@ export class ArtistQueryService {
       WHERE ref_id = ? AND status IN ('pending', 'processing')
     `).all(artistId) as any[];
 
-        const albumJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
-      INNER JOIN ProviderAlbums a ON a.id = jq.ref_id
-      WHERE a.artist_id = ? AND jq.type IN ('RefreshAlbum', 'ScanAlbum') AND jq.status IN ('pending', 'processing')
-    `).all(artistId) as any[];
-
-        const albumDownloadJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
-      INNER JOIN ProviderAlbums a ON a.id = jq.ref_id
-      WHERE a.artist_id = ?
-        AND jq.type IN ('DownloadAlbum', 'ImportDownload')
-        AND jq.status IN ('pending', 'processing')
-    `).all(artistId) as any[];
-
-        const mediaDownloadJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
-      INNER JOIN ProviderMedia m ON m.id = jq.ref_id
-      WHERE m.artist_id = ?
-        AND jq.type IN ('DownloadTrack', 'DownloadVideo', 'ImportDownload')
-        AND jq.status IN ('pending', 'processing')
-    `).all(artistId) as any[];
-
-        const releaseGroupSlotJobs = db.prepare(`
+        const releaseGroupJobs = db.prepare(`
       SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
       FROM job_queue jq
       INNER JOIN Albums rg
-        ON rg.mbid = json_extract(jq.payload, '$.releaseGroupMbid')
+        ON rg.mbid = jq.ref_id
+        OR rg.mbid = json_extract(jq.payload, '$.releaseGroupMbid')
       WHERE rg.artist_mbid = ?
-        AND jq.type IN ('DownloadAlbum', 'ImportDownload')
+        AND jq.type IN ('RefreshAlbum', 'ScanAlbum', 'DownloadAlbum', 'ImportDownload')
         AND jq.status IN ('pending', 'processing')
     `).all(artistMbid) as any[];
+
+        const trackDownloadJobs = db.prepare(`
+      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM job_queue jq
+      INNER JOIN Tracks track
+        ON CAST(track.Id AS TEXT) = CAST(jq.ref_id AS TEXT)
+        OR track.mbid = jq.ref_id
+        OR track.mbid = json_extract(jq.payload, '$.canonicalTrackMbid')
+        OR CAST(track.Id AS TEXT) = CAST(json_extract(jq.payload, '$.canonicalTrackId') AS TEXT)
+      INNER JOIN AlbumReleases release
+        ON release.mbid = track.release_mbid
+      INNER JOIN Albums rg
+        ON rg.mbid = release.release_group_mbid
+      WHERE rg.artist_mbid = ?
+        AND jq.type IN ('DownloadTrack', 'ImportDownload')
+        AND jq.status IN ('pending', 'processing')
+    `).all(artistMbid) as any[];
+
+        const videoDownloadJobs = db.prepare(`
+      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM job_queue jq
+      INNER JOIN Recordings recording
+        ON CAST(recording.Id AS TEXT) = CAST(jq.ref_id AS TEXT)
+        OR CAST(recording.Id AS TEXT) = CAST(json_extract(jq.payload, '$.canonicalRecordingId') AS TEXT)
+        OR recording.mbid = json_extract(jq.payload, '$.canonicalRecordingMbid')
+      WHERE recording.IsVideo = 1
+        AND (
+          recording.artist_mbid = ?
+          OR CAST(recording.ArtistMetadataId AS TEXT) = CAST(? AS TEXT)
+        )
+        AND jq.type IN ('DownloadVideo', 'ImportDownload')
+        AND jq.status IN ('pending', 'processing')
+    `).all(artistMbid, artist?.id ? String(artist.id) : artistId) as any[];
 
         const libraryRescanJob = db.prepare(`
       SELECT id, type, status, ref_id, created_at, started_at
@@ -439,7 +547,7 @@ export class ArtistQueryService {
     `).get() as any | undefined;
 
         const allJobs = new Map<number, any>();
-        for (const job of [...directJobs, ...albumJobs, ...albumDownloadJobs, ...mediaDownloadJobs, ...releaseGroupSlotJobs]) {
+        for (const job of [...directJobs, ...releaseGroupJobs, ...trackDownloadJobs, ...videoDownloadJobs]) {
             allJobs.set(job.id, job);
         }
         if (libraryRescanJob) {
@@ -480,31 +588,29 @@ export class ArtistQueryService {
             return null;
         }
 
-        const albums = db.prepare(`
-      SELECT * FROM ProviderAlbums
-      WHERE artist_id = ?
-      ORDER BY release_date DESC
-    `).all(id) as any[];
+        const albums = this.getArtistAlbums(id);
 
         const grouped: Record<string, any[]> = {
             ARTIST_ALBUMS: [],
-            ARTIST_EP: [],
-            ARTIST_SINGLE: [],
+            ARTIST_EPS: [],
+            ARTIST_SINGLES: [],
             ARTIST_COMPILATIONS: [],
             ARTIST_LIVE_ALBUMS: [],
             ARTIST_APPEARS_ON: [],
+            ARTIST_REMIXES: [],
+            ARTIST_SOUNDTRACKS: [],
+            ARTIST_DEMOS: [],
+            ARTIST_DJ_MIXES: [],
+            ARTIST_MIXTAPES: [],
+            ARTIST_BROADCASTS: [],
+            ARTIST_OTHER_RELEASES: [],
         };
 
         for (const album of albums) {
-            const derivedQuality = album.quality || "LOSSLESS";
-            album.derived_quality = derivedQuality;
-
-            let moduleName = album.module;
-            if (!moduleName) {
-                if (album.type === "SINGLE") moduleName = "ARTIST_SINGLE";
-                else if (album.type === "EP") moduleName = "ARTIST_EP";
-                else moduleName = "ARTIST_ALBUMS";
-            }
+            const moduleName = RELEASE_GROUP_BUCKETS[album.module as keyof typeof RELEASE_GROUP_BUCKETS]
+                || (album.type === "SINGLE" ? "ARTIST_SINGLES"
+                    : album.type === "EP" ? "ARTIST_EPS"
+                        : "ARTIST_ALBUMS");
 
             if (!grouped[moduleName]) {
                 grouped[moduleName] = [];
@@ -539,9 +645,70 @@ export class ArtistQueryService {
         if (!artist) {
             return null;
         }
+        if (artist.mbid) {
+            RefreshArtistService.syncProviderSelectionsFromStoredOffers(String(artist.mbid));
+        }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
-        const videos = db.prepare("SELECT * FROM ProviderMedia WHERE type = 'Music Video' AND artist_id = ? ORDER BY (release_date IS NULL) ASC, release_date DESC, popularity DESC, title ASC, id ASC").all(artistId) as any[];
+        const videos = db.prepare(`
+         SELECT
+           CAST(recording.Id AS TEXT) AS id,
+           recording.title,
+           COALESCE(
+             CASE
+               WHEN COALESCE(recording.length_ms, 0) > 0
+               THEN CAST(ROUND(recording.length_ms / 1000.0) AS INT)
+               ELSE NULL
+             END,
+             provider_item.duration,
+             0
+           ) AS duration,
+           COALESCE(recording.ReleaseDate, provider_item.release_date) AS release_date,
+           provider_item.version,
+           provider_item.explicit,
+           COALESCE(provider_item.quality, 'MP4_1080P') AS quality,
+           COALESCE(recording.CoverImageId, provider_item.asset_id) AS cover,
+           recording.CoverImageUrl AS cover_art_url,
+           provider_item.provider_url AS url,
+           CAST(COALESCE(recording.ArtistMetadataId, artist_metadata.Id) AS TEXT) AS artist_id,
+           artist_metadata.name AS artist_name,
+           COALESCE(recording.Monitor, 0) AS monitor,
+           COALESCE(recording.MonitorLock, 0) AS monitor_lock,
+           recording.updated_at AS last_scanned,
+           CASE WHEN EXISTS (
+             SELECT 1
+             FROM TrackFiles lf
+             WHERE lf.file_type = 'video'
+               AND (
+                 lf.media_id = recording.Id
+                 OR lf.canonical_recording_mbid = recording.mbid
+                 OR CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT)
+               )
+           ) THEN 1 ELSE 0 END AS is_downloaded
+         FROM Recordings recording
+         LEFT JOIN ArtistMetadata artist_metadata
+           ON artist_metadata.Id = recording.ArtistMetadataId
+          OR (recording.artist_mbid IS NOT NULL AND artist_metadata.mbid = recording.artist_mbid)
+         LEFT JOIN ProviderItems provider_item
+           ON provider_item.rowid = (
+             SELECT candidate.rowid
+             FROM ProviderItems candidate
+             WHERE candidate.entity_type = 'video'
+               AND (
+                 candidate.recording_id = recording.Id
+                 OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
+               )
+             ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC, candidate.provider_id ASC
+             LIMIT 1
+           )
+         WHERE recording.IsVideo = 1
+           AND (
+             CAST(recording.ArtistMetadataId AS TEXT) = ?
+             OR recording.artist_mbid = ?
+             OR artist_metadata.mbid = ?
+           )
+         ORDER BY (release_date IS NULL) ASC, release_date DESC, recording.title ASC, recording.Id ASC
+       `).all(String(artist.id), String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
          SELECT
@@ -556,6 +723,7 @@ export class ArtistQueryService {
            stereo.match_status AS stereo_match_status,
            stereo.match_method AS stereo_match_method,
            stereo.provider_data AS stereo_provider_data,
+           stereo.monitor_lock AS stereo_monitor_lock,
            spatial.selected_provider AS spatial_provider,
            spatial.selected_provider_id AS spatial_provider_id,
            spatial.selected_release_mbid AS spatial_release_mbid,
@@ -563,6 +731,7 @@ export class ArtistQueryService {
            spatial.match_status AS spatial_match_status,
            spatial.match_method AS spatial_match_method,
            spatial.provider_data AS spatial_provider_data,
+           spatial.monitor_lock AS spatial_monitor_lock,
            CASE
              WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
              WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
@@ -586,22 +755,6 @@ export class ArtistQueryService {
          ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
        `).all(artist.mbid, artist.mbid) as any[]
             : [];
-
-        const allProviderAlbums = db.prepare(`
-            SELECT DISTINCT
-                pa.*,
-                paa.type AS relationship_type,
-                paa.group_type AS group_type,
-                paa.module AS aa_module
-            FROM ProviderAlbums pa
-            JOIN ProviderAlbumArtists paa ON pa.id = paa.album_id
-            WHERE paa.artist_id = ?
-        `).all(artist.mbid || artistId) as any[];
-
-        const mbReleaseGroupMbids = new Set(musicBrainzReleaseGroups.map(rg => String(rg.mbid)));
-        const albums = allProviderAlbums.filter(pa => 
-            !pa.mb_release_group_id || !mbReleaseGroupMbids.has(String(pa.mb_release_group_id))
-        );
 
         let similarArtists: any[] = [];
         try {
@@ -630,55 +783,114 @@ export class ArtistQueryService {
 
         const topTracks = db.prepare(`
       SELECT
-        t.id,
-        t.artist_id,
-        t.title,
-        t.version,
-        t.duration,
-        t.track_number,
-        t.volume_number,
-        t.explicit,
-        t.quality,
-        t.monitor,
-        t.monitor_lock,
-        MAX(COALESCE(t.popularity, 0)) as popularity,
-        a.title as album_title,
-        a.cover as album_cover,
-        a.id as album_id,
-        ta.name as artist_name
-      FROM ProviderMedia t
-      JOIN ProviderAlbums a ON t.album_id = a.id
-      JOIN ProviderMediaArtists ma ON t.id = ma.media_id
-      LEFT JOIN ArtistMetadata ta ON ta.mbid = ma.artist_id
-      WHERE t.album_id IS NOT NULL
-        AND t.type <> 'Music Video'
-        AND ma.artist_id = ?
-        AND ma.type = 'MAIN'
-      GROUP BY COALESCE(t.mbid, t.id)
-      ORDER BY popularity DESC, a.release_date DESC, t.id ASC
-    `).all(artist.mbid || artistId) as any[];
+        track.mbid AS id,
+        release_group.mbid AS album_id,
+        track.title,
+        NULL AS version,
+        COALESCE(
+          ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0),
+          0
+        ) AS duration,
+        track.position AS track_number,
+        track.medium_position AS volume_number,
+        COALESCE(provider_track.explicit, 0) AS explicit,
+        COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM ReleaseGroupSlots monitored_slot
+          WHERE monitored_slot.release_group_mbid = release_group.mbid
+            AND monitored_slot.wanted = 1
+        ) THEN 1 ELSE 0 END AS monitor,
+        COALESCE(selected_slot.monitor_lock, 0) AS monitor_lock,
+        COALESCE(artist_metadata.popularity, 0) AS popularity,
+        release_group.title AS album_title,
+        provider_album.asset_id AS album_cover,
+        artist_metadata.name AS artist_name,
+        artist_metadata.mbid AS artist_id,
+        COALESCE(release.date, release_group.first_release_date) AS release_date,
+        track.updated_at AS last_scanned,
+        track.updated_at AS created_at,
+        track.updated_at AS updated_at,
+        recording.data AS recording_data,
+        provider_track.provider AS preview_provider,
+        provider_track.provider_id AS preview_provider_track_id,
+        track.mbid AS musicbrainz_track_id,
+        track.recording_mbid AS musicbrainz_recording_id,
+        track.release_mbid AS musicbrainz_release_id,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM TrackFiles downloaded_file
+          WHERE downloaded_file.file_type = 'track'
+            AND downloaded_file.canonical_track_mbid = track.mbid
+        ) THEN 1 ELSE 0 END AS is_downloaded
+      FROM Tracks track
+      JOIN AlbumReleases release ON release.mbid = track.release_mbid
+      JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
+      LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
+      LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
+      LEFT JOIN ProviderItems provider_track
+        ON provider_track.rowid = (
+          SELECT preferred_provider_track.rowid
+          FROM ProviderItems preferred_provider_track
+          WHERE preferred_provider_track.entity_type = 'track'
+            AND (
+              preferred_provider_track.track_mbid = track.mbid
+              OR preferred_provider_track.recording_mbid = track.recording_mbid
+            )
+          ORDER BY
+            CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+            preferred_provider_track.updated_at DESC,
+            preferred_provider_track.provider_id ASC
+          LIMIT 1
+        )
+      LEFT JOIN ProviderItems provider_album
+        ON provider_album.rowid = (
+          SELECT preferred_provider_album.rowid
+          FROM ProviderItems preferred_provider_album
+          WHERE preferred_provider_album.entity_type = 'album'
+            AND preferred_provider_album.release_group_mbid = release_group.mbid
+          ORDER BY
+            CASE preferred_provider_album.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+            preferred_provider_album.updated_at DESC,
+            preferred_provider_album.provider_id ASC
+          LIMIT 1
+        )
+      LEFT JOIN ReleaseGroupSlots selected_slot
+        ON selected_slot.release_group_mbid = release_group.mbid
+       AND selected_slot.selected_release_mbid = track.release_mbid
+       AND selected_slot.id = (
+         SELECT preferred_slot.id
+         FROM ReleaseGroupSlots preferred_slot
+         WHERE preferred_slot.release_group_mbid = release_group.mbid
+           AND preferred_slot.selected_release_mbid = track.release_mbid
+         ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+         LIMIT 1
+       )
+      LEFT JOIN TrackFiles primary_file
+        ON primary_file.canonical_track_mbid = track.mbid
+       AND primary_file.file_type = 'track'
+       AND primary_file.id = (
+         SELECT preferred_file.id
+         FROM TrackFiles preferred_file
+         WHERE preferred_file.canonical_track_mbid = track.mbid
+           AND preferred_file.file_type = 'track'
+         ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
+         LIMIT 1
+       )
+      WHERE release_group.artist_mbid = ?
+         OR EXISTS (
+           SELECT 1
+           FROM ArtistReleaseGroups scope
+           WHERE scope.release_group_mbid = release_group.mbid
+             AND scope.artist_mbid = ?
+         )
+      GROUP BY track.mbid
+      ORDER BY popularity DESC, release_date DESC, track.mbid ASC
+      LIMIT 24
+    `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
 
-        const albumDownloadStats = getAlbumDownloadStatsMap(albums.map((album) => album.id));
-        const videoDownloadStates = getMediaDownloadStateMap(videos.map((video) => video.id), "video");
+        const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
         const artistDownloadStats = getArtistDownloadStats(artistId);
-
-        const transformedAlbums = albums.map((album) => {
-            const derivedQuality = album.quality || "LOSSLESS";
-            const downloadStats = albumDownloadStats.get(String(album.id)) ?? getAlbumDownloadStats(album.id);
-
-            return {
-                ...album,
-                cover_id: album.cover || null,
-                monitor_locked: Boolean(album.monitor_lock),
-                redundant_of: album.redundant || null,
-                type: album.relationship_type === "APPEARS_ON" ? "APPEARS_ON" : album.type,
-                is_monitored: Boolean(album.monitor),
-                downloaded: downloadStats.downloadedPercent,
-                is_downloaded: downloadStats.isDownloaded,
-                quality: derivedQuality,
-                derived_quality: derivedQuality,
-            };
-        });
 
         const modules: Record<string, any[]> = {
             ARTIST_ALBUMS: [],
@@ -696,22 +908,6 @@ export class ArtistQueryService {
             ARTIST_OTHER_RELEASES: [],
         };
 
-        const moduleToBucket: Record<string, string> = {
-            ALBUM: "ARTIST_ALBUMS",
-            EP: "ARTIST_EPS",
-            SINGLE: "ARTIST_SINGLES",
-            APPEARS_ON: "ARTIST_APPEARS_ON",
-            COMPILATION: "ARTIST_COMPILATIONS",
-            LIVE: "ARTIST_LIVE_ALBUMS",
-            REMIX: "ARTIST_REMIXES",
-            SOUNDTRACK: "ARTIST_SOUNDTRACKS",
-            DEMO: "ARTIST_DEMOS",
-            DJ_MIX: "ARTIST_DJ_MIXES",
-            MIXTAPE: "ARTIST_MIXTAPES",
-            BROADCAST: "ARTIST_BROADCASTS",
-            OTHER: "ARTIST_OTHER_RELEASES",
-        };
-
         // Exclude raw provider albums from modules to restrict discography entirely to MusicBrainz release groups.
 
         const releaseGroupCards = musicBrainzReleaseGroups.map((row) => {
@@ -719,6 +915,7 @@ export class ArtistQueryService {
             const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
             const monitored = Boolean(row.wanted);
             const includeSpatial = getConfigSection("filtering").include_spatial === true;
+            const downloadStats = releaseGroupDownloadStats.get(String(row.mbid));
             
             const selectedProviderData = (() => {
                 const raw = row.stereo_provider_data || row.spatial_provider_data;
@@ -749,6 +946,7 @@ export class ArtistQueryService {
                 album_type: primaryType,
                 explicit: Boolean(selectedProviderData?.explicit),
                 quality: row.selected_quality || null,
+                selected_provider_id: row.selected_provider_id || null,
                 stereo_provider_id: row.stereo_provider_id || null,
                 stereo_release_mbid: row.stereo_release_mbid || null,
                 stereo_quality: row.stereo_quality || null,
@@ -764,10 +962,10 @@ export class ArtistQueryService {
                 mb_release_group_id: String(row.mbid),
                 monitor: monitored ? 1 : 0,
                 is_monitored: monitored,
-                downloaded: 0,
-                is_downloaded: false,
-                monitor_lock: 0,
-                monitor_locked: false,
+                downloaded: downloadStats?.downloadedPercent ?? 0,
+                is_downloaded: downloadStats?.isDownloaded ?? false,
+                monitor_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock) ? 1 : 0,
+                monitor_locked: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
                 module: bucketKey,
                 group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
                 source: "musicbrainz",
@@ -834,8 +1032,8 @@ export class ArtistQueryService {
                         quality: video.quality || "MP4_1080P",
                         monitor_locked: Boolean(video.monitor_lock),
                         is_monitored: Boolean(video.monitor),
-                        downloaded: videoDownloadStates.get(String(video.id)) ? 1 : 0,
-                        is_downloaded: videoDownloadStates.get(String(video.id)) ?? false,
+                        downloaded: Boolean(video.is_downloaded) ? 1 : 0,
+                        is_downloaded: Boolean(video.is_downloaded),
                     })),
                 }],
             });
