@@ -9,6 +9,7 @@ import { streamingProviderManager } from "./providers/index.js";
 import type { ProviderAlbum, ProviderTrack } from "./providers/streaming-provider.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "./provider-artist-identity-service.js";
+import { ProviderOfferReleaseLinkService } from "./provider-offer-release-link-service.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -594,6 +595,83 @@ export class RefreshAlbumService {
         `);
 
         const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderMedia WHERE id = ? AND album_id = ?");
+        const selectedRelease = db.prepare(`
+            SELECT
+                COALESCE(rgs.selected_release_mbid, pi.release_mbid, pa.mbid) AS release_mbid,
+                COALESCE(rgs.release_group_mbid, pi.release_group_mbid, pa.mb_release_group_id) AS release_group_mbid,
+                COALESCE(rgs.artist_mbid, pi.artist_mbid, artist.mbid) AS artist_mbid,
+                COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot,
+                COALESCE(rgs.quality, pi.quality, pa.quality) AS quality
+            FROM ProviderAlbums pa
+            LEFT JOIN ProviderItems pi
+              ON pi.provider = ?
+             AND pi.entity_type = 'album'
+             AND pi.provider_id = CAST(pa.id AS TEXT)
+            LEFT JOIN ReleaseGroupSlots rgs
+              ON rgs.selected_provider = ?
+             AND (
+                rgs.selected_provider_id = CAST(pa.id AS TEXT)
+                OR rgs.selected_provider_id LIKE CAST(pa.id AS TEXT) || ';%'
+                OR rgs.selected_provider_id LIKE '%;' || CAST(pa.id AS TEXT) || ';%'
+                OR rgs.selected_provider_id LIKE '%;' || CAST(pa.id AS TEXT)
+             )
+            LEFT JOIN Artists artist ON artist.id = pa.artist_id
+            WHERE CAST(pa.id AS TEXT) = ?
+            ORDER BY
+              CASE WHEN rgs.selected_release_mbid IS NOT NULL THEN 0 ELSE 1 END,
+              CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+            LIMIT 1
+        `).get(providerId, providerId, albumId) as {
+            release_mbid?: string | null;
+            release_group_mbid?: string | null;
+            artist_mbid?: string | null;
+            library_slot?: string | null;
+            quality?: string | null;
+        } | undefined;
+        const selectCanonicalTrackByPosition = db.prepare(`
+            SELECT
+                t.Id AS track_id,
+                t.mbid AS track_mbid,
+                t.recording_mbid,
+                r.Id AS recording_id
+            FROM Tracks t
+            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+            WHERE t.release_mbid = ?
+              AND t.medium_position = ?
+              AND t.position = ?
+              AND COALESCE(r.IsVideo, 0) = 0
+            LIMIT 1
+        `);
+        const upsertProviderTrackOffer = db.prepare(`
+            INSERT INTO ProviderItems (
+                provider, entity_type, provider_id, title, version, explicit, quality,
+                isrc, duration, release_date, artist_mbid, release_group_mbid, release_mbid,
+                track_mbid, recording_mbid, library_slot, track_id, recording_id,
+                match_status, match_confidence, match_method, match_evidence, data, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+                title = excluded.title,
+                version = excluded.version,
+                explicit = excluded.explicit,
+                quality = excluded.quality,
+                isrc = excluded.isrc,
+                duration = excluded.duration,
+                release_date = excluded.release_date,
+                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
+                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
+                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
+                track_mbid = COALESCE(excluded.track_mbid, ProviderItems.track_mbid),
+                recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
+                library_slot = excluded.library_slot,
+                track_id = COALESCE(excluded.track_id, ProviderItems.track_id),
+                recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
+                match_status = excluded.match_status,
+                match_confidence = excluded.match_confidence,
+                match_method = excluded.match_method,
+                match_evidence = excluded.match_evidence,
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP
+        `);
 
         const cooperateTrackStore = createCooperativeBatcher(25);
         const trackBatch: any[] = [];
@@ -662,6 +740,52 @@ export class RefreshAlbumService {
                                 albumId,
                             );
                         }
+
+                        const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
+                        const canonicalTrack = releaseMbid
+                            ? selectCanonicalTrackByPosition.get(
+                                releaseMbid,
+                                Number(currentTrack.volume_number || 1),
+                                Number(currentTrack.track_number || 0),
+                            ) as {
+                                track_id?: number | null;
+                                track_mbid?: string | null;
+                                recording_mbid?: string | null;
+                                recording_id?: number | null;
+                            } | undefined
+                            : null;
+                        upsertProviderTrackOffer.run(
+                            providerId,
+                            String(currentTrack.provider_id),
+                            currentTrack.title || null,
+                            currentTrack.version || null,
+                            currentTrack.explicit ? 1 : 0,
+                            currentTrack.quality || selectedRelease?.quality || null,
+                            currentTrack.isrc || null,
+                            currentTrack.duration || null,
+                            currentTrack.release_date || null,
+                            selectedRelease?.artist_mbid || null,
+                            selectedRelease?.release_group_mbid || null,
+                            releaseMbid || null,
+                            canonicalTrack?.track_mbid || null,
+                            canonicalTrack?.recording_mbid || null,
+                            selectedRelease?.library_slot || getProviderLibrarySlot(currentTrack.quality || selectedRelease?.quality),
+                            canonicalTrack?.track_id || null,
+                            canonicalTrack?.recording_id || null,
+                            canonicalTrack?.track_mbid ? "matched" : "pending",
+                            canonicalTrack?.track_mbid ? 0.9 : null,
+                            canonicalTrack?.track_mbid ? "selected-release-position" : "provider-album-tracklist",
+                            JSON.stringify({
+                                albumProviderId: albumId,
+                                mediumPosition: Number(currentTrack.volume_number || 1),
+                                trackPosition: Number(currentTrack.track_number || 0),
+                            }),
+                            JSON.stringify({
+                                albumProviderId: albumId,
+                                copyright: currentTrack.copyright || null,
+                                popularity: currentTrack.popularity || null,
+                            }),
+                        );
 
                         this.storeTrackArtists(currentTrack, currentTrackArtistId, resolvedGuestsMap);
                     }
@@ -846,6 +970,8 @@ export class RefreshAlbumService {
             );
         }
 
+        const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(releaseGroupMatch);
+
         if (matchedReleaseGroup) {
             db.prepare(`
                 UPDATE ProviderAlbums SET
@@ -861,7 +987,7 @@ export class RefreshAlbumService {
                     musicbrainz_match_method = ?
                 WHERE id = ?
             `).run(
-                releaseGroupMatch?.releaseMbid || null,
+                matchedReleaseMbid,
                 matchedReleaseGroup.mbid,
                 primaryTypeFromProviderMatch(releaseGroupMatch),
                 secondaryTypeFromProviderMatch(releaseGroupMatch),
@@ -906,7 +1032,7 @@ export class RefreshAlbumService {
             album.release_date || null,
             matchedArtistMbid,
             matchedReleaseGroup?.mbid || null,
-            releaseGroupMatch?.releaseMbid || null,
+            matchedReleaseMbid,
             getProviderLibrarySlot(album.quality),
             releaseGroupMatch?.status || "unmatched",
             releaseGroupMatch?.confidence ?? null,

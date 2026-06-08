@@ -8,6 +8,7 @@ type AlbumSlotSelection = {
     slot: "stereo" | "spatial";
     selected_provider?: string | null;
     selected_provider_id: string;
+    selected_release_mbid?: string | null;
     quality?: string | null;
     provider_data?: string | null;
     title?: string | null;
@@ -89,6 +90,7 @@ export class AlbumCommandService {
               rgs.slot,
               rgs.selected_provider,
               rgs.selected_provider_id,
+              rgs.selected_release_mbid,
               rgs.quality,
               rgs.provider_data,
               rg.title,
@@ -261,6 +263,7 @@ export class AlbumCommandService {
                     provider,
                     providerId: providerAlbumId,
                     releaseGroupMbid: albumId,
+                    releaseMbid: selection.selected_release_mbid || null,
                     albumId,
                     libraryRoot: selection.slot === "spatial" ? "spatial" : "music",
                     slot: selection.slot,

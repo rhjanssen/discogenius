@@ -553,6 +553,7 @@ export class CurationService {
             artist_name?: string | null;
             provider?: string | null;
             releaseGroupMbid?: string | null;
+            releaseMbid?: string | null;
             slot?: string | null;
         }, artistNames: string[] = []): boolean => {
             const albumId = String(album.id);
@@ -577,6 +578,7 @@ export class CurationService {
                 provider,
                 providerId: albumId,
                 releaseGroupMbid: album.releaseGroupMbid || undefined,
+                releaseMbid: album.releaseMbid || null,
                 albumId: album.releaseGroupMbid || undefined,
                 libraryRoot: album.slot === "spatial" ? "spatial" : "music",
                 slot: album.slot || undefined,
@@ -621,6 +623,7 @@ export class CurationService {
             WHERE rgs.wanted = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
+              AND rgs.selected_release_mbid IS NOT NULL
               AND ${slotArtistWhere}
             ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
         `).all(...slotParams) as any[];
@@ -631,51 +634,33 @@ export class CurationService {
             }
 
             const albumId = String(slot.id);
-            const albumIds = albumId.split(";").filter(Boolean);
-            
-            // Check if all target tracks of the preferred release are imported.
-            // First find the preferred release MBID for this release group
-            const preferredReleaseRow = slot.selected_release_mbid
-                ? { mbid: String(slot.selected_release_mbid) }
-                : MusicBrainzReleaseSelectionService.selectRepresentativeRelease(slot.release_group_mbid);
+            const targetTracks = db.prepare(`
+                SELECT t.mbid as track_mbid, t.recording_mbid
+                FROM Tracks t
+                LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
+                WHERE t.release_mbid = ?
+                  AND COALESCE(recording.IsVideo, 0) = 0
+            `).all(String(slot.selected_release_mbid)) as Array<{ track_mbid: string; recording_mbid: string | null }>;
 
             let allTracksImported = false;
-            if (preferredReleaseRow) {
-                const targetTracks = db.prepare(`
-                    SELECT t.mbid as track_mbid, t.recording_mbid
-                    FROM Tracks t
-                    WHERE t.release_mbid = ?
-                `).all(preferredReleaseRow.mbid) as Array<{ track_mbid: string; recording_mbid: string | null }>;
-
-                if (targetTracks.length > 0) {
-                    let importedCount = 0;
-                    for (const track of targetTracks) {
-                        const fileExists = db.prepare(`
-                            SELECT 1 FROM TrackFiles
-                            WHERE (canonical_track_mbid = ? OR (canonical_recording_mbid = ? AND canonical_recording_mbid IS NOT NULL))
-                              AND file_type = 'track'
-                            LIMIT 1
-                        `).get(track.track_mbid, track.recording_mbid);
-                        if (fileExists) {
-                            importedCount++;
-                        }
-                    }
-                    if (importedCount === targetTracks.length) {
-                        allTracksImported = true;
-                    }
-                }
-            } else {
-                // Fallback to basic has-any-imported check if no preferred release exists
-                if (albumIds.length > 0) {
-                    const placeholders = albumIds.map(() => '?').join(', ');
-                    allTracksImported = Boolean(db.prepare(`
-                        SELECT 1
-                        FROM TrackFiles lf
-                        WHERE lf.album_id IN (${placeholders})
-                          AND lf.file_type = 'track'
+            if (targetTracks.length > 0) {
+                let importedCount = 0;
+                for (const track of targetTracks) {
+                    const fileExists = db.prepare(`
+                        SELECT 1 FROM TrackFiles
+                        WHERE (
+                            canonical_track_mbid = ?
+                            OR (canonical_recording_mbid = ? AND canonical_recording_mbid IS NOT NULL)
+                        )
+                          AND file_type = 'track'
+                          AND library_slot = ?
                         LIMIT 1
-                    `).get(...albumIds));
+                    `).get(track.track_mbid, track.recording_mbid, slot.slot || "stereo");
+                    if (fileExists) {
+                        importedCount++;
+                    }
                 }
+                allTracksImported = importedCount === targetTracks.length;
             }
 
             if (allTracksImported) {
@@ -698,6 +683,7 @@ export class CurationService {
                 artist_name: slot.artist_name || providerData?.artist?.name || null,
                 provider: slot.selected_provider || null,
                 releaseGroupMbid: slot.release_group_mbid || null,
+                releaseMbid: slot.selected_release_mbid || null,
                 slot: slot.slot || null,
             }, artistNames);
         }

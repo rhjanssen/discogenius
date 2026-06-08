@@ -428,36 +428,7 @@ export class DownloadProcessor {
 
     private hasAlbumMetadataReady(albumId: string, payload?: DownloadJobPayload): boolean {
         const canonicalOffer = this.resolveCanonicalProviderOffer(albumId, 'album', payload);
-        if (canonicalOffer) {
-            return true;
-        }
-
-        const row = db.prepare(`
-            SELECT
-                a.id,
-                a.title,
-                a.artist_id,
-                ar.name as artist_name,
-                a.num_tracks,
-                COUNT(m.id) as track_count
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            LEFT JOIN ProviderMedia m ON m.album_id = a.id AND m.type != 'Music Video'
-            WHERE a.id = ?
-            GROUP BY a.id, a.title, a.artist_id, ar.name, a.num_tracks
-        `).get(albumId) as any;
-
-        if (!row?.id || !row?.title || !row?.artist_id || !row?.artist_name) {
-            return false;
-        }
-
-        const expectedTracks = Number(row.num_tracks || 0);
-        const trackCount = Number(row.track_count || 0);
-        if (expectedTracks <= 0) {
-            return trackCount > 0;
-        }
-
-        return trackCount >= expectedTracks;
+        return Boolean(canonicalOffer);
     }
 
     private hasTrackMetadataReady(trackId: string, payload?: DownloadJobPayload): boolean {
@@ -470,14 +441,7 @@ export class DownloadProcessor {
             );
         }
 
-        const row = db.prepare(`
-            SELECT m.id, m.title, m.artist_id, m.album_id, a.id as album_exists
-            FROM ProviderMedia m
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            WHERE m.id = ?
-        `).get(trackId) as any;
-
-        return Boolean(row?.id && row?.title && row?.artist_id && row?.album_id && row?.album_exists);
+        return false;
     }
 
     private hasVideoMetadataReady(videoId: string, payload?: DownloadJobPayload): boolean {
@@ -490,13 +454,7 @@ export class DownloadProcessor {
             );
         }
 
-        const row = db.prepare(`
-            SELECT id, title, artist_id
-            FROM ProviderMedia
-            WHERE id = ? AND type = 'Music Video'
-        `).get(videoId) as any;
-
-        return Boolean(row?.id && row?.title && row?.artist_id);
+        return false;
     }
 
     private async ensureMetadataReady(
@@ -585,57 +543,10 @@ export class DownloadProcessor {
                 };
             }
 
-            if (type === 'album') {
-                const albumIds = providerId.split(";").filter(Boolean);
-                const titles: string[] = [];
-                let artistName = 'Unknown';
-                let cover: string | null = null;
-                for (const subAlbumId of albumIds) {
-                    const row = db.prepare(`
-                        SELECT a.title, a.cover, ar.name as artist_name
-                        FROM ProviderAlbums a
-                        LEFT JOIN Artists ar ON ar.id = a.artist_id
-                        WHERE a.id = ?
-                    `).get(subAlbumId) as any;
-                    if (row) {
-                        if (row.title) titles.push(row.title);
-                        if (row.artist_name) artistName = row.artist_name;
-                        if (!cover && row.cover) cover = row.cover;
-                    }
-                }
-                return {
-                    title: fallbackTitle || (titles.length > 0 ? titles.join(" / ") : 'Unknown'),
-                    artist: fallbackArtist || artistName,
-                    cover: fallbackCover ?? cover ?? null,
-                };
-            }
-
-            if (type === 'video') {
-                const row = db.prepare(`
-                    SELECT m.title, m.cover as video_cover, ar.name as artist_name, a.cover as album_cover
-                    FROM ProviderMedia m
-                    LEFT JOIN Artists ar ON ar.id = m.artist_id
-                    LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                    WHERE m.id = ? AND m.type = 'Music Video'
-                `).get(providerId) as any;
-                return {
-                    title: fallbackTitle || row?.title || 'Unknown',
-                    artist: fallbackArtist || row?.artist_name || 'Unknown',
-                    cover: fallbackCover ?? row?.video_cover ?? row?.album_cover ?? null,
-                };
-            }
-
-            const row = db.prepare(`
-                SELECT m.title, ar.name as artist_name, a.cover as album_cover
-                FROM ProviderMedia m
-                LEFT JOIN Artists ar ON ar.id = m.artist_id
-                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                WHERE m.id = ?
-            `).get(providerId) as any;
             return {
-                title: fallbackTitle || row?.title || 'Unknown',
-                artist: fallbackArtist || row?.artist_name || 'Unknown',
-                cover: fallbackCover ?? row?.album_cover ?? null,
+                title: fallbackTitle || 'Unknown',
+                artist: fallbackArtist || 'Unknown',
+                cover: fallbackCover,
             };
         } catch {
             return {
@@ -660,23 +571,7 @@ export class DownloadProcessor {
             if (canonicalOffer) {
                 return canonicalOffer.slot_quality ?? canonicalOffer.provider_quality ?? null;
             }
-
-            if (type === 'album') {
-                const firstId = providerId.split(";")[0];
-                const row = db.prepare(`
-                    SELECT quality
-                    FROM ProviderAlbums
-                    WHERE id = ?
-                `).get(firstId) as { quality?: string | null } | undefined;
-                return row?.quality ?? null;
-            }
-
-            const row = db.prepare(`
-                SELECT quality
-                FROM ProviderMedia
-                WHERE id = ?
-            `).get(providerId) as { quality?: string | null } | undefined;
-            return row?.quality ?? null;
+            return null;
         } catch {
             return null;
         }
@@ -1082,16 +977,7 @@ export class DownloadProcessor {
                 // tidal-dl-ng exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
-                    const canonicalProgress = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadJobPayload);
-                    const row = canonicalProgress ?? db.prepare(
-                        `SELECT COUNT(DISTINCT m.id) as total,
-                                COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) as done
-                         FROM ProviderMedia m
-                         LEFT JOIN TrackFiles lf
-                           ON lf.media_id = m.id
-                          AND lf.file_type = 'track'
-                         WHERE m.album_id = ? AND m.type != 'Music Video'`
-                    ).get(providerId) as any;
+                    const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadJobPayload);
 
                     if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done > 0) {
                         // Album has at least some tracks downloaded.  tidal-dl-ng
@@ -1119,16 +1005,9 @@ export class DownloadProcessor {
                         return;
                     }
                 } else if (type === 'track' || type === 'video') {
-                    const canonicalRow = this.isCanonicalProviderItemDownloaded(providerId, type, payload as DownloadJobPayload);
-                    const row = canonicalRow || db.prepare(`
-                        SELECT 1
-                        FROM TrackFiles
-                        WHERE media_id = ?
-                          AND file_type = ?
-                        LIMIT 1
-                    `).get(providerId, type === 'video' ? 'video' : 'track') as any;
+                    const alreadyDownloaded = this.isCanonicalProviderItemDownloaded(providerId, type, payload as DownloadJobPayload);
 
-                    if (payload?.reason !== 'upgrade' && row) {
+                    if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
                         TaskQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
@@ -1157,6 +1036,7 @@ export class DownloadProcessor {
                 provider: payload.provider,
                 providerId: payload.providerId ?? providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
+                releaseMbid: payload.releaseMbid,
                 canonicalTrackMbid: payload.canonicalTrackMbid,
                 canonicalRecordingMbid: payload.canonicalRecordingMbid,
                 slot: payload.slot,

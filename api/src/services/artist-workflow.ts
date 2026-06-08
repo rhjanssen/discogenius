@@ -117,7 +117,7 @@ export function buildRefreshArtistJobPayload(params: {
     seedSimilarArtists: false,
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
-    expandCreditedArtists: params.expandCreditedArtists !== false,
+    expandCreditedArtists: params.expandCreditedArtists === true,
   };
 }
 
@@ -211,7 +211,7 @@ export function queueArtistIntake(params: {
     artistName: params.artistName,
     workflow: params.monitored ? "monitoring-intake" : "metadata-refresh",
     forceUpdate: params.forceUpdate,
-    expandCreditedArtists: params.expandCreditedArtists ?? params.monitored,
+    expandCreditedArtists: params.expandCreditedArtists === true,
     priority: params.priority,
     trigger: params.trigger,
   });

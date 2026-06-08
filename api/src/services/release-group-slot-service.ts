@@ -276,6 +276,38 @@ function selectReleaseMbidForCandidate(
     return selected?.mbid || candidate.match.releaseMbid || fallbackReleaseMbid || null;
 }
 
+function hasStrongReleaseShapeEvidence(
+    candidate: ProviderAlbumCandidateWithTracks,
+    preferredReleaseMbid?: string | null,
+): boolean {
+    if (candidate.match.confidence < 0.95) {
+        return false;
+    }
+
+    const evidence = candidate.match.evidence ?? {};
+    if (!evidence.trackCountMatched || !evidence.volumeCountMatched) {
+        return false;
+    }
+
+    const providerTrackCount = Number(evidence.providerTrackCount || candidate.album.trackCount || 0);
+    const targetTrackCount = Number(evidence.targetTrackCount || 0);
+    if (providerTrackCount <= 0 || targetTrackCount <= 0 || providerTrackCount !== targetTrackCount) {
+        return false;
+    }
+
+    const providerVolumeCount = Number(evidence.providerVolumeCount || candidate.album.volumeCount || 1);
+    const targetVolumeCount = Number(evidence.targetVolumeCount || 1);
+    if (providerVolumeCount !== targetVolumeCount) {
+        return false;
+    }
+
+    if (preferredReleaseMbid && !compatibleReleaseMbids(candidate.match).includes(preferredReleaseMbid)) {
+        return false;
+    }
+
+    return true;
+}
+
 export function selectReleaseGroupSlotAlbums(
     candidatesOrAlbums: Array<{
         provider: string;
@@ -514,6 +546,27 @@ export function selectReleaseGroupSlotAlbums(
         }
 
         if (currentCovered.size < targetTrackList.length) {
+            const strongMetadataCandidates = candidatesWithTracks.filter((candidate) =>
+                hasStrongReleaseShapeEvidence(candidate, preferredReleaseRow?.mbid)
+            );
+            if (strongMetadataCandidates.length === 0) {
+                continue;
+            }
+
+            sortCandidatesForSlot(slot, strongMetadataCandidates);
+            const bestMetadataCover = strongMetadataCandidates[0];
+            const selectedMatch: ProviderReleaseGroupMatch = {
+                ...bestMetadataCover.match,
+                releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, bestMetadataCover, preferredReleaseRow?.mbid),
+            };
+            bestByReleaseGroupAndSlot.set(key, {
+                releaseGroupMbid,
+                slot,
+                provider: bestMetadataCover.provider,
+                album: bestMetadataCover.album,
+                match: selectedMatch,
+                score: bestMetadataCover.score,
+            });
             continue;
         }
 

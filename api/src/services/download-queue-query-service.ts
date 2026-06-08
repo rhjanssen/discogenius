@@ -134,16 +134,6 @@ function getJobAlbumId(job: QueueJobRow): string | null {
     return providerId;
   }
 
-  if (contentType === "track" || contentType === "video") {
-    const row = db.prepare(`
-      SELECT album_id
-      FROM ProviderMedia
-      WHERE id = ?
-    `).get(providerId) as { album_id?: string | number | null } | undefined;
-
-    return getOptionalString(row?.album_id);
-  }
-
   return null;
 }
 
@@ -167,26 +157,6 @@ function getJobArtistId(job: QueueJobRow): string | null {
   const providerItemArtistId = getProviderItemArtistId(contentType, providerId);
   if (providerItemArtistId) {
     return providerItemArtistId;
-  }
-
-  if (contentType === "album") {
-    const row = db.prepare(`
-      SELECT artist_id
-      FROM ProviderAlbums
-      WHERE id = ?
-    `).get(providerId) as { artist_id?: string | number | null } | undefined;
-
-    return getOptionalString(row?.artist_id);
-  }
-
-  if (contentType === "track" || contentType === "video") {
-    const row = db.prepare(`
-      SELECT artist_id
-      FROM ProviderMedia
-      WHERE id = ?
-    `).get(providerId) as { artist_id?: string | number | null } | undefined;
-
-    return getOptionalString(row?.artist_id);
   }
 
   return null;
@@ -764,86 +734,6 @@ export class DownloadQueueQueryService {
       albumId ||= offerMetadata.albumId ?? null;
       albumTitle ||= offerMetadata.albumTitle ?? null;
       quality ||= offerMetadata.quality ?? null;
-    }
-
-    if (providerId && (!title || !artist || cover === null || albumId === null || albumTitle === null || quality === null)) {
-      try {
-        if (contentType === "album") {
-          const row = db.prepare(`
-            SELECT a.title, a.cover, ar.name as artist_name, a.id as album_id, a.quality
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE a.id = ?
-          `).get(providerId) as {
-            title?: string;
-            cover?: string | null;
-            artist_name?: string;
-            album_id?: string | number;
-            quality?: string | null;
-          } | undefined;
-
-          title ||= row?.title;
-          artist ||= row?.artist_name;
-          if (cover === null) cover = row?.cover ?? null;
-          albumId ||= getOptionalString(row?.album_id);
-          albumTitle ||= row?.title ?? null;
-          quality ||= row?.quality ?? null;
-        } else if (contentType === "video") {
-          const row = db.prepare(`
-            SELECT m.title, ar.name as artist_name, m.cover as video_cover, a.id as album_id, a.title as album_title, m.quality
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            WHERE m.id = ? AND m.type = 'Music Video'
-          `).get(providerId) as {
-            title?: string;
-            artist_name?: string;
-            video_cover?: string | null;
-            album_id?: string | number;
-            album_title?: string | null;
-            quality?: string | null;
-          } | undefined;
-
-          title ||= row?.title;
-          artist ||= row?.artist_name;
-          if (cover === null) cover = row?.video_cover ?? null;
-          albumId ||= getOptionalString(row?.album_id);
-          albumTitle ||= row?.album_title ?? null;
-          quality ||= row?.quality ?? null;
-        } else {
-          const row = db.prepare(`
-            SELECT m.title, m.version as version, ar.name as artist_name, a.cover as album_cover, a.id as album_id, a.title as album_title, m.quality
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            WHERE m.id = ?
-          `).get(providerId) as {
-            title?: string;
-            version?: string | null;
-            artist_name?: string;
-            album_cover?: string | null;
-            album_id?: string | number;
-            album_title?: string | null;
-            quality?: string | null;
-          } | undefined;
-
-          if (!title) {
-            const baseTitle = row?.title;
-            const version = (row?.version || "").trim();
-            title = baseTitle && version && !baseTitle.toLowerCase().includes(version.toLowerCase())
-              ? `${baseTitle} (${version})`
-              : baseTitle;
-          }
-
-          artist ||= row?.artist_name;
-          if (cover === null) cover = row?.album_cover ?? null;
-          albumId ||= getOptionalString(row?.album_id);
-          albumTitle ||= row?.album_title ?? null;
-          quality ||= row?.quality ?? null;
-        }
-      } catch {
-        // ignore metadata lookup failures for queue surfaces
-      }
     }
 
     return {

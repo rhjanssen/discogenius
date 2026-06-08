@@ -115,6 +115,91 @@ test("matched provider offers attach to the canonical MusicBrainz artist and rel
   assert.equal(row.match_status, "verified");
 });
 
+test("matched provider offers persist the best compatible MusicBrainz release version", () => {
+  const artistMbid = "artist-mbid-bastille";
+  const releaseGroupMbid = "release-group-gmtf";
+  const standardReleaseMbid = "release-gmtf-standard";
+  const expandedReleaseMbid = "release-gmtf-expanded";
+  const album = {
+    provider_id: "tidal-expanded",
+    title: "Give Me The Future + Dreams Of The Past",
+    artist_name: "Bastille",
+    quality: "HIRES_LOSSLESS",
+  };
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Give Me the Future", "Album", "2022-02-04");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count
+    ) VALUES
+      (?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    standardReleaseMbid,
+    releaseGroupMbid,
+    artistMbid,
+    "Give Me the Future",
+    "Official",
+    JSON.stringify(["XW"]),
+    "2022-02-04",
+    1,
+    13,
+    expandedReleaseMbid,
+    releaseGroupMbid,
+    artistMbid,
+    "Give Me the Future + Dreams of the Past",
+    "Official",
+    JSON.stringify(["XW"]),
+    "2022-08-26",
+    3,
+    27,
+  );
+
+  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+    "tidal",
+    artistMbid,
+    [album],
+    new Map([
+      [album.provider_id, {
+        providerId: album.provider_id,
+        status: "verified",
+        confidence: 1,
+        method: "musicbrainz-release-group-title-year-type-track-count",
+        releaseMbid: null,
+        releaseGroup: {
+          mbid: releaseGroupMbid,
+          title: "Give Me the Future",
+        },
+        evidence: {
+          providerTitle: "Give Me The Future + Dreams Of The Past",
+          availableReleaseMbids: [standardReleaseMbid, expandedReleaseMbid],
+        },
+      }],
+    ]),
+  );
+
+  const row = dbModule.db.prepare(`
+    SELECT release_group_mbid, release_mbid, match_status
+    FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
+  `).get(album.provider_id) as {
+    release_group_mbid: string | null;
+    release_mbid: string | null;
+    match_status: string;
+  };
+
+  assert.equal(row.release_group_mbid, releaseGroupMbid);
+  assert.equal(row.release_mbid, expandedReleaseMbid);
+  assert.equal(row.match_status, "verified");
+});
+
 test("stored matched provider offers rebuild release-group slot selections without broad hydration", () => {
   const artistMbid = "artist-mbid-bastille";
   const releaseGroupMbid = "release-group-gmtf";

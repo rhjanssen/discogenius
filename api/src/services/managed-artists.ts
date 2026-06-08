@@ -34,16 +34,16 @@ export function buildArtistCompletionPredicate(alias: string = "a"): string {
     ${alias}.monitor = 1
     OR EXISTS (
       SELECT 1
-      FROM ProviderAlbums al
-      JOIN ProviderAlbumArtists aa ON aa.album_id = al.id
-      WHERE aa.artist_id = ${alias}.id
-        AND COALESCE(al.monitor_lock, 0) = 1
+      FROM ReleaseGroupSlots slot
+      WHERE slot.artist_mbid = ${alias}.mbid
+        AND COALESCE(slot.monitor_lock, 0) = 1
     )
     OR EXISTS (
       SELECT 1
-      FROM ProviderMedia m
-      WHERE m.artist_id = ${alias}.id
-        AND COALESCE(m.monitor_lock, 0) = 1
+      FROM Recordings recording
+      WHERE recording.artist_mbid = ${alias}.mbid
+        AND recording.IsVideo = 1
+        AND COALESCE(recording.MonitorLock, 0) = 1
     )
   )`;
 }

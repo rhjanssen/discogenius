@@ -21,6 +21,7 @@ import { ProviderArtistIdentityService, normalizeProviderArtist } from "./provid
 import { streamingProviderManager } from "./providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderTrack, ProviderVideo } from "./providers/streaming-provider.js";
 import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
+import { ProviderOfferReleaseLinkService } from "./provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../utils/spatial-audio.js";
 import {
     getSkyHookArtistImageUrl,
@@ -762,6 +763,7 @@ export class RefreshArtistService {
                     ? db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
                         .get(matchedReleaseGroup.mbid) as { artist_mbid?: string | null } | undefined
                     : null;
+                const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(match);
                 upsert.run(
                     providerId,
                     providerAlbumId,
@@ -774,7 +776,7 @@ export class RefreshArtistService {
                     album.release_date || null,
                     matchedReleaseGroup ? canonicalOwner?.artist_mbid || artistMbid : null,
                     matchedReleaseGroup?.mbid || null,
-                    match?.releaseMbid || null,
+                    matchedReleaseMbid,
                     isSpatialAudioQuality(album.quality) ? "spatial" : "stereo",
                     match?.status || "unmatched",
                     match?.confidence ?? null,
@@ -1458,8 +1460,8 @@ export class RefreshArtistService {
             artistMbid = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
-                Boolean(monitoredArtist?.monitor),
-                options.expandCreditedArtists !== false,
+                false,
+                options.expandCreditedArtists === true,
             );
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
@@ -1523,20 +1525,6 @@ export class RefreshArtistService {
                         : await provider.getArtistAlbums(providerArtistId);
                     const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
                     const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
-                    const collaborationOffers = await this.searchCanonicalCollaborationOffers(
-                        provider,
-                        artistMbid,
-                    );
-                    for (const album of collaborationOffers.albums) {
-                        const providerAlbumId = String(album.provider_id);
-                        if (!albums.some((candidate) => String(candidate.provider_id) === providerAlbumId)) {
-                            albums.push(album);
-                        }
-                    }
-                    for (const [providerAlbumId, match] of collaborationOffers.matches) {
-                        providerReleaseGroupMatches.set(providerAlbumId, match);
-                    }
-                    await this.addSupplementalProviderOffers(provider, albums, providerReleaseGroupMatches);
                     console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
 
                     totalAlbumsCount += albums.length;
@@ -1589,8 +1577,13 @@ export class RefreshArtistService {
                 candidates: allMatchedSelections,
                 clearProviders: [...new Set([...refreshedProviders, ...staleProviderIds])],
             });
-            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
-                console.log(`[RefreshArtistService] Selected provider offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
+            const storedSlotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
+            const totalSlotCounts = {
+                stereo: Math.max(slotCounts.stereo, storedSlotCounts.stereo),
+                spatial: Math.max(slotCounts.spatial, storedSlotCounts.spatial),
+            };
+            if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
+                console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
             }
         } else {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);

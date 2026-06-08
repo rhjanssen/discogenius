@@ -195,11 +195,93 @@ function listMusicBrainzReleaseVersions(
     const imageUrl = coverUrl ?? chooseReleaseGroupArtwork(releaseGroup);
     const providerCoverUrl = chooseReleaseGroupProviderArtwork(releaseGroup);
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
+    const providerOffers = db.prepare(`
+      SELECT
+        provider,
+        provider_id,
+        release_mbid,
+        library_slot,
+        quality,
+        match_status,
+        match_confidence,
+        match_evidence
+      FROM ProviderItems
+      WHERE entity_type = 'album'
+        AND release_group_mbid = ?
+        AND match_status IN ('verified', 'probable')
+      ORDER BY
+        CASE match_status WHEN 'verified' THEN 0 WHEN 'probable' THEN 1 ELSE 2 END ASC,
+        COALESCE(match_confidence, 0) DESC,
+        CASE UPPER(COALESCE(quality, ''))
+          WHEN 'HIRES_LOSSLESS' THEN 0
+          WHEN 'HI_RES_LOSSLESS' THEN 0
+          WHEN 'DOLBY_ATMOS' THEN 0
+          WHEN 'LOSSLESS' THEN 1
+          ELSE 2
+        END ASC,
+        provider_id ASC
+    `).all(releaseGroup.mbid) as Array<{
+        provider: string | null;
+        provider_id: string | number | null;
+        release_mbid: string | null;
+        library_slot: string | null;
+        quality: string | null;
+        match_status: string | null;
+        match_confidence: number | null;
+        match_evidence: string | null;
+    }>;
+
+    const compatibleReleaseMbidsForOffer = (offer: typeof providerOffers[number]): Set<string> => {
+        const mbids = new Set<string>();
+        const directReleaseMbid = String(offer.release_mbid || "").trim();
+        if (directReleaseMbid) {
+            mbids.add(directReleaseMbid);
+        }
+        try {
+            const evidence = JSON.parse(String(offer.match_evidence || "{}"));
+            const evidenceMbids = Array.isArray(evidence.availableReleaseMbids)
+                ? evidence.availableReleaseMbids
+                : [];
+            for (const releaseMbid of evidenceMbids) {
+                const normalized = String(releaseMbid || "").trim();
+                if (normalized) {
+                    mbids.add(normalized);
+                }
+            }
+            const matchedReleaseMbid = String(evidence.matchedReleaseMbid || "").trim();
+            if (matchedReleaseMbid) {
+                mbids.add(matchedReleaseMbid);
+            }
+        } catch {
+            // Ignore malformed match evidence; the durable release_mbid is enough.
+        }
+        return mbids;
+    };
+
+    const offersByReleaseMbid = new Map<string, typeof providerOffers>();
+    for (const offer of providerOffers) {
+        for (const releaseMbid of compatibleReleaseMbidsForOffer(offer)) {
+            const offers = offersByReleaseMbid.get(releaseMbid) || [];
+            offers.push(offer);
+            offersByReleaseMbid.set(releaseMbid, offers);
+        }
+    }
+
+    const selectOfferForSlot = (releaseMbid: string, slot: "stereo" | "spatial") => {
+        const offers = offersByReleaseMbid.get(releaseMbid) || [];
+        return offers.find((offer) => String(offer.library_slot || "stereo") === slot) || null;
+    };
 
     return releases.map((release) => {
         const releaseMbid = String(release.mbid);
         const isStereoSelected = releaseGroup.stereo_release_mbid === releaseMbid;
         const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
+        const stereoOffer = isStereoSelected
+            ? null
+            : selectOfferForSlot(releaseMbid, "stereo");
+        const spatialOffer = includeSpatial && !isSpatialSelected
+            ? selectOfferForSlot(releaseMbid, "spatial")
+            : null;
 
         return {
             id: releaseMbid,
@@ -213,10 +295,18 @@ function listMusicBrainzReleaseVersions(
             explicit: false,
             is_monitored: Boolean(releaseGroup.wanted),
             version: formatReleaseVersionLabel(release),
-            stereo_provider_id: isStereoSelected ? releaseGroup.stereo_provider_id || null : null,
-            stereo_quality: isStereoSelected ? releaseGroup.stereo_quality || null : null,
-            spatial_provider_id: includeSpatial && isSpatialSelected ? releaseGroup.spatial_provider_id || null : null,
-            spatial_quality: includeSpatial && isSpatialSelected ? releaseGroup.spatial_quality || null : null,
+            stereo_provider_id: isStereoSelected
+                ? releaseGroup.stereo_provider_id || null
+                : stereoOffer?.provider_id == null ? null : String(stereoOffer.provider_id),
+            stereo_quality: isStereoSelected
+                ? releaseGroup.stereo_quality || null
+                : stereoOffer?.quality || null,
+            spatial_provider_id: includeSpatial && isSpatialSelected
+                ? releaseGroup.spatial_provider_id || null
+                : spatialOffer?.provider_id == null ? null : String(spatialOffer.provider_id),
+            spatial_quality: includeSpatial && isSpatialSelected
+                ? releaseGroup.spatial_quality || null
+                : spatialOffer?.quality || null,
         };
     });
 }

@@ -649,6 +649,79 @@ test("provider slot selection rejects a high quality partial release when target
   assert.equal(slot, undefined);
 });
 
+test("provider slot selection falls back to strong release-shape evidence when noisy track titles block strict matching", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-noisy-track-title";
+  insertReleaseGroup(releaseGroupMbid);
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-noisy-track-title", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 3, 1);
+
+  db.prepare(`
+    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
+    VALUES (?, ?, ?)
+  `).run("release-mbid-noisy-track-title", "Digital Media", 1);
+
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, isrcs)
+    VALUES (?, ?, ?)
+  `);
+  insertRecording.run("rec-noisy-1", "Death on Two Legs", JSON.stringify(["ISRC301"]));
+  insertRecording.run("rec-noisy-2", "Lazing on a Sunday Afternoon", JSON.stringify(["ISRC302"]));
+  insertRecording.run("rec-noisy-3", "I'm in Love with My Car", JSON.stringify(["ISRC303"]));
+
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-noisy-1", "release-mbid-noisy-track-title", "rec-noisy-1", "Death on Two Legs", 1, 1);
+  insertTrack.run("track-noisy-2", "release-mbid-noisy-track-title", "rec-noisy-2", "Lazing on a Sunday Afternoon", 2, 1);
+  insertTrack.run("track-noisy-3", "release-mbid-noisy-track-title", "rec-noisy-3", "I'm in Love with My Car", 3, 1);
+
+  const match = {
+    ...buildMatch(releaseGroupMbid, "provider-album-noisy"),
+    releaseMbid: "release-mbid-noisy-track-title",
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-album-noisy").evidence,
+      providerTrackCount: 3,
+      targetTrackCount: 3,
+      providerVolumeCount: 1,
+      targetVolumeCount: 1,
+      availableReleaseMbids: ["release-mbid-noisy-track-title"],
+    },
+  };
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "provider-album-noisy",
+      title: "A Night at the Opera",
+      quality: "HIRES_LOSSLESS",
+      trackCount: 3,
+      volumeCount: 1,
+      tracks: [
+        { mbid: null, isrc: null, title: "Death on Two Legs", track_number: 1, volume_number: 1, duration: 150 },
+        { mbid: null, isrc: null, title: "Lazing on a Sunday Afternoon", track_number: 2, volume_number: 1, duration: 150 },
+        { mbid: null, isrc: null, title: "Car Song Provider Version", track_number: 3, volume_number: 1, duration: 150 },
+      ],
+    }],
+    matches: new Map([["provider-album-noisy", match]]),
+  });
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id, selected_release_mbid
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(releaseGroupMbid) as { selected_provider_id: string | null; selected_release_mbid: string | null } | undefined;
+
+  assert.ok(slot);
+  assert.equal(slot.selected_provider_id, "provider-album-noisy");
+  assert.equal(slot.selected_release_mbid, "release-mbid-noisy-track-title");
+});
+
 test("provider slot selection falls back to metadata matching when track details are missing", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-fallback";

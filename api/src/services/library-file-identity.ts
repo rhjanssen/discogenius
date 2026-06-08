@@ -201,7 +201,7 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
 
   const providerEntityType = inferProviderEntityType(input, media);
   const providerId = inferProviderId(input, providerEntityType);
-  const provider = nullableText(input.provider) ?? (providerId ? "tidal" : null);
+  const provider = nullableText(input.provider);
   const providerAlbum = getProviderItem(provider, "album", albumId);
   const providerMedia = providerEntityType
     ? getProviderItem(provider, providerEntityType, providerId)
@@ -242,43 +242,46 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ) as MbTrackRow | undefined) ?? null
     : null;
 
+  const legacyProvider = (providerId && (media || album)) ? "tidal" : null;
+
   return {
     canonicalArtistMbid:
       nullableText(input.canonicalArtistMbid)
-      ?? nullableText(artist?.mbid)
       ?? nullableText(providerMedia?.artist_mbid)
       ?? nullableText(providerAlbum?.artist_mbid)
+      ?? nullableText(artist?.mbid)
       ?? null,
     canonicalReleaseGroupMbid:
       nullableText(input.canonicalReleaseGroupMbid)
-      ?? nullableText(album?.mb_release_group_id)
       ?? nullableText(providerMedia?.release_group_mbid)
       ?? nullableText(providerAlbum?.release_group_mbid)
       ?? nullableText(releaseGroupSlot?.release_group_mbid)
+      ?? nullableText(album?.mb_release_group_id)
       ?? nullableText(albumRelease?.release_group_mbid)
       ?? nullableText(trackRelease?.release_group_mbid)
       ?? null,
     canonicalReleaseMbid:
       nullableText(input.canonicalReleaseMbid)
-      ?? nullableText(albumRelease?.mbid)
-      ?? nullableText(mediaTrack?.release_mbid)
+      ?? nullableText(releaseGroupSlot?.selected_release_mbid)
       ?? nullableText(providerMedia?.release_mbid)
       ?? nullableText(providerAlbum?.release_mbid)
-      ?? nullableText(releaseGroupSlot?.selected_release_mbid)
+      ?? nullableText(albumRelease?.mbid)
+      ?? nullableText(mediaTrack?.release_mbid)
       ?? null,
     canonicalTrackMbid:
       nullableText(input.canonicalTrackMbid)
-      ?? nullableText(mediaTrack?.mbid)
       ?? nullableText(providerMedia?.track_mbid)
       ?? nullableText(selectedTrack?.mbid)
+      ?? nullableText(mediaTrack?.mbid)
       ?? null,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
+      ?? nullableText(providerMedia?.recording_mbid)
+      ?? nullableText(selectedTrack?.recording_mbid)
       ?? nullableText(mediaTrack?.recording_mbid)
       ?? nullableText(mediaRecording?.mbid)
-      ?? nullableText(providerMedia?.recording_mbid)
       ?? null,
-    provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider,
+    provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider ?? legacyProvider,
     providerEntityType,
     providerId,
     librarySlot: preferredSlot,

@@ -1,5 +1,5 @@
 import { db } from "../database.js";
-import { invalidateAlbumDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
+import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from "./download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueArtistIntake, queueArtistWorkflow } from "./artist-workflow.js";
@@ -36,15 +36,15 @@ export function requireArtistName(artistId: string): string {
 }
 
 function refreshArtistProgress(artistId: string) {
-    const albumIds = db.prepare(`
-        SELECT DISTINCT al.id
-        FROM ProviderAlbums al
-        LEFT JOIN ProviderAlbumArtists aa ON aa.album_id = al.id
-        WHERE al.artist_id = ? OR aa.artist_id = ?
-    `).all(artistId, artistId) as Array<{ id: number }>;
+    const releaseGroupMbids = db.prepare(`
+        SELECT DISTINCT rg.mbid
+        FROM Albums rg
+        LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+        WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+    `).all(artistId, artistId) as Array<{ mbid: string }>;
 
-    for (const row of albumIds) {
-        invalidateAlbumDownloadStatus(String(row.id));
+    for (const row of releaseGroupMbids) {
+        invalidateReleaseGroupDownloadStatus(String(row.mbid));
     }
 
     updateArtistDownloadStatus(artistId);
@@ -65,41 +65,26 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         }
 
         db.prepare(`
-            UPDATE ProviderAlbums
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE artist_id = ?
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, artistId);
+            UPDATE ReleaseGroupSlots
+            SET wanted = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE (monitor_lock = 0 OR monitor_lock IS NULL)
+              AND release_group_mbid IN (
+                SELECT rg.mbid
+                FROM Albums rg
+                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+                WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+              )
+        `).run(artistId, artistId);
 
         db.prepare(`
-            UPDATE ProviderAlbums
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE id IN (
-                SELECT album_id FROM ProviderAlbumArtists WHERE artist_id = ?
-            )
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, artistId);
-
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE album_id IN (
-                SELECT id FROM ProviderAlbums WHERE artist_id = ?
-            )
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, artistId);
-
-        db.prepare(`
-            UPDATE ProviderMedia
-            SET monitor = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-            WHERE type = 'Music Video'
-              AND artist_id = ?
-              AND (monitor_lock = 0 OR monitor_lock IS NULL)
-        `).run(nextStatus, nextStatus, artistId);
+            UPDATE Recordings
+            SET Monitor = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE IsVideo = 1
+              AND artist_mbid = ?
+              AND (MonitorLock = 0 OR MonitorLock IS NULL)
+        `).run(artistId);
 
         return artistResult.changes;
     });

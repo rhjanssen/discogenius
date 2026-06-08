@@ -26,6 +26,11 @@ type OrganizeType = "album" | "track" | "video";
 type OrganizeRequest = {
   type: OrganizeType | string;
   providerId?: string;
+  provider?: string | null;
+  releaseGroupMbid?: string | null;
+  releaseMbid?: string | null;
+  albumId?: string | null;
+  slot?: string | null;
   downloadPath?: string;
   onProgress?: (progress: {
     phase: "importing" | "finalizing";
@@ -45,12 +50,15 @@ export type OrganizeResult = {
 };
 
 type AlbumTrackRow = {
-  id: number;
+  id: string | number;
+  provider_id?: string | null;
   title: string;
   version: string | null;
   track_number: number | null;
   volume_number: number | null;
   isrc: string | null;
+  track_mbid?: string | null;
+  recording_mbid?: string | null;
 };
 
 type StagedAudioMetadata = {
@@ -65,6 +73,23 @@ type OrganizerArtistContext = {
   artistName: string;
   artistMbId: string;
   artistPath: string;
+};
+
+type CanonicalAlbumImportContext = {
+  provider: string;
+  providerAlbumId: string;
+  releaseGroupMbid: string | null;
+  releaseMbid: string | null;
+  slot: "stereo" | "spatial";
+  quality: string | null;
+  title: string | null;
+  artistMbid: string | null;
+  artistName: string | null;
+  cover: string | null;
+  videoCover: string | null;
+  volumeCount: number | null;
+  releaseDate: string | null;
+  albumType: string | null;
 };
 
 const getAlbumVideoCoverName = (albumCoverName: string) => {
@@ -356,21 +381,145 @@ export class OrganizerService {
     return null;
   }
 
+  private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
+    const provider = String(raw.provider || "").trim() || "tidal";
+    const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
+    const requestedSlot = String(raw.slot || "").trim().toLowerCase();
+    const row = db.prepare(`
+      SELECT
+        COALESCE(rgs.selected_provider, pi.provider, ?) AS provider,
+        COALESCE(rgs.selected_provider_id, pi.provider_id, ?) AS providerAlbumId,
+        COALESCE(rgs.release_group_mbid, pi.release_group_mbid, rg.mbid) AS releaseGroupMbid,
+        COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?) AS releaseMbid,
+        COALESCE(rgs.slot, pi.library_slot, ?) AS slot,
+        COALESCE(rgs.quality, pi.quality) AS quality,
+        rg.title,
+        rg.artist_mbid AS artistMbid,
+        am.name AS artistName,
+        COALESCE(mc.local_path, mc.url, json_extract(rgs.provider_data, '$.cover'), json_extract(pi.data, '$.cover')) AS cover,
+        json_extract(rgs.provider_data, '$.video_cover') AS videoCover,
+        selected_release.date AS releaseDate,
+        selected_release.primary_type AS albumType,
+        (
+          SELECT COUNT(DISTINCT media.position)
+          FROM AlbumReleaseMedia media
+          WHERE media.release_mbid = COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?)
+        ) AS volumeCount
+      FROM ProviderItems pi
+      LEFT JOIN ReleaseGroupSlots rgs
+        ON rgs.selected_provider = pi.provider
+       AND (
+          rgs.selected_provider_id = pi.provider_id
+          OR rgs.selected_provider_id LIKE pi.provider_id || ';%'
+          OR rgs.selected_provider_id LIKE '%;' || pi.provider_id || ';%'
+          OR rgs.selected_provider_id LIKE '%;' || pi.provider_id
+       )
+       AND (? = '' OR rgs.slot = ?)
+      LEFT JOIN Albums rg ON rg.mbid = COALESCE(rgs.release_group_mbid, pi.release_group_mbid, ?)
+      LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
+      LEFT JOIN AlbumReleases selected_release ON selected_release.mbid = COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?)
+      LEFT JOIN MediaCovers mc
+        ON mc.entity_type = 'release_group'
+       AND mc.entity_id = rg.mbid
+       AND mc.cover_type = 'front'
+       AND mc.provider IN ('musicbrainz', 'cover_art_archive', 'skyhook')
+      WHERE pi.provider = ?
+        AND pi.entity_type = 'album'
+        AND pi.provider_id = ?
+        AND (? = '' OR pi.release_group_mbid = ? OR rgs.release_group_mbid = ?)
+      ORDER BY
+        CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END,
+        CASE mc.provider WHEN 'musicbrainz' THEN 0 WHEN 'cover_art_archive' THEN 1 WHEN 'skyhook' THEN 2 ELSE 3 END,
+        pi.updated_at DESC
+      LIMIT 1
+    `).get(
+      provider,
+      providerAlbumId,
+      raw.releaseMbid || null,
+      requestedSlot || "stereo",
+      raw.releaseMbid || null,
+      requestedSlot,
+      requestedSlot,
+      releaseGroupMbid || null,
+      raw.releaseMbid || null,
+      provider,
+      providerAlbumId,
+      releaseGroupMbid,
+      releaseGroupMbid,
+      releaseGroupMbid,
+      requestedSlot || "stereo",
+    ) as any;
+
+    if (!row?.releaseGroupMbid && !row?.releaseMbid) {
+      return null;
+    }
+
+    const slot = String(row.slot || requestedSlot || "stereo").toLowerCase() === "spatial" ? "spatial" : "stereo";
+    return {
+      provider: String(row.provider || provider),
+      providerAlbumId,
+      releaseGroupMbid: row.releaseGroupMbid || null,
+      releaseMbid: row.releaseMbid || null,
+      slot,
+      quality: row.quality || null,
+      title: row.title || null,
+      artistMbid: row.artistMbid || null,
+      artistName: row.artistName || null,
+      cover: row.cover || null,
+      videoCover: row.videoCover || null,
+      volumeCount: row.volumeCount == null ? null : Number(row.volumeCount),
+      releaseDate: row.releaseDate || null,
+      albumType: row.albumType || null,
+    };
+  }
+
   private static async matchAlbumFilesToTracks(
     albumId: string,
     files: string[],
+    context?: CanonicalAlbumImportContext | null,
   ): Promise<Map<string, string>> {
     const albumIds = albumId.split(";").filter(Boolean);
     if (albumIds.length === 0) {
       return new Map();
     }
     const placeholders = albumIds.map(() => '?').join(', ');
-    const trackRows = db.prepare(`
-      SELECT id, title, version, track_number, volume_number, isrc
-      FROM ProviderMedia
-      WHERE album_id IN (${placeholders}) AND type != 'Music Video'
-      ORDER BY volume_number, track_number, id
-    `).all(...albumIds) as AlbumTrackRow[];
+    const trackRows = context?.releaseMbid
+      ? db.prepare(`
+          SELECT
+            COALESCE(pi.provider_id, CAST(t.Id AS TEXT)) AS id,
+            pi.provider_id,
+            COALESCE(pi.title, t.title) AS title,
+            pi.version,
+            t.position AS track_number,
+            t.medium_position AS volume_number,
+            COALESCE(pi.isrc, json_extract(r.isrcs, '$[0]')) AS isrc,
+            t.mbid AS track_mbid,
+            t.recording_mbid
+          FROM Tracks t
+          LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+          LEFT JOIN ProviderItems pi
+            ON pi.provider = ?
+           AND pi.entity_type = 'track'
+           AND pi.release_mbid = t.release_mbid
+           AND (
+              pi.track_mbid = t.mbid
+              OR (
+                pi.track_mbid IS NULL
+                AND pi.release_group_mbid = ?
+                AND json_extract(pi.match_evidence, '$.mediumPosition') = t.medium_position
+                AND json_extract(pi.match_evidence, '$.trackPosition') = t.position
+              )
+           )
+          WHERE t.release_mbid = ?
+            AND COALESCE(r.IsVideo, 0) = 0
+          ORDER BY t.medium_position, t.position, t.mbid
+        `).all(context.provider, context.releaseGroupMbid, context.releaseMbid) as AlbumTrackRow[]
+      : db.prepare(`
+          SELECT id, title, version, track_number, volume_number, isrc
+          FROM ProviderMedia
+          WHERE album_id IN (${placeholders}) AND type != 'Music Video'
+          ORDER BY volume_number, track_number, id
+        `).all(...albumIds) as AlbumTrackRow[];
 
     const remainingTracks = [...trackRows];
     const matches = new Map<string, string>();
@@ -997,6 +1146,15 @@ export class OrganizerService {
     codec?: string | null;
     channels?: number | null;
     fingerprint?: string | null;
+    provider?: string | null;
+    providerEntityType?: string | null;
+    providerId?: string | null;
+    librarySlot?: string | null;
+    canonicalArtistMbid?: string | null;
+    canonicalReleaseGroupMbid?: string | null;
+    canonicalReleaseMbid?: string | null;
+    canonicalTrackMbid?: string | null;
+    canonicalRecordingMbid?: string | null;
   }): number {
     return LibraryFilesService.upsertLibraryFile({
       ...params,
@@ -1043,6 +1201,7 @@ export class OrganizerService {
       const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumIds[0]) as any;
       if (!album) throw new Error(`Album ${albumIds[0]} not found in DB after scan`);
 
+      const canonicalContext = this.resolveCanonicalAlbumImportContext(raw, albumIds[0]);
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
@@ -1054,14 +1213,14 @@ export class OrganizerService {
         path: artistContext.artistPath || null,
       });
 
-      const isSpatial = isSpatialAudioQuality(album.quality);
+      const isSpatial = canonicalContext?.slot === "spatial" || isSpatialAudioQuality(canonicalContext?.quality || album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
-        canonicalReleaseGroupMbid: album.mb_release_group_id,
-        canonicalReleaseMbid: album.mbid,
+        canonicalReleaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id,
+        canonicalReleaseMbid: canonicalContext?.releaseMbid || album.mbid,
       });
 
-      const trackTemplate = Number(canonicalAlbumForNaming?.volumeCount || album.num_volumes || 1) > 1
+      const trackTemplate = Number(canonicalAlbumForNaming?.volumeCount || canonicalContext?.volumeCount || album.num_volumes || 1) > 1
         ? naming.album_track_path_multi
         : naming.album_track_path_single;
 
@@ -1076,7 +1235,7 @@ export class OrganizerService {
       }
 
       const audioFiles = files.filter((file) => this.AUDIO_EXTENSIONS.has(path.extname(file).toLowerCase()));
-      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(providerId, audioFiles);
+      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(providerId, audioFiles, canonicalContext);
       if (audioFiles.length > 0 && matchedTrackIdsByFile.size === 0) {
         throw new Error(`[Organizer] Could not match downloaded album files for ${providerId} to Discogenius tracks in ${sourceAlbumDir}`);
       }
@@ -1087,9 +1246,27 @@ export class OrganizerService {
         const idFromName = /^\d+$/.test(base) ? base : null;
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
-        const placeholders = albumIds.map(() => '?').join(', ');
-        const trackRow = db.prepare(`SELECT id FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any;
-        return !trackRow;
+        if (canonicalContext?.releaseMbid) {
+          const trackRow = db.prepare(`
+            SELECT 1
+            FROM ProviderItems pi
+            WHERE pi.provider = ?
+              AND pi.entity_type = 'track'
+              AND pi.provider_id = ?
+              AND pi.release_mbid = ?
+            UNION
+            SELECT 1
+            FROM Tracks t
+            WHERE CAST(t.Id AS TEXT) = ?
+              AND t.release_mbid = ?
+            LIMIT 1
+          `).get(canonicalContext.provider, trackId, canonicalContext.releaseMbid, trackId, canonicalContext.releaseMbid) as any;
+          return !trackRow;
+        } else {
+          const placeholders = albumIds.map(() => '?').join(', ');
+          const trackRow = db.prepare(`SELECT id FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any;
+          return !trackRow;
+        }
       });
 
       if (unmatchedAudioFiles.length > 0) {
@@ -1135,9 +1312,46 @@ export class OrganizerService {
 
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         const placeholders = albumIds.map(() => '?').join(', ');
-        const trackRow = trackId
-          ? (db.prepare(`SELECT * FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any)
-          : null;
+        const trackRow = trackId && canonicalContext?.releaseMbid
+          ? (db.prepare(`
+              SELECT
+                COALESCE(pm.id, pi.provider_id, CAST(t.Id AS TEXT)) AS id,
+                COALESCE(pm.album_id, ?) AS album_id,
+                COALESCE(pm.artist_id, ?) AS artist_id,
+                COALESCE(pm.title, pi.title, t.title) AS title,
+                COALESCE(pm.version, pi.version) AS version,
+                COALESCE(pm.explicit, pi.explicit) AS explicit,
+                COALESCE(pm.quality, pi.quality, ?) AS quality,
+                COALESCE(pm.track_number, t.position) AS track_number,
+                COALESCE(pm.volume_number, t.medium_position) AS volume_number,
+                COALESCE(pm.mbid, pi.recording_mbid, t.recording_mbid) AS mbid,
+                t.mbid AS canonical_track_mbid,
+                t.recording_mbid AS canonical_recording_mbid
+              FROM Tracks t
+              LEFT JOIN ProviderItems pi
+                ON pi.provider = ?
+               AND pi.entity_type = 'track'
+               AND pi.release_mbid = t.release_mbid
+               AND (pi.provider_id = ? OR pi.track_mbid = t.mbid)
+              LEFT JOIN ProviderMedia pm ON CAST(pm.id AS TEXT) = CAST(pi.provider_id AS TEXT)
+              WHERE t.release_mbid = ?
+                AND (pi.provider_id = ? OR CAST(t.Id AS TEXT) = ?)
+              ORDER BY CASE WHEN pi.provider_id = ? THEN 0 ELSE 1 END
+              LIMIT 1
+            `).get(
+              albumIds[0],
+              artistId,
+              canonicalContext.quality || album.quality || null,
+              canonicalContext.provider,
+              trackId,
+              canonicalContext.releaseMbid,
+              trackId,
+              trackId,
+              trackId,
+            ) as any)
+          : trackId
+            ? (db.prepare(`SELECT * FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any)
+            : null;
 
         if (!trackId || !trackRow) {
           continue;
@@ -1150,6 +1364,15 @@ export class OrganizerService {
           fileType: "track",
           quality: trackRow.quality || album.quality,
           libraryRoot: targetRoot,
+          provider: canonicalContext?.provider || raw.provider || "tidal",
+          providerEntityType: "track",
+          providerId: trackId,
+          librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
+          canonicalArtistMbid: canonicalContext?.artistMbid || artistMbId || null,
+          canonicalReleaseGroupMbid: canonicalContext?.releaseGroupMbid || null,
+          canonicalReleaseMbid: canonicalContext?.releaseMbid || null,
+          canonicalTrackMbid: trackRow.canonical_track_mbid || null,
+          canonicalRecordingMbid: trackRow.canonical_recording_mbid || null,
         });
         const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
         const canonicalAlbum = getCanonicalAlbumMetadata({
@@ -1239,6 +1462,15 @@ export class OrganizerService {
             codec: metrics.codec,
             channels: metrics.channels,
             fingerprint: fileFingerprint,
+            provider: canonicalIdentity.provider,
+            providerEntityType: canonicalIdentity.providerEntityType,
+            providerId: canonicalIdentity.providerId,
+            librarySlot: canonicalIdentity.librarySlot,
+            canonicalArtistMbid: canonicalIdentity.canonicalArtistMbid,
+            canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
+            canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
+            canonicalTrackMbid: canonicalIdentity.canonicalTrackMbid,
+            canonicalRecordingMbid: canonicalIdentity.canonicalRecordingMbid,
           });
 
           try {

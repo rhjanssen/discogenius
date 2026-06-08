@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-artist-monitoring-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -15,6 +15,19 @@ before(async () => {
   dbModule = await import("../database.js");
   dbModule.initDatabase();
   monitoringModule = await import("./artist-monitoring.js");
+});
+
+beforeEach(() => {
+  const { db } = dbModule;
+  db.prepare("DELETE FROM job_queue").run();
+  db.prepare("DELETE FROM ProviderMedia").run();
+  db.prepare("DELETE FROM ProviderAlbums").run();
+  db.prepare("DELETE FROM Recordings").run();
+  db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM ArtistReleaseGroups").run();
+  db.prepare("DELETE FROM Albums").run();
+  db.prepare("DELETE FROM Artists").run();
+  db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -56,4 +69,70 @@ test("monitoring a named MusicBrainz search result queues hydration without inli
   assert.equal(job.type, "RefreshArtist");
   assert.equal(job.ref_id, artistMbid);
   assert.equal(job.status, "pending");
+});
+
+test("unmonitoring an artist clears canonical slots and videos without mutating provider catalog rows", () => {
+  const { db } = dbModule;
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "bc411157-431c-4f04-81e1-18e1c21d50ec";
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run(artistMbid, "Bastille");
+
+  db.prepare(`
+    INSERT INTO Artists (id, mbid, name, monitor, monitored_at)
+    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+  `).run(artistMbid, artistMbid, "Bastille");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Give Me the Future", "Album");
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+    )
+    VALUES (?, ?, 'stereo', 1, 'tidal', '243864035', 'verified')
+  `).run(artistMbid, releaseGroupMbid);
+
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitor)
+    VALUES (?, ?, ?, 1, 'provider_only', 1)
+  `).run("video-recording-1", artistMbid, "Bastille Video");
+
+  db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+    )
+    VALUES (?, ?, ?, ?, 0, 'LOSSLESS', 1, 1, 0, 180, 1)
+  `).run("legacy-provider-album", artistMbid, "Give Me the Future", "ALBUM");
+
+  db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, type, explicit, quality, monitor
+    )
+    VALUES (?, ?, ?, ?, ?, 0, 'LOSSLESS', 1)
+  `).run("legacy-provider-video", artistMbid, "legacy-provider-album", "Bastille Video", "Music Video");
+
+  const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
+
+  const artist = db.prepare("SELECT monitor FROM Artists WHERE id = ?").get(artistMbid) as { monitor: number };
+  const slot = db.prepare("SELECT wanted, selected_provider_id FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get(releaseGroupMbid) as {
+    wanted: number;
+    selected_provider_id: string;
+  };
+  const recording = db.prepare("SELECT Monitor FROM Recordings WHERE mbid = ?").get("video-recording-1") as { Monitor: number };
+  const providerAlbum = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("legacy-provider-album") as { monitor: number };
+  const providerVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("legacy-provider-video") as { monitor: number };
+
+  assert.equal(changes, 1);
+  assert.equal(artist.monitor, 0);
+  assert.equal(slot.wanted, 0);
+  assert.equal(slot.selected_provider_id, "243864035");
+  assert.equal(recording.Monitor, 0);
+  assert.equal(providerAlbum.monitor, 1);
+  assert.equal(providerVideo.monitor, 1);
 });

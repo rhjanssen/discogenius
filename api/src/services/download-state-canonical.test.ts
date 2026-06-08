@@ -194,3 +194,45 @@ test("artist and release-group download stats use canonical slots, recordings, a
   assert.equal(completeArtist.isDownloaded, true);
   assert.equal(downloadState.countDownloadedManagedArtists(), 1);
 });
+
+test("album download stats ignore legacy provider catalog rows", () => {
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitor) VALUES (?, ?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
+  db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor, mb_release_group_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-album-only", "artist-local", "Provider Album", "Album", 0, "LOSSLESS", 1, 1, 0, 180000, 1, "release-group-mbid");
+  db.prepare(`
+    INSERT INTO ProviderMedia (id, album_id, artist_id, title, type, explicit, quality, monitor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-track-only", "provider-album-only", "artist-local", "Provider Track", "Track", 0, "LOSSLESS", 1);
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, album_id, media_id, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "provider-album-only",
+    "provider-track-only",
+    "tidal",
+    "track",
+    "provider-track-only",
+    "stereo",
+    "C:/Music/provider-track.flac",
+    "provider-track.flac",
+    "C:/Music",
+    "provider-track.flac",
+    "flac",
+    "track",
+  );
+
+  const stats = downloadState.getAlbumDownloadStats("provider-album-only");
+
+  assert.equal(stats.totalTracks, 0);
+  assert.equal(stats.downloadedTracks, 0);
+  assert.equal(stats.isDownloaded, false);
+});

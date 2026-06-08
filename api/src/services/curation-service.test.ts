@@ -271,6 +271,102 @@ test("CurationService queues monitored canonical videos through provider offers"
   assert.equal(staleProviderVideo.monitor, 0);
 });
 
+test("CurationService queues spatial slot when only the stereo selected release is imported", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_spatial: true,
+      include_videos: false,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitor)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Bastille");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "Give Me the Future", "album");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "Give Me the Future", 1, 1);
+
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo)
+    VALUES (?, ?, ?, ?)
+  `).run("recording-mbid-1", "artist-mbid-1", "Give Me the Future", 0);
+
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", "Give Me the Future", 1, 1);
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "tidal-stereo-album", "release-mbid-1", "HIRES_LOSSLESS", "verified");
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "spatial", 1, "tidal", "tidal-atmos-album", "release-mbid-1", "DOLBY_ATMOS", "verified");
+
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-1",
+    "artist-mbid-1",
+    "rg-mbid-1",
+    "release-mbid-1",
+    "track-mbid-1",
+    "recording-mbid-1",
+    "tidal",
+    "track",
+    "tidal-stereo-track",
+    "stereo",
+    "C:/Music/Bastille/Give Me the Future/01 - Give Me the Future.flac",
+    "Bastille/Give Me the Future/01 - Give Me the Future.flac",
+    "C:/Music",
+    "01 - Give Me the Future.flac",
+    "flac",
+    "track",
+  );
+
+  const queued = await curationServiceModule.CurationService.queueMonitoredItems("artist-1");
+
+  assert.equal(queued.albums, 1);
+  const jobs = db.prepare(`
+    SELECT ref_id AS refId, payload
+    FROM job_queue
+    WHERE type = ?
+  `).all(queueModule.JobTypes.DownloadAlbum) as Array<{ refId: string; payload: string }>;
+
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0]?.refId, "rg-mbid-1:spatial");
+  const payload = JSON.parse(jobs[0]?.payload || "{}") as { providerId?: string; slot?: string; releaseGroupMbid?: string };
+  assert.equal(payload.providerId, "tidal-atmos-album");
+  assert.equal(payload.slot, "spatial");
+  assert.equal(payload.releaseGroupMbid, "rg-mbid-1");
+});
+
 test("CurationService respects monitor_lock when synchronizing monitor status", async () => {
   const { db } = dbModule;
 

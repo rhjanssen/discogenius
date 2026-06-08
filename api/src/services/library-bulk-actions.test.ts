@@ -115,6 +115,16 @@ function seedLibrary() {
 
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality,
+            artist_metadata_id, album_id, album_release_id, match_status, match_confidence, match_method
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal", "album", "10", "artist-mbid-1", "release-group-mbid-1", "release-mbid-1", "Album One", "LOSSLESS",
+        101, null, 201, "verified", 1, "test",
+    );
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems (
             provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid,
             recording_mbid, title, quality, artist_metadata_id, album_id, album_release_id, track_id, recording_id,
             match_status, match_confidence, match_method
@@ -137,9 +147,9 @@ function seedLibrary() {
     dbModule.db.prepare(`
         INSERT INTO ReleaseGroupSlots (
             artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id,
-            quality, match_status, match_confidence, match_method, provider_data
+            selected_release_mbid, quality, match_status, match_confidence, match_method, provider_data
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "artist-mbid-1",
         "release-group-mbid-1",
@@ -147,6 +157,7 @@ function seedLibrary() {
         1,
         "tidal",
         "10",
+        "release-mbid-1",
         "LOSSLESS",
         "verified",
         1,

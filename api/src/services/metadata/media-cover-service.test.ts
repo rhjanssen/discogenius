@@ -85,3 +85,37 @@ test("provider artwork is used when SkyHook has no usable image URL", () => {
 
   assert.match(artworkUrl ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/750x750\.jpg$/);
 });
+
+test("SkyHook album artwork wins over cached provider fallback artwork", () => {
+  const albumMbid = "album-with-provider-fallback";
+  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/skyhook-cover.jpg";
+  const providerUrl = "https://resources.tidal.com/images/11111111/1111/1111/1111/111111111111/750x750.jpg";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      "artist-mbid",
+      "Provider Fallback Album",
+      JSON.stringify([{ coverType: "Cover", url: providerUrl, source: "provider-fallback" }]),
+    );
+
+  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
+    albumMbid,
+    skyHookData: {
+      Images: [
+        {
+          CoverType: "Cover",
+          Url: skyHookUrl,
+          Width: 1200,
+          Height: 1200,
+        },
+      ],
+    },
+    providerCandidates: [],
+  });
+
+  const hash = artworkUrl?.split("/")[2] ?? "";
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+});

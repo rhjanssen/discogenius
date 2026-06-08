@@ -535,6 +535,113 @@ test("upsertLibraryFile resolves canonical release group from provider item mapp
   });
 });
 
+test("upsertLibraryFile prefers selected release-group slot identity over legacy provider album identity", () => {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitor)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("release-group-mbid-1", "artist-mbid-1", "Give Me The Future", "album", null);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country, status, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "legacy-release-mbid",
+    "release-group-mbid-1",
+    "artist-mbid-1",
+    "Give Me The Future",
+    "2022-02-04",
+    "US",
+    "official",
+    1,
+    1,
+    "selected-release-mbid",
+    "release-group-mbid-1",
+    "artist-mbid-1",
+    "Give Me The Future + Dreams Of The Past",
+    "2022-08-26",
+    "XW",
+    "official",
+    1,
+    1,
+  );
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo)
+    VALUES (?, ?, ?, ?)
+  `).run("recording-mbid-1", "artist-mbid-1", "Shut Off The Lights", 0);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, recording_mbid, release_mbid, medium_position, position, title)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("selected-track-mbid", "recording-mbid-1", "selected-release-mbid", 1, 1, "Shut Off The Lights");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, release_date, type, explicit, quality,
+      num_tracks, num_volumes, num_videos, duration, monitor, mbid, mb_release_group_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-album-1", "artist-local", "Give Me The Future", "2022-02-04", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1, "legacy-release-mbid", "release-group-mbid-1");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, track_number, volume_number,
+      explicit, type, quality, duration, monitor, mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("provider-track-1", "artist-local", "provider-album-1", "Shut Off The Lights", 1, 1, 0, "Track", "LOSSLESS", 180, 1, "recording-mbid-1");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "album",
+    "provider-album-1",
+    "artist-mbid-1",
+    "release-group-mbid-1",
+    "legacy-release-mbid",
+    "Give Me The Future",
+    "LOSSLESS",
+    "stereo",
+    "verified",
+    1,
+    "test",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, wanted, selected_provider,
+      selected_provider_id, selected_release_mbid, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "release-group-mbid-1", "stereo", 1, "tidal", "provider-album-1", "selected-release-mbid", "matched");
+
+  const root = configModule.Config.getMusicPath();
+  const filePath = path.join(root, "Bastille {mbid-artist-mbid-1}", "Give Me The Future", "01 - Shut Off The Lights.flac");
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "artist-local",
+    albumId: "provider-album-1",
+    mediaId: "provider-track-1",
+    filePath,
+    libraryRoot: root,
+    fileType: "track",
+    quality: "LOSSLESS",
+  });
+
+  const row = dbModule.db.prepare(`
+    SELECT canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid
+    FROM TrackFiles
+    WHERE id = ?
+  `).get(id) as Record<string, string | null>;
+
+  assert.deepEqual(row, {
+    canonical_release_mbid: "selected-release-mbid",
+    canonical_track_mbid: "selected-track-mbid",
+    canonical_recording_mbid: "recording-mbid-1",
+  });
+});
+
 test("upsertLibraryFile does not invent provider ids for canonical artist assets", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitor)

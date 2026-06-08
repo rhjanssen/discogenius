@@ -191,6 +191,45 @@ function preferredTypes(value: string | string[] | undefined, fallback: string[]
   return fallback;
 }
 
+function isProviderFallbackImage(image: Record<string, any>): boolean {
+  return String(image.source || image.Source || "").trim().toLowerCase() === "provider-fallback";
+}
+
+function chooseImageFromStoredList(
+  images: unknown,
+  preferredCoverTypes: string[],
+  options: { includeProviderFallbacks: boolean; proxy: boolean },
+): string | null {
+  if (!Array.isArray(images) || images.length === 0) {
+    return null;
+  }
+
+  const candidates = images
+    .filter((image): image is Record<string, any> => Boolean(image && typeof image === "object"))
+    .filter((image) => options.includeProviderFallbacks || !isProviderFallbackImage(image));
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  for (const coverType of preferredCoverTypes) {
+    const match = candidates.find((image) => String(image.coverType || image.CoverType || "").trim().toLowerCase() === coverType.toLowerCase());
+    if (match?.url || match?.Url || match?.remoteUrl || match?.RemoteUrl) {
+      const url = normalizeArtworkUrl(match.url || match.Url || match.remoteUrl || match.RemoteUrl);
+      if (url) {
+        return options.proxy ? registerMediaCoverProxyUrl(url) || url : url;
+      }
+    }
+  }
+
+  const fallback = candidates[0];
+  const fallbackUrl = fallback?.url || fallback?.Url || fallback?.remoteUrl || fallback?.RemoteUrl;
+  if (!fallbackUrl) {
+    return null;
+  }
+  const url = normalizeArtworkUrl(fallbackUrl);
+  return url ? options.proxy ? registerMediaCoverProxyUrl(url) || url : url : null;
+}
+
 export function getSkyHookImageUrl(
   resource: SkyHookImageContainer | null | undefined,
   preferredCoverTypes: string | string[],
@@ -304,26 +343,24 @@ export function chooseCachedAlbumArtwork(options: {
   skyHookData?: SkyHookImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
 }): string | null {
+  let storedProviderFallbackUrl: string | null = null;
   if (options.albumMbid) {
     try {
       const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
       if (row?.images) {
         const dbImages = JSON.parse(row.images);
-        if (Array.isArray(dbImages) && dbImages.length > 0) {
-          const preferredCoverTypes = ["Cover", "Poster"];
-          for (const coverType of preferredCoverTypes) {
-            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
-            if (match?.url) {
-              const url = normalizeArtworkUrl(match.url);
-              if (url) return registerMediaCoverProxyUrl(url) || url;
-            }
-          }
-          const fallback = dbImages[0]?.url;
-          if (fallback) {
-            const url = normalizeArtworkUrl(fallback);
-            if (url) return registerMediaCoverProxyUrl(url) || url;
-          }
+        const preferredCoverTypes = ["Cover", "Poster"];
+        const storedCanonicalUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+          includeProviderFallbacks: false,
+          proxy: true,
+        });
+        if (storedCanonicalUrl) {
+          return storedCanonicalUrl;
         }
+        storedProviderFallbackUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+          includeProviderFallbacks: true,
+          proxy: true,
+        });
       }
     } catch (error) {
       console.warn("[MediaCoverService] Failed to query or parse cached album artwork:", error);
@@ -333,6 +370,9 @@ export function chooseCachedAlbumArtwork(options: {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
   if (skyHookUrl) {
     return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
+  }
+  if (storedProviderFallbackUrl) {
+    return storedProviderFallbackUrl;
   }
   const providerUrl = chooseCachedProviderArtwork(options.providerCandidates || [], "album");
   return registerMediaCoverProxyUrl(providerUrl) || providerUrl;
@@ -458,26 +498,24 @@ export async function resolveAlbumArtwork(options: {
   providerCandidates?: ProviderArtworkCandidate[];
   size?: string | number | null;
 }): Promise<string | null> {
+  let storedProviderFallbackUrl: string | null = null;
   if (options.albumMbid) {
     try {
       const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
       if (row?.images) {
         const dbImages = JSON.parse(row.images);
-        if (Array.isArray(dbImages) && dbImages.length > 0) {
-          const preferredCoverTypes = ["Cover", "Poster"];
-          for (const coverType of preferredCoverTypes) {
-            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
-            if (match?.url) {
-              const url = normalizeArtworkUrl(match.url);
-              if (url) return url;
-            }
-          }
-          const fallback = dbImages[0]?.url;
-          if (fallback) {
-            const url = normalizeArtworkUrl(fallback);
-            if (url) return url;
-          }
+        const preferredCoverTypes = ["Cover", "Poster"];
+        const storedCanonicalUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+          includeProviderFallbacks: false,
+          proxy: false,
+        });
+        if (storedCanonicalUrl) {
+          return storedCanonicalUrl;
         }
+        storedProviderFallbackUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+          includeProviderFallbacks: true,
+          proxy: false,
+        });
       }
     } catch (error) {
       console.warn("[MediaCoverService] Failed to resolve album artwork from database:", error);
@@ -487,6 +525,9 @@ export async function resolveAlbumArtwork(options: {
   const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
   if (skyHookUrl) {
     return skyHookUrl;
+  }
+  if (storedProviderFallbackUrl) {
+    return storedProviderFallbackUrl;
   }
 
   const providerUrl = await resolveProviderArtworkUrl(

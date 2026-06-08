@@ -27,68 +27,42 @@ export type ImportDownloadState = {
 };
 
 type ImportHistoryContext = {
-    artistId: number | null;
-    albumId: number | null;
-    mediaId: number | null;
+    artistId: string | null;
+    albumId: string | null;
+    mediaId: string | null;
     quality: string | null;
 };
 
+type ImportHistoryContextRow = {
+    artist_id?: string | null;
+    album_id?: string | null;
+    media_id?: string | null;
+    quality?: string | null;
+};
+
 function resolveImportHistoryContext(type: string, providerId: string): ImportHistoryContext {
-    const fallback: ImportHistoryContext = {
-        artistId: null,
-        albumId: null,
-        mediaId: null,
-        quality: null,
+    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
+    const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
+    const row = db.prepare(`
+        SELECT
+            COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id,
+            COALESCE(pi.release_group_mbid, pi.release_mbid) AS album_id,
+            COALESCE(CAST(pi.track_id AS TEXT), pi.track_mbid, CAST(pi.recording_id AS TEXT), pi.recording_mbid, pi.provider_id) AS media_id,
+            pi.quality
+        FROM ProviderItems pi
+        LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
+        WHERE pi.provider_id = ?
+          AND pi.entity_type = ?
+        ORDER BY pi.updated_at DESC
+        LIMIT 1
+    `).get(firstProviderId, entityType) as ImportHistoryContextRow | undefined;
+
+    return {
+        artistId: row?.artist_id ?? null,
+        albumId: row?.album_id ?? null,
+        mediaId: type === "album" ? null : row?.media_id ?? null,
+        quality: row?.quality || null,
     };
-
-    if (type === "album") {
-        const albumIds = providerId.split(";").filter(Boolean);
-        if (albumIds.length === 0) {
-            return fallback;
-        }
-        const albumRow = db.prepare(`
-            SELECT id, artist_id, quality
-            FROM ProviderAlbums
-            WHERE id = ?
-        `).get(albumIds[0]) as { id: number; artist_id: number; quality: string | null } | undefined;
-
-        if (!albumRow) {
-            return fallback;
-        }
-
-        return {
-            artistId: albumRow.artist_id,
-            albumId: albumRow.id,
-            mediaId: null,
-            quality: albumRow.quality || null,
-        };
-    }
-
-    if (type === "track" || type === "video") {
-        const mediaRow = db.prepare(`
-            SELECT id, artist_id, album_id, quality
-            FROM ProviderMedia
-            WHERE id = ?
-        `).get(providerId) as {
-            id: number;
-            artist_id: number;
-            album_id: number | null;
-            quality: string | null;
-        } | undefined;
-
-        if (!mediaRow) {
-            return fallback;
-        }
-
-        return {
-            artistId: mediaRow.artist_id,
-            albumId: mediaRow.album_id,
-            mediaId: mediaRow.id,
-            quality: mediaRow.quality || null,
-        };
-    }
-
-    return fallback;
 }
 
 function clearUpgradeQueue(type: string, providerId: string) {
@@ -104,14 +78,57 @@ function clearUpgradeQueue(type: string, providerId: string) {
     db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(providerId);
 }
 
-function resolveAffectedArtistId(type: string, providerId: string): number | null {
-    if (type === "album") {
-        const albumIds = providerId.split(";").filter(Boolean);
-        if (albumIds.length === 0) return null;
-        return (db.prepare(`SELECT artist_id FROM ProviderAlbums WHERE id = ?`).get(albumIds[0]) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+function resolveAffectedArtistId(type: string, providerId: string): string | null {
+    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
+    const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
+    const row = db.prepare(`
+        SELECT COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id
+        FROM ProviderItems pi
+        LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
+        WHERE pi.provider_id = ?
+          AND pi.entity_type = ?
+        ORDER BY pi.updated_at DESC
+        LIMIT 1
+    `).get(firstProviderId, entityType) as { artist_id?: string | null } | undefined;
+    return row?.artist_id ?? null;
+}
+
+function resolveExpectedRecoveredTracks(type: string, providerId: string, fallbackCount: number): number {
+    if (type !== "album") {
+        return Math.max(1, fallbackCount);
     }
 
-    return (db.prepare(`SELECT artist_id FROM ProviderMedia WHERE id = ?`).get(providerId) as { artist_id?: number | null } | undefined)?.artist_id ?? null;
+    const albumIds = providerId.split(";").filter(Boolean);
+    if (albumIds.length === 0) {
+        return fallbackCount;
+    }
+
+    const row = db.prepare(`
+        WITH provider_albums(provider_id) AS (
+            VALUES ${albumIds.map(() => "(?)").join(", ")}
+        ),
+        selected_releases AS (
+            SELECT DISTINCT COALESCE(pi.release_mbid, rgs.selected_release_mbid) AS release_mbid
+            FROM provider_albums input
+            LEFT JOIN ProviderItems pi
+              ON pi.provider_id = input.provider_id
+             AND pi.entity_type = 'album'
+            LEFT JOIN ReleaseGroupSlots rgs
+              ON rgs.selected_provider_id = input.provider_id
+              OR (
+                pi.release_group_mbid IS NOT NULL
+                AND rgs.release_group_mbid = pi.release_group_mbid
+              )
+            WHERE COALESCE(pi.release_mbid, rgs.selected_release_mbid) IS NOT NULL
+        )
+        SELECT COUNT(DISTINCT track.mbid) AS count
+        FROM selected_releases sr
+        JOIN Tracks track ON track.release_mbid = sr.release_mbid
+        LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
+        WHERE COALESCE(recording.IsVideo, 0) = 0
+    `).get(...albumIds) as { count?: number } | undefined;
+
+    return Number(row?.count || fallbackCount);
 }
 
 function reconcileImportedDownload(type: string, providerId: string, organizeResult: OrganizeResult) {
@@ -138,15 +155,18 @@ function reconcileImportedDownload(type: string, providerId: string, organizeRes
         return;
     }
 
-    try {
-        const albumRow = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(providerId) as { album_id?: number | null } | undefined;
-        if (albumRow?.album_id) {
-            updateAlbumDownloadStatus(String(albumRow.album_id));
-        } else {
-            updateArtistDownloadStatusFromMedia(String(providerId));
-        }
-    } catch {
-        // Best-effort: skip album update if lookup fails.
+    const row = db.prepare(`
+        SELECT release_group_mbid
+        FROM ProviderItems
+        WHERE provider_id = ?
+          AND entity_type = 'track'
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `).get(providerId) as { release_group_mbid?: string | null } | undefined;
+    if (row?.release_group_mbid) {
+        updateAlbumDownloadStatus(row.release_group_mbid);
+    } else {
+        updateArtistDownloadStatusFromMedia(String(providerId));
     }
 }
 
@@ -186,16 +206,7 @@ export class DownloadedTracksImportService {
                 throw new Error(`Import files for ${type} ${providerId} are no longer available. Re-download the item to retry import.`);
             }
 
-            let expectedTracks = 1;
-            if (type === "album") {
-                const albumIds = providerId.split(";").filter(Boolean);
-                if (albumIds.length > 0) {
-                    const placeholders = albumIds.map(() => '?').join(', ');
-                    expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || recoveredMediaIds.length);
-                } else {
-                    expectedTracks = recoveredMediaIds.length;
-                }
-            }
+            const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length);
 
             organizeResult = {
                 type,
@@ -224,6 +235,11 @@ export class DownloadedTracksImportService {
             organizeResult = await OrganizerService.organizeDownload({
                 type,
                 providerId,
+                provider: job.payload.provider || null,
+                releaseGroupMbid: job.payload.releaseGroupMbid || null,
+                releaseMbid: job.payload.releaseMbid || null,
+                albumId: job.payload.albumId || null,
+                slot: job.payload.slot || null,
                 downloadPath,
                 onProgress: (progress) => {
                     const normalizedProgress = progress.phase === "finalizing"

@@ -19,7 +19,12 @@ before(async () => {
 });
 
 beforeEach(() => {
+    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare("DELETE FROM Recordings").run();
+    dbModule.db.prepare("DELETE FROM Albums").run();
+    dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
     dbModule.db.prepare("DELETE FROM ProviderAlbumArtists").run();
+    dbModule.db.prepare("DELETE FROM ProviderMedia").run();
     dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
     dbModule.db.prepare("DELETE FROM TrackFiles").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
@@ -45,4 +50,56 @@ test("getManagedArtistsDueForRefresh respects configured refresh days and keeps 
         dueArtists.map((artist) => String(artist.id)),
         ["1", "3"],
     );
+});
+
+test("artist completion predicate uses canonical locks instead of provider catalog locks", () => {
+    dbModule.db.prepare(`
+        INSERT INTO Artists (id, name, mbid, monitor, path)
+        VALUES
+            ('1', 'Provider Locked', 'provider-locked-mbid', 0, 'Provider Locked'),
+            ('2', 'Slot Locked', 'slot-locked-mbid', 0, 'Slot Locked'),
+            ('3', 'Video Locked', 'video-locked-mbid', 0, 'Video Locked')
+    `).run();
+    dbModule.db.prepare(`
+        INSERT INTO ArtistMetadata (mbid, name)
+        VALUES
+            ('provider-locked-mbid', 'Provider Locked'),
+            ('slot-locked-mbid', 'Slot Locked'),
+            ('video-locked-mbid', 'Video Locked')
+    `).run();
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderAlbums (
+            id, artist_id, title, type, explicit, quality,
+            num_tracks, num_volumes, num_videos, duration, monitor_lock
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("provider-album-1", "1", "Provider Album", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
+    dbModule.db.prepare(`
+        INSERT INTO ProviderMedia (
+            id, artist_id, album_id, title, type, explicit, quality, monitor_lock
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("provider-track-1", "1", "provider-album-1", "Provider Track", "Track", 0, "LOSSLESS", 1);
+
+    dbModule.db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+        VALUES (?, ?, ?, ?)
+    `).run("slot-rg-mbid", "slot-locked-mbid", "Slot Album", "album");
+    dbModule.db.prepare(`
+        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, monitor_lock)
+        VALUES (?, ?, ?, ?, ?)
+    `).run("slot-locked-mbid", "slot-rg-mbid", "stereo", 0, 1);
+    dbModule.db.prepare(`
+        INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MonitorLock)
+        VALUES (?, ?, ?, ?, ?)
+    `).run("video-recording-mbid", "video-locked-mbid", "Video", 1, 1);
+
+    const predicate = managedArtistsModule.buildArtistCompletionPredicate("a");
+    const rows = dbModule.db.prepare(`
+        SELECT id
+        FROM Artists a
+        WHERE ${predicate}
+        ORDER BY id
+    `).all() as Array<{ id: string }>;
+
+    assert.deepEqual(rows.map((row) => row.id), ["2", "3"]);
 });

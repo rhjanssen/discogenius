@@ -61,10 +61,6 @@ function releaseGroupCacheKey(releaseGroupMbid: string, slot?: string | null) {
   return `release-group:${slot || "any"}:${releaseGroupMbid}`;
 }
 
-function placeholders(values: readonly unknown[]): string {
-  return values.map(() => "?").join(", ");
-}
-
 function toAlbumStats(albumId: string, totalTracks: number, downloadedTracks: number): AlbumDownloadStats {
   const normalizedTotalTracks = Math.max(0, totalTracks);
   const normalizedDownloadedTracks = Math.max(0, downloadedTracks);
@@ -101,16 +97,6 @@ export function invalidateAlbumDownloadStatus(albumId: string): void {
   if (!albumId) return;
   albumStatsCache.delete(String(albumId));
   invalidateReleaseGroupDownloadStatus(String(albumId));
-
-  const album = db.prepare(`
-    SELECT mb_release_group_id
-    FROM ProviderAlbums
-    WHERE CAST(id AS TEXT) = ?
-    LIMIT 1
-  `).get(String(albumId)) as { mb_release_group_id?: string | null } | undefined;
-  if (album?.mb_release_group_id) {
-    invalidateReleaseGroupDownloadStatus(album.mb_release_group_id);
-  }
 }
 
 export function invalidateReleaseGroupDownloadStatus(releaseGroupMbid: string): void {
@@ -258,32 +244,6 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
     }>;
 
     const statsByAlbumId = new Map(canonicalRows.map((row) => [String(row.album_id), row]));
-    const legacyMissing = missing.filter((albumId) => !statsByAlbumId.has(albumId));
-
-    if (legacyMissing.length > 0) {
-      const legacyPlaceholders = placeholders(legacyMissing);
-      const legacyRows = db.prepare(`
-        SELECT
-          CAST(m.album_id AS TEXT) AS album_id,
-          COUNT(DISTINCT m.id) AS total_tracks,
-          COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN m.id END) AS downloaded_tracks
-        FROM ProviderMedia m
-        LEFT JOIN TrackFiles lf
-          ON lf.media_id = m.id
-         AND lf.file_type = 'track'
-        WHERE m.album_id IN (${legacyPlaceholders})
-          AND m.type != 'Music Video'
-        GROUP BY m.album_id
-      `).all(...legacyMissing) as Array<{
-        album_id: string;
-        total_tracks: number;
-        downloaded_tracks: number;
-      }>;
-
-      for (const row of legacyRows) {
-        statsByAlbumId.set(String(row.album_id), row);
-      }
-    }
 
     for (const albumId of missing) {
       const row = statsByAlbumId.get(albumId);
@@ -656,16 +616,6 @@ export function updateArtistDownloadStatusFromAlbum(albumId: string): void {
       invalidateArtistDownloadStatus(String(row.artist_id));
     }
   }
-
-  const artistIds = db.prepare(`
-    SELECT DISTINCT CAST(artist_id AS TEXT) AS artist_id
-    FROM ProviderAlbumArtists
-    WHERE album_id = ?
-  `).all(albumId) as Array<{ artist_id: string }>;
-
-  for (const row of artistIds) {
-    invalidateArtistDownloadStatus(String(row.artist_id));
-  }
 }
 
 export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
@@ -712,21 +662,5 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
     if (row.artist_id) {
       invalidateArtistDownloadStatus(String(row.artist_id));
     }
-  }
-
-  const media = db.prepare(`
-    SELECT artist_id, album_id
-    FROM ProviderMedia
-    WHERE id = ?
-  `).get(mediaId) as { artist_id?: number | null; album_id?: number | null } | undefined;
-
-  if (!media) return;
-
-  if (media.album_id) {
-    updateArtistDownloadStatusFromAlbum(String(media.album_id));
-  }
-
-  if (media.artist_id) {
-    invalidateArtistDownloadStatus(String(media.artist_id));
   }
 }
