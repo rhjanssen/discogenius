@@ -71,9 +71,7 @@ export interface AlbumTrackContract {
   downloaded: boolean;
   is_downloaded: boolean;
   is_monitored: boolean;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
-  monitor_locked?: boolean;
+  monitored_lock: boolean;
   explicit?: boolean;
   album_id?: string | null;
   files: LibraryFileContract[];
@@ -113,16 +111,14 @@ export interface VideoDetailContract {
   cover?: string | null;
   cover_id?: string | null;
   is_monitored: boolean;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
-  monitor_locked?: boolean;
+  monitored_lock: boolean;
   downloaded: boolean;
   is_downloaded: boolean;
 }
 
 export interface VideoUpdateContract {
   monitored?: boolean;
-  monitor_lock?: boolean;
+  monitored_lock?: boolean;
 }
 
 function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFileContract {
@@ -213,9 +209,7 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
     downloaded: expectBoolean(record.downloaded, `${label}.downloaded`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
-    monitor: record.monitor as boolean | number | undefined,
-    monitor_lock: record.monitor_lock as boolean | number | undefined,
-    monitor_locked: expectOptionalBoolean(record.monitor_locked, `${label}.monitor_locked`),
+    monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
     explicit: expectOptionalBoolean(record.explicit, `${label}.explicit`),
     album_id: expectNullableString(record.album_id, `${label}.album_id`),
     files: expectArray(record.files, `${label}.files`, (item, fileIndex) =>
@@ -276,9 +270,7 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
     cover: expectNullableString(record.cover, "video.cover"),
     cover_id: expectNullableString(record.cover_id, "video.cover_id"),
     is_monitored: expectBoolean(record.is_monitored, "video.is_monitored"),
-    monitor: record.monitor as boolean | number | undefined,
-    monitor_lock: record.monitor_lock as boolean | number | undefined,
-    monitor_locked: expectOptionalBoolean(record.monitor_locked, "video.monitor_locked"),
+    monitored_lock: expectOptionalBoolean(record.monitored_lock, "video.monitored_lock") ?? false,
     downloaded: expectBoolean(record.downloaded, "video.downloaded"),
     is_downloaded: expectBoolean(record.is_downloaded, "video.is_downloaded"),
   };

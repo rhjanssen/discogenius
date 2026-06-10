@@ -102,7 +102,7 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("artists")) {
                 const localArtists = db
                     .prepare(
-                        `SELECT id, mbid, name, COALESCE(picture, cover_image_url) AS picture, monitor
+                        `SELECT id, mbid, name, COALESCE(picture, cover_image_url) AS picture, monitored AS monitor
                          FROM Artists current_artist
                          WHERE name LIKE ? ESCAPE '\\'
                            AND NOT EXISTS (
@@ -151,7 +151,7 @@ router.get("/", async (req, res) => {
               spatial.selected_provider_id AS spatial_provider_id,
               spatial.provider_data AS spatial_provider_data,
               COALESCE(stereo.quality, spatial.quality) AS quality,
-              CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END AS monitored
+              CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
             LEFT JOIN ReleaseGroupSlots stereo
@@ -200,7 +200,7 @@ router.get("/", async (req, res) => {
                 SELECT 1
                 FROM ReleaseGroupSlots monitored_slot
                 WHERE monitored_slot.release_group_mbid = rg.mbid
-                  AND monitored_slot.wanted = 1
+                  AND monitored_slot.monitored = 1
               ) THEN 1 ELSE 0 END AS monitored
             FROM Tracks t
             JOIN AlbumReleases release ON release.mbid = t.release_mbid
@@ -284,7 +284,7 @@ router.get("/", async (req, res) => {
               recording.Id AS id,
               recording.title,
               artist.name AS artist_name,
-              COALESCE(recording.Monitor, 0) AS monitored,
+              COALESCE(recording.Monitored, 0) AS monitored,
               COALESCE(recording.CoverImageId, provider_video.asset_id) AS cover,
               COALESCE(recording.ReleaseDate, provider_video.release_date) AS release_date,
               COALESCE((
@@ -367,7 +367,7 @@ router.get("/", async (req, res) => {
                     const mbid = item.artist.id;
                     if (mbid && !addedArtistMbids.has(mbid)) {
                         // Check if exists in local library
-                        const localArtist = db.prepare("SELECT id, monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as any;
+                        const localArtist = db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as any;
                         if (localArtist) {
                             if (addedArtistIds.has(localArtist.id.toString())) {
                                 continue;
@@ -416,7 +416,7 @@ router.get("/", async (req, res) => {
                     const mbid = item.album.id;
                     if (mbid && !addedAlbumMbids.has(mbid)) {
                         const localAlbum = db.prepare(`
-                            SELECT rg.mbid, CASE WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1 ELSE 0 END AS monitored
+                            SELECT rg.mbid, CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END AS monitored
                             FROM Albums rg
                             LEFT JOIN ReleaseGroupSlots stereo ON stereo.release_group_mbid = rg.mbid AND stereo.slot = 'stereo'
                             LEFT JOIN ReleaseGroupSlots spatial ON spatial.release_group_mbid = rg.mbid AND spatial.slot = 'spatial'

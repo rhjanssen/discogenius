@@ -132,7 +132,7 @@ export class RefreshArtistService {
         artistId: string,
         force = false,
         includeCreditedReleaseGroups = false,
-        expandCreditedArtists = true,
+        expandCreditedArtists = false,
     ): Promise<string | null> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         if (!artistMbid) {
@@ -241,10 +241,10 @@ export class RefreshArtistService {
         }
 
         const existing = db.prepare(
-            "SELECT id, monitor, path FROM Artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
-        ).get(artistMbid, artistMbid, artistMbid) as { id: string | number; monitor?: number | null; path?: string | null } | undefined;
+            "SELECT id, monitored, path FROM Artists WHERE id = ? OR mbid = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
+        ).get(artistMbid, artistMbid, artistMbid) as { id: string | number; monitored?: number | null; path?: string | null } | undefined;
         const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
-        const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitor);
+        const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitored);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
         const artistData = await skyHookProxy.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
@@ -301,7 +301,7 @@ export class RefreshArtistService {
                     id, name, picture, cover_image_url, popularity, artist_types, artist_roles,
                     mbid, musicbrainz_status, musicbrainz_last_checked, musicbrainz_match_method,
                     bio_text, bio_source,
-                    monitor, monitored_at, user_date_added, last_scanned, path
+                    monitored, monitored_at, user_date_added, last_scanned, path
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'musicbrainz-metadata',
                     ?, 'musicbrainz', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
@@ -335,7 +335,7 @@ export class RefreshArtistService {
                     musicbrainz_match_method = 'musicbrainz-metadata',
                     bio_text = COALESCE(?, bio_text),
                     bio_source = CASE WHEN ? IS NOT NULL THEN 'musicbrainz' ELSE bio_source END,
-                    monitor = ?,
+                    monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
                     last_scanned = CURRENT_TIMESTAMP,
                     path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END
@@ -393,6 +393,9 @@ export class RefreshArtistService {
                 upc: album.upc ?? null,
                 trackCount: album.num_tracks ?? null,
                 volumeCount: album.num_volumes ?? null,
+                isrcs: Array.isArray(album._provider_tracks)
+                    ? album._provider_tracks.map((t: any) => String(t.isrc || "")).filter(Boolean)
+                    : [],
             })),
             releaseGroups,
         );
@@ -787,6 +790,7 @@ export class RefreshArtistService {
                         explicit: album.explicit == null ? null : Boolean(album.explicit),
                         quality: album.quality || null,
                         discoveredFromArtistMbid: artistMbid,
+                        tracks: album._provider_tracks || null,
                     }),
                 );
 
@@ -888,6 +892,7 @@ export class RefreshArtistService {
                     explicit: row.explicit,
                     trackCount: providerTrackCount > 0 ? providerTrackCount : null,
                     volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
+                    tracks: Array.isArray(data.tracks) ? data.tracks : undefined,
                     raw: data,
                 },
                 match: {
@@ -1261,7 +1266,7 @@ export class RefreshArtistService {
         console.log(`[RefreshArtistService] scanBasic for ${artistId}`);
 
         const existing = db.prepare(
-            "SELECT id, monitor, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
+            "SELECT id, monitored, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
         ).get(artistId) as any;
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const shouldRefresh =
@@ -1269,7 +1274,7 @@ export class RefreshArtistService {
             options.forceUpdate === true ||
             isRefreshDue(existing?.last_scanned, refreshDays);
 
-        const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitor || false);
+        const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitored || false);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
         const provider = streamingProviderManager.getDefaultStreamingProvider();
         const providerAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : true;
@@ -1283,17 +1288,17 @@ export class RefreshArtistService {
         if (existing?.mbid && !providerAuthenticated) {
             await this.upsertMusicBrainzArtist(String(existing.mbid), {
                 ...options,
-                monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitor),
+                monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitored),
             });
             console.log(`[RefreshArtistService] scanBasic skipped provider lookup for ${artistId} (provider not connected)`);
             return;
         }
 
         if (existing && !shouldRefresh) {
-            if (options.monitorArtist === true && existing.monitor !== shouldMonitorInt) {
+            if (options.monitorArtist === true && existing.monitored !== shouldMonitorInt) {
                 db.prepare(`
                     UPDATE Artists SET
-                        monitor = ?,
+                        monitored = ?,
                         monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                     WHERE id = ?
                 `).run(shouldMonitorInt, shouldMonitorInt, artistId);
@@ -1455,13 +1460,14 @@ export class RefreshArtistService {
             || (isMusicBrainzMbid(artistId) ? artistId : null);
 
         if (shouldHydrateCatalog) {
-            const monitoredArtist = db.prepare("SELECT monitor FROM Artists WHERE id = ?")
-                .get(artistId) as { monitor?: number | null } | undefined;
+            const monitoredArtist = db.prepare("SELECT monitored FROM Artists WHERE id = ?")
+                .get(artistId) as { monitored?: number | null } | undefined;
+            const isMonitored = Boolean(monitoredArtist?.monitored);
             artistMbid = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
-                false,
-                options.expandCreditedArtists === true,
+                isMonitored,
+                isMonitored,
             );
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
@@ -1524,6 +1530,52 @@ export class RefreshArtistService {
                         ? await provider.listArtistReleaseOffers(providerArtistId)
                         : await provider.getArtistAlbums(providerArtistId);
                     const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
+
+                    // Fetch tracks for all provider albums to support track-level matching
+                    for (const album of albums) {
+                        let loadedTracks: any[] | null = null;
+                        const cachedItem = db.prepare(`
+                            SELECT data
+                            FROM ProviderItems
+                            WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+                        `).get(provider.id, String(album.provider_id)) as { data?: string | null } | undefined;
+
+                        if (cachedItem?.data) {
+                            try {
+                                const parsed = JSON.parse(cachedItem.data);
+                                if (Array.isArray(parsed.tracks) && parsed.tracks.length === Number(album.num_tracks)) {
+                                    loadedTracks = parsed.tracks;
+                                }
+                            } catch {
+                                // Ignore JSON parse errors
+                            }
+                        }
+
+                        if (loadedTracks) {
+                            album._provider_tracks = loadedTracks;
+                        }
+                    }
+
+                    const missingAlbums = albums.filter((album) => !album._provider_tracks);
+                    if (missingAlbums.length > 0) {
+                        console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
+                        const chunkSize = 5;
+                        for (let i = 0; i < missingAlbums.length; i += chunkSize) {
+                            const chunk = missingAlbums.slice(i, i + chunkSize);
+                            await Promise.all(
+                                chunk.map(async (album) => {
+                                    try {
+                                        const rawTracks = await provider.getAlbumTracks(album.provider_id);
+                                        album._provider_tracks = rawTracks.map((t) => this.slotTrack(t));
+                                    } catch (error) {
+                                        console.warn(`[RefreshArtistService] Failed to fetch tracks for album ${album.provider_id}:`, error);
+                                        album._provider_tracks = [];
+                                    }
+                                })
+                            );
+                        }
+                    }
+
                     const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
                     console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
 

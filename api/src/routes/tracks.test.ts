@@ -71,7 +71,7 @@ function insertCanonicalTrackFixture() {
     VALUES ('artist-mbid', 'Track Artist')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES ('artist-id', 'Track Artist', 'artist-mbid', 1)
   `).run();
   dbModule.db.prepare(`
@@ -95,7 +95,7 @@ function insertCanonicalTrackFixture() {
 test("POST track monitor creates canonical release-group slot and leaves provider media untouched", async () => {
   insertCanonicalTrackFixture();
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitor)
+    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitored)
     VALUES ('track-mbid', 'artist-id', 'Legacy Track Row', 'Track', 0, 'LOW', 0)
   `).run();
 
@@ -106,7 +106,7 @@ test("POST track monitor creates canonical release-group slot and leaves provide
   assert.equal(res.body.success, true);
 
   const slot = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, slot, wanted
+    SELECT artist_mbid, release_group_mbid, slot, monitored AS wanted
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = 'rg-mbid'
   `).get() as { artist_mbid: string; release_group_mbid: string; slot: string; wanted: number };
@@ -114,18 +114,18 @@ test("POST track monitor creates canonical release-group slot and leaves provide
   assert.equal(slot.slot, "stereo");
   assert.equal(slot.wanted, 1);
 
-  const providerMedia = dbModule.db.prepare("SELECT monitor FROM ProviderMedia WHERE id = 'track-mbid'")
-    .get() as { monitor: number };
-  assert.equal(providerMedia.monitor, 0);
+  const providerMedia = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = 'track-mbid'")
+    .get() as { monitored: number };
+  assert.equal(providerMedia.monitored, 0);
 });
 
 test("track monitor route rejects provider-only track IDs", async () => {
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, monitor)
+    INSERT INTO Artists (id, name, monitored)
     VALUES ('artist-id', 'Legacy Artist', 1)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitor)
+    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitored)
     VALUES ('provider-track-only', 'artist-id', 'Provider Track', 'Track', 0, 'LOSSLESS', 0)
   `).run();
 
@@ -136,27 +136,27 @@ test("track monitor route rejects provider-only track IDs", async () => {
   }, res);
 
   assert.equal(res.statusCode, 404);
-  const providerMedia = dbModule.db.prepare("SELECT monitor FROM ProviderMedia WHERE id = 'provider-track-only'")
-    .get() as { monitor: number };
-  assert.equal(providerMedia.monitor, 0);
+  const providerMedia = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = 'provider-track-only'")
+    .get() as { monitored: number };
+  assert.equal(providerMedia.monitored, 0);
 });
 
 test("PATCH track updates canonical release-group wanted state", () => {
   insertCanonicalTrackFixture();
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted)
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored)
     VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1)
   `).run();
 
   const res = createMockResponse();
   getRouteHandler("/:trackId", "patch")({
     params: { trackId: "track-mbid" },
-    body: { monitored: false, monitor_lock: true },
+    body: { monitored: false, monitored_lock: true },
   }, res);
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
-  const slot = dbModule.db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = 'rg-mbid'")
+  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = 'rg-mbid'")
     .get() as { wanted: number };
   assert.equal(slot.wanted, 0);
 });

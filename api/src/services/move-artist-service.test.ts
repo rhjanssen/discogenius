@@ -37,19 +37,19 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
   fs.writeFileSync(trackPath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("1", "Artist One", artistPath, 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
@@ -236,7 +236,7 @@ test("executeMoveArtistJob rolls back the stored artist path when the destinatio
 test("moveArtist rejects overlapping artist folders", () => {
   seedArtistTrack({ artistPath: "Artists/Artist One" });
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("2", "Artist Two", "Artists", 1);
 

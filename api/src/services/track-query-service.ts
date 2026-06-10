@@ -33,7 +33,7 @@ const canonicalTrackMonitoredPredicate = `
     SELECT monitored_slot.release_group_mbid
     FROM ReleaseGroupSlots monitored_slot
     WHERE monitored_slot.release_group_mbid IS NOT NULL
-      AND monitored_slot.wanted = 1
+      AND monitored_slot.monitored = 1
   )
 `;
 
@@ -118,8 +118,8 @@ export interface TrackRow {
   album_title?: string;
   album_cover?: string | null;
   explicit?: boolean | number;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
+  is_monitored?: boolean | number;
+  monitored_lock?: boolean | number;
   release_date?: string | null;
   popularity?: number | null;
   last_scanned?: string | null;
@@ -300,8 +300,8 @@ function getTrackSelectSql(whereClause: string): string {
         WHERE quality_value IS NOT NULL AND TRIM(quality_value) != ''
       ) AS quality_tags,
       COALESCE(provider_track.explicit, 0) AS explicit,
-      CASE WHEN ${canonicalTrackMonitoredPredicate} THEN 1 ELSE 0 END AS monitor,
-      0 AS monitor_lock,
+      CASE WHEN ${canonicalTrackMonitoredPredicate} THEN 1 ELSE 0 END AS is_monitored,
+      0 AS monitored_lock,
       COALESCE(release.date, release_group.first_release_date) AS release_date,
       COALESCE(artist.popularity, 0) AS popularity,
       track.updated_at AS last_scanned,
@@ -465,8 +465,8 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       musicbrainz_release_id: track.musicbrainz_release_id || null,
       quality: track.quality || "",
       qualityTags: splitQualityTags(track.quality_tags),
-      is_monitored: Boolean(track.monitor),
-      monitor_locked: Boolean(track.monitor_lock),
+      is_monitored: Boolean(track.is_monitored),
+      monitored_lock: Boolean(track.monitored_lock),
       explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),
       downloaded: isDownloaded,
       is_downloaded: isDownloaded,

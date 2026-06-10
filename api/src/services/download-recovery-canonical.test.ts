@@ -62,7 +62,7 @@ test("download recovery resolves existing album files through canonical provider
   `).run("tidal", "album", "provider-album", "artist-mbid", "rg-mbid", "release-mbid", "Album", "stereo");
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
+      artist_mbid, release_group_mbid, slot, monitored,
       selected_provider, selected_provider_id, selected_release_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid", "rg-mbid", "stereo", 1, "tidal", "provider-album", "release-mbid");

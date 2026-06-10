@@ -270,7 +270,7 @@ test("download queue query resolves canonical release-group provider offers with
     );
     db.prepare(`
         INSERT INTO ReleaseGroupSlots (
-            artist_mbid, release_group_mbid, slot, wanted,
+            artist_mbid, release_group_mbid, slot, monitored,
             selected_provider, selected_provider_id, selected_release_mbid, quality,
             match_status, match_confidence, provider_data
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

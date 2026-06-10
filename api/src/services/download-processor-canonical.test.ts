@@ -69,7 +69,7 @@ test("download processor resolves canonical album provider offers without legacy
   );
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
+      artist_mbid, release_group_mbid, slot, monitored,
       selected_provider, selected_provider_id, selected_release_mbid, quality, provider_data
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(

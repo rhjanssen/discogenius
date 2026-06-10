@@ -397,8 +397,8 @@ const TrackList = <T extends TrackListItem>({
           const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
           const canPlay = Boolean(isDownloaded || audioFile || track.preview_provider_track_id);
           const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
-          const isMonitored = isTruthy(track.is_monitored ?? track.monitor);
-          const isLocked = isTruthy(track.monitor_locked ?? track.monitor_lock);
+          const isMonitored = isTruthy(track.is_monitored);
+          const isLocked = isTruthy(track.monitored_lock);
           const displayArtist = shouldShowArtist(track, showArtist, contextArtistName) ? track.artist_name : null;
           const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
             ? getAlbumTitle(track, contextAlbumTitle)

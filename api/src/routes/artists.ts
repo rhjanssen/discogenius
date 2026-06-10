@@ -30,7 +30,7 @@ const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
 
 function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
-  return db.prepare("SELECT id, monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
+  return db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
     { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined;
 }
 

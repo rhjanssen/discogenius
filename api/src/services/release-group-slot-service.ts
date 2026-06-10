@@ -699,7 +699,7 @@ export class ReleaseGroupSlotService {
 
         const upsert = db.prepare(`
             INSERT INTO ReleaseGroupSlots (
-                artist_mbid, release_group_mbid, slot, wanted,
+                artist_mbid, release_group_mbid, slot, monitored,
                 selected_provider, selected_provider_id, selected_release_mbid, quality,
                 match_status, match_confidence, match_method, match_evidence,
                 provider_data, checked_at, updated_at

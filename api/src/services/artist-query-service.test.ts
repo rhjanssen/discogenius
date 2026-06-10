@@ -49,7 +49,7 @@ function seedCanonicalArtistPage() {
   `).get() as { Id: number };
 
   db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitor, last_scanned, bio_text, artist_types)
+    INSERT INTO Artists (id, mbid, name, monitored, last_scanned, bio_text, artist_types)
     VALUES ('artist-1', 'artist-mbid-1', 'Canonical Artist', 1, CURRENT_TIMESTAMP, 'Canonical biography', '["Person"]')
   `).run();
 
@@ -71,8 +71,8 @@ function seedCanonicalArtistPage() {
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
-      selected_provider, selected_provider_id, selected_release_mbid, quality, monitor_lock
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, monitored_lock
     )
     VALUES (
       'artist-mbid-1', 'release-group-mbid-1', 'stereo', 1,
@@ -132,7 +132,7 @@ function seedCanonicalArtistPage() {
   db.prepare(`
     INSERT INTO Recordings (
       Id, ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid,
-      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitor
+      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitored
     )
     VALUES (
       501, 'provider-video-1', NULL, ?, 'artist-mbid-1',
@@ -156,7 +156,7 @@ function seedCanonicalArtistPage() {
   db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality, num_tracks, num_volumes,
-      num_videos, duration, monitor, mb_release_group_id
+      num_videos, duration, monitored, mb_release_group_id
     )
     VALUES ('stale-provider-album', 'artist-1', 'Stale Provider Album', 'ALBUM', 0, 'LOSSLESS', 1, 1,
       0, 180, 1, NULL)
@@ -169,7 +169,7 @@ function seedCanonicalArtistPage() {
 
   db.prepare(`
     INSERT INTO ProviderMedia (
-      id, album_id, artist_id, title, type, explicit, quality, duration, monitor
+      id, album_id, artist_id, title, type, explicit, quality, duration, monitored
     )
     VALUES ('stale-provider-video', NULL, 'artist-1', 'Stale Provider Video', 'Music Video', 0, 'FHD', 210, 1)
   `).run();
@@ -196,7 +196,7 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(albums[0].id, "release-group-mbid-1");
   assert.equal(albums[0].title, "Canonical Album");
   assert.equal(albums[0].source, "musicbrainz");
-  assert.equal(albums[0].monitor_locked, true);
+  assert.equal(albums[0].monitored_lock, true);
   assert.equal(albums[0].selected_provider_id, "provider-album-1");
   assert.equal(albums.some((album: any) => album.title === "Stale Provider Album"), false);
 

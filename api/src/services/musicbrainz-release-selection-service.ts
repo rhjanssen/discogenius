@@ -49,6 +49,7 @@ export class MusicBrainzReleaseSelectionService {
             WHERE r.release_group_mbid = ?
               ${availabilityWhere}
             ORDER BY
+                imported_file_count DESC,
                 COALESCE(r.track_count, 0) DESC,
                 CASE WHEN LOWER(COALESCE(r.status, '')) = 'official' THEN 1 ELSE 0 END DESC,
                 CASE WHEN EXISTS (

@@ -31,11 +31,8 @@ export interface TrackListItem {
   created_at?: string | null;
   downloaded?: boolean;
   is_downloaded?: boolean;
-  monitored?: boolean;
   is_monitored?: boolean;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
-  monitor_locked?: boolean;
+  monitored_lock?: boolean;
   files?: LibraryFileContract[] | null;
   album?: TrackAlbumRef | null;
 }

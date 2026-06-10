@@ -464,7 +464,7 @@ function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: s
            a.title AS album_title,
            a.primary_type,
            a.first_release_date,
-           COALESCE(rgs.wanted, 0) AS wanted,
+           COALESCE(rgs.monitored, 0) AS wanted,
            COALESCE(c.included, 0) AS included,
            CASE WHEN rgs.selected_release_mbid = ar.mbid THEN 1 ELSE 0 END AS selected_release
     FROM Tracks t
@@ -793,7 +793,7 @@ export class LibraryFilesService {
               SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
               FROM ProviderMedia m
               LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-              WHERE m.mbid = ? AND m.type = 'Track' AND m.monitor = 1
+              WHERE m.mbid = ? AND m.type = 'Track' AND m.monitored = 1
               LIMIT 1
             `).get(recordingMbid) as AudioMediaLookupRow | undefined
           : undefined;
@@ -804,7 +804,7 @@ export class LibraryFilesService {
                 FROM ProviderMedia m
                 JOIN Tracks t ON t.mbid = m.mbid
                 LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                WHERE t.recording_mbid = ? AND m.type = 'Track' AND m.monitor = 1
+                WHERE t.recording_mbid = ? AND m.type = 'Track' AND m.monitored = 1
                 LIMIT 1
               `).get(recordingMbid) as AudioMediaLookupRow | undefined;
         }
@@ -833,8 +833,8 @@ export class LibraryFilesService {
               FROM ProviderMedia m
               JOIN ProviderAlbums a ON a.id = m.album_id
               WHERE m.artist_id = ? AND m.type = 'Track'
-              ORDER BY m.monitor DESC,
-                       a.monitor DESC,
+              ORDER BY m.monitored DESC,
+                       a.monitored DESC,
                        CASE a.type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
                        a.release_date ASC,
                        a.id ASC,
@@ -2162,8 +2162,8 @@ export class LibraryFilesService {
   }
 
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
-    const artist = db.prepare(`SELECT monitor FROM Artists WHERE id = ?`).get(artistId) as any;
-    const artistMonitored = Boolean(artist?.monitor);
+    const artist = db.prepare(`SELECT monitored FROM Artists WHERE id = ?`).get(artistId) as any;
+    const artistMonitored = Boolean(artist?.monitored);
 
     // Unmonitoring an artist does not implicitly wipe the artist folder.
     // Automatic cleanup only applies while the artist remains managed and curation explicitly unmonitors child items.
@@ -2178,8 +2178,8 @@ export class LibraryFilesService {
         LEFT JOIN ProviderMedia m ON m.id = lf.media_id
         WHERE lf.artist_id = ?
           AND lf.media_id IS NOT NULL
-          AND (m.monitor = 0 OR m.monitor IS NULL)
-          AND (m.monitor_lock = 0 OR m.monitor_lock IS NULL)
+          AND (m.monitored = 0 OR m.monitored IS NULL)
+          AND (m.monitored_lock = 0 OR m.monitored_lock IS NULL)
       `).all(artistId),
       ...db.prepare(`
         SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
@@ -2188,11 +2188,11 @@ export class LibraryFilesService {
         WHERE lf.artist_id = ?
           AND lf.media_id IS NULL
           AND lf.album_id IS NOT NULL
-          AND (a.monitor = 0 OR a.monitor IS NULL)
-          AND (a.monitor_lock = 0 OR a.monitor_lock IS NULL)
+          AND (a.monitored = 0 OR a.monitored IS NULL)
+          AND (a.monitored_lock = 0 OR a.monitored_lock IS NULL)
           AND NOT EXISTS (
             SELECT 1 FROM ProviderMedia m2
-            WHERE m2.album_id = a.id AND m2.monitor = 1
+            WHERE m2.album_id = a.id AND m2.monitored = 1
           )
       `).all(artistId),
     ] as Array<{

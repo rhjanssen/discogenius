@@ -21,7 +21,7 @@ export class AlbumCommandService {
             .get(releaseGroupMbid) as { mbid: string; artist_mbid: string } | null;
     }
 
-    private static setReleaseGroupWanted(releaseGroupMbid: string, wanted: boolean): boolean {
+    private static setReleaseGroupMonitored(releaseGroupMbid: string, monitored: boolean): boolean {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
             return false;
@@ -29,24 +29,24 @@ export class AlbumCommandService {
 
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
         const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
-        const wantedInt = wanted ? 1 : 0;
+        const monitoredInt = monitored ? 1 : 0;
         const upsert = db.prepare(`
-            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
+            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, updated_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
               artist_mbid = excluded.artist_mbid,
-              wanted = excluded.wanted,
+              monitored = excluded.monitored,
               updated_at = CURRENT_TIMESTAMP
         `);
 
         for (const slot of slots) {
-            upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, wantedInt);
+            upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, monitoredInt);
         }
 
         return true;
     }
 
-    private static setReleaseGroupLock(releaseGroupMbid: string, locked: boolean): boolean {
+    private static setReleaseGroupMonitoredLock(releaseGroupMbid: string, locked: boolean): boolean {
         const releaseGroup = this.releaseGroupExists(releaseGroupMbid);
         if (!releaseGroup) {
             return false;
@@ -56,11 +56,11 @@ export class AlbumCommandService {
         const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
         const lockedInt = locked ? 1 : 0;
         const upsert = db.prepare(`
-            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitor_lock, locked_at, updated_at)
+            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored_lock, locked_at, updated_at)
             VALUES (?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
               artist_mbid = excluded.artist_mbid,
-              monitor_lock = excluded.monitor_lock,
+              monitored_lock = excluded.monitored_lock,
               locked_at = excluded.locked_at,
               updated_at = CURRENT_TIMESTAMP
         `);
@@ -100,7 +100,7 @@ export class AlbumCommandService {
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
             WHERE rgs.release_group_mbid = ?
-              AND rgs.wanted = 1
+              AND rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
               AND rgs.slot IN (${placeholders})
@@ -132,7 +132,7 @@ export class AlbumCommandService {
 
     /** Set release-group slot wanted state. Provider albums are selected offers, not catalog identity. */
     static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
-        if (this.setReleaseGroupWanted(albumId, monitored)) {
+        if (this.setReleaseGroupMonitored(albumId, monitored)) {
             invalidateReleaseGroupDownloadStatus(albumId);
             return { success: true, albumId, monitored };
         }
@@ -182,7 +182,7 @@ export class AlbumCommandService {
             return { success: false, message: 'Track not found', status: 404 };
         }
 
-        this.setReleaseGroupWanted(String(track.release_group_mbid), true);
+        this.setReleaseGroupMonitored(String(track.release_group_mbid), true);
         invalidateReleaseGroupDownloadStatus(String(track.release_group_mbid));
 
         let jobId: number | null = null;
@@ -232,7 +232,7 @@ export class AlbumCommandService {
             return { success: false, status: 404, message: 'Release group not found' };
         }
 
-        this.setReleaseGroupWanted(albumId, true);
+        this.setReleaseGroupMonitored(albumId, true);
         const selections = this.resolveSelectedProviderAlbumSelections(albumId, requestedSlot);
         if (selections.length === 0) {
             return {
@@ -282,17 +282,17 @@ export class AlbumCommandService {
     }
 
     /** Update album monitored and/or monitor_lock state */
-    static updateAlbum(albumId: string, monitored?: boolean, monitorLock?: boolean): { success: boolean; albumId?: string; monitored?: boolean; status?: number; message?: string } {
-        if (monitored === undefined && monitorLock === undefined) {
+    static updateAlbum(albumId: string, monitored?: boolean, monitoredLock?: boolean): { success: boolean; albumId?: string; monitored?: boolean; status?: number; message?: string } {
+        if (monitored === undefined && monitoredLock === undefined) {
             return { success: true };
         }
 
         if (this.releaseGroupExists(albumId)) {
             if (monitored !== undefined) {
-                this.setReleaseGroupWanted(albumId, monitored);
+                this.setReleaseGroupMonitored(albumId, monitored);
             }
-            if (monitorLock !== undefined) {
-                this.setReleaseGroupLock(albumId, monitorLock);
+            if (monitoredLock !== undefined) {
+                this.setReleaseGroupMonitoredLock(albumId, monitoredLock);
             }
             return { success: true, albumId, monitored };
         }

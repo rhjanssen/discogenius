@@ -45,7 +45,7 @@ test("monitoring a named MusicBrainz search result queues hydration without inli
   });
 
   const artist = dbModule.db.prepare(`
-    SELECT id, name, mbid, monitor, musicbrainz_status
+    SELECT id, name, mbid, monitored AS monitor, musicbrainz_status
     FROM Artists
     WHERE id = ?
   `).get(artistMbid) as {
@@ -82,7 +82,7 @@ test("unmonitoring an artist clears canonical slots and videos without mutating 
   `).run(artistMbid, "Bastille");
 
   db.prepare(`
-    INSERT INTO Artists (id, mbid, name, monitor, monitored_at)
+    INSERT INTO Artists (id, mbid, name, monitored, monitored_at)
     VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
   `).run(artistMbid, artistMbid, "Bastille");
 
@@ -93,46 +93,46 @@ test("unmonitoring an artist clears canonical slots and videos without mutating 
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     )
     VALUES (?, ?, 'stereo', 1, 'tidal', '243864035', 'verified')
   `).run(artistMbid, releaseGroupMbid);
 
   db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitor)
+    INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitored)
     VALUES (?, ?, ?, 1, 'provider_only', 1)
   `).run("video-recording-1", artistMbid, "Bastille Video");
 
   db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
     )
     VALUES (?, ?, ?, ?, 0, 'LOSSLESS', 1, 1, 0, 180, 1)
   `).run("legacy-provider-album", artistMbid, "Give Me the Future", "ALBUM");
 
   db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, monitor
+      id, artist_id, album_id, title, type, explicit, quality, monitored
     )
     VALUES (?, ?, ?, ?, ?, 0, 'LOSSLESS', 1)
   `).run("legacy-provider-video", artistMbid, "legacy-provider-album", "Bastille Video", "Music Video");
 
   const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
 
-  const artist = db.prepare("SELECT monitor FROM Artists WHERE id = ?").get(artistMbid) as { monitor: number };
-  const slot = db.prepare("SELECT wanted, selected_provider_id FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get(releaseGroupMbid) as {
-    wanted: number;
+  const artist = db.prepare("SELECT monitored FROM Artists WHERE id = ?").get(artistMbid) as { monitored: number };
+  const slot = db.prepare("SELECT monitored, selected_provider_id FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get(releaseGroupMbid) as {
+    monitored: number;
     selected_provider_id: string;
   };
-  const recording = db.prepare("SELECT Monitor FROM Recordings WHERE mbid = ?").get("video-recording-1") as { Monitor: number };
-  const providerAlbum = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("legacy-provider-album") as { monitor: number };
-  const providerVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("legacy-provider-video") as { monitor: number };
+  const recording = db.prepare("SELECT Monitored FROM Recordings WHERE mbid = ?").get("video-recording-1") as { Monitored: number };
+  const providerAlbum = db.prepare("SELECT monitored FROM ProviderAlbums WHERE id = ?").get("legacy-provider-album") as { monitored: number };
+  const providerVideo = db.prepare("SELECT monitored FROM ProviderMedia WHERE id = ?").get("legacy-provider-video") as { monitored: number };
 
   assert.equal(changes, 1);
-  assert.equal(artist.monitor, 0);
-  assert.equal(slot.wanted, 0);
+  assert.equal(artist.monitored, 0);
+  assert.equal(slot.monitored, 0);
   assert.equal(slot.selected_provider_id, "243864035");
-  assert.equal(recording.Monitor, 0);
-  assert.equal(providerAlbum.monitor, 1);
-  assert.equal(providerVideo.monitor, 1);
+  assert.equal(recording.Monitored, 0);
+  assert.equal(providerAlbum.monitored, 1);
+  assert.equal(providerVideo.monitored, 1);
 });

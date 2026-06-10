@@ -15,7 +15,7 @@ export interface ManagedArtistOptions {
 
 export function buildManagedArtistPredicate(alias: string = "a", options: ManagedArtistOptions = {}): string {
   const { includeLibraryFiles = false } = options;
-  const clauses = [`${alias}.monitor = 1`];
+  const clauses = [`${alias}.monitored = 1`];
 
   if (includeLibraryFiles) {
     clauses.push(`EXISTS (
@@ -31,19 +31,19 @@ export function buildManagedArtistPredicate(alias: string = "a", options: Manage
 
 export function buildArtistCompletionPredicate(alias: string = "a"): string {
   return `(
-    ${alias}.monitor = 1
+    ${alias}.monitored = 1
     OR EXISTS (
       SELECT 1
       FROM ReleaseGroupSlots slot
       WHERE slot.artist_mbid = ${alias}.mbid
-        AND COALESCE(slot.monitor_lock, 0) = 1
+        AND COALESCE(slot.monitored_lock, 0) = 1
     )
     OR EXISTS (
       SELECT 1
       FROM Recordings recording
       WHERE recording.artist_mbid = ${alias}.mbid
         AND recording.IsVideo = 1
-        AND COALESCE(recording.MonitorLock, 0) = 1
+        AND COALESCE(recording.MonitoredLock, 0) = 1
     )
   )`;
 }
@@ -74,7 +74,7 @@ export function getManagedArtists(options: { includeLibraryFiles?: boolean; orde
   const orderBy = orderByLastScanned ? "ORDER BY a.last_scanned IS NULL DESC, a.last_scanned ASC" : "ORDER BY a.name COLLATE NOCASE ASC";
 
   return db.prepare(`
-    SELECT DISTINCT a.id, a.name, a.monitor, a.last_scanned
+    SELECT DISTINCT a.id, a.name, a.monitored AS monitor, a.last_scanned
     FROM Artists a
     WHERE ${predicate}${idClause}
     ${orderBy}

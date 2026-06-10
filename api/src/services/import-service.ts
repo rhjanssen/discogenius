@@ -296,23 +296,23 @@ export class ImportService {
         const namingConfig = getNamingConfig();
 
         const upsertArtist = db.prepare(`
-            INSERT INTO Artists (id, name, picture, popularity, monitor, path)
+            INSERT INTO Artists (id, name, picture, popularity, monitored, path)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = COALESCE(excluded.name, name),
                 picture = COALESCE(excluded.picture, picture),
                 popularity = COALESCE(excluded.popularity, popularity),
                 path = COALESCE(artists.path, excluded.path),
-                monitor = CASE
-                    WHEN monitor = 0 AND excluded.monitor = 1 THEN 1
-                    ELSE monitor
+                monitored = CASE
+                    WHEN monitored = 0 AND excluded.monitored = 1 THEN 1
+                    ELSE monitored
                 END
         `);
 
         const upsertVideo = db.prepare(`
             INSERT INTO ProviderMedia (
                 id, artist_id, album_id, title, version, release_date,
-                type, explicit, quality, duration, popularity, cover, monitor
+                type, explicit, quality, duration, popularity, cover, monitored
             ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 artist_id = excluded.artist_id,
@@ -326,7 +326,7 @@ export class ImportService {
                 popularity = excluded.popularity,
                 cover = COALESCE(excluded.cover, cover),
                 type = 'Music Video',
-                monitor = CASE WHEN monitor_lock = 0 THEN excluded.monitor ELSE monitor END
+                monitored = CASE WHEN monitored_lock = 0 THEN excluded.monitored ELSE monitored END
         `);
 
         const monitorValue = monitorImported ? 1 : 0;
@@ -624,8 +624,8 @@ export class ImportService {
 
                     db.prepare(`
                         UPDATE ProviderMedia
-                        SET monitor = CASE WHEN monitor_lock = 0 THEN 1 ELSE monitor END,
-                            monitored_at = CASE WHEN monitor_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
+                        SET monitored = CASE WHEN monitored_lock = 0 THEN 1 ELSE monitored END,
+                            monitored_at = CASE WHEN monitored_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                         WHERE id = ?
                     `).run(videoId);
                     updateArtistDownloadStatusFromMedia(videoId);
@@ -697,21 +697,21 @@ export class ImportService {
 
             db.prepare(`
                 UPDATE Artists
-                SET monitor = ?,
+                SET monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE id = ?
             `).run(monitorValue, monitorValue, artistId);
             db.prepare(`
                 UPDATE ProviderAlbums
-                SET monitor = ?,
+                SET monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE id = ? AND monitor_lock = 0
+                WHERE id = ? AND monitored_lock = 0
             `).run(monitorValue, monitorValue, albumId);
             db.prepare(`
                 UPDATE ProviderMedia
-                SET monitor = ?,
+                SET monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE album_id = ? AND monitor_lock = 0
+                WHERE album_id = ? AND monitored_lock = 0
             `).run(monitorValue, monitorValue, albumId);
             db.prepare(`
                 INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
@@ -835,8 +835,8 @@ export class ImportService {
                     if (matchedTrack?.id) {
                         db.prepare(`
                             UPDATE ProviderMedia
-                            SET monitor = CASE WHEN monitor_lock = 0 THEN 1 ELSE monitor END,
-                                monitored_at = CASE WHEN monitor_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
+                            SET monitored = CASE WHEN monitored_lock = 0 THEN 1 ELSE monitored END,
+                                monitored_at = CASE WHEN monitored_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                             WHERE id = ?
                         `).run(matchedTrack.id);
                     }

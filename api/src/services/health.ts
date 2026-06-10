@@ -11,10 +11,9 @@ import {
 } from "../utils/health.js";
 import { getOrpheusCapabilitySnapshot, ORPHEUS_RUNTIME_DIR, ORPHEUS_SETTINGS_FILE } from "./orpheus.js";
 import {
-  getTidalDlNgCapabilitySnapshot,
-  TIDAL_DL_NG_CONFIG_DIR,
-  getTidalDlNgCommand,
-} from "./providers/tidal/tidal-dl-ng.js";
+  getTiddlCapabilitySnapshot,
+  TIDDL_CONFIG_DIR,
+} from "./providers/tidal/tiddl-backend.js";
 
 export interface HealthDiagnosticsSnapshot {
   checkedAt: string;
@@ -32,18 +31,18 @@ export interface HealthDiagnosticsSnapshot {
     runtime: {
       orpheus: HealthCheckResult;
       orpheusState: HealthCheckResult;
-      tidalDlNg: HealthCheckResult;
+      tiddl: HealthCheckResult;
     };
   };
   tools: {
     git: HealthCheckResult;
     python: HealthCheckResult;
     ffmpeg: HealthCheckResult;
-    tidalDlNg: HealthCheckResult;
+    tiddl: HealthCheckResult;
   };
   backends: {
     orpheus: BackendCapabilitySnapshot;
-    tidalDlNg: BackendCapabilitySnapshot;
+    tiddl: BackendCapabilitySnapshot;
   };
   issues: HealthCheckResult[];
 }
@@ -123,11 +122,11 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       kind: "dir",
       displayName: "Orpheus state directory",
     });
-  const tidalDlNgConfigCheck = downloadsDisabled
-    ? disabledDownloadCheck("paths.runtime.tidalDlNg", "tidal-dl-ng config directory", { path: TIDAL_DL_NG_CONFIG_DIR })
-    : checkWritablePath("paths.runtime.tidalDlNg", TIDAL_DL_NG_CONFIG_DIR, {
+  const tiddlConfigCheck = downloadsDisabled
+    ? disabledDownloadCheck("paths.runtime.tiddl", "tiddl config directory", { path: TIDDL_CONFIG_DIR })
+    : checkWritablePath("paths.runtime.tiddl", TIDDL_CONFIG_DIR, {
       kind: "dir",
-      displayName: "tidal-dl-ng config directory",
+      displayName: "tiddl config directory",
     });
 
   const gitCheck = checkCommandAvailability("tools.git", "git", "Git");
@@ -139,18 +138,18 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
   const ffmpegCheck = downloadsDisabled
     ? disabledDownloadCheck("tools.ffmpeg", "FFmpeg", { command: "ffmpeg" })
     : checkCommandAvailability("tools.ffmpeg", "ffmpeg", "FFmpeg");
-  const tidalDlNgCommandCheck = downloadsDisabled
-    ? disabledDownloadCheck("tools.tidalDlNg", "tidal-dl-ng", { command: getTidalDlNgCommand().command })
+  const tiddlCommandCheck = downloadsDisabled
+    ? disabledDownloadCheck("tools.tiddl", "tiddl", { command: process.env.TIDDL_BIN || "tiddl" })
     : checkCommandAvailability(
-      "tools.tidalDlNg",
-      getTidalDlNgCommand().command,
-      "tidal-dl-ng",
+      "tools.tiddl",
+      process.env.TIDDL_BIN || "tiddl",
+      "tiddl",
     );
 
   const rawOrpheus = getOrpheusCapabilitySnapshot();
-  const rawTidalDlNg = getTidalDlNgCapabilitySnapshot();
+  const rawTiddl = getTiddlCapabilitySnapshot();
   const orpheus = downloadsDisabled ? markBackendDisabled(rawOrpheus) : rawOrpheus;
-  const tidalDlNg = downloadsDisabled ? markBackendDisabled(rawTidalDlNg) : rawTidalDlNg;
+  const tiddl = downloadsDisabled ? markBackendDisabled(rawTiddl) : rawTiddl;
   const issues = flattenChecks(
     [
       configPathCheck,
@@ -161,14 +160,14 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       videoPathCheck,
       orpheusRuntimeCheck,
       orpheusStateCheck,
-      tidalDlNgConfigCheck,
+      tiddlConfigCheck,
       gitCheck,
       pythonCheck,
       ffmpegCheck,
-      tidalDlNgCommandCheck,
+      tiddlCommandCheck,
     ],
     orpheus.checks,
-    tidalDlNg.checks,
+    tiddl.checks,
   );
 
   return {
@@ -187,18 +186,18 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       runtime: {
         orpheus: orpheusRuntimeCheck,
         orpheusState: orpheusStateCheck,
-        tidalDlNg: tidalDlNgConfigCheck,
+        tiddl: tiddlConfigCheck,
       },
     },
     tools: {
       git: gitCheck,
       python: pythonCheck,
       ffmpeg: ffmpegCheck,
-      tidalDlNg: tidalDlNgCommandCheck,
+      tiddl: tiddlCommandCheck,
     },
     backends: {
       orpheus,
-      tidalDlNg,
+      tiddl,
     },
     issues,
   };

@@ -70,15 +70,15 @@ export const useMonitoring = () => {
         }
 
         if (type === "video") {
-            return api.updateVideo(id, { monitor_lock: !isLocked });
+            return api.updateVideo(id, { monitored_lock: !isLocked });
         }
 
         if (type === "album") {
-            return api.updateAlbum(id, { monitor_lock: !isLocked });
+            return api.updateAlbum(id, { monitored_lock: !isLocked });
         }
 
         // track
-        return api.updateTrack(id, { monitor_lock: !isLocked });
+        return api.updateTrack(id, { monitored_lock: !isLocked });
     };
 
     const lockMutation = useMutation({

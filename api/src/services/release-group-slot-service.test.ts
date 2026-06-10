@@ -101,7 +101,7 @@ test("provider slot selection does not make a MusicBrainz release group wanted",
   });
 
   const slot = db.prepare(`
-    SELECT wanted, selected_provider, selected_provider_id
+    SELECT monitored AS wanted, selected_provider, selected_provider_id
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get("rg-mbid-1") as { wanted: number; selected_provider: string | null; selected_provider_id: string | null };
@@ -117,7 +117,7 @@ test("provider slot clearing preserves MusicBrainz wanted state", () => {
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "stale-provider-album", "verified");
 
@@ -129,7 +129,7 @@ test("provider slot clearing preserves MusicBrainz wanted state", () => {
   });
 
   const slot = db.prepare(`
-    SELECT wanted, selected_provider, selected_provider_id, match_status
+    SELECT monitored AS wanted, selected_provider, selected_provider_id, match_status
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get("rg-mbid-1") as {
@@ -152,7 +152,7 @@ test("provider slot clearing preserves selections for providers that were not re
 
   const insertSlot = db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   insertSlot.run("artist-mbid-1", "rg-mbid-apple", "stereo", 0, "apple-music", "apple-album", "verified");
@@ -314,7 +314,7 @@ test("provider sync retains Atmos matches while spatial downloads are disabled",
   });
 
   const slot = db.prepare(`
-    SELECT wanted, selected_provider_id
+    SELECT monitored AS wanted, selected_provider_id
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'spatial'
   `).get("rg-mbid-hidden-atmos") as { wanted: number; selected_provider_id: string };
@@ -448,7 +448,7 @@ test("provider slot selection matches multiple provider releases to cover a Musi
   });
 
   const slot = db.prepare(`
-    SELECT wanted, selected_provider, selected_provider_id
+    SELECT monitored AS wanted, selected_provider, selected_provider_id
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get(releaseGroupMbid) as { wanted: number; selected_provider: string | null; selected_provider_id: string | null };

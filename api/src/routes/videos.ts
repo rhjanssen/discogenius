@@ -103,7 +103,7 @@ router.post("/", async (req, res) => {
     if (providerItem?.recordingId) {
       db.prepare(`
         UPDATE Recordings
-        SET Monitor = CASE WHEN MonitorLock = 1 THEN Monitor ELSE 1 END,
+        SET Monitored = CASE WHEN MonitoredLock = 1 THEN Monitored ELSE 1 END,
             MonitoredAt = COALESCE(MonitoredAt, CURRENT_TIMESTAMP),
             updated_at = CURRENT_TIMESTAMP
         WHERE Id = ?
@@ -121,27 +121,28 @@ router.post("/", async (req, res) => {
   }
 });
 
+
 // Update video (toggle monitoring, etc.)
 router.patch("/:videoId", (req, res) => {
   try {
     const videoId = req.params.videoId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Video update");
+    rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Video update");
     const updates: string[] = [];
     const values: any[] = [];
     const monitored = getOptionalBoolean(body, "monitored");
-    const monitorLock = getOptionalBoolean(body, "monitor_lock");
+    const monitoredLock = getOptionalBoolean(body, "monitored_lock");
 
     if (monitored !== undefined) {
-      updates.push("monitor = ?");
+      updates.push("monitored = ?");
       values.push(monitored ? 1 : 0);
     }
 
-    if (monitorLock !== undefined) {
-      updates.push("monitor_lock = ?");
-      values.push(monitorLock ? 1 : 0);
+    if (monitoredLock !== undefined) {
+      updates.push("monitored_lock = ?");
+      values.push(monitoredLock ? 1 : 0);
       updates.push("locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END");
-      values.push(monitorLock ? 1 : 0);
+      values.push(monitoredLock ? 1 : 0);
     }
 
     if (updates.length === 0) {
@@ -152,8 +153,8 @@ router.patch("/:videoId", (req, res) => {
 
     const canonicalUpdates = updates
       .map((update) => update
-        .replace(/^monitor = \?$/, "Monitor = ?")
-        .replace(/^monitor_lock = \?$/, "MonitorLock = ?")
+        .replace(/^monitored = \?$/, "Monitored = ?")
+        .replace(/^monitored_lock = \?$/, "MonitoredLock = ?")
         .replace(/^locked_at = /, "LockedAt = "))
       .concat("updated_at = CURRENT_TIMESTAMP");
 

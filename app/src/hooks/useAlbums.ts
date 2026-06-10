@@ -176,20 +176,20 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
       { queryKey: ["albums"] },
       (current) => updateAlbumPages(current, (album) => (
         album.id === albumId
-          ? { ...album, monitor_lock: nextState, monitor_locked: nextState }
+          ? { ...album, monitored_lock: nextState }
           : album
       )),
     );
 
     try {
-      await api.updateAlbum(albumId, { monitor_lock: nextState });
+      await api.updateAlbum(albumId, { monitored_lock: nextState });
       dispatchLibraryUpdated();
     } catch (error) {
       queryClient.setQueriesData<InfiniteData<AlbumsPage>>(
         { queryKey: ["albums"] },
         (current) => updateAlbumPages(current, (album) => (
           album.id === albumId
-            ? { ...album, monitor_lock: !nextState, monitor_locked: !nextState }
+            ? { ...album, monitored_lock: !nextState }
             : album
         )),
       );

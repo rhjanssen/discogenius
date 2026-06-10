@@ -267,7 +267,7 @@ export class ManualImportService {
                 // Ensure artist exists
                 if (c.artistId && c.artistInfo) {
                     db.prepare(`
-                        INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path)
+                        INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path)
                         VALUES (?, ?, ?, ?, 0, ?)
                     `).run(
                         c.artistId,
@@ -284,8 +284,8 @@ export class ManualImportService {
                 // Album monitor + album_artists
                 if (c.albumId) {
                     db.prepare(`
-                        UPDATE ProviderAlbums SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-                        WHERE id = ? AND monitor_lock = 0
+                        UPDATE ProviderAlbums SET monitored = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                        WHERE id = ? AND monitored_lock = 0
                     `).run(c.albumId);
                     db.prepare(`
                         INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
@@ -298,7 +298,7 @@ export class ManualImportService {
                     db.prepare(`
                         INSERT INTO ProviderMedia (
                             id, artist_id, album_id, title, version, release_date, type,
-                            explicit, quality, duration, popularity, cover, monitor
+                            explicit, quality, duration, popularity, cover, monitored
                         ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, 1)
                         ON CONFLICT(id) DO UPDATE SET
                             artist_id = excluded.artist_id, album_id = excluded.album_id,
@@ -307,7 +307,7 @@ export class ManualImportService {
                             quality = excluded.quality, duration = excluded.duration,
                             popularity = excluded.popularity,
                             cover = COALESCE(excluded.cover, cover),
-                            monitor = CASE WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1 ELSE monitor END
+                            monitored = CASE WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN 1 ELSE monitored END
                     `).run(
                         c.providerId, c.artistId, c.albumId || null,
                         c.trackData.title || "Unknown Video", c.trackData.version || null,
@@ -406,7 +406,7 @@ export class ManualImportService {
 
                 // Monitor media + remove from unmapped
                 db.prepare(`
-                    UPDATE ProviderMedia SET monitor = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
+                    UPDATE ProviderMedia SET monitored = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
                 `).run(c.providerId);
                 db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
 

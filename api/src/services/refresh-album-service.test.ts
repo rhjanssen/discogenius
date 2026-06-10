@@ -140,7 +140,7 @@ test("album track scan stores provider track offers linked to the selected canon
   });
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitor) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
   dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
   dbModule.db.prepare("INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count) VALUES (?, 1, 'Digital Media', 1)").run(releaseMbid);
@@ -163,7 +163,7 @@ test("album track scan stores provider track offers linked to the selected canon
   `).run("provider-album-1", "Provider Album", artistMbid, releaseGroupMbid, releaseMbid);
   dbModule.db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, quality
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, quality
     ) VALUES (?, ?, 'stereo', 1, 'fake', ?, ?, 'LOSSLESS')
   `).run(artistMbid, releaseGroupMbid, "provider-album-1", releaseMbid);
 

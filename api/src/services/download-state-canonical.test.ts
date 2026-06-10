@@ -32,7 +32,7 @@ beforeEach(resetRows);
 afterEach(resetRows);
 
 function seedCanonicalArtistGraph() {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitor) VALUES (?, ?, ?, ?)")
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
@@ -61,12 +61,12 @@ function seedCanonicalArtistGraph() {
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
+      artist_mbid, release_group_mbid, slot, monitored,
       selected_provider, selected_provider_id, selected_release_mbid, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid", "release-group-1", "stereo", 1, "tidal", "provider-album-1", "release-1", "LOSSLESS");
 
-  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, ArtistMetadataId, IsVideo, Monitor) VALUES (?, ?, ?, ?, ?, ?)")
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, ArtistMetadataId, IsVideo, Monitored) VALUES (?, ?, ?, ?, ?, ?)")
     .run("video-recording-1", "Track One", "artist-mbid", artistMetadata.Id, 1, 1);
   const videoRecording = db.prepare("SELECT Id FROM Recordings WHERE mbid = ?")
     .get("video-recording-1") as { Id: number };
@@ -196,17 +196,17 @@ test("artist and release-group download stats use canonical slots, recordings, a
 });
 
 test("album download stats ignore legacy provider catalog rows", () => {
-  db.prepare("INSERT INTO Artists (id, name, mbid, monitor) VALUES (?, ?, ?, ?)")
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitor, mb_release_group_id
+      num_tracks, num_volumes, num_videos, duration, monitored, mb_release_group_id
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-album-only", "artist-local", "Provider Album", "Album", 0, "LOSSLESS", 1, 1, 0, 180000, 1, "release-group-mbid");
   db.prepare(`
-    INSERT INTO ProviderMedia (id, album_id, artist_id, title, type, explicit, quality, monitor)
+    INSERT INTO ProviderMedia (id, album_id, artist_id, title, type, explicit, quality, monitored)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-track-only", "provider-album-only", "artist-local", "Provider Track", "Track", 0, "LOSSLESS", 1);
   db.prepare(`

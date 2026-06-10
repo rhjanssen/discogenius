@@ -19,12 +19,12 @@ type ReleaseGroupSlotRow = {
     id: number;
     release_group_mbid: string;
     slot: string;
-    wanted: number;
+    monitored: number;
     selected_provider?: string | null;
     selected_provider_id?: string | null;
     selected_release_mbid?: string | null;
     provider_data?: string | null;
-    monitor_lock?: number | null;
+    monitored_lock?: number | null;
 };
 
 type CurationTrack = {
@@ -327,7 +327,7 @@ export class CurationService {
 
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         const slotRows = db.prepare(`
-            SELECT id, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, provider_data, monitor_lock
+            SELECT id, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, provider_data, monitored_lock
             FROM ReleaseGroupSlots
             WHERE release_group_mbid IN (${releaseGroupMbids.map(() => "?").join(",")})
         `).all(...releaseGroupMbids) as ReleaseGroupSlotRow[];
@@ -387,12 +387,12 @@ export class CurationService {
         `);
         const updateSlot = db.prepare(`
             UPDATE ReleaseGroupSlots
-            SET wanted = ?, updated_at = CURRENT_TIMESTAMP
+            SET monitored = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
 
         let slotUpdates = 0;
-        let wantedSlots = 0;
+        let monitoredSlots = 0;
         db.transaction(() => {
             for (const releaseGroup of releaseGroups) {
                 const included = includedReleaseGroupIds.has(releaseGroup.mbid);
@@ -400,9 +400,9 @@ export class CurationService {
             }
 
             for (const slot of slotRows) {
-                if (Number(slot.monitor_lock || 0) === 1) {
-                    if (Number(slot.wanted || 0) === 1) {
-                        wantedSlots++;
+                if (Number(slot.monitored_lock || 0) === 1) {
+                    if (Number(slot.monitored || 0) === 1) {
+                        monitoredSlots++;
                     }
                     continue;
                 }
@@ -414,41 +414,41 @@ export class CurationService {
                     JOIN Artists artist ON artist.mbid = context.source_artist_mbid
                     WHERE context.release_group_mbid = ?
                       AND context.included = 1
-                      AND artist.monitor = 1
+                      AND artist.monitored = 1
                     LIMIT 1
                 `).get(slot.release_group_mbid);
-                const wanted = Boolean(monitoredContext)
+                const monitoredVal = Boolean(monitoredContext)
                     && (slotName !== "spatial" || includeSpatial)
                     && (!requireProvider || hasProvider)
                     ? 1
                     : 0;
                 
-                if (wanted) {
-                    wantedSlots++;
+                if (monitoredVal) {
+                    monitoredSlots++;
                 }
-                if (Number(slot.wanted || 0) !== wanted) {
-                    updateSlot.run(wanted, slot.id);
+                if (Number(slot.monitored || 0) !== monitoredVal) {
+                    updateSlot.run(monitoredVal, slot.id);
                     slotUpdates++;
                 }
             }
         })();
 
-        const videoWanted = curationConfig.include_videos !== false ? 1 : 0;
+        const videoMonitored = curationConfig.include_videos !== false ? 1 : 0;
         const videoMonitorUpdates = artistMbid
             ? db.prepare(`
                 UPDATE Recordings
-                SET Monitor = ?,
+                SET Monitored = ?,
                     MonitoredAt = CASE WHEN ? = 1 THEN COALESCE(MonitoredAt, CURRENT_TIMESTAMP) ELSE MonitoredAt END
                 WHERE IsVideo = 1
                   AND artist_mbid = ?
-                  AND (MonitorLock = 0 OR MonitorLock IS NULL)
-                  AND COALESCE(Monitor, 0) != ?
-            `).run(videoWanted, videoWanted, artistMbid, videoWanted).changes
+                  AND (MonitoredLock = 0 OR MonitoredLock IS NULL)
+                  AND COALESCE(Monitored, 0) != ?
+            `).run(videoMonitored, videoMonitored, artistMbid, videoMonitored).changes
             : 0;
 
         console.log(
             `   Release groups: ${includedReleaseGroupIds.size}/${releaseGroups.length} included, ` +
-            `${wantedSlots}/${slotRows.length} slots wanted, ${slotUpdates} slot updates, ` +
+            `${monitoredSlots}/${slotRows.length} slots monitored, ${slotUpdates} slot updates, ` +
             `${videoMonitorUpdates} canonical video monitor updates.`
         );
 
@@ -464,7 +464,7 @@ export class CurationService {
                 artist_mbid,
                 release_group_mbid,
                 slot,
-                wanted,
+                monitored,
                 match_status,
                 checked_at,
                 updated_at
@@ -598,7 +598,7 @@ export class CurationService {
         // Discogenius extension of Lidarr's "monitored release group + selected release"
         // model: each slot resolves to a provider album ID that can be downloaded.
         const slotParams: any[] = [];
-        let slotArtistWhere = "COALESCE(monitored_artist.monitor, 0) = 1";
+        let slotArtistWhere = "COALESCE(monitored_artist.monitored, 0) = 1";
         if (artistId) {
             slotArtistWhere = "monitored_artist.id = ?";
             slotParams.push(artistId);
@@ -620,7 +620,7 @@ export class CurationService {
             FROM ReleaseGroupSlots rgs
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
-            WHERE rgs.wanted = 1
+            WHERE rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
               AND rgs.selected_release_mbid IS NOT NULL
@@ -711,7 +711,7 @@ export class CurationService {
                     OR (r.mbid IS NOT NULL AND pi.recording_mbid = r.mbid)
                  )
                 WHERE r.IsVideo = 1
-                  AND r.Monitor = 1
+                  AND r.Monitored = 1
                   AND pi.provider_id IS NOT NULL
                   AND NOT ${hasImportedVideoFile('r.mbid', 'pi.provider_id')}
             `;

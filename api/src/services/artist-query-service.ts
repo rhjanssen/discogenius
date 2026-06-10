@@ -82,7 +82,7 @@ function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, Art
             scope.artist_mbid AS artist_id,
             COUNT(DISTINCT scope.release_group_mbid) AS cnt,
             COUNT(DISTINCT CASE
-                WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1
+                WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1
                 THEN scope.release_group_mbid
                 ELSE NULL
             END) AS monitored_cnt
@@ -115,7 +115,7 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
             scope.artist_mbid AS artist_id,
             COUNT(DISTINCT track.mbid) AS cnt,
             COUNT(DISTINCT CASE
-                WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1
+                WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1
                 THEN track.mbid
                 ELSE NULL
             END) AS monitored_cnt
@@ -403,7 +403,7 @@ export class ArtistQueryService {
         stereo.match_status AS stereo_match_status,
         stereo.match_method AS stereo_match_method,
         stereo.provider_data AS stereo_provider_data,
-        stereo.monitor_lock AS stereo_monitor_lock,
+        stereo.monitored_lock AS stereo_monitor_lock,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.selected_release_mbid AS spatial_release_mbid,
@@ -411,10 +411,10 @@ export class ArtistQueryService {
         spatial.match_status AS spatial_match_status,
         spatial.match_method AS spatial_match_method,
         spatial.provider_data AS spatial_provider_data,
-        spatial.monitor_lock AS spatial_monitor_lock,
+        spatial.monitored_lock AS spatial_monitor_lock,
         CASE
           WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-          WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
+          WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
           ELSE 0
         END AS wanted
       FROM Albums rg
@@ -472,10 +472,8 @@ export class ArtistQueryService {
                 stereo_release_mbid: row.stereo_release_mbid || null,
                 spatial_provider_id: row.spatial_provider_id || null,
                 spatial_release_mbid: row.spatial_release_mbid || null,
-                monitor: Boolean(row.wanted),
                 is_monitored: Boolean(row.wanted),
-                monitor_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
-                monitor_locked: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
+                monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
                 downloaded: stats?.downloadedPercent ?? 0,
                 is_downloaded: stats?.isDownloaded ?? false,
                 module: releaseGroupBucket(row),
@@ -672,8 +670,8 @@ export class ArtistQueryService {
            provider_item.provider_url AS url,
            CAST(COALESCE(recording.ArtistMetadataId, artist_metadata.Id) AS TEXT) AS artist_id,
            artist_metadata.name AS artist_name,
-           COALESCE(recording.Monitor, 0) AS monitor,
-           COALESCE(recording.MonitorLock, 0) AS monitor_lock,
+           COALESCE(recording.Monitored, 0) AS monitored,
+           COALESCE(recording.MonitoredLock, 0) AS monitored_lock,
            recording.updated_at AS last_scanned,
            CASE WHEN EXISTS (
              SELECT 1
@@ -723,7 +721,7 @@ export class ArtistQueryService {
            stereo.match_status AS stereo_match_status,
            stereo.match_method AS stereo_match_method,
            stereo.provider_data AS stereo_provider_data,
-           stereo.monitor_lock AS stereo_monitor_lock,
+           stereo.monitored_lock AS stereo_monitor_lock,
            spatial.selected_provider AS spatial_provider,
            spatial.selected_provider_id AS spatial_provider_id,
            spatial.selected_release_mbid AS spatial_release_mbid,
@@ -731,10 +729,10 @@ export class ArtistQueryService {
            spatial.match_status AS spatial_match_status,
            spatial.match_method AS spatial_match_method,
            spatial.provider_data AS spatial_provider_data,
-           spatial.monitor_lock AS spatial_monitor_lock,
+           spatial.monitored_lock AS spatial_monitor_lock,
            CASE
              WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-             WHEN COALESCE(stereo.wanted, 0) = 1 OR COALESCE(spatial.wanted, 0) = 1 THEN 1
+             WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
              ELSE 0
            END AS wanted,
            rg.data
@@ -799,9 +797,9 @@ export class ArtistQueryService {
           SELECT 1
           FROM ReleaseGroupSlots monitored_slot
           WHERE monitored_slot.release_group_mbid = release_group.mbid
-            AND monitored_slot.wanted = 1
+            AND monitored_slot.monitored = 1
         ) THEN 1 ELSE 0 END AS monitor,
-        COALESCE(selected_slot.monitor_lock, 0) AS monitor_lock,
+        COALESCE(selected_slot.monitored_lock, 0) AS monitor_lock,
         COALESCE(artist_metadata.popularity, 0) AS popularity,
         release_group.title AS album_title,
         provider_album.asset_id AS album_cover,
@@ -960,12 +958,10 @@ export class ArtistQueryService {
                 artist_id: String(artist.id),
                 artist_name: String(artist.name || "Unknown Artist"),
                 mb_release_group_id: String(row.mbid),
-                monitor: monitored ? 1 : 0,
                 is_monitored: monitored,
                 downloaded: downloadStats?.downloadedPercent ?? 0,
                 is_downloaded: downloadStats?.isDownloaded ?? false,
-                monitor_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock) ? 1 : 0,
-                monitor_locked: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
+                monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
                 module: bucketKey,
                 group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
                 source: "musicbrainz",
@@ -1030,8 +1026,8 @@ export class ArtistQueryService {
                         ...video,
                         cover_id: video.cover || null,
                         quality: video.quality || "MP4_1080P",
-                        monitor_locked: Boolean(video.monitor_lock),
-                        is_monitored: Boolean(video.monitor),
+                        monitored_lock: Boolean(video.monitored_lock),
+                        is_monitored: Boolean(video.monitored),
                         downloaded: Boolean(video.is_downloaded) ? 1 : 0,
                         is_downloaded: Boolean(video.is_downloaded),
                     })),

@@ -49,10 +49,10 @@ function normalizeProviderArtist(artist: ProviderArtist): FollowedArtistRow {
     };
 }
 
-function findExistingArtist(artist: FollowedArtistRow): { id: string | number; monitor: number; path: string | null } | undefined {
+function findExistingArtist(artist: FollowedArtistRow): { id: string | number; monitored: number; path: string | null } | undefined {
     if (artist.mbid) {
-        const byMbid = db.prepare("SELECT id, monitor, path FROM artists WHERE mbid = ? OR id = ? LIMIT 1")
-            .get(artist.mbid, artist.mbid) as { id: string | number; monitor: number; path: string | null } | undefined;
+        const byMbid = db.prepare("SELECT id, monitored, path FROM artists WHERE mbid = ? OR id = ? LIMIT 1")
+            .get(artist.mbid, artist.mbid) as { id: string | number; monitored: number; path: string | null } | undefined;
         if (byMbid) {
             return byMbid;
         }
@@ -69,7 +69,7 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
     }
 
     const existing = findExistingArtist(artist);
-    const status = existing?.monitor === 1 ? "skipped" : existing ? "updated" : "added";
+    const status = existing?.monitored === 1 ? "skipped" : existing ? "updated" : "added";
 
     const localArtistId = await RefreshArtistService.upsertMusicBrainzArtist(artist.mbid, { monitorArtist: true });
     const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
@@ -80,7 +80,7 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
     });
     db.prepare(`
         UPDATE artists
-        SET monitor = 1,
+        SET monitored = 1,
             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
             path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END,
             picture = COALESCE(picture, ?),

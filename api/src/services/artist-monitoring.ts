@@ -55,7 +55,7 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
     const applyChanges = db.transaction(() => {
         const artistResult = db.prepare(`
             UPDATE Artists
-            SET monitor = ?,
+            SET monitored = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id = ?
         `).run(nextStatus, nextStatus, artistId);
@@ -66,9 +66,9 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
 
         db.prepare(`
             UPDATE ReleaseGroupSlots
-            SET wanted = 0,
+            SET monitored = 0,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE (monitor_lock = 0 OR monitor_lock IS NULL)
+            WHERE (monitored_lock = 0 OR monitored_lock IS NULL)
               AND release_group_mbid IN (
                 SELECT rg.mbid
                 FROM Albums rg
@@ -79,11 +79,11 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
 
         db.prepare(`
             UPDATE Recordings
-            SET Monitor = 0,
+            SET Monitored = 0,
                 updated_at = CURRENT_TIMESTAMP
             WHERE IsVideo = 1
               AND artist_mbid = ?
-              AND (MonitorLock = 0 OR MonitorLock IS NULL)
+              AND (MonitoredLock = 0 OR MonitoredLock IS NULL)
         `).run(artistId);
 
         return artistResult.changes;
@@ -133,7 +133,7 @@ function ensurePendingMusicBrainzArtist(artistId: string, artistName?: string): 
     db.prepare(`
         INSERT INTO Artists (
             id, name, mbid, musicbrainz_status, musicbrainz_match_method,
-            monitor, monitored_at, user_date_added
+            monitored, monitored_at, user_date_added
         )
         VALUES (?, ?, ?, 'pending', 'musicbrainz-search-result', 0, NULL, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO NOTHING

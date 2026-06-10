@@ -695,7 +695,7 @@ const Library = () => {
 
   const setSelectedAlbumLockState = async (locked: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(albumSelection.selectedItems, async (album: any) => {
-      await api.updateAlbum(album.id, { monitor_lock: locked });
+      await api.updateAlbum(album.id, { monitored_lock: locked });
     });
 
     if (succeeded > 0) {
@@ -763,7 +763,7 @@ const Library = () => {
 
   const setSelectedTrackLockState = async (locked: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(trackSelection.selectedItems, async (track: any) => {
-      await api.updateTrack(track.id, { monitor_lock: locked });
+      await api.updateTrack(track.id, { monitored_lock: locked });
     });
 
     if (succeeded > 0) {
@@ -829,7 +829,7 @@ const Library = () => {
 
   const setSelectedVideoLockState = async (locked: boolean) => {
     const { succeeded, failed } = await runSelectionActionWithConcurrency(videoSelection.selectedItems, async (video: any) => {
-      await api.updateVideo(video.id, { monitor_lock: locked });
+      await api.updateVideo(video.id, { monitored_lock: locked });
     });
 
     if (succeeded > 0) {
@@ -1222,9 +1222,9 @@ const Library = () => {
 
   const handleToggleAlbumLock = useCallback(async (e: React.MouseEvent, album: any) => {
     e.stopPropagation();
-    const nextLocked = !(album.monitor_locked ?? album.monitor_lock);
+    const nextLocked = !album.monitored_lock;
     try {
-      await api.updateAlbum(album.id, { monitor_lock: nextLocked });
+      await api.updateAlbum(album.id, { monitored_lock: nextLocked });
       dispatchLibraryUpdated();
     } catch (error) {
       console.error('Failed to toggle album lock:', error);
@@ -1235,7 +1235,7 @@ const Library = () => {
   const renderAlbumCard = (album: any) => {
     const year = album.release_date ? album.release_date.split('-')[0] : '';
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
-    const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
+    const isLocked = Boolean(album.monitored_lock);
     const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
     const providerImageUrl = getAlbumCover(album.provider_cover_id, 'small');
     const itemProgress = getProgressByProviderId(String(album.id));
@@ -1339,7 +1339,7 @@ const Library = () => {
       width: "120px",
       align: "right",
       render: (album: any) => {
-        const isLocked = (album.monitor_locked ?? album.monitor_lock) ? true : false;
+        const isLocked = Boolean(album.monitored_lock);
         return (
           <LibraryRowActions
             actions={[
@@ -1419,7 +1419,7 @@ const Library = () => {
       width: "120px",
       align: "right",
       render: (video: any) => {
-        const isLocked = (video.monitor_locked ?? video.monitor_lock) ? true : false;
+        const isLocked = Boolean(video.monitored_lock);
         return (
           <LibraryRowActions
             actions={[

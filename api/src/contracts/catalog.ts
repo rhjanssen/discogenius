@@ -71,9 +71,7 @@ export interface AlbumContract {
   filtered_reason?: string | null;
   redundant_of?: string | null;
   redundant?: string | null;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
-  monitor_locked?: boolean;
+  monitored_lock: boolean;
   filter_locked?: number;
   module?: string;
   group_type?: string;
@@ -96,9 +94,7 @@ export interface VideoContract {
   artist_id: string;
   artist_name?: string;
   is_monitored: boolean;
-  monitor?: boolean | number;
-  monitor_lock?: boolean | number;
-  monitor_locked?: boolean;
+  monitored_lock: boolean;
   downloaded?: boolean;
   is_downloaded: boolean;
   created_at?: string;
@@ -234,9 +230,7 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     filtered_reason: expectNullableString(record.filtered_reason, `${label}.filtered_reason`),
     redundant_of: expectNullableString(record.redundant_of, `${label}.redundant_of`),
     redundant: expectNullableString(record.redundant, `${label}.redundant`),
-    monitor: record.monitor as boolean | number | undefined,
-    monitor_lock: record.monitor_lock as boolean | number | undefined,
-    monitor_locked: expectOptionalBoolean(record.monitor_locked, `${label}.monitor_locked`),
+    monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
     filter_locked: expectOptionalNumber(record.filter_locked, `${label}.filter_locked`),
     module: expectOptionalString(record.module, `${label}.module`),
     group_type: expectOptionalString(record.group_type, `${label}.group_type`),
@@ -262,9 +256,7 @@ function parseVideoContract(value: unknown, index: number): VideoContract {
     artist_id: expectIdentifierString(record.artist_id, `${label}.artist_id`),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
-    monitor: record.monitor as boolean | number | undefined,
-    monitor_lock: record.monitor_lock as boolean | number | undefined,
-    monitor_locked: expectOptionalBoolean(record.monitor_locked, `${label}.monitor_locked`),
+    monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
     downloaded: expectOptionalBoolean(record.downloaded, `${label}.downloaded`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
     created_at: expectOptionalString(record.created_at, `${label}.created_at`),

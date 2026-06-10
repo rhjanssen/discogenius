@@ -73,6 +73,12 @@ export const useSearch = () => {
         if (item.type === 'artist') {
             queryClient.invalidateQueries({ queryKey: ["artistPage", item.providerId] });
         }
+
+        queryClient.invalidateQueries({ queryKey: ["artists"] });
+        queryClient.invalidateQueries({ queryKey: ["albums"] });
+        queryClient.invalidateQueries({ queryKey: ["tracks"] });
+        queryClient.invalidateQueries({ queryKey: ["videos"] });
+        queryClient.invalidateQueries({ queryKey: ["libraryStats"] });
     }, [queryClient]);
 
     const search = useCallback(async (

@@ -136,13 +136,13 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
     const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
     const wanted = monitored ? 1 : 0;
     const upsert = db.prepare(`
-        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, updated_at)
+        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, updated_at)
         SELECT artist_mbid, mbid, ?, ?, CURRENT_TIMESTAMP
         FROM Albums
         WHERE mbid = ?
         ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
           artist_mbid = excluded.artist_mbid,
-          wanted = excluded.wanted,
+          monitored = excluded.monitored,
           updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -164,7 +164,7 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
     const tx = db.transaction(() => {
         db.prepare(`
             UPDATE Artists
-            SET monitor = ?,
+            SET monitored = ?,
                 monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
             WHERE id IN (${artistPlaceholders})
         `).run(nextStatus, nextStatus, ...artistIds);
@@ -172,21 +172,21 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
         if (!monitored) {
             db.prepare(`
                 UPDATE ReleaseGroupSlots
-                SET wanted = 0, updated_at = CURRENT_TIMESTAMP
+                SET monitored = 0, updated_at = CURRENT_TIMESTAMP
                 WHERE artist_mbid IN (
                     SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
                 )
-                  AND COALESCE(monitor_lock, 0) = 0
+                  AND COALESCE(monitored_lock, 0) = 0
             `).run(...artistIds);
 
             db.prepare(`
                 UPDATE Recordings
-                SET Monitor = 0
+                SET Monitored = 0
                 WHERE IsVideo = 1
                   AND artist_mbid IN (
                     SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
                   )
-                  AND COALESCE(MonitorLock, 0) = 0
+                  AND COALESCE(MonitoredLock, 0) = 0
             `).run(...artistIds);
         }
     });
@@ -217,7 +217,7 @@ function applyVideoMonitorState(videoIds: string[], monitored: boolean): void {
     const tx = db.transaction(() => {
         db.prepare(`
             UPDATE Recordings
-            SET Monitor = ?,
+            SET Monitored = ?,
                 MonitoredAt = CASE WHEN ? = 1 THEN COALESCE(MonitoredAt, CURRENT_TIMESTAMP) ELSE MonitoredAt END
             WHERE id IN (${videoPlaceholders})
               AND IsVideo = 1
@@ -234,7 +234,7 @@ function applyAlbumLockState(releaseGroupMbids: string[], locked: boolean): void
     const tx = db.transaction(() => {
         db.prepare(`
             UPDATE ReleaseGroupSlots
-            SET monitor_lock = ?,
+            SET monitored_lock = ?,
                 locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE release_group_mbid IN (${albumPlaceholders})
         `).run(nextStatus, nextStatus, ...releaseGroupMbids);
@@ -250,7 +250,7 @@ function applyVideoLockState(videoIds: string[], locked: boolean): void {
     const tx = db.transaction(() => {
         db.prepare(`
             UPDATE Recordings
-            SET MonitorLock = ?,
+            SET MonitoredLock = ?,
                 LockedAt = CASE WHEN ? = 1 THEN COALESCE(LockedAt, CURRENT_TIMESTAMP) ELSE NULL END
             WHERE id IN (${videoPlaceholders})
               AND IsVideo = 1
@@ -277,7 +277,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
             WHERE rgs.release_group_mbid = ?
-              AND rgs.wanted = 1
+              AND rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
             ORDER BY CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END

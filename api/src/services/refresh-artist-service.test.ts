@@ -333,7 +333,7 @@ test("stored matched provider offers repair an unmatched slot for a representati
     1,
   );
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, match_status)
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, match_status)
     VALUES (?, ?, 'stereo', 0, 'unmatched')
   `).run(artistMbid, releaseGroupMbid);
   dbModule.db.prepare(`

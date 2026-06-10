@@ -13,14 +13,16 @@ type VideoRow = {
   explicit?: number | boolean | null;
   quality?: string | null;
   current_quality?: string | null;
+
+
   cover?: string | null;
   cover_art_url?: string | null;
   url?: string | null;
   path?: string | null;
   artist_id: number | string;
   artist_name?: string | null;
-  monitor?: number | boolean | null;
-  monitor_lock?: number | boolean | null;
+  monitored?: number | boolean | null;
+  monitored_lock?: number | boolean | null;
   created_at?: string | null;
   updated_at?: string | null;
   last_scanned?: string | null;
@@ -70,10 +72,8 @@ function mapVideoRow(row: VideoRow, isDownloaded: boolean): VideoContract {
     path: row.path ?? null,
     artist_id: String(row.artist_id),
     artist_name: row.artist_name ?? undefined,
-    is_monitored: Boolean(row.monitor),
-    monitor: row.monitor === undefined || row.monitor === null ? undefined : Boolean(row.monitor),
-    monitor_lock: row.monitor_lock === undefined || row.monitor_lock === null ? undefined : Boolean(row.monitor_lock),
-    monitor_locked: Boolean(row.monitor_lock),
+    is_monitored: Boolean(row.monitored),
+    monitored_lock: Boolean(row.monitored_lock),
     downloaded: isDownloaded,
     is_downloaded: isDownloaded,
     created_at: row.created_at ?? undefined,
@@ -97,9 +97,7 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
     cover: mapped.cover,
     cover_id: mapped.cover_id,
     is_monitored: mapped.is_monitored,
-    monitor: mapped.monitor,
-    monitor_lock: mapped.monitor_lock,
-    monitor_locked: mapped.monitor_locked,
+    monitored_lock: mapped.monitored_lock,
     downloaded: mapped.downloaded ?? false,
     is_downloaded: mapped.is_downloaded,
   };
@@ -130,8 +128,8 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       NULL AS path,
       CAST(COALESCE(recording.ArtistMetadataId, artist.Id) AS TEXT) AS artist_id,
       artist.name AS artist_name,
-      COALESCE(recording.Monitor, 0) AS monitor,
-      COALESCE(recording.MonitorLock, 0) AS monitor_lock,
+      COALESCE(recording.Monitored, 0) AS monitored,
+      COALESCE(recording.MonitoredLock, 0) AS monitored_lock,
       recording.updated_at AS created_at,
       recording.updated_at AS updated_at,
       recording.updated_at AS last_scanned,
@@ -193,12 +191,12 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
   }
 
   if (input.monitored !== undefined) {
-    where.push("COALESCE(recording.Monitor, 0) = ?");
+    where.push("COALESCE(recording.Monitored, 0) = ?");
     params.push(input.monitored ? 1 : 0);
   }
 
   if (input.locked !== undefined) {
-    where.push("COALESCE(recording.MonitorLock, 0) = ?");
+    where.push("COALESCE(recording.MonitoredLock, 0) = ?");
     params.push(input.locked ? 1 : 0);
   }
 

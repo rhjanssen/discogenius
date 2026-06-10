@@ -45,9 +45,9 @@ export interface Album {
     mb_secondary?: string;         // MusicBrainz secondary: live/compilation/remix
 
     // Monitoring & Filtering
-    monitor?: boolean;             // whether to scan and download tracks
+    monitored?: boolean;             // whether to scan and download tracks
     monitored_at?: string;         // when monitoring was enabled
-    monitor_lock?: boolean;        // whether monitoring is locked
+    monitored_lock?: boolean;        // whether monitoring is locked
     locked_at?: string;            // when lock was enabled
     last_scanned?: string;         // last time this album was scanned
     downloaded?: number;           // percentage of album's tracks downloaded
@@ -79,8 +79,8 @@ export interface AlbumInsert {
     module?: string;
     mb_primary?: string;
     mb_secondary?: string;
-    monitor?: boolean;
-    monitor_lock?: boolean;
+    monitored?: boolean;
+    monitored_lock?: boolean;
 }
 
 /**
@@ -112,7 +112,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     }
 
     findMonitored(): Album[] {
-        return this.prepare("SELECT * FROM ProviderAlbums WHERE monitor = 1 ORDER BY release_date DESC")
+        return this.prepare("SELECT * FROM ProviderAlbums WHERE monitored = 1 ORDER BY release_date DESC")
             .all() as Album[];
     }
 
@@ -128,7 +128,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     }
 
     countMonitored(): number {
-        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums WHERE monitor = 1")
+        const result = this.prepare("SELECT COUNT(*) as count FROM ProviderAlbums WHERE monitored = 1")
             .get() as { count: number };
         return result.count;
     }
@@ -150,7 +150,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
                 num_tracks, num_volumes, num_videos, duration, popularity,
                 similar_albums, credits, copyright, upc,
                 module, mb_primary, mb_secondary,
-                monitor, monitor_lock
+                monitored, monitored_lock
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             album.id,
@@ -177,8 +177,8 @@ export class AlbumRepository extends BaseRepository<Album, number> {
             album.module || null,
             album.mb_primary || null,
             album.mb_secondary || null,
-            album.monitor ? 1 : 0,
-            album.monitor_lock ? 1 : 0
+            album.monitored ? 1 : 0,
+            album.monitored_lock ? 1 : 0
         );
     }
 
@@ -197,7 +197,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
                     num_tracks, num_volumes, num_videos, duration, popularity,
                     similar_albums, credits, copyright, upc,
                     module, mb_primary, mb_secondary,
-                    monitor, monitor_lock
+                    monitored, monitored_lock
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
@@ -228,8 +228,8 @@ export class AlbumRepository extends BaseRepository<Album, number> {
                     album.module || null,
                     album.mb_primary || null,
                     album.mb_secondary || null,
-                    album.monitor ? 1 : 0,
-                    album.monitor_lock ? 1 : 0
+                    album.monitored ? 1 : 0,
+                    album.monitored_lock ? 1 : 0
                 );
                 insertedCount++;
             }
@@ -248,7 +248,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
                 num_tracks, num_volumes, num_videos, duration, popularity,
                 similar_albums, credits, copyright, upc,
                 module, mb_primary, mb_secondary,
-                monitor, monitor_lock
+                monitored, monitored_lock
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -286,8 +286,8 @@ export class AlbumRepository extends BaseRepository<Album, number> {
             album.module || null,
             album.mb_primary || null,
             album.mb_secondary || null,
-            album.monitor ? 1 : 0,
-            album.monitor_lock ? 1 : 0
+            album.monitored ? 1 : 0,
+            album.monitored_lock ? 1 : 0
         );
     }
 
@@ -299,8 +299,8 @@ export class AlbumRepository extends BaseRepository<Album, number> {
         const values: any[] = [];
 
         const fieldMap: Record<string, any> = {
-            monitor: updates.monitor !== undefined ? (updates.monitor ? 1 : 0) : undefined,
-            monitor_lock: updates.monitor_lock !== undefined ? (updates.monitor_lock ? 1 : 0) : undefined,
+            monitored: updates.monitored !== undefined ? (updates.monitored ? 1 : 0) : undefined,
+            monitored_lock: updates.monitored_lock !== undefined ? (updates.monitored_lock ? 1 : 0) : undefined,
             review_text: updates.review_text,
             quality: updates.quality,
             downloaded: updates.downloaded,
@@ -326,7 +326,7 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     setMonitored(id: number, monitored: boolean): void {
         this.prepare(`
             UPDATE ProviderAlbums SET 
-                monitor = ?, 
+                monitored = ?, 
                 monitored_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE monitored_at END
             WHERE id = ?
         `).run(monitored ? 1 : 0, monitored ? 1 : 0, id);
@@ -335,19 +335,19 @@ export class AlbumRepository extends BaseRepository<Album, number> {
     /**
      * Lock album monitoring (prevents auto-changes)
      */
-    setLocked(id: number, locked: boolean, wantedState?: boolean): void {
-        if (wantedState !== undefined) {
+    setLocked(id: number, locked: boolean, monitoredState?: boolean): void {
+        if (monitoredState !== undefined) {
             this.prepare(`
                 UPDATE ProviderAlbums SET 
-                    monitor_lock = ?, 
-                    monitor = ?,
+                    monitored_lock = ?, 
+                    monitored = ?,
                     locked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE locked_at END
                 WHERE id = ?
-            `).run(locked ? 1 : 0, wantedState ? 1 : 0, locked ? 1 : 0, id);
+            `).run(locked ? 1 : 0, monitoredState ? 1 : 0, locked ? 1 : 0, id);
         } else {
             this.prepare(`
                 UPDATE ProviderAlbums SET 
-                    monitor_lock = ?, 
+                    monitored_lock = ?, 
                     locked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE locked_at END
                 WHERE id = ?
             `).run(locked ? 1 : 0, locked ? 1 : 0, id);

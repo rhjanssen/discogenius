@@ -68,17 +68,17 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
   const wanted = monitored ? 1 : 0;
   const result = db.prepare(`
     UPDATE ReleaseGroupSlots
-    SET wanted = ?, updated_at = CURRENT_TIMESTAMP
+    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
     WHERE release_group_mbid = ?
   `).run(wanted, canonicalTrack.release_group_mbid);
 
   if (result.changes === 0) {
     db.prepare(`
       INSERT INTO ReleaseGroupSlots (
-        artist_mbid, release_group_mbid, slot, wanted, match_status, updated_at
+        artist_mbid, release_group_mbid, slot, monitored, match_status, updated_at
       ) VALUES (?, ?, 'stereo', ?, 'unmatched', CURRENT_TIMESTAMP)
       ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
-        wanted = excluded.wanted,
+        monitored = excluded.monitored,
         updated_at = CURRENT_TIMESTAMP
     `).run(canonicalTrack.artist_mbid, canonicalTrack.release_group_mbid, wanted);
   }
@@ -188,11 +188,11 @@ router.patch("/:trackId", (req, res) => {
   try {
     const trackId = req.params.trackId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Track update");
+    rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Track update");
     const monitored = getOptionalBoolean(body, "monitored");
-    const monitorLock = getOptionalBoolean(body, "monitor_lock");
+    const monitoredLock = getOptionalBoolean(body, "monitored_lock");
 
-    if (monitored === undefined && monitorLock === undefined) {
+    if (monitored === undefined && monitoredLock === undefined) {
       return res.json({ success: true });
     }
 

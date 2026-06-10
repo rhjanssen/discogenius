@@ -42,16 +42,16 @@ after(() => {
 function seedAlbum() {
   const { db } = dbModule;
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-1", "Artist One");
-  db.prepare("INSERT INTO Artists (id, mbid, name, monitor) VALUES (?, ?, ?, ?)").run("artist-1", "artist-mbid-1", "Artist One", 1);
+  db.prepare("INSERT INTO Artists (id, mbid, name, monitored) VALUES (?, ?, ?, ?)").run("artist-1", "artist-mbid-1", "Artist One", 1);
   db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
     .run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album");
   db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id)
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "release-group-mbid-1", "stereo", 0, "tidal", "provider-album-1");
   db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor, mb_release_group_id
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored, mb_release_group_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-album-1", "artist-1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 0, "release-group-mbid-1");
 
@@ -88,13 +88,13 @@ test("album monitor command writes release-group slots and ignores provider albu
   const canonicalResult = serviceModule.AlbumCommandService.setAlbumMonitored("release-group-mbid-1", true);
   assert.equal(canonicalResult.success, true);
 
-  const slot = dbModule.db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
+  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
     .get("release-group-mbid-1") as { wanted: number };
-  const providerAlbum = dbModule.db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?")
-    .get("provider-album-1") as { monitor: number };
+  const providerAlbum = dbModule.db.prepare("SELECT monitored FROM ProviderAlbums WHERE id = ?")
+    .get("provider-album-1") as { monitored: number };
 
   assert.equal(slot.wanted, 1);
-  assert.equal(providerAlbum.monitor, 0);
+  assert.equal(providerAlbum.monitored, 0);
 });
 
 test("album update command stores monitor lock on release-group slots", () => {
@@ -103,13 +103,13 @@ test("album update command stores monitor lock on release-group slots", () => {
   const result = serviceModule.AlbumCommandService.updateAlbum("release-group-mbid-1", undefined, true);
   assert.equal(result.success, true);
 
-  const slot = dbModule.db.prepare("SELECT monitor_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
-    .get("release-group-mbid-1") as { monitor_lock: number };
-  const providerAlbum = dbModule.db.prepare("SELECT monitor_lock FROM ProviderAlbums WHERE id = ?")
-    .get("provider-album-1") as { monitor_lock: number };
+  const slot = dbModule.db.prepare("SELECT monitored_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
+    .get("release-group-mbid-1") as { monitored_lock: number };
+  const providerAlbum = dbModule.db.prepare("SELECT monitored_lock FROM ProviderAlbums WHERE id = ?")
+    .get("provider-album-1") as { monitored_lock: number };
 
-  assert.equal(slot.monitor_lock, 1);
-  assert.equal(providerAlbum.monitor_lock, 0);
+  assert.equal(slot.monitored_lock, 1);
+  assert.equal(providerAlbum.monitored_lock, 0);
 });
 
 test("track monitor command uses canonical tracks and selected provider offers", async () => {
@@ -123,7 +123,7 @@ test("track monitor command uses canonical tracks and selected provider offers",
   assert.equal(result.success, true);
   assert.equal(result.albumId, "release-group-mbid-1");
 
-  const slot = dbModule.db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
+  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
     .get("release-group-mbid-1") as { wanted: number };
   assert.equal(slot.wanted, 1);
 

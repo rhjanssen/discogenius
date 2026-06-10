@@ -96,7 +96,7 @@ test("canonical provider track resolution splits combined provider album selecti
   `).run("track-mbid-2", "release-mbid-1", "recording-mbid-2", "Target Track", 2, 1, 180000);
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, quality, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "test-provider", "album-a;album-b", "LOSSLESS", "verified");
 
@@ -154,7 +154,7 @@ test("canonical provider track resolution includes provider version text while m
   `).run("track-mbid-version", "release-mbid-2", "recording-mbid-version", "Brave New World (interlude)", 4, 1, 27000);
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, quality, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-2", "rg-mbid-2", "stereo", 1, "version-provider", "album-version", "LOSSLESS", "verified");
 

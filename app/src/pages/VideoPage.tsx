@@ -304,10 +304,10 @@ const VideoPage = () => {
     // Toggle lock mutation
     const toggleLock = useMutation({
         mutationFn: (nextLocked: boolean) =>
-            api.updateVideo(videoId!, { monitor_lock: nextLocked }),
+            api.updateVideo(videoId!, { monitored_lock: nextLocked }),
         onSuccess: (_data, nextLocked) => {
             queryClient.setQueryData(["video", videoId], (old: any) =>
-                old ? { ...old, monitor_locked: nextLocked, monitor_lock: nextLocked } : old
+                old ? { ...old, monitored_lock: nextLocked } : old
             );
         },
         onError: (err: any) => {
@@ -353,8 +353,8 @@ const VideoPage = () => {
         }
     };
 
-    const isMonitored = Boolean(video?.is_monitored ?? video?.monitor);
-    const isLocked = Boolean(video?.monitor_locked ?? video?.monitor_lock);
+    const isMonitored = Boolean(video?.is_monitored);
+    const isLocked = Boolean(video?.monitored_lock);
     const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
     const year = video?.release_date ? new Date(video.release_date).getFullYear() : null;
     const videoErrorDescription = error instanceof Error && error.message === "Video not found"

@@ -111,7 +111,7 @@ export const useVideos = (options?: UseVideosOptions) => {
         { queryKey: ["videos"] },
         (current) => updateVideoPages(current, (video) => (
           video.id === detail.providerId
-            ? { ...video, is_monitored: detail.monitored, monitor: detail.monitored }
+            ? { ...video, is_monitored: detail.monitored }
             : video
         )),
       );
@@ -138,7 +138,7 @@ export const useVideos = (options?: UseVideosOptions) => {
         { queryKey: ["videos"] },
         (current) => updateVideoPages(current, (video) => (
           video.id === videoId
-            ? { ...video, is_monitored: nextState, monitor: nextState }
+            ? { ...video, is_monitored: nextState }
             : video
         )),
       );
@@ -160,12 +160,12 @@ export const useVideos = (options?: UseVideosOptions) => {
 
   const toggleLock = useCallback(async (videoId: string, nextState: boolean) => {
     try {
-      await api.updateVideo(videoId, { monitor_lock: nextState });
+      await api.updateVideo(videoId, { monitored_lock: nextState });
       queryClient.setQueriesData<InfiniteData<VideosPage>>(
         { queryKey: ["videos"] },
         (current) => updateVideoPages(current, (video) => (
           video.id === videoId
-            ? { ...video, monitor_lock: nextState, monitor_locked: nextState }
+            ? { ...video, monitored_lock: nextState }
             : video
         )),
       );

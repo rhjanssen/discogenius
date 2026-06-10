@@ -24,7 +24,7 @@ export interface Artist {
     bio_last_updated?: string;     // When biography was last updated
 
     // Monitoring & Lock Mechanism
-    monitor?: boolean;             // whether to scan/download and watch for changes
+    monitored?: boolean;             // whether to scan/download and watch for changes
     monitored_at?: string;         // when monitoring was enabled
     last_scanned?: string;         // last time this artist was scanned for new releases
     downloaded?: number;           // percentage of artist's monitored media downloaded (0-100)
@@ -41,7 +41,7 @@ export interface ArtistInsert {
     similar_artists?: string;
     bio_text?: string;
     bio_source?: string;
-    monitor?: boolean;
+    monitored?: boolean;
     path?: string;
 }
 
@@ -65,7 +65,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
     }
 
     findMonitored(): Artist[] {
-        return this.prepare("SELECT * FROM artists WHERE monitor = 1 ORDER BY name")
+        return this.prepare("SELECT * FROM artists WHERE monitored = 1 ORDER BY name")
             .all() as Artist[];
     }
 
@@ -85,7 +85,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
         this.prepare(`
             INSERT OR IGNORE INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 
-                user_date_added, similar_artists, bio_text, bio_source, monitor, path
+                user_date_added, similar_artists, bio_text, bio_source, monitored, path
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             artist.id,
@@ -98,7 +98,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
             artist.similar_artists || null,
             artist.bio_text || null,
             artist.bio_source || null,
-            artist.monitor ? 1 : 0,
+            artist.monitored ? 1 : 0,
             artistPath || null
         );
     }
@@ -114,7 +114,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
         this.prepare(`
             INSERT INTO artists (
                 id, name, picture, popularity, artist_types, artist_roles, 
-                user_date_added, similar_artists, bio_text, bio_source, monitor, path
+                user_date_added, similar_artists, bio_text, bio_source, monitored, path
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             artist.id,
@@ -127,7 +127,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
             artist.similar_artists || null,
             artist.bio_text || null,
             artist.bio_source || null,
-            artist.monitor ? 1 : 0,
+            artist.monitored ? 1 : 0,
             artistPath || null
         );
     }
@@ -140,7 +140,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
         const values: any[] = [];
 
         const fieldMap: Record<string, any> = {
-            monitor: updates.monitor !== undefined ? (updates.monitor ? 1 : 0) : undefined,
+            monitored: updates.monitored !== undefined ? (updates.monitored ? 1 : 0) : undefined,
             downloaded: updates.downloaded,
             bio_text: updates.bio_text,
             bio_source: updates.bio_source,
@@ -177,7 +177,7 @@ export class ArtistRepository extends BaseRepository<Artist, number> {
     setMonitored(id: number, monitored: boolean): void {
         this.prepare(`
             UPDATE artists SET 
-                monitor = ?, 
+                monitored = ?, 
                 monitored_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE monitored_at END
             WHERE id = ?
         `).run(monitored ? 1 : 0, monitored ? 1 : 0, id);

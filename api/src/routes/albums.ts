@@ -189,11 +189,11 @@ router.patch("/:albumId", async (req, res) => {
   try {
     const albumId = req.params.albumId;
     const body = getObjectBody(req.body);
-    rejectUnknownKeys(body, ["monitored", "monitor_lock"], "Album update");
+    rejectUnknownKeys(body, ["monitored", "monitored_lock"], "Album update");
     const monitored = getOptionalBoolean(body, "monitored");
-    const monitorLock = getOptionalBoolean(body, "monitor_lock");
+    const monitoredLock = getOptionalBoolean(body, "monitored_lock");
 
-    const result = AlbumCommandService.updateAlbum(albumId, monitored, monitorLock);
+    const result = AlbumCommandService.updateAlbum(albumId, monitored, monitoredLock);
 
     if (result.status === 404) {
       return res.status(404).json({ detail: result.message || "Album not found" });

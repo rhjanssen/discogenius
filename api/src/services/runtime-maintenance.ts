@@ -157,9 +157,9 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
 function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
   summary.mediaMonitorRepairs += Number(db.prepare(`
     UPDATE ProviderMedia AS media
-    SET monitor = 1,
+    SET monitored = 1,
         monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-    WHERE monitor = 0
+    WHERE monitored = 0
       AND monitored_at IS NULL
       AND EXISTS (
         SELECT 1
@@ -171,15 +171,15 @@ function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
 
   summary.albumMonitorRepairs += Number(db.prepare(`
     UPDATE ProviderAlbums AS albums
-    SET monitor = 1,
+    SET monitored = 1,
         monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-    WHERE monitor = 0
+    WHERE monitored = 0
       AND EXISTS (
         SELECT 1
         FROM ProviderMedia m
         WHERE m.album_id = albums.id
           AND m.type != 'Music Video'
-          AND m.monitor = 1
+          AND m.monitored = 1
       )
   `).run().changes || 0);
 

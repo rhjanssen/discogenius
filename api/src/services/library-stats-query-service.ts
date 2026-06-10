@@ -40,7 +40,7 @@ export class LibraryStatsQueryService {
                     FROM ReleaseGroupSlots
                     WHERE slot IN ('stereo', 'spatial')
                       AND selected_release_mbid IS NOT NULL
-                      AND wanted = 1
+                      AND monitored = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedAlbums(),
             },
@@ -58,7 +58,7 @@ export class LibraryStatsQueryService {
                     JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
                     WHERE rgs.slot IN ('stereo', 'spatial')
                       AND rgs.selected_release_mbid IS NOT NULL
-                      AND rgs.wanted = 1
+                      AND rgs.monitored = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedTracks(),
             },
@@ -72,7 +72,7 @@ export class LibraryStatsQueryService {
                     SELECT COUNT(*) AS count
                     FROM Recordings
                     WHERE COALESCE(IsVideo, 0) = 1
-                      AND COALESCE(Monitor, 0) = 1
+                      AND COALESCE(Monitored, 0) = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedVideos(),
             },

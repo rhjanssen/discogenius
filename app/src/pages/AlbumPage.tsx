@@ -575,7 +575,7 @@ const AlbumPage = () => {
   }, [albumSkyHookArtworkUrl, albumProviderArtworkUrl]);
 
   const isMonitored = !!album?.is_monitored;
-  const isLocked = !!((album as any)?.monitor_locked ?? (album as any)?.monitor_lock);
+  const isLocked = !!album?.monitored_lock;
   const hasStereoOffer = Boolean(album?.stereo_provider_id);
   const hasSpatialOffer = Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
@@ -751,7 +751,7 @@ const AlbumPage = () => {
     toggleLock({ id: album.id, type: 'album', isLocked });
     updateAlbumPageCache((current) => ({
       ...current,
-      album: { ...current.album, monitor_locked: !isLocked } as typeof current.album & { monitor_locked: boolean },
+      album: { ...current.album, monitored_lock: !isLocked },
     }));
     dispatchLibraryUpdated();
   };

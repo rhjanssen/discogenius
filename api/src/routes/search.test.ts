@@ -73,7 +73,7 @@ function insertCanonicalArtist() {
   `).get() as { Id: number };
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES ('artist-id', 'Search Artist', 'artist-mbid', 1)
   `).run();
 
@@ -101,7 +101,7 @@ test("local search returns canonical tracks and ignores legacy provider-media tr
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, quality
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, quality
     )
     VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'provider-album-1', 'release-mbid', 'LOSSLESS')
   `).run();
@@ -135,7 +135,7 @@ test("local search returns canonical videos and ignores legacy provider-media vi
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
       ForeignRecordingId, ArtistMetadataId, artist_mbid,
-      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitor
+      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitored
     )
     VALUES (
       'provider-video-1', ?, 'artist-mbid',
@@ -156,7 +156,7 @@ test("local search returns canonical videos and ignores legacy provider-media vi
   `).run(video.Id);
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, title, duration, type, explicit, quality, monitor
+      id, artist_id, title, duration, type, explicit, quality, monitored
     )
     VALUES ('legacy-video-1', 'artist-id', 'Canonical Search Video Legacy', 200, 'Music Video', 0, 'LOW', 1)
   `).run();

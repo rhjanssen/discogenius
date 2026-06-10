@@ -55,10 +55,10 @@ test("credited release discovery adds visible unmonitored collaborators and pres
     (await import("axios")).default.get = originalGet;
   }
 
-  const marshmello = dbModule.db.prepare("SELECT name, monitor, library_origin FROM Artists WHERE id = ?")
+  const marshmello = dbModule.db.prepare("SELECT name, monitored, library_origin FROM Artists WHERE id = ?")
     .get("301b45a4-b8b9-410e-8344-4b4eaf96691a") as any;
   assert.equal(marshmello.name, "Marshmello");
-  assert.equal(marshmello.monitor, 0);
+  assert.equal(marshmello.monitored, 0);
   assert.equal(marshmello.library_origin, "musicbrainz-credit");
 
   const album = dbModule.db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")

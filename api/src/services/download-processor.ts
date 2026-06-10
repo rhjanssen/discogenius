@@ -3,6 +3,7 @@ import { DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobOfType, JobTypes, 
 import { Config } from './config.js';
 import { downloadEvents } from './download-events.js';
 import { updateAlbumDownloadStatus } from './download-state.js';
+import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../utils/env.js';
 import fs from 'fs';
 import path from 'path';
@@ -1122,10 +1123,12 @@ export class DownloadProcessor {
         this.currentDownloadPath = downloadPath;
 
         const providerId = (payload as any).streamingSource || getDefaultStreamingSource();
-        const provider = streamingProviderManager.getStreamingProvider(providerId);
+        const slot = (payload as any).slot || 'stereo';
+        const capability = type === 'video' ? 'video' : (slot === 'spatial' ? 'spatial' : 'stereo');
 
-        if (!provider.downloadItem) {
-            throw new Error(`Provider ${providerId} does not support downloads`);
+        const backend = downloadBackendRegistry.resolve(providerId, capability);
+        if (!backend) {
+            throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
         }
 
         const controller = new AbortController();
@@ -1166,10 +1169,15 @@ export class DownloadProcessor {
         }, 500);
 
         try {
-            await provider.downloadItem(id, type, downloadPath, {
+            await backend.download({
+                provider: providerId,
+                entityType: type as "album" | "track" | "video",
+                providerId: id,
+                downloadPath,
+                quality: payload.quality,
+            }, {
                 signal,
                 onProgress,
-                quality: payload.quality,
             });
         } finally {
             clearInterval(checkCancelInterval);

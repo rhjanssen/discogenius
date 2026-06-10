@@ -79,7 +79,7 @@ test("CurationService updates release-group slots and canonical videos without s
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -99,7 +99,7 @@ test("CurationService updates release-group slots and canonical videos without s
   db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitor, monitor_lock
+      num_tracks, num_volumes, num_videos, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("album-prov-1", "artist-1", "A Night at the Opera", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 0, 0);
 
@@ -107,25 +107,25 @@ test("CurationService updates release-group slots and canonical videos without s
   db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitor, monitor_lock
+      explicit, type, quality, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-prov-1", "artist-1", "album-prov-1", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 0, 0);
 
   db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, explicit, type, quality, duration, monitor, monitor_lock
+      id, artist_id, album_id, title, explicit, type, quality, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("video-prov-1", "artist-1", null, "Bohemian Rhapsody", 0, "Music Video", "LOSSLESS", 354, 1, 0);
 
   db.prepare(`
-    INSERT INTO Recordings (Id, ForeignRecordingId, mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitor, MonitorLock)
+    INSERT INTO Recordings (Id, ForeignRecordingId, mbid, artist_mbid, title, IsVideo, MetadataStatus, Monitored, MonitoredLock)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(101, "video-rec-1", "video-rec-1", "artist-mbid-1", "Bohemian Rhapsody", 1, "provider_only", 1, 0);
 
   // Insert slot manually as wanted = 0, pointing to the album
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 0, "tidal", "album-prov-1", "matched");
 
@@ -133,19 +133,19 @@ test("CurationService updates release-group slots and canonical videos without s
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 1 while provider catalog rows were not used as monitor state.
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 1);
 
-  const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
+  const album = db.prepare("SELECT monitored AS monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
   assert.equal(album.monitor, 0);
 
-  const media = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
+  const media = db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
   assert.equal(media.monitor, 0);
 
-  const providerVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("video-prov-1") as any;
+  const providerVideo = db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get("video-prov-1") as any;
   assert.equal(providerVideo.monitor, 1);
 
-  const canonicalVideo = db.prepare("SELECT Monitor FROM Recordings WHERE Id = ?").get(101) as any;
+  const canonicalVideo = db.prepare("SELECT Monitored AS Monitor FROM Recordings WHERE Id = ?").get(101) as any;
   assert.equal(canonicalVideo.Monitor, 0);
 });
 
@@ -154,7 +154,7 @@ test("CurationService unmonitors release-group slot without mutating provider al
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -174,7 +174,7 @@ test("CurationService unmonitors release-group slot without mutating provider al
   db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitor, monitor_lock
+      num_tracks, num_volumes, num_videos, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("album-prov-1", "artist-1", "A Night at the Opera", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, 0);
 
@@ -182,14 +182,14 @@ test("CurationService unmonitors release-group slot without mutating provider al
   db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitor, monitor_lock
+      explicit, type, quality, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-prov-1", "artist-1", "album-prov-1", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, 0);
 
   // Insert slot manually as wanted = 1, pointing to the album
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "album-prov-1", "matched");
 
@@ -200,13 +200,13 @@ test("CurationService unmonitors release-group slot without mutating provider al
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 0 while provider rows remain stale compatibility data.
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 0);
 
-  const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
+  const album = db.prepare("SELECT monitored AS monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
   assert.equal(album.monitor, 1);
 
-  const media = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
+  const media = db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
   assert.equal(media.monitor, 1);
 });
 
@@ -220,7 +220,7 @@ test("CurationService queues monitored canonical videos through provider offers"
   });
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -231,7 +231,7 @@ test("CurationService queues monitored canonical videos through provider offers"
 
   db.prepare(`
     INSERT INTO Recordings (
-      Id, ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid, title, IsVideo, MetadataStatus, Monitor, MonitorLock
+      Id, ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid, title, IsVideo, MetadataStatus, Monitored, MonitoredLock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(501, "video-rec-1", "video-rec-1", 101, "artist-mbid-1", "Bohemian Rhapsody", 1, "provider_only", 1, 0);
 
@@ -247,7 +247,7 @@ test("CurationService queues monitored canonical videos through provider offers"
 
   db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, title, explicit, type, quality, duration, monitor, monitor_lock
+      id, artist_id, title, explicit, type, quality, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("stale-provider-video", "artist-1", "Bohemian Rhapsody", 0, "Music Video", "HIGH", 354, 0, 0);
 
@@ -267,7 +267,7 @@ test("CurationService queues monitored canonical videos through provider offers"
   assert.equal(payload.providerId, "tidal-video-1");
   assert.equal(payload.canonicalRecordingId, "501");
 
-  const staleProviderVideo = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("stale-provider-video") as { monitor: number };
+  const staleProviderVideo = db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get("stale-provider-video") as { monitor: number };
   assert.equal(staleProviderVideo.monitor, 0);
 });
 
@@ -282,7 +282,7 @@ test("CurationService queues spatial slot when only the stereo selected release 
   });
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-1", 1);
 
@@ -313,14 +313,14 @@ test("CurationService queues spatial slot when only the stereo selected release 
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
+      artist_mbid, release_group_mbid, slot, monitored,
       selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "tidal-stereo-album", "release-mbid-1", "HIRES_LOSSLESS", "verified");
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted,
+      artist_mbid, release_group_mbid, slot, monitored,
       selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "spatial", 1, "tidal", "tidal-atmos-album", "release-mbid-1", "DOLBY_ATMOS", "verified");
@@ -372,7 +372,7 @@ test("CurationService respects monitor_lock when synchronizing monitor status", 
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -392,7 +392,7 @@ test("CurationService respects monitor_lock when synchronizing monitor status", 
   db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitor, monitor_lock
+      num_tracks, num_volumes, num_videos, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("album-prov-1", "artist-1", "A Night at the Opera", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, 1);
 
@@ -400,14 +400,14 @@ test("CurationService respects monitor_lock when synchronizing monitor status", 
   db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitor, monitor_lock
+      explicit, type, quality, duration, monitored, monitored_lock
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-prov-1", "artist-1", "album-prov-1", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, 1);
 
   // Insert slot manually as wanted = 1, pointing to the album
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "album-prov-1", "matched");
 
@@ -418,13 +418,13 @@ test("CurationService respects monitor_lock when synchronizing monitor status", 
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify that wanted became 0, but album/media monitor status remained 1 (locked)
-  const slot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
+  const slot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-mbid-1") as any;
   assert.equal(slot.wanted, 0);
 
-  const album = db.prepare("SELECT monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
+  const album = db.prepare("SELECT monitored AS monitor FROM ProviderAlbums WHERE id = ?").get("album-prov-1") as any;
   assert.equal(album.monitor, 1);
 
-  const media = db.prepare("SELECT monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
+  const media = db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get("track-prov-1") as any;
   assert.equal(media.monitor, 1);
 });
 
@@ -432,7 +432,7 @@ test("CurationService marks MusicBrainz release-group slots wanted without provi
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -448,14 +448,14 @@ test("CurationService marks MusicBrainz release-group slots wanted without provi
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, match_status
+      artist_mbid, release_group_mbid, slot, monitored, match_status
     ) VALUES (?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 0, "unmatched");
 
   await curationServiceModule.CurationService.processAll("artist-1");
 
   const slot = db.prepare(`
-    SELECT wanted, selected_provider, selected_provider_id
+    SELECT monitored AS wanted, selected_provider, selected_provider_id
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get("rg-mbid-1") as any;
@@ -481,7 +481,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
   });
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -504,7 +504,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
 
   const wantedByReleaseGroup = new Map(
     (db.prepare(`
-      SELECT release_group_mbid, wanted
+      SELECT release_group_mbid, monitored AS wanted
       FROM ReleaseGroupSlots
       WHERE slot = 'stereo'
       ORDER BY release_group_mbid
@@ -531,7 +531,7 @@ test("CurationService applies MusicBrainz primary and secondary release-group fi
 
   const updatedWantedByReleaseGroup = new Map(
     (db.prepare(`
-      SELECT release_group_mbid, wanted
+      SELECT release_group_mbid, monitored AS wanted
       FROM ReleaseGroupSlots
       WHERE slot = 'stereo'
       ORDER BY release_group_mbid
@@ -548,7 +548,7 @@ test("Album read model does not inherit release-group wanted state from artist m
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -574,14 +574,13 @@ test("Album read model does not inherit release-group wanted state from artist m
 
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].is_monitored, false);
-  assert.equal(result.items[0].monitor, 0);
 });
 
 test("Album read model exposes and filters canonical release-group slot locks", () => {
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -601,7 +600,7 @@ test("Album read model exposes and filters canonical release-group slot locks", 
   `).run("artist-mbid-1", "rg-mbid-1", 1);
 
   db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, monitor_lock)
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, monitored_lock)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, 1);
 
@@ -617,8 +616,7 @@ test("Album read model exposes and filters canonical release-group slot locks", 
   });
 
   assert.equal(locked.items.length, 1);
-  assert.equal(locked.items[0].monitor_lock, true);
-  assert.equal(locked.items[0].monitor_locked, true);
+  assert.equal(locked.items[0].monitored_lock, true);
   assert.equal(unlocked.items.length, 0);
 });
 
@@ -626,7 +624,7 @@ test("Album track read model follows release-group wanted state", async () => {
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -657,23 +655,21 @@ test("Album track read model follows release-group wanted state", async () => {
 
   const unmonitoredTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
   assert.equal(unmonitoredTracks[0].is_monitored, false);
-  assert.equal(unmonitoredTracks[0].monitor, 0);
 
   db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, match_status)
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, match_status)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "unmatched");
 
   const monitoredTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
   assert.equal(monitoredTracks[0].is_monitored, true);
-  assert.equal(monitoredTracks[0].monitor, 1);
 });
 
 test("Album versions are MusicBrainz releases from the release group", async () => {
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -712,7 +708,7 @@ test("CurationService marks Single redundant if contained in an EP", async () =>
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
 
@@ -774,8 +770,8 @@ test("CurationService marks Single redundant if contained in an EP", async () =>
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP!
@@ -786,7 +782,7 @@ test("CurationService marks Album redundant if contained in a Compilation", asyn
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
 
@@ -852,8 +848,8 @@ test("CurationService marks Album redundant if contained in a Compilation", asyn
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const compSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-compilation") as any;
-  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album") as any;
+  const compSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-compilation") as any;
+  const albumSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album") as any;
 
   assert.equal(compSlot.wanted, 1);
   assert.equal(albumSlot.wanted, 0); // Album should be redundant because its tracks are in the Compilation!
@@ -864,7 +860,7 @@ test("CurationService uses fallback release when preferred release has no tracks
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
 
@@ -934,8 +930,8 @@ test("CurationService uses fallback release when preferred release has no tracks
 
   // Verify wanted status: the Single should still be marked redundant because the EP
   // containment check fell back to the fallback release's tracks!
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because rec-1 is in the EP fallback release!
@@ -946,7 +942,7 @@ test("CurationService respects require_provider_availability filter", async () =
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-1", 1);
 
@@ -971,14 +967,14 @@ test("CurationService respects require_provider_availability filter", async () =
   // rg-1 has a provider matched
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, match_status, selected_provider, selected_provider_id
+      artist_mbid, release_group_mbid, slot, monitored, match_status, selected_provider, selected_provider_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-1", "stereo", 0, "matched", "tidal", "album-prov-1");
 
   // rg-2 is unmatched (no provider)
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, match_status
+      artist_mbid, release_group_mbid, slot, monitored, match_status
     ) VALUES (?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-2", "stereo", 0, "unmatched");
 
@@ -994,8 +990,8 @@ test("CurationService respects require_provider_availability filter", async () =
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const slot1 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-1") as any;
-  const slot2 = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-2") as any;
+  const slot1 = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-1") as any;
+  const slot2 = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-2") as any;
 
   assert.equal(slot1.wanted, 1); // Matched slot should be wanted
   assert.equal(slot2.wanted, 0); // Unmatched slot should NOT be wanted
@@ -1006,7 +1002,7 @@ test("CurationService marks Single redundant if contained in an EP by track titl
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-bastille", 1);
 
@@ -1069,8 +1065,8 @@ test("CurationService marks Single redundant if contained in an EP by track titl
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const epSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
+  const epSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-ep") as any;
+  const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
@@ -1081,7 +1077,7 @@ test("CurationService does not mark Single redundant if contained in an Album by
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Bastille", "artist-mbid-bastille-edit", 1);
 
@@ -1140,8 +1136,8 @@ test("CurationService does not mark Single redundant if contained in an Album by
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-edit") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-edit") as any;
+  const albumSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-edit") as any;
+  const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-edit") as any;
 
   assert.equal(albumSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 1); // Single should not be redundant because different edit versions are treated as distinct recordings when recording IDs/ISRCs differ!
@@ -1152,7 +1148,7 @@ test("CurationService marks a single redundant when its parent album is present 
 
   // Insert artist
   db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES (?, ?, ?, ?)
   `).run("artist-1", "Queen", "artist-mbid-redundancy-unmatched", 1);
 
@@ -1202,13 +1198,13 @@ test("CurationService marks a single redundant when its parent album is present 
   // Single slot HAS a selected provider (so it is matched on the provider side)
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-redundancy-unmatched", "rg-album-unmatched", "stereo", 0, null, null, "unmatched");
 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, wanted, selected_provider, selected_provider_id, selected_release_mbid, match_status
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, match_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-redundancy-unmatched", "rg-single-matched", "stereo", 1, "tidal", "tidal-single-1", "release-single-matched", "verified");
 
@@ -1226,8 +1222,8 @@ test("CurationService marks a single redundant when its parent album is present 
   await curationServiceModule.CurationService.processAll("artist-1");
 
   // Verify wanted status
-  const albumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
-  const singleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
+  const albumSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
+  const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
 
   assert.equal(albumSlot.wanted, 1); // Album should be wanted (even if provider slot is unmatched, because require_provider_availability is false and it's included in metadata)
   assert.equal(singleSlot.wanted, 0); // Single should be redundant (wanted = 0) because all its tracks are contained in the parent album, despite the parent album being unmatched!
@@ -1243,8 +1239,8 @@ test("CurationService marks a single redundant when its parent album is present 
 
   await curationServiceModule.CurationService.processAll("artist-1");
 
-  const requiredAlbumSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
-  const requiredSingleSlot = db.prepare("SELECT wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
+  const requiredAlbumSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-album-unmatched") as any;
+  const requiredSingleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single-matched") as any;
 
   assert.equal(requiredAlbumSlot.wanted, 0);
   assert.equal(requiredSingleSlot.wanted, 1); // Provider-required redundancy only compares provider-available representatives.

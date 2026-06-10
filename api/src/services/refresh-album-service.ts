@@ -297,7 +297,7 @@ export class RefreshAlbumService {
             throw new Error(`Provider album ${albumId} could not be linked to a MusicBrainz artist. Refresh/curate the artist before hydrating provider tracks.`);
         }
 
-        const existing = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
+        const existing = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
         const existingModuleRow = artistId
             ? (db.prepare("SELECT module FROM ProviderAlbumArtists WHERE album_id = ? AND artist_id = ?").get(albumId, artistId) as any)
             : null;
@@ -309,7 +309,7 @@ export class RefreshAlbumService {
                     id, artist_id, title, version, release_date, type, explicit, quality,
                     cover, vibrant_color, video_cover,
                     num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
-                    mb_primary, mb_secondary, monitor, last_scanned
+                    mb_primary, mb_secondary, monitored, last_scanned
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             `).run(
                 albumId,
@@ -520,7 +520,7 @@ export class RefreshAlbumService {
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
-        const album = db.prepare("SELECT id, artist_id, type, monitor FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
+        const album = db.prepare("SELECT id, artist_id, type, monitored FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
         if (!album) {
             console.warn(`[RefreshAlbumService] Album ${albumId} not found, skipping tracks`);
             return;
@@ -580,7 +580,7 @@ export class RefreshAlbumService {
                 id, artist_id, album_id, title, version, release_date, type, explicit, quality,
                 track_number, volume_number, duration, popularity,
                 bpm, key, key_scale, peak, replay_gain,
-                credits, copyright, isrc, monitor, last_scanned, downloaded
+                credits, copyright, isrc, monitored, last_scanned, downloaded
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
         `);
 
@@ -594,7 +594,7 @@ export class RefreshAlbumService {
             WHERE id=? AND album_id=?
         `);
 
-        const selectMedia = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderMedia WHERE id = ? AND album_id = ?");
+        const selectMedia = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderMedia WHERE id = ? AND album_id = ?");
         const selectedRelease = db.prepare(`
             SELECT
                 COALESCE(rgs.selected_release_mbid, pi.release_mbid, pa.mbid) AS release_mbid,
@@ -687,9 +687,9 @@ export class RefreshAlbumService {
 
                         const exists = selectMedia.get(currentTrack.provider_id, albumId) as any;
 
-                        let shouldMonitor = exists?.monitor || (album?.monitor ? 1 : 0);
-                        if (exists?.monitor_lock) {
-                            shouldMonitor = exists.monitor;
+                        let shouldMonitor = exists?.monitored || (album?.monitored ? 1 : 0);
+                        if (exists?.monitored_lock) {
+                            shouldMonitor = exists.monitored;
                         }
 
                         if (!exists) {
@@ -822,8 +822,8 @@ export class RefreshAlbumService {
             await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
-        const exists = db.prepare("SELECT id, monitor, monitor_lock FROM ProviderAlbums WHERE id = ?").get(album.provider_id) as any;
-        const shouldMonitor = exists?.monitor || 0;
+        const exists = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderAlbums WHERE id = ?").get(album.provider_id) as any;
+        const shouldMonitor = exists?.monitored || 0;
         const moduleFromPage = albumModuleMap.get(album.provider_id) || album._module || null;
 
         if (!exists) {
@@ -832,7 +832,7 @@ export class RefreshAlbumService {
                     id, artist_id, title, version, release_date, type, explicit, quality,
                     cover, vibrant_color, video_cover,
                     num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
-                    mb_primary, mb_secondary, monitor
+                    mb_primary, mb_secondary, monitored
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 album.provider_id,

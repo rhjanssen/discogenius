@@ -183,8 +183,8 @@ const getQualityTags = (track: Track): string[] => {
 };
 
 const isDownloadedTrack = (track: Track) => Boolean(track.is_downloaded ?? track.downloaded);
-const isMonitoredTrack = (track: Track) => Boolean(track.is_monitored ?? track.monitor ?? track.monitored);
-const isLockedTrack = (track: Track) => Boolean(track.monitor_locked ?? track.monitor_lock);
+const isMonitoredTrack = (track: Track) => Boolean(track.is_monitored);
+const isLockedTrack = (track: Track) => Boolean(track.monitored_lock);
 
 function joinTrackMeta(parts: Array<string | null | undefined>) {
   return parts.filter((value) => Boolean(value && value.trim().length > 0)) as string[];

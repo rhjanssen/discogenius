@@ -39,7 +39,7 @@ after(() => {
 
 test("library stats count videos from canonical recordings and ignore legacy provider media", () => {
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, monitor)
+    INSERT INTO Artists (id, name, mbid, monitored)
     VALUES ('artist-id', 'Video Artist', 'artist-mbid', 1)
   `).run();
 
@@ -52,7 +52,7 @@ test("library stats count videos from canonical recordings and ignore legacy pro
   dbModule.db.prepare(`
     INSERT INTO Recordings (
       ForeignRecordingId, ArtistMetadataId, artist_mbid,
-      title, IsVideo, MetadataStatus, Monitor
+      title, IsVideo, MetadataStatus, Monitored
     )
     VALUES
       ('provider-video-1', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_only', 1),
@@ -62,7 +62,7 @@ test("library stats count videos from canonical recordings and ignore legacy pro
 
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, title, duration, type, explicit, quality, monitor
+      id, artist_id, title, duration, type, explicit, quality, monitored
     )
     VALUES ('legacy-video-1', 'artist-id', 'Legacy Provider Video', 200, 'Music Video', 0, 'FHD', 1)
   `).run();

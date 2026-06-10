@@ -40,7 +40,7 @@ test("video list and detail use canonical video recordings with provider offers"
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
       ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid,
-      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitor
+      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitored
     )
     VALUES (
       'provider-video-1', NULL, ?, 'artist-mbid',

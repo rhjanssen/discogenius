@@ -48,9 +48,9 @@ export interface Media {
     isrc?: string;
 
     // Monitoring & Filtering
-    monitor: boolean;              // whether to scan and download this media
+    monitored: boolean;              // whether to scan and download this media
     monitored_at?: string;         // when monitoring was enabled
-    monitor_lock: boolean;         // whether monitoring is locked
+    monitored_lock: boolean;         // whether monitoring is locked
     locked_at?: string;            // when lock was enabled
     last_scanned?: string;         // last time this media was scanned for changes
     downloaded: boolean;           // whether this media has been downloaded
@@ -80,7 +80,7 @@ export interface MediaInsert {
     credits?: string;
     copyright?: string;
     isrc?: string;
-    monitor?: boolean;
+    monitored?: boolean;
 }
 
 /**
@@ -321,11 +321,11 @@ export class MediaRepository extends BaseRepository<Media, number> {
     countMonitored(type?: 'track' | 'video'): number {
         let sql: string;
         if (type === 'track') {
-            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type != 'Music Video' AND monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type != 'Music Video' AND monitored = 1";
         } else if (type === 'video') {
-            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video' AND monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE type = 'Music Video' AND monitored = 1";
         } else {
-            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE monitor = 1";
+            sql = "SELECT COUNT(*) as count FROM ProviderMedia WHERE monitored = 1";
         }
         const result = this.prepare(sql).get() as { count: number };
         return result.count;
@@ -340,7 +340,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
                 id, artist_id, album_id, title, version, release_date, type,
                 explicit, quality, user_date_added, track_number, volume_number,
                 duration, popularity, bpm, key, key_scale, peak, replay_gain,
-                credits, copyright, isrc, monitor
+                credits, copyright, isrc, monitored
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             media.id,
@@ -365,7 +365,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
             media.credits || null,
             media.copyright || null,
             media.isrc || null,
-            media.monitor ? 1 : 0
+            media.monitored ? 1 : 0
         );
     }
 
@@ -381,7 +381,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
                     id, artist_id, album_id, title, version, release_date, type,
                     explicit, quality, user_date_added, track_number, volume_number,
                     duration, popularity, bpm, key, key_scale, peak, replay_gain,
-                    credits, copyright, isrc, monitor
+                    credits, copyright, isrc, monitored
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
@@ -410,7 +410,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
                     media.credits || null,
                     media.copyright || null,
                     media.isrc || null,
-                    media.monitor ? 1 : 0
+                    media.monitored ? 1 : 0
                 );
                 insertedCount++;
             }
@@ -427,7 +427,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
                 id, artist_id, album_id, title, version, release_date, type,
                 explicit, quality, user_date_added, track_number, volume_number,
                 duration, popularity, bpm, key, key_scale, peak, replay_gain,
-                credits, copyright, isrc, monitor
+                credits, copyright, isrc, monitored
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -459,7 +459,7 @@ export class MediaRepository extends BaseRepository<Media, number> {
             media.credits || null,
             media.copyright || null,
             media.isrc || null,
-            media.monitor ? 1 : 0
+            media.monitored ? 1 : 0
         );
     }
 
@@ -471,8 +471,8 @@ export class MediaRepository extends BaseRepository<Media, number> {
         const values: any[] = [];
 
         const fieldMap: Record<string, any> = {
-            monitor: updates.monitor !== undefined ? (updates.monitor ? 1 : 0) : undefined,
-            monitor_lock: updates.monitor_lock !== undefined ? (updates.monitor_lock ? 1 : 0) : undefined,
+            monitored: updates.monitored !== undefined ? (updates.monitored ? 1 : 0) : undefined,
+            monitored_lock: updates.monitored_lock !== undefined ? (updates.monitored_lock ? 1 : 0) : undefined,
             downloaded: updates.downloaded !== undefined ? (updates.downloaded ? 1 : 0) : undefined,
             quality: updates.quality,
         };

@@ -385,7 +385,7 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
         FROM target_artists
         JOIN ReleaseGroupSlots rgs
           ON rgs.artist_mbid = target_artists.artist_mbid
-        WHERE (rgs.wanted = 1 OR COALESCE(rgs.monitor_lock, 0) = 1)
+        WHERE (rgs.monitored = 1 OR COALESCE(rgs.monitored_lock, 0) = 1)
           AND rgs.slot IN ('stereo', 'spatial')
           AND rgs.selected_release_mbid IS NOT NULL
       ),
@@ -438,7 +438,7 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
         FROM target_artists
         JOIN Recordings recording
           ON recording.IsVideo = 1
-         AND (COALESCE(recording.Monitor, 0) = 1 OR COALESCE(recording.MonitorLock, 0) = 1)
+         AND (COALESCE(recording.Monitored, 0) = 1 OR COALESCE(recording.MonitoredLock, 0) = 1)
          AND (
           recording.artist_mbid = target_artists.artist_mbid
           OR (

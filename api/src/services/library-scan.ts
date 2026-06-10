@@ -721,12 +721,12 @@ export class DiskScanService {
                         shouldPromoteArtist = true;
                         db.prepare(`
                             UPDATE ProviderMedia
-                            SET monitor = CASE
-                                    WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1
-                                    ELSE monitor
+                            SET monitored = CASE
+                                    WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN 1
+                                    ELSE monitored
                                 END,
                                 monitored_at = CASE
-                                    WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                                    WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
                                     ELSE monitored_at
                                 END
                             WHERE id = ?
@@ -734,22 +734,22 @@ export class DiskScanService {
                         if (match.albumId && match.fileType === "track") {
                             db.prepare(`
                                 UPDATE ProviderAlbums
-                                SET monitor = CASE
-                                        WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN 1
-                                        ELSE monitor
+                                SET monitored = CASE
+                                        WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN 1
+                                        ELSE monitored
                                     END,
                                     monitored_at = CASE
-                                        WHEN monitor_lock = 0 OR monitor_lock IS NULL THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                                        WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
                                         ELSE monitored_at
                                     END
                                 WHERE id = ?
                             `).run(match.albumId);
                             db.prepare(`
                                 UPDATE ProviderMedia
-                                SET monitor = 1,
+                                SET monitored = 1,
                                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
                                 WHERE album_id = ?
-                                  AND (monitor_lock = 0 OR monitor_lock IS NULL)
+                                  AND (monitored_lock = 0 OR monitored_lock IS NULL)
                             `).run(match.albumId);
                             updateAlbumDownloadStatus(match.albumId);
                         } else {
@@ -831,7 +831,7 @@ export class DiskScanService {
         if (shouldPromoteArtist) {
             db.prepare(`
                 UPDATE Artists
-                SET monitor = 1,
+                SET monitored = 1,
                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
                 WHERE id = ?
             `).run(artistId);

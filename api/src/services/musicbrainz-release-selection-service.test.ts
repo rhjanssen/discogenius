@@ -75,13 +75,14 @@ test("representative release defaults to the MusicBrainz release with the most t
   insertRelease("standard-release", 12);
   insertRelease("deluxe-release", 18);
 
+
   const selected = selectionModule.MusicBrainzReleaseSelectionService
     .selectRepresentativeRelease("group-mbid");
 
   assert.equal(selected?.mbid, "deluxe-release");
 });
 
-test("representative release does not let imported files override the MusicBrainz track-count choice", () => {
+test("representative release prefers releases with imported files first", () => {
   insertRelease("standard-release", 12);
   insertRelease("deluxe-release", 18);
   dbModule.db.prepare(`
@@ -98,8 +99,8 @@ test("representative release does not let imported files override the MusicBrain
   const selected = selectionModule.MusicBrainzReleaseSelectionService
     .selectRepresentativeRelease("group-mbid");
 
-  assert.equal(selected?.mbid, "deluxe-release");
-  assert.equal(selected?.imported_file_count, 0);
+  assert.equal(selected?.mbid, "standard-release");
+  assert.equal(selected?.imported_file_count, 1);
 });
 
 test("local import release follows Lidarr by preferring releases with imported files first", () => {

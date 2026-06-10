@@ -37,7 +37,7 @@ after(() => {
 
 test("getManagedArtistsDueForRefresh respects configured refresh days and keeps stalest artists first", () => {
     dbModule.db.prepare(`
-        INSERT INTO Artists (id, name, monitor, path, last_scanned)
+        INSERT INTO Artists (id, name, monitored, path, last_scanned)
         VALUES
             ('1', 'Never Scanned', 1, 'Never Scanned', NULL),
             ('2', 'Recently Scanned', 1, 'Recently Scanned', datetime('now', '-5 days')),
@@ -54,7 +54,7 @@ test("getManagedArtistsDueForRefresh respects configured refresh days and keeps 
 
 test("artist completion predicate uses canonical locks instead of provider catalog locks", () => {
     dbModule.db.prepare(`
-        INSERT INTO Artists (id, name, mbid, monitor, path)
+        INSERT INTO Artists (id, name, mbid, monitored, path)
         VALUES
             ('1', 'Provider Locked', 'provider-locked-mbid', 0, 'Provider Locked'),
             ('2', 'Slot Locked', 'slot-locked-mbid', 0, 'Slot Locked'),
@@ -71,12 +71,12 @@ test("artist completion predicate uses canonical locks instead of provider catal
     dbModule.db.prepare(`
         INSERT INTO ProviderAlbums (
             id, artist_id, title, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, monitor_lock
+            num_tracks, num_volumes, num_videos, duration, monitored_lock
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run("provider-album-1", "1", "Provider Album", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
     dbModule.db.prepare(`
         INSERT INTO ProviderMedia (
-            id, artist_id, album_id, title, type, explicit, quality, monitor_lock
+            id, artist_id, album_id, title, type, explicit, quality, monitored_lock
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run("provider-track-1", "1", "provider-album-1", "Provider Track", "Track", 0, "LOSSLESS", 1);
 
@@ -85,11 +85,11 @@ test("artist completion predicate uses canonical locks instead of provider catal
         VALUES (?, ?, ?, ?)
     `).run("slot-rg-mbid", "slot-locked-mbid", "Slot Album", "album");
     dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, wanted, monitor_lock)
+        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, monitored_lock)
         VALUES (?, ?, ?, ?, ?)
     `).run("slot-locked-mbid", "slot-rg-mbid", "stereo", 0, 1);
     dbModule.db.prepare(`
-        INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MonitorLock)
+        INSERT INTO Recordings (mbid, artist_mbid, title, IsVideo, MonitoredLock)
         VALUES (?, ?, ?, ?, ?)
     `).run("video-recording-mbid", "video-locked-mbid", "Video", 1, 1);
 

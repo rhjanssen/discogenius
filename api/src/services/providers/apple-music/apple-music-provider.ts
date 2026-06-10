@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import {
   StreamingProvider,
   ProviderAlbum,
@@ -11,6 +13,8 @@ import {
   ProviderDownloadOptions,
 } from "../streaming-provider.js";
 import { ensureOrpheusRuntime, spawnOrpheusDownload, parseOrpheusProgress } from "../../orpheus.js";
+import { downloadBackendRegistry } from "../../download-backend.js";
+import { OrpheusBackend } from "../../orpheus-backend.js";
 
 export class AppleMusicProvider implements StreamingProvider {
   readonly id = "apple-music";
@@ -300,56 +304,35 @@ export class AppleMusicProvider implements StreamingProvider {
     downloadPath: string,
     options?: ProviderDownloadOptions
   ): Promise<void> {
-    let url = "";
-    if (entityType === "album") {
-      const album = await this.getAlbum(providerId);
-      url = album.url || `https://music.apple.com/us/album/${providerId}`;
-    } else if (entityType === "track") {
-      const track = await this.getTrack(providerId);
-      url = track.url || `https://music.apple.com/us/song/${providerId}`;
-    } else {
-      throw new Error(`Unsupported Apple Music entity type: ${entityType}`);
+    const slot = options?.qualityProfile === "spatial" || options?.quality?.toLowerCase().includes("atmos") ? "spatial" : "stereo";
+    const backend = downloadBackendRegistry.resolve(this.id, slot);
+    if (!backend) {
+      throw new Error(`No download backend resolved for ${this.id} and slot ${slot}`);
     }
 
-    await ensureOrpheusRuntime();
-    const typeArg = entityType === "track" ? "track" : "album";
-    const cp = await spawnOrpheusDownload(typeArg, providerId, downloadPath, "applemusic");
-
-    if (options?.onProgress) {
-      cp.stdout?.on("data", (data: any) => {
-        const str = data.toString();
-        const op = parseOrpheusProgress(str);
-        if (op) {
-          options.onProgress!({
-            progress: op.trackProgress ?? 0,
-            currentFileNum: op.currentTrack,
-            totalFiles: op.totalTracks,
-            currentTrack: op.currentTrackName,
-            trackProgress: op.trackProgress,
-            statusMessage: op.statusMessage,
-            state: op.isEntityComplete ? 'completed' : 'downloading',
-            speed: op.speed,
-            eta: op.eta,
-            size: op.size,
-            sizeleft: op.sizeleft,
-          });
-        }
-      });
+    try {
+      await fs.promises.rm(downloadPath, { recursive: true, force: true });
+    } catch {
+      // ignore
     }
+    await fs.promises.mkdir(path.dirname(downloadPath), { recursive: true });
 
-    return new Promise<void>((resolve, reject) => {
-      cp.on("close", (code: any) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`Orpheus exited with code ${code}`));
+    return backend.download({
+      provider: this.id,
+      entityType,
+      providerId,
+      downloadPath,
+      quality: options?.quality,
+    }, {
+      signal: options?.signal,
+      onProgress: (progress) => {
+        if (options?.onProgress) {
+          options.onProgress(progress);
         }
-      });
-      cp.on("error", (err: any) => {
-        reject(err);
-      });
+      }
     });
   }
 }
 
 export const appleMusicStreamingProvider = new AppleMusicProvider();
+downloadBackendRegistry.register(new OrpheusBackend());

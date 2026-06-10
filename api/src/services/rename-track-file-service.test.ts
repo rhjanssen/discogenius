@@ -33,19 +33,19 @@ function seedTrackedFile() {
   fs.writeFileSync(sourcePath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("1", "Artist One", "Artist One", 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
@@ -225,19 +225,19 @@ test("RenameTrackFileService keeps the stored artist path canonical until path u
   fs.writeFileSync(legacyPath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
@@ -270,7 +270,7 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   fs.writeFileSync(sourcePath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-mbid-1", "artist-one", 1);
 
@@ -342,7 +342,7 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
   fs.writeFileSync(sourcePath, "test-video");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
 

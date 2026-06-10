@@ -2078,7 +2078,7 @@ export class OrganizerService {
         if (!exists) {
           try {
             const a = await this.fetchProviderArtist(videoArtistId);
-            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
               .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
                 artistId: videoArtistId,
                 artistName: a.name,
@@ -2146,7 +2146,7 @@ export class OrganizerService {
           artistName: fetchedArtistName,
           artistMbId: artistMbId || null,
         });
-        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitor, path) VALUES (?, ?, ?, ?, 0, ?)")
+        db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
           .run(artistId, artistName, remoteArtist.picture || null, remoteArtist.popularity || 0, artistPath);
       }
       this.refreshArtistPathFromTemplateIfNeeded(artistId);

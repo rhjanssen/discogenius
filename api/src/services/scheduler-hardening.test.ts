@@ -101,7 +101,7 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
 
 test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {
     dbModule.db.prepare(`
-        INSERT INTO Artists (id, name, monitor)
+        INSERT INTO Artists (id, name, monitored)
         VALUES (?, ?, ?), (?, ?, ?)
     `).run(101, "Monitored Artist", 1, 202, "Ignored Artist", 0);
 

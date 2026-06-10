@@ -31,7 +31,7 @@ const SearchPage = () => {
   return (
     <div className={styles.container}>
       <div className={styles.content}>
-        <Title1 align="center">Search Library</Title1>
+        <Title1 align="center">Search</Title1>
         <div className={styles.searchWrapper}>
           <GlobalSearch key={query} autoFocus initialQuery={query} />
         </div>

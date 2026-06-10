@@ -13,7 +13,7 @@ export interface HealthCheckResult {
 }
 
 export interface BackendCapabilitySnapshot {
-  name: "orpheus" | "tidal-dl-ng";
+  name: "orpheus" | "tidal-dl-ng" | "tiddl";
   status: HealthOverallStatus;
   available: boolean;
   ready: boolean;

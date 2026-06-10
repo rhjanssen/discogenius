@@ -28,7 +28,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   fs.writeFileSync(audioPath, "not-a-real-audio-file");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitor)
+    INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
 

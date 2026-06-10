@@ -641,7 +641,7 @@ const ArtistPage = () => {
       for (const mod of row.modules || []) {
         const items = mod.pagedList?.items || mod.items || [];
         for (const item of items) {
-          if (item.is_monitored || item.monitor) {
+          if (item.is_monitored) {
             monitoredCount++;
           }
         }
@@ -794,8 +794,8 @@ const ArtistPage = () => {
     const providerId = item.id?.toString?.() ?? String(item.id);
     const albumTitle = item.title || "Unknown Album";
 
-    const isAlbumMonitored = Boolean(item.is_monitored ?? item.monitor);
-    const isLocked = Boolean(item.monitor_locked ?? item.monitor_lock);
+    const isAlbumMonitored = Boolean(item.is_monitored);
+    const isLocked = Boolean(item.monitored_lock);
     const redundantOf = item.redundant_of ?? item.redundant;
     const isRedundant = Boolean(redundantOf);
     const isPrimary = !isRedundant;
@@ -927,8 +927,8 @@ const ArtistPage = () => {
   const renderVideoCard = (item: any) => {
     const providerId = item.id?.toString?.() ?? String(item.id);
     const title = item.title || "Unknown Video";
-    const isVideoMonitored = Boolean(item.is_monitored ?? item.monitor);
-    const isLocked = Boolean(item.monitor_locked ?? item.monitor_lock);
+    const isVideoMonitored = Boolean(item.is_monitored);
+    const isLocked = Boolean(item.monitored_lock);
     const imageUrl = getVideoThumbnail(item.cover_id, 'small');
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
@@ -1021,7 +1021,7 @@ const ArtistPage = () => {
       if (libraryFilter === 'spatial' && !isSpatialAudioQuality(quality)) return false;
       if (libraryFilter === 'stereo' && isSpatialAudioQuality(quality)) return false;
 
-      const isTrackMonitored = Boolean(track.is_monitored ?? track.monitor);
+      const isTrackMonitored = Boolean(track.is_monitored);
       const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;
       if (hasMonitoringFilter) {
         const matchesMonitored = statusFilters.onlyMonitored && isTrackMonitored;
@@ -1037,7 +1037,7 @@ const ArtistPage = () => {
         if (!matchesDownloaded && !matchesNotDownloaded) return false;
       }
 
-      const isLocked = Boolean(track.monitor_locked ?? track.monitor_lock);
+      const isLocked = Boolean(track.monitored_lock);
       const hasLockFilter = statusFilters.onlyLocked || statusFilters.onlyUnlocked;
       if (hasLockFilter) {
         const matchesLocked = statusFilters.onlyLocked && isLocked;

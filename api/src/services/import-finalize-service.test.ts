@@ -32,19 +32,19 @@ function seedImportedTrack(fileName = "track-one.flac") {
   fs.writeFileSync(incomingPath, "test-audio");
 
   dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, path, monitor)
+    INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("1", "Artist One", "Artist One", 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitor
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitor
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 

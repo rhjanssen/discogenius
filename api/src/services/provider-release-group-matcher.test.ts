@@ -298,7 +298,7 @@ test("uses ISRC overlap and track count as fallback evidence", () => {
         volumeCount: 1,
     }, releaseGroups);
 
-    assert.equal(match.status, "probable");
+    assert.equal(match.status, "verified");
     assert.equal(match.method, "musicbrainz-recording-isrc");
     assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
     assert.equal(match.evidence.isrcOverlap, 2);

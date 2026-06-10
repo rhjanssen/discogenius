@@ -60,7 +60,7 @@ function ensureArtist(artist: MusicBrainzArtistCredit, origin = "musicbrainz-cre
 
   db.prepare(`
     INSERT INTO Artists (
-      id, name, mbid, musicbrainz_status, musicbrainz_match_method, library_origin, monitor
+      id, name, mbid, musicbrainz_status, musicbrainz_match_method, library_origin, monitored
     )
     VALUES (?, ?, ?, 'verified', 'musicbrainz-artist-credit', ?, 0)
     ON CONFLICT(id) DO UPDATE SET
