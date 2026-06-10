@@ -1,13 +1,12 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-06-03
+Last updated: 2026-06-11
 
 ## Purpose
 
 This document describes the current Discogenius architecture and the stable boundaries we preserve while iterating.
 
-For planned architecture consolidation and Lidarr-alignment backlog, use docs/ARCHITECTURE_WORKPLAN.md.
 For curation flow details, use docs/CURATION_DEDUPLICATION.md.
 
 ## System Shape
@@ -23,10 +22,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 1. Keep long-running work in the queue, not in route handlers.
 
-1. Keep download backends split by media type:
-
-- Orpheus for music (album, track)
-- tidal-dl-ng for video
+1. Keep one download backend per provider: all TIDAL downloads (audio, Atmos, video) run through tiddl (`api/src/services/providers/tidal/tiddl.ts` + `tiddl-backend.ts`). Tokens and settings are synced into tiddl's config dir (`config/.tiddl`) whenever the provider login or quality settings change.
 
 1. Preserve explicit workflow boundaries:
 
@@ -270,7 +266,7 @@ Operationally important semantics:
 
 ## Boundaries We Intentionally Keep
 
-- No direct music downloads through tidal-dl-ng.
+- No downloader invocations outside the tiddl backend in the TIDAL provider.
 - No heavy route-level orchestration for scan/import/curation/download operations.
 - No provider-shaped shadow file state. Playable media lives in `TrackFiles`; sidecar inventory lives in the Lidarr-style extra-file tables.
 - No lock-blind monitor updates.
@@ -279,7 +275,6 @@ Operationally important semantics:
 ## Documentation Ownership
 
 - docs/ARCHITECTURE.md: current architecture and stable boundaries (this file)
-- docs/ARCHITECTURE_WORKPLAN.md: architecture improvements and backlog
 - docs/CURATION_DEDUPLICATION.md: curation flow deep-dive
 - docs/ROADMAP.md: forward-looking product priorities only
-- docs/RELEASE_DISTRIBUTION_PLAN.md: alpha operational release planning guidance
+- AGENTS.md (repo root): coding-agent expectations and validation checklist

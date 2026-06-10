@@ -1,45 +1,39 @@
 # Discogenius Roadmap
 
-_Last updated: 2026-03-13_
+_Last updated: 2026-06-11_
 
-This roadmap is intentionally short and forward-looking.
+This roadmap is intentionally short and forward-looking. Architecture
+current-state detail lives in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- Architecture current-state detail lives in docs/ARCHITECTURE.md.
-- Architecture consolidation backlog and Lidarr-alignment work items live in docs/ARCHITECTURE_WORKPLAN.md.
-- Release mechanics live in docs/RELEASE_DISTRIBUTION_PLAN.md.
-
-This file should not become an implementation changelog.
-
-## Alpha priorities
+## 2.0 priorities
 
 1. Stabilize the core library workflow:
-   - music downloads through Orpheus
-   - video downloads through tidal-dl-ng
+   - all TIDAL downloads (audio, Atmos, video) through tiddl
    - queue, import, organize, and retry behavior
-
+   - reliable MusicBrainz ↔ provider release matching
 2. Tighten library management:
    - better rename and retag maintenance flows
    - clearer monitoring and lock behavior
    - stronger reconciliation between disk state and database state
-
 3. Improve manual import quality:
    - better identification confidence and fallback paths
    - smoother review and mapping UX for unmapped files
-
-4. Ship a clean public alpha:
+4. Ship a clean public release:
    - concise docs
    - reliable Docker deployment story
    - versioned public releases and images
 
 ## Near-term product work
 
-- Faster and more predictable artist, album, and dashboard pages while background jobs are running.
+- Faster and more predictable artist, album, and dashboard pages while
+  background jobs are running.
 - Better activity visibility for queued maintenance, imports, and retries.
 - More polish around mobile layouts and queue/status presentation.
-- Continue reducing service monolith pressure in scan/import/monitoring orchestration while preserving current Discogenius feature behavior.
 
 ## Longer-term direction
 
+- Additional streaming providers (Qobuz, Deezer, Apple Music) behind the
+  existing provider interface, using MusicBrainz release groups and
+  ISRC/recording MBIDs as cross-provider matching keys.
 - More robust import decision logic and fingerprint-assisted identification.
-- Additional library-maintenance tooling once the alpha workflow is stable.
-- **Multi-provider support:** A provider-agnostic internal ID model built on app-owned UUIDs plus provider offer mappings, with MusicBrainz Release Groups (for albums) and ISRCs/recording MBIDs (for tracks) used as cross-provider matching keys. The current schema keeps provider state in `ProviderItems`, selected `ReleaseGroupSlots`, and `TrackFiles` provenance instead of maintaining a second provider catalog. Full support requires migrating compatibility primary keys from provider IDs to internal UUIDs and adding pluggable metadata source and download backend interfaces. See [docs/RFC_PROVIDER_NEUTRAL_IDS.md](/E:/projects/discogenius/docs/RFC_PROVIDER_NEUTRAL_IDS.md) and [docs/ARCHITECTURE_WORKPLAN.md](/E:/projects/discogenius/docs/ARCHITECTURE_WORKPLAN.md) for the approved direction.
+- Additional library-maintenance tooling once the 2.0 workflow is stable.

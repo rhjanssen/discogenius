@@ -1,38 +1,20 @@
 # Discogenius Documentation Map
 
-Last updated: 2026-03-13
-
-This folder is organized by document role so current architecture, architecture work planning, and subsystem deep-dives stay separate.
-
-## Canonical Documents
-
-- ARCHITECTURE.md
-  - Current architecture state and stable structural principles.
-  - Describes what exists today, not backlog inventory.
-
-- ARCHITECTURE_WORKPLAN.md
-  - Architecture improvement backlog (Lidarr alignment, consolidation, code-quality work).
-  - Tracks planned/in-progress architecture work.
-
-- CURATION_DEDUPLICATION.md
-  - Canonical deep-dive for Discogenius release-group slot curation.
-  - Covers end-to-end flow, slot semantics, and monitored semantics.
-
-- ROADMAP.md
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+  - Current architecture and the stable boundaries we preserve while iterating.
+- [CURATION_DEDUPLICATION.md](CURATION_DEDUPLICATION.md)
+  - Deep-dive into release-group slot curation and discography deduplication.
+- [ROADMAP.md](ROADMAP.md)
   - Forward-looking product priorities only.
-  - Does not duplicate architecture implementation detail.
+- [ULTRABLUR_DOCUMENTATION.md](ULTRABLUR_DOCUMENTATION.md)
+  - UltraBlur background subsystem (frontend).
 
-- TESTING_PLAN.md
-  - Release-candidate validation checklist and runtime verification workflow.
+Agent/contributor expectations live in [AGENTS.md](../AGENTS.md) at the
+repository root.
 
-- ULTRABLUR_DOCUMENTATION.md
-  - UltraBlur subsystem scope, ownership, and implementation behavior.
+Documentation rules:
 
-## Documentation Rules
-
-1. Keep ARCHITECTURE.md focused on current state.
-2. Keep architecture backlog/planning in ARCHITECTURE_WORKPLAN.md.
-3. Keep curation-specific design and semantics in CURATION_DEDUPLICATION.md.
-4. If architecture behavior changes, update ARCHITECTURE.md and any affected deep-dive docs in the same change.
-5. Update ROADMAP.md only when product priorities change.
-6. Remove stale overlap docs instead of letting parallel versions drift.
+1. Keep ARCHITECTURE.md focused on current state — no backlog inventory.
+2. Keep curation design and semantics in CURATION_DEDUPLICATION.md.
+3. Update ROADMAP.md only when product priorities change.
+4. Remove stale overlap docs instead of letting parallel versions drift.

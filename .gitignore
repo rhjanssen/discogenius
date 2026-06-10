@@ -56,3 +56,8 @@ pnpm-lock.yaml
 
 # Local runtime (OrpheusDL venv, bootstrap)
 .runtime/
+
+# Agent/session artifacts
+.playwright-mcp/
+.codex/
+.claude/

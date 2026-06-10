@@ -45,7 +45,7 @@
 ## Features
 
 - **MusicBrainz/Lidarr-style Library Identity**: Manage artists, release groups, releases, tracks, and recordings using canonical MusicBrainz metadata.
-- **Provider-backed Availability & Downloads**: Use TIDAL as the first provider for availability, previews, lyrics, music downloads through Orpheus, and video downloads through tidal-dl-ng.
+- **Provider-backed Availability & Downloads**: Use TIDAL as the first provider for availability, previews, lyrics, and downloads (audio, Dolby Atmos, and music videos through tiddl).
 - **Curated Discography Management**: Curate complete or partial artist discographies with monitored release-group slots.
 - **Smart Library Organization**: Automatic file organization, metadata enrichment, fingerprint-based identification, and deduplication.
 - **Download Management**: Queue with Lidarr-style command exclusivity, background scheduling, and quality profiles.
@@ -203,48 +203,3 @@ That means:
 - AI can make serious mistakes, including subtle logic bugs that are easy to miss.
 
 Please review code carefully before deploying in production.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

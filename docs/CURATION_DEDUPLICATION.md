@@ -1,6 +1,6 @@
 # Curation Workflow
 
-Last updated: 2026-05-25
+Last updated: 2026-06-11
 
 Discogenius curation is MusicBrainz release-group based. It no longer runs the old provider-album redundancy engine as a runtime fallback.
 
@@ -39,6 +39,8 @@ Provider album matching is release-group first:
 - unresolved exact release: keep the provider item matched to the release group only.
 
 This is intentional. Standard, deluxe, clean, explicit, hi-res, and spatial provider albums may all belong to the same MusicBrainz release group. Discogenius should not invent exact MusicBrainz release IDs when the evidence is weak or missing.
+
+Slot selection then validates provider tracklists against every release (edition) in the release group — the representative release first, remaining editions ordered by tracklist size. The slot records the release that the chosen provider album (or same-provider combination of albums) actually covers, so the selected MusicBrainz edition always describes the content that will be downloaded. A provider album that only matches a smaller edition selects that edition instead of leaving the slot unavailable.
 
 ## Category Policy
 
