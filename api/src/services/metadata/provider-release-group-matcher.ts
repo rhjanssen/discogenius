@@ -113,8 +113,10 @@ function prefixBeforeVersionSeparator(value: string): string | null {
         return null;
     }
 
+    // Only treat the suffix as a version/edition label when it contains an
+    // edition keyword. Arbitrary suffixes are part of the actual title.
     const suffix = match[2].trim();
-    if (!/(?:deluxe|expanded|extended|special|complete|anniversary|bonus|remaster(?:ed)?|reissue|clean|explicit|dolby\s+atmos|atmos|spatial|hi-?res|lossless|stereo|dreams?\b|past\b)/i.test(suffix)) {
+    if (!/(?:deluxe|expanded|extended|special|complete|anniversary|bonus|remaster(?:ed)?|reissue|clean|explicit|dolby\s+atmos|atmos|spatial|hi-?res|lossless|stereo)/i.test(suffix)) {
         return null;
     }
 

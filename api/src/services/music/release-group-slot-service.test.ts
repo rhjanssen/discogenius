@@ -865,3 +865,127 @@ test("provider slot selection selects available digital release when require_pro
     },
   });
 });
+
+test("provider album covering only the standard edition selects that edition instead of nothing", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-edition-fallback";
+  insertReleaseGroup(releaseGroupMbid);
+
+  // Deluxe release (3 tracks) outranks the standard (2 tracks) as representative.
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run("release-deluxe-fb", releaseGroupMbid, "artist-mbid-1", "Opera (Deluxe)", "Official", "1975-11-21", 3, 1);
+  insertRelease.run("release-standard-fb", releaseGroupMbid, "artist-mbid-1", "Opera", "Official", "1975-11-21", 2, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertRecording.run("rec-edfb-1", "Track One", JSON.stringify(["FBISRC001"]));
+  insertRecording.run("rec-edfb-2", "Track Two", JSON.stringify(["FBISRC002"]));
+  insertRecording.run("rec-edfb-3", "Bonus Track", JSON.stringify(["FBISRC003"]));
+  insertTrack.run("track-fb-d1", "release-deluxe-fb", "rec-edfb-1", "Track One", 1, 1);
+  insertTrack.run("track-fb-d2", "release-deluxe-fb", "rec-edfb-2", "Track Two", 2, 1);
+  insertTrack.run("track-fb-d3", "release-deluxe-fb", "rec-edfb-3", "Bonus Track", 3, 1);
+  insertTrack.run("track-fb-s1", "release-standard-fb", "rec-edfb-1", "Track One", 1, 1);
+  insertTrack.run("track-fb-s2", "release-standard-fb", "rec-edfb-2", "Track Two", 2, 1);
+
+  // The provider only has the 2-track standard edition.
+  const match = buildMatch(releaseGroupMbid, "provider-standard-fb");
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-standard-fb",
+        title: "Opera",
+        quality: "LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "FBISRC001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "FBISRC002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+        ],
+      },
+      match,
+    },
+  ]);
+
+  // Previously the selector only validated against the representative (deluxe)
+  // release and produced no selection at all, leaving the album "unavailable"
+  // even though the standard edition is fully on the provider.
+  assert.equal(selections.length, 1);
+  assert.equal(selections[0]?.album.providerId, "provider-standard-fb");
+  assert.equal(selections[0]?.match.releaseMbid, "release-standard-fb");
+});
+
+test("slot release follows the edition the chosen provider album actually covers", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-edition-binding";
+  insertReleaseGroup(releaseGroupMbid);
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run("release-deluxe-eb", releaseGroupMbid, "artist-mbid-1", "Opera (Deluxe)", "Official", "1975-11-21", 3, 1);
+  insertRelease.run("release-standard-eb", releaseGroupMbid, "artist-mbid-1", "Opera", "Official", "1975-11-21", 2, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertRecording.run("rec-eb-1", "Track One", JSON.stringify(["EBISRC001"]));
+  insertRecording.run("rec-eb-2", "Track Two", JSON.stringify(["EBISRC002"]));
+  insertRecording.run("rec-eb-3", "Bonus Track", JSON.stringify(["EBISRC003"]));
+  insertTrack.run("track-eb-d1", "release-deluxe-eb", "rec-eb-1", "Track One", 1, 1);
+  insertTrack.run("track-eb-d2", "release-deluxe-eb", "rec-eb-2", "Track Two", 2, 1);
+  insertTrack.run("track-eb-d3", "release-deluxe-eb", "rec-eb-3", "Bonus Track", 3, 1);
+  insertTrack.run("track-eb-s1", "release-standard-eb", "rec-eb-1", "Track One", 1, 1);
+  insertTrack.run("track-eb-s2", "release-standard-eb", "rec-eb-2", "Track Two", 2, 1);
+
+  // Both editions exist on the provider; the deluxe must win and the slot must
+  // record the deluxe release MBID (not a re-derived representative).
+  const standardMatch = buildMatch(releaseGroupMbid, "provider-standard-eb");
+  const deluxeMatch = buildMatch(releaseGroupMbid, "provider-deluxe-eb");
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-standard-eb",
+        title: "Opera",
+        quality: "LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "EBISRC001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "EBISRC002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+        ],
+      },
+      match: standardMatch,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-deluxe-eb",
+        title: "Opera (Deluxe)",
+        quality: "LOSSLESS",
+        trackCount: 3,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "EBISRC001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "EBISRC002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+          { mbid: null, isrc: "EBISRC003", title: "Bonus Track", track_number: 3, volume_number: 1, duration: null },
+        ],
+      },
+      match: deluxeMatch,
+    },
+  ]);
+
+  assert.equal(selections.length, 1);
+  assert.equal(selections[0]?.album.providerId, "provider-deluxe-eb");
+  assert.equal(selections[0]?.match.releaseMbid, "release-deluxe-eb");
+});

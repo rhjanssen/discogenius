@@ -177,6 +177,7 @@ export type ProviderTrackDetail = {
 };
 
 type ProviderAlbumCandidateWithTracks = {
+    provider: string;
     album: ProviderAlbumSlotCandidate;
     match: ProviderReleaseGroupMatch;
     score: number;
@@ -259,6 +260,71 @@ function compatibleReleaseMbids(match: ProviderReleaseGroupMatch): string[] {
         ...(match.evidence.availableReleaseMbids || []),
         match.releaseMbid || "",
     ].map((releaseMbid) => String(releaseMbid || "").trim()).filter(Boolean)));
+}
+
+type ReleaseTrackTargets = {
+    releaseMbid: string;
+    tracks: TargetTrack[];
+};
+
+/**
+ * Load the audio tracklist of every release in a release group, so provider
+ * albums can be validated against the edition they actually correspond to
+ * instead of only the single "representative" release.
+ */
+function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[] {
+    const rows = db.prepare(`
+        SELECT t.release_mbid, t.recording_mbid, rec.isrcs, t.title, t.position, t.medium_position, t.length_ms
+        FROM Tracks t
+        JOIN AlbumReleases r ON r.mbid = t.release_mbid
+        LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
+        WHERE r.release_group_mbid = ?
+          AND COALESCE(rec.is_video, 0) = 0
+        ORDER BY t.release_mbid ASC, t.medium_position ASC, t.position ASC
+    `).all(releaseGroupMbid) as Array<{
+        release_mbid: string;
+        recording_mbid: string | null;
+        isrcs: string | null;
+        title: string;
+        position: number;
+        medium_position: number;
+        length_ms: number | null;
+    }>;
+
+    const byRelease = new Map<string, TargetTrack[]>();
+    for (const row of rows) {
+        const isrcs = new Set<string>();
+        if (row.isrcs) {
+            try {
+                const parsed = JSON.parse(row.isrcs);
+                if (Array.isArray(parsed)) {
+                    for (const isrc of parsed) {
+                        const normalized = normalizeIsrc(isrc);
+                        if (normalized) isrcs.add(normalized);
+                    }
+                }
+            } catch {
+                // Ignore malformed ISRC payloads.
+            }
+        }
+
+        const recordingMbid = row.recording_mbid ? String(row.recording_mbid).trim() : null;
+        let tracks = byRelease.get(row.release_mbid);
+        if (!tracks) {
+            tracks = [];
+            byRelease.set(row.release_mbid, tracks);
+        }
+        tracks.push({
+            recordingMbid,
+            isrcs,
+            title: row.title,
+            position: row.position,
+            mediumPosition: row.medium_position,
+            lengthMs: row.length_ms,
+        });
+    }
+
+    return Array.from(byRelease.entries()).map(([releaseMbid, tracks]) => ({ releaseMbid, tracks }));
 }
 
 function selectReleaseMbidForCandidate(
@@ -411,55 +477,22 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        const targetTrackList: TargetTrack[] = [];
-        if (preferredReleaseRow) {
-            const targetTracks = db.prepare(`
-                SELECT t.recording_mbid, r.isrcs, t.title, t.position, t.medium_position, t.length_ms
-                FROM Tracks t
-                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-                WHERE t.release_mbid = ?
-                ORDER BY t.medium_position ASC, t.position ASC
-            `).all(preferredReleaseRow.mbid) as Array<{
-                recording_mbid: string | null;
-                isrcs: string | null;
-                title: string;
-                position: number;
-                medium_position: number;
-                length_ms: number | null;
-            }>;
-
-            for (const track of targetTracks) {
-                const isrcs = new Set<string>();
-                if (track.isrcs) {
-                    try {
-                        const parsed = JSON.parse(track.isrcs);
-                        if (Array.isArray(parsed)) {
-                            for (const isrc of parsed) {
-                                const norm = normalizeIsrc(isrc);
-                                if (norm) isrcs.add(norm);
-                            }
-                        }
-                    } catch {
-                        // Ignore
-                    }
-                }
-                const recordingMbid = track.recording_mbid ? String(track.recording_mbid).trim() : null;
-                targetTrackList.push({
-                    recordingMbid,
-                    isrcs,
-                    title: track.title,
-                    position: track.position,
-                    mediumPosition: track.medium_position,
-                    lengthMs: track.length_ms,
-                });
-            }
-        }
-
+        // Validate provider albums against every release in the group, with the
+        // representative release tried first and remaining editions ordered by
+        // tracklist size. The slot then records the release that was actually
+        // covered, so the selected MusicBrainz edition always describes the
+        // provider album that will be downloaded.
+        const releaseTargets = loadReleaseTrackTargets(releaseGroupMbid)
+            .sort((left, right) =>
+                Number(right.releaseMbid === preferredReleaseRow?.mbid) - Number(left.releaseMbid === preferredReleaseRow?.mbid)
+                || right.tracks.length - left.tracks.length
+                || left.releaseMbid.localeCompare(right.releaseMbid)
+            );
 
         const preferredCompatibleCandidates = preferredReleaseRow
             ? groupCandidates.filter((candidate) => compatibleReleaseMbids(candidate.match).includes(preferredReleaseRow.mbid))
             : [];
-        const slotCandidates = targetTrackList.length > 0
+        const slotCandidates = releaseTargets.length > 0
             ? groupCandidates
             : preferredCompatibleCandidates.length > 0
                 ? preferredCompatibleCandidates
@@ -477,7 +510,7 @@ export function selectReleaseGroupSlotAlbums(
         const hasTrackDetails = candidatesWithTracks.some(c => c.tracks.length > 0);
 
         // 1. If there are no target tracks or no candidate track details, select the best candidate by score
-        if (targetTrackList.length === 0 || !hasTrackDetails) {
+        if (releaseTargets.length === 0 || !hasTrackDetails) {
             candidatesWithTracks.sort((a, b) => b.score - a.score);
             const best = candidatesWithTracks[0];
             const selectedMatch: ProviderReleaseGroupMatch = {
@@ -495,57 +528,95 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // 2. Check if any candidates are "Full covers"
-        const fullCovers = candidatesWithTracks.filter(c =>
-            getMatchedTargets1to1(targetTrackList, c.tracks).size === targetTrackList.length
-        );
+        // 2. Single candidate fully covering a release, most complete edition first.
+        let selectedSingle: { candidate: ProviderAlbumCandidateWithTracks; releaseMbid: string } | null = null;
+        for (const target of releaseTargets) {
+            const fullCovers = candidatesWithTracks.filter(c =>
+                getMatchedTargets1to1(target.tracks, c.tracks).size === target.tracks.length
+            );
+            if (fullCovers.length > 0) {
+                sortCandidatesForSlot(slot, fullCovers);
+                selectedSingle = { candidate: fullCovers[0], releaseMbid: target.releaseMbid };
+                break;
+            }
+        }
 
-        if (fullCovers.length > 0) {
-            // Sort by quality score first, then candidate score descending
-            sortCandidatesForSlot(slot, fullCovers);
-            const bestFullCover = fullCovers[0];
+        if (selectedSingle) {
             const selectedMatch: ProviderReleaseGroupMatch = {
-                ...bestFullCover.match,
-                releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, bestFullCover, preferredReleaseRow?.mbid),
+                ...selectedSingle.candidate.match,
+                releaseMbid: selectedSingle.releaseMbid,
             };
             bestByReleaseGroupAndSlot.set(key, {
                 releaseGroupMbid,
                 slot,
-                provider: bestFullCover.provider,
-                album: bestFullCover.album,
+                provider: selectedSingle.candidate.provider,
+                album: selectedSingle.candidate.album,
                 match: selectedMatch,
-                score: bestFullCover.score,
+                score: selectedSingle.candidate.score,
             });
             continue;
         }
 
-        // 3. Fallback to combined matching since no single candidate fully covers the target tracks
+        // 3. Combined matching: no single candidate covers any release, so try to
+        // assemble full coverage from multiple same-provider albums, again
+        // preferring the most complete edition.
         sortCandidatesForSlot(slot, candidatesWithTracks);
 
-        const primary = candidatesWithTracks[0];
-        const selectedCandidates = [primary];
-        let currentCovered = getMatchedTargets1to1(targetTrackList, primary.tracks);
+        let selectedCombination: {
+            candidates: ProviderAlbumCandidateWithTracks[];
+            targetTracks: TargetTrack[];
+            releaseMbid: string;
+        } | null = null;
 
-        for (let i = 1; i < candidatesWithTracks.length; i++) {
-            if (currentCovered.size === targetTrackList.length) {
-                break;
-            }
-            const candidate = candidatesWithTracks[i];
-            if (candidate.provider !== primary.provider) {
-                continue; // Only combine candidates from the same provider
+        for (const target of releaseTargets) {
+            const primary = candidatesWithTracks[0];
+            const selectedCandidates = [primary];
+            let currentCovered = getMatchedTargets1to1(target.tracks, primary.tracks);
+
+            for (let i = 1; i < candidatesWithTracks.length; i++) {
+                if (currentCovered.size === target.tracks.length) {
+                    break;
+                }
+                const candidate = candidatesWithTracks[i];
+                if (candidate.provider !== primary.provider) {
+                    continue; // Only combine candidates from the same provider
+                }
+
+                // Check if combining this candidate covers new target tracks 1-to-1
+                const combinedTracks = selectedCandidates.concat(candidate).flatMap(c => c.tracks);
+                const combinedCovered = getMatchedTargets1to1(target.tracks, combinedTracks);
+
+                if (combinedCovered.size > currentCovered.size) {
+                    selectedCandidates.push(candidate);
+                    currentCovered = combinedCovered;
+                }
             }
 
-            // Check if combining this candidate covers new target tracks 1-to-1
-            const combinedTracks = selectedCandidates.concat(candidate).flatMap(c => c.tracks);
-            const combinedCovered = getMatchedTargets1to1(targetTrackList, combinedTracks);
-
-            if (combinedCovered.size > currentCovered.size) {
-                selectedCandidates.push(candidate);
-                currentCovered = combinedCovered;
+            if (currentCovered.size < target.tracks.length) {
+                continue;
             }
+
+            // Reject combinations whose provider tracks don't all map back onto the
+            // target release — leftovers indicate the albums describe something else.
+            if (selectedCandidates.length > 1) {
+                const allProviderTracks = selectedCandidates.flatMap(c => c.tracks);
+                const hasLeftover = allProviderTracks.some(pt => {
+                    return !target.tracks.some(targetTrack => scoreTrackMatch(targetTrack, pt) >= 0.55);
+                });
+                if (hasLeftover) {
+                    continue;
+                }
+            }
+
+            selectedCombination = {
+                candidates: selectedCandidates,
+                targetTracks: target.tracks,
+                releaseMbid: target.releaseMbid,
+            };
+            break;
         }
 
-        if (currentCovered.size < targetTrackList.length) {
+        if (!selectedCombination) {
             const strongMetadataCandidates = candidatesWithTracks.filter((candidate) =>
                 hasStrongReleaseShapeEvidence(candidate, preferredReleaseRow?.mbid)
             );
@@ -570,26 +641,17 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // Check: no provider tracks left over across the combined candidate releases (if combined)
-        if (selectedCandidates.length > 1) {
-            const allProviderTracks = selectedCandidates.flatMap(c => c.tracks);
-            const hasLeftover = allProviderTracks.some(pt => {
-                return !targetTrackList.some(target => scoreTrackMatch(target, pt) >= 0.55);
-            });
-            if (hasLeftover) {
-                continue;
-            }
-        }
-
-        selectedCandidates.sort((left, right) => {
+        const { candidates: combinedCandidates, targetTracks: combinedTargets } = selectedCombination;
+        const primary = combinedCandidates[0];
+        combinedCandidates.sort((left, right) => {
             const firstCoveredTarget = (candidate: ProviderAlbumCandidateWithTracks) => {
-                const covered = getMatchedTargets1to1(targetTrackList, candidate.tracks);
+                const covered = getMatchedTargets1to1(combinedTargets, candidate.tracks);
                 if (covered.size === 0) return Number.MAX_SAFE_INTEGER;
                 return Math.min(...covered);
             };
             return firstCoveredTarget(left) - firstCoveredTarget(right);
         });
-        const selectedIds = selectedCandidates.map(c => c.album.providerId);
+        const selectedIds = combinedCandidates.map(c => c.album.providerId);
         const mergedAlbum: ProviderAlbumSlotCandidate = {
             ...primary.album,
             providerId: selectedIds.join(";"),
@@ -597,7 +659,7 @@ export function selectReleaseGroupSlotAlbums(
 
         const selectedMatch: ProviderReleaseGroupMatch = {
             ...primary.match,
-            releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, primary, preferredReleaseRow?.mbid),
+            releaseMbid: selectedCombination.releaseMbid,
         };
 
         bestByReleaseGroupAndSlot.set(key, {
