@@ -17,16 +17,13 @@ import {
 import * as tidal from "./tidal.js";
 import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "./tidal-playback.js";
 import { hasSpatialAudioQuality } from "../../../utils/spatial-audio.js";
-import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import { db } from "../../../database.js";
-import { Config } from "../../config/config.js";
-import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgCommand, parseProgress } from "./tidal-dl-ng.js";
+import { syncTiddlSettings } from "./tiddl.js";
 import { downloadBackendRegistry } from "../../download/download-backend.js";
 import { TiddlBackend } from "./tiddl-backend.js";
-import { loadStoredTidalToken, syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
-import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../download/orpheus.js";
+import { syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 
 export type TidalAlbumDownloadTrackInfo = {
   title: string;
@@ -481,8 +478,7 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async syncSettings(downloadPath?: string): Promise<void> {
-    await syncDiscogeniusSettings(downloadPath);
-    await syncOrpheusSettings(downloadPath);
+    syncTiddlSettings(downloadPath);
   }
 
   async syncCredentials(): Promise<void> {

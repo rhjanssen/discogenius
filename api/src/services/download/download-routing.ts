@@ -4,7 +4,6 @@ import { streamingProviderManager } from "../providers/index.js";
 
 export type StreamingSourceId = string;
 export type DownloadMediaType = "album" | "track" | "video";
-export type DownloadBackendId = "orpheus" | "tidal-dl-ng";
 
 const DOWNLOAD_FOLDERS: Record<DownloadMediaType, string> = {
     album: "albums",
@@ -18,10 +17,6 @@ export function getDefaultStreamingSource(): StreamingSourceId {
     } catch {
         return "tidal";
     }
-}
-
-export function getDownloadBackendForMediaType(type: DownloadMediaType): DownloadBackendId {
-    return type === "video" ? "tidal-dl-ng" : "orpheus";
 }
 
 export function getDownloadWorkspacePath(

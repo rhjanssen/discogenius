@@ -1,4 +1,3 @@
-import path from "path";
 import { Config, CONFIG_DIR, DB_PATH } from "../config/config.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
 import {
@@ -9,11 +8,11 @@ import {
   type HealthCheckResult,
   type HealthOverallStatus,
 } from "../../utils/health.js";
-import { getOrpheusCapabilitySnapshot, ORPHEUS_RUNTIME_DIR, ORPHEUS_SETTINGS_FILE } from "../download/orpheus.js";
 import {
   getTiddlCapabilitySnapshot,
+  getTiddlBinary,
   TIDDL_CONFIG_DIR,
-} from "../providers/tidal/tiddl-backend.js";
+} from "../providers/tidal/tiddl.js";
 
 export interface HealthDiagnosticsSnapshot {
   checkedAt: string;
@@ -29,19 +28,14 @@ export interface HealthDiagnosticsSnapshot {
       video: HealthCheckResult;
     };
     runtime: {
-      orpheus: HealthCheckResult;
-      orpheusState: HealthCheckResult;
       tiddl: HealthCheckResult;
     };
   };
   tools: {
-    git: HealthCheckResult;
-    python: HealthCheckResult;
     ffmpeg: HealthCheckResult;
     tiddl: HealthCheckResult;
   };
   backends: {
-    orpheus: BackendCapabilitySnapshot;
     tiddl: BackendCapabilitySnapshot;
   };
   issues: HealthCheckResult[];
@@ -102,26 +96,6 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
     kind: "dir",
     displayName: "Video library directory",
   });
-  const IS_DOCKER = process.env.DOCKER === "true";
-  const orpheusRuntimeCheck = downloadsDisabled
-    ? disabledDownloadCheck("paths.runtime.orpheus", "Orpheus runtime", { path: ORPHEUS_RUNTIME_DIR })
-    : IS_DOCKER
-    ? {
-      scope: "paths.runtime.orpheus",
-      status: "ok" as const,
-      message: "Orpheus runtime baked into Docker image",
-      details: { path: ORPHEUS_RUNTIME_DIR },
-    }
-    : checkWritablePath("paths.runtime.orpheus", ORPHEUS_RUNTIME_DIR, {
-      kind: "dir",
-      displayName: "Orpheus runtime directory",
-    });
-  const orpheusStateCheck = downloadsDisabled
-    ? disabledDownloadCheck("paths.runtime.orpheusState", "Orpheus state directory", { path: path.dirname(ORPHEUS_SETTINGS_FILE) })
-    : checkWritablePath("paths.runtime.orpheusState", path.dirname(ORPHEUS_SETTINGS_FILE), {
-      kind: "dir",
-      displayName: "Orpheus state directory",
-    });
   const tiddlConfigCheck = downloadsDisabled
     ? disabledDownloadCheck("paths.runtime.tiddl", "tiddl config directory", { path: TIDDL_CONFIG_DIR })
     : checkWritablePath("paths.runtime.tiddl", TIDDL_CONFIG_DIR, {
@@ -129,26 +103,14 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       displayName: "tiddl config directory",
     });
 
-  const gitCheck = checkCommandAvailability("tools.git", "git", "Git");
-  const pythonCheck = checkCommandAvailability(
-    "tools.python",
-    process.platform === "win32" ? "python" : "python3",
-    "Python",
-  );
   const ffmpegCheck = downloadsDisabled
     ? disabledDownloadCheck("tools.ffmpeg", "FFmpeg", { command: "ffmpeg" })
     : checkCommandAvailability("tools.ffmpeg", "ffmpeg", "FFmpeg");
   const tiddlCommandCheck = downloadsDisabled
-    ? disabledDownloadCheck("tools.tiddl", "tiddl", { command: process.env.TIDDL_BIN || "tiddl" })
-    : checkCommandAvailability(
-      "tools.tiddl",
-      process.env.TIDDL_BIN || "tiddl",
-      "tiddl",
-    );
+    ? disabledDownloadCheck("tools.tiddl", "tiddl", { command: getTiddlBinary() })
+    : checkCommandAvailability("tools.tiddl", getTiddlBinary(), "tiddl");
 
-  const rawOrpheus = getOrpheusCapabilitySnapshot();
   const rawTiddl = getTiddlCapabilitySnapshot();
-  const orpheus = downloadsDisabled ? markBackendDisabled(rawOrpheus) : rawOrpheus;
   const tiddl = downloadsDisabled ? markBackendDisabled(rawTiddl) : rawTiddl;
   const issues = flattenChecks(
     [
@@ -158,15 +120,10 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
       musicPathCheck,
       spatialPathCheck,
       videoPathCheck,
-      orpheusRuntimeCheck,
-      orpheusStateCheck,
       tiddlConfigCheck,
-      gitCheck,
-      pythonCheck,
       ffmpegCheck,
       tiddlCommandCheck,
     ],
-    orpheus.checks,
     tiddl.checks,
   );
 
@@ -184,19 +141,14 @@ export function collectHealthDiagnosticsSnapshot(): HealthDiagnosticsSnapshot {
         video: videoPathCheck,
       },
       runtime: {
-        orpheus: orpheusRuntimeCheck,
-        orpheusState: orpheusStateCheck,
         tiddl: tiddlConfigCheck,
       },
     },
     tools: {
-      git: gitCheck,
-      python: pythonCheck,
       ffmpeg: ffmpegCheck,
       tiddl: tiddlCommandCheck,
     },
     backends: {
-      orpheus,
       tiddl,
     },
     issues,

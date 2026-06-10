@@ -1,11 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CONFIG_DIR, updateConfig } from "../../config/config.js";
-import {
-    clearTidalDlNgToken,
-    syncTokenToTidalDlNg,
-} from "./tidal-dl-ng.js";
-import { clearOrpheusSession, syncTokenToOrpheusSession } from "../../download/orpheus.js";
+import { clearTiddlAuth, syncTokenToTiddl } from "./tiddl.js";
 import { resolveTidalAuthClientConfig } from "../../config/provider-client-config.js";
 
 const TIDAL_AUTH_DIR = path.join(CONFIG_DIR, "providers", "tidal");
@@ -152,11 +148,11 @@ export function saveStoredTidalToken(token: TidalAuthToken): void {
     fs.writeFileSync(TIDAL_AUTH_TOKEN_FILE, JSON.stringify(token, null, 2), "utf-8");
     cacheAccountInfo(token.user);
 
-    const expiresAt = token.expires_at || Math.floor(Date.now() / 1000) + 3600;
-    syncTokenToTidalDlNg(token.access_token, token.refresh_token || "", expiresAt);
-    void syncTokenToOrpheusSession(token).catch((error) => {
-        console.error("[TIDAL-AUTH] Failed to sync Orpheus session:", error);
-    });
+    try {
+        syncTokenToTiddl(token);
+    } catch (error) {
+        console.error("[TIDAL-AUTH] Failed to sync tiddl auth:", error);
+    }
 }
 
 export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
@@ -165,9 +161,7 @@ export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
         return false;
     }
 
-    const expiresAt = token.expires_at || Math.floor(Date.now() / 1000) + 3600;
-    syncTokenToTidalDlNg(token.access_token, token.refresh_token || "", expiresAt);
-    await syncTokenToOrpheusSession(token);
+    syncTokenToTiddl(token);
     return true;
 }
 
@@ -180,8 +174,7 @@ export function clearStoredTidalToken(): void {
         console.error("[TIDAL-AUTH] Failed to clear token:", error);
     }
 
-    clearTidalDlNgToken();
-    clearOrpheusSession();
+    clearTiddlAuth();
     activeDeviceLogin = null;
 
     updateConfig("account", {

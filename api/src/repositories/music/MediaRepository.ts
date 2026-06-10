@@ -89,8 +89,8 @@ export interface MediaInsert {
 export type LibraryType = 'music' | 'spatial' | 'music_video';
 
 /**
- * Quality profiles based on tidal-dl-ng download settings
- * Maps to tidal-dl-ng quality_audio: 'LOW' | 'HIGH' | 'LOSSLESS' | 'HIRES_LOSSLESS'
+ * Quality profiles aligned with tiddl track qualities
+ * (low = 96k AAC, normal = 320k AAC, high = 16-bit FLAC, max = up to 24-bit/192kHz FLAC)
  */
 export type QualityProfile = 'max' | 'high' | 'normal' | 'low';
 
@@ -190,9 +190,8 @@ export function getQualityRank(
         };
         return ranks[normalizedQuality] || 0;
     } else {
-        // High/Normal/Low profiles: Prefer standard Lossless over Hi-Res
-        // For these profiles, we download Lossless and let tidal-dl-ng handle conversion
-        // Hi-Res files are larger with no benefit when converting to lossy
+        // High/Normal/Low profiles: Prefer standard Lossless over Hi-Res.
+        // Hi-Res files are larger with no benefit at these target qualities.
         const ranks: Record<string, number> = {
             'LOSSLESS': 2,
             'HIRES_LOSSLESS': 1,

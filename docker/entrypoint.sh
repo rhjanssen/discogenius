@@ -78,13 +78,15 @@ prepare_writable_dirs() {
   ensure_dir /library/spatial-music
   ensure_dir /library/music-videos
 
-  # Clean up stale runtime dir from pre-1.2 installations (Orpheus is now baked into the image)
-  if [[ -d /config/runtime ]]; then
-    rm -rf /config/runtime
-  fi
+  # Clean up stale runtime dirs from pre-2.0 installations (Orpheus/tidal-dl-ng era)
+  for stale in /config/runtime /config/orpheusdl /config/tidal_dl_ng-dev; do
+    if [[ -d "$stale" ]]; then
+      rm -rf "$stale"
+    fi
+  done
 
-  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /library /opt/orpheusdl; then
-    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, /library, or /opt/orpheusdl." >&2
+  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /library; then
+    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, or /library." >&2
   fi
 
   if ! chmod -R u+rwX,g+rwX /config /downloads /library; then

@@ -1028,7 +1028,7 @@ export class ArtistQueryService {
                         quality: video.quality || "MP4_1080P",
                         monitored_lock: Boolean(video.monitored_lock),
                         is_monitored: Boolean(video.monitored),
-                        downloaded: Boolean(video.is_downloaded) ? 1 : 0,
+                        downloaded: video.is_downloaded ? 1 : 0,
                         is_downloaded: Boolean(video.is_downloaded),
                     })),
                 }],

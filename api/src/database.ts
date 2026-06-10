@@ -1466,12 +1466,13 @@ function initializeDefaultData(migrationSummary: MigrationRunSummary) {
   if (profileCount.count === 0) {
     console.log("📋 Creating default quality profiles...");
 
-    // Quality profiles define what to MONITOR, not what tidal-dl-ng downloads.
+    // Quality profiles define what to MONITOR, not what the downloader fetches.
     // TIDAL only reports LOSSLESS and HIRES_LOSSLESS as quality metadata.
-    // When user wants LOW/HIGH AAC, we still monitor LOSSLESS and let tidal-dl-ng convert.
+    // When the user wants lossy AAC we still monitor LOSSLESS; tiddl picks the
+    // delivery tier from its track_quality setting.
 
     // Max Quality - monitors HIRES_LOSSLESS, upgrades from LOSSLESS to HIRES_LOSSLESS
-    // Use with tidal-dl-ng quality_audio=HIRES_LOSSLESS to get 24-bit Hi-Res files
+    // Pair with audio_quality=max to get 24-bit Hi-Res files
     db.prepare(`
       INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items)
       VALUES (?, ?, ?, ?)
@@ -1483,7 +1484,7 @@ function initializeDefaultData(migrationSummary: MigrationRunSummary) {
     );
 
     // High Quality - monitors LOSSLESS, no upgrades needed
-    // Use with tidal-dl-ng quality_audio=LOSSLESS to get 16-bit FLAC files
+    // Pair with audio_quality=high to get 16-bit FLAC files
     db.prepare(`
       INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items)
       VALUES (?, ?, ?, ?)
@@ -1494,8 +1495,8 @@ function initializeDefaultData(migrationSummary: MigrationRunSummary) {
       JSON.stringify(["LOSSLESS"])
     );
 
-    // Normal Quality - monitors LOSSLESS, tidal-dl-ng converts to 320kbps AAC on download
-    // Use with tidal-dl-ng quality_audio=HIGH setting
+    // Normal Quality - monitors LOSSLESS, downloads 320kbps AAC
+    // Pair with audio_quality=normal
     db.prepare(`
       INSERT INTO quality_profiles (name, upgrade_allowed, cutoff, items)
       VALUES (?, ?, ?, ?)

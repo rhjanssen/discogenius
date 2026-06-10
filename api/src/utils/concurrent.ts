@@ -2,7 +2,6 @@ import pLimit from 'p-limit';
 
 /**
  * Concurrency configuration for scanning
- * Based on tidal-dl-ng (8 workers default)
  */
 export interface ConcurrencyConfig {
     albumWorkers: number;
@@ -10,9 +9,7 @@ export interface ConcurrencyConfig {
 }
 
 /**
- * Default conservative configuration
- * - albumWorkers: 4 (conservative)
- * - trackWorkers: 6 (between 4 and tidal-dl-ng's 8 default)
+ * Default conservative configuration, tuned to stay under TIDAL rate limits.
  */
 export const DEFAULT_CONFIG: ConcurrencyConfig = {
     albumWorkers: 4,

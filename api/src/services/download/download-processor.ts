@@ -60,7 +60,7 @@ const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1
 const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
 const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
 
-// Docker: tidal-dl-ng/ffmpeg installed globally via Dockerfile. Local dev uses PATH + buildTidalDlNgEnv.
+// Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
 
 /**
  * Enhanced Download Processor with real-time progress tracking
@@ -972,16 +972,16 @@ export class DownloadProcessor {
             await this.downloadItem(job.id, providerId, type, payload);
 
             // Check if the item-specific download path has any media files before attempting organization.
-            // tidal-dl-ng may skip all items (e.g. "already in history") and exit successfully
+            // tiddl may skip all items (already downloaded or unavailable) and exit successfully
             // without producing any new files.
             if (!await this.hasDownloadedMediaFiles(this.currentDownloadPath)) {
-                // tidal-dl-ng exited 0 but downloaded nothing.
+                // The downloader exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
                     const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadJobPayload);
 
                     if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done > 0) {
-                        // Album has at least some tracks downloaded.  tidal-dl-ng
+                        // Album has at least some tracks downloaded.  The downloader
                         // couldn't add anything new (items skipped or unavailable).
                         const pct = Math.round(row.done / row.total * 100);
                         console.log(
@@ -1027,8 +1027,8 @@ export class DownloadProcessor {
 
                 // Nothing in library either — something is genuinely wrong
                 throw new Error(
-                    `tidal-dl-ng finished successfully but no files were downloaded for ${type} ${providerId}. ` +
-                    `All items may have been skipped (already in tidal-dl-ng history or unavailable on TIDAL).`
+                    `tiddl finished successfully but no files were downloaded for ${type} ${providerId}. ` +
+                    `All items may have been skipped (already downloaded or unavailable on TIDAL).`
                 );
             }
 

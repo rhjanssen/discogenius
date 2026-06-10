@@ -13,13 +13,6 @@ const TIDAL_HIFI_BASE = "https://api.tidalhifi.com/v1";
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1/oauth2";
 const TIDAL_CLIENT_TOKEN = "wdgaB1CilGA-S_sj"; // Public client token used by TIDAL web clients
 
-// tidal-dl-ng credentials (base64 decoded: client_id;client_secret)
-const TIDAL_DL_NG_CREDENTIALS = Buffer.from(
-  "ZlgySnhkbW50WldLMGl4VDsxTm45QWZEQWp4cmdKRkpiS05XTGVBeUtHVkdtSU51WFBQTEhWWEF2eEFnPQ==",
-  "base64"
-).toString();
-const [CLIENT_ID, CLIENT_SECRET] = TIDAL_DL_NG_CREDENTIALS.split(";");
-
 export interface TidalToken {
   access_token: string;
   refresh_token: string;
@@ -643,8 +636,8 @@ export async function tidalApiRequest(endpoint: string): Promise<unknown> {
 }
 
 /**
- * Refresh Tidal token using tidal-dl-ng
- * tidal-dl-ng handles token refresh automatically, but we can trigger it
+ * Refresh the stored TIDAL token when it is close to expiry.
+ * The refreshed token is re-synced to the downloader (tiddl) on save.
  */
 export async function refreshTidalToken(force: boolean = false): Promise<void> {
   const token = loadToken();
