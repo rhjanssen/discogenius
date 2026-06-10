@@ -12,9 +12,9 @@ import {
   ProviderAuthStatus,
   ProviderDownloadOptions,
 } from "../streaming-provider.js";
-import { ensureOrpheusRuntime, spawnOrpheusDownload, parseOrpheusProgress } from "../../orpheus.js";
-import { downloadBackendRegistry } from "../../download-backend.js";
-import { OrpheusBackend } from "../../orpheus-backend.js";
+import { ensureOrpheusRuntime, spawnOrpheusDownload, parseOrpheusProgress } from "../../download/orpheus.js";
+import { downloadBackendRegistry } from "../../download/download-backend.js";
+import { OrpheusBackend } from "../../download/orpheus-backend.js";
 
 export class AppleMusicProvider implements StreamingProvider {
   readonly id = "apple-music";

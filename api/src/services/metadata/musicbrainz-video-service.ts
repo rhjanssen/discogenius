@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../fingerprint.js";
+import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../mediafiles/fingerprint.js";
 
 type MusicBrainzRecording = {
   id?: string;
@@ -51,9 +51,9 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
   }
 
   const existing = db.prepare(`
-    SELECT Id
+    SELECT id
     FROM ArtistMetadata
-    WHERE ForeignArtistId = ? OR mbid = ?
+    WHERE foreign_artist_id = ? OR mbid = ?
     LIMIT 1
   `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
   if (existing?.Id != null) {
@@ -72,7 +72,7 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
 
   db.prepare(`
     INSERT OR IGNORE INTO ArtistMetadata (
-      ForeignArtistId, mbid, name, data, updated_at
+      foreign_artist_id, mbid, name, data, updated_at
     ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).run(
     normalizedArtistMbid,
@@ -82,9 +82,9 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
   );
 
   const row = db.prepare(`
-    SELECT Id
+    SELECT id
     FROM ArtistMetadata
-    WHERE ForeignArtistId = ? OR mbid = ?
+    WHERE foreign_artist_id = ? OR mbid = ?
     LIMIT 1
   `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
 
@@ -139,8 +139,8 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
 
   db.prepare(`
     INSERT OR IGNORE INTO Recordings (
-      ForeignRecordingId, mbid, ArtistMetadataId, artist_mbid, title,
-      artist_credit, length_ms, IsVideo, MetadataStatus, isrcs, data, updated_at
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
+      artist_credit, length_ms, is_video, metadata_status, isrcs, data, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, ?, CURRENT_TIMESTAMP)
   `).run(
     recordingMbid,
@@ -158,17 +158,17 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   db.prepare(`
     UPDATE Recordings
     SET
-      ArtistMetadataId = COALESCE(ArtistMetadataId, ?),
+      artist_metadata_id = COALESCE(artist_metadata_id, ?),
       artist_mbid = COALESCE(artist_mbid, ?),
       title = COALESCE(NULLIF(?, ''), title),
       artist_credit = COALESCE(artist_credit, ?),
       length_ms = COALESCE(?, length_ms),
-      IsVideo = CASE WHEN ? = 1 THEN 1 ELSE IsVideo END,
-      MetadataStatus = 'musicbrainz',
+      is_video = CASE WHEN ? = 1 THEN 1 ELSE is_video END,
+      metadata_status = 'musicbrainz',
       isrcs = COALESCE(?, isrcs),
       data = COALESCE(?, data),
       updated_at = CURRENT_TIMESTAMP
-    WHERE ForeignRecordingId = ? OR mbid = ?
+    WHERE foreign_recording_id = ? OR mbid = ?
   `).run(
     artistMetadataId,
     recordingArtistMbid,
@@ -183,9 +183,9 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   );
 
   const row = db.prepare(`
-    SELECT Id
+    SELECT id
     FROM Recordings
-    WHERE ForeignRecordingId = ? OR mbid = ?
+    WHERE foreign_recording_id = ? OR mbid = ?
     LIMIT 1
   `).get(recordingMbid, recordingMbid) as { Id?: number | null } | undefined;
 
@@ -215,9 +215,8 @@ function upsertMusicVideoRelations(video: MusicBrainzRecording, sourceRecordingI
 
     db.prepare(`
       INSERT OR IGNORE INTO RecordingRelations (
-        SourceRecordingId, TargetRecordingId, SourceForeignRecordingId,
-        TargetForeignRecordingId, RelationType, ForeignRelationTypeId,
-        Source, Confidence, Data, UpdatedAt
+        source_recording_id, target_recording_id, source_foreign_recording_id,
+        target_foreign_recording_id, relation_type, foreign_relation_type_id, source, confidence, Data, updated_at
       ) VALUES (?, ?, ?, ?, 'music_video_for', ?, 'musicbrainz', 1, ?, CURRENT_TIMESTAMP)
     `).run(
       sourceRecordingId,
@@ -238,7 +237,7 @@ export async function syncMusicBrainzVideosForArtist(
     SELECT COUNT(*) AS count
     FROM Recordings
     WHERE artist_mbid = ?
-      AND IsVideo = 1
+      AND is_video = 1
   `).get(artistMbid) as { count?: number } | undefined;
 
   if (!options.force && Number(existing?.count || 0) > 0) {

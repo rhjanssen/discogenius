@@ -69,8 +69,8 @@ function insertCanonicalArtist() {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES ('artist-mbid', 'Search Artist')
-    RETURNING Id
-  `).get() as { Id: number };
+    RETURNING id
+  `).get() as { id: number };
 
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, monitored)
@@ -92,7 +92,7 @@ test("local search returns canonical tracks and ignores legacy provider-media tr
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Search Album', 'Official', 'XW', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, IsVideo)
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video)
     VALUES ('recording-mbid', 'artist-mbid', 'Canonical Track Recording', 181000, 0)
   `).run();
   dbModule.db.prepare(`
@@ -134,15 +134,15 @@ test("local search returns canonical videos and ignores legacy provider-media vi
   const artist = insertCanonicalArtist();
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
-      ForeignRecordingId, ArtistMetadataId, artist_mbid,
-      title, length_ms, IsVideo, MetadataStatus, ReleaseDate, CoverImageId, Monitored
+      foreign_recording_id, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, metadata_status, release_date, cover_image_id, monitored
     )
     VALUES (
       'provider-video-1', ?, 'artist-mbid',
       'Canonical Search Video', 201000, 1, 'provider_only', '2023-02-03', 'recording-cover', 1
     )
-    RETURNING Id
-  `).get(artist.Id) as { Id: number };
+    RETURNING id
+  `).get(artist.id) as { id: number };
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -153,7 +153,7 @@ test("local search returns canonical videos and ignores legacy provider-media vi
       'tidal', 'video', 'provider-video-1', 'artist-mbid', ?,
       'Canonical Search Video', 'FHD', 201, '2023-02-03', 'provider-cover', 'verified'
     )
-  `).run(video.Id);
+  `).run(video.id);
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, title, duration, type, explicit, quality, monitored
@@ -166,7 +166,7 @@ test("local search returns canonical videos and ignores legacy provider-media vi
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.results.videos.length, 1);
-  assert.equal(res.body.results.videos[0].id, String(video.Id));
+  assert.equal(res.body.results.videos[0].id, String(video.id));
   assert.equal(res.body.results.videos[0].quality, "FHD");
   assert.equal(res.body.results.videos[0].monitored, true);
 });

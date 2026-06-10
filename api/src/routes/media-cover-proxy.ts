@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { getRegisteredMediaCoverProxyUrl } from "../services/metadata/media-cover-service.js";
-import { getDiscogeniusUserAgent } from "../services/user-agent.js";
+import { getDiscogeniusUserAgent } from "../services/config/user-agent.js";
 
 const router = Router();
 

@@ -1,9 +1,9 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download-backend.js";
+import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
 import { checkCommandAvailability, checkWritablePath, rollupHealthStatus, BackendCapabilitySnapshot } from "../../../utils/health.js";
-import { Config, CONFIG_DIR } from "../../config.js";
+import { Config, CONFIG_DIR } from "../../config/config.js";
 
 export const TIDDL_CONFIG_DIR = path.join(CONFIG_DIR, ".tiddl");
 export const TIDDL_AUTH_FILE = path.join(TIDDL_CONFIG_DIR, "auth.json");

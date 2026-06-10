@@ -1,8 +1,8 @@
 import fs from "fs";
 import { db } from "../../database.js";
-import { resolveStoredLibraryPath } from "../library-paths.js";
-import { normalizeResolvedPath } from "../path-utils.js";
-import type { LocalGroup, TidalMatch } from "../import-types.js";
+import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
+import { normalizeResolvedPath } from "../mediafiles/path-utils.js";
+import type { LocalGroup, TidalMatch } from "../mediafiles/import-types.js";
 
 type LibraryRow = {
     file_path: string;

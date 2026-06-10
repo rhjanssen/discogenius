@@ -48,9 +48,9 @@ function seedCanonicalRelease() {
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 2, 2);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, IsVideo) VALUES (?, ?, ?, ?)")
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("recording-1", "Track One", "artist-mbid", 0);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, IsVideo) VALUES (?, ?, ?, ?)")
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("recording-2", "Track Two", "artist-mbid", 0);
   dbModule.db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { LibraryBulkActionService, LIBRARY_BULK_ACTIONS, LIBRARY_BULK_ENTITIES } from "../services/library-bulk-actions.js";
+import { LibraryBulkActionService, LIBRARY_BULK_ACTIONS, LIBRARY_BULK_ENTITIES } from "../services/music/library-bulk-actions.js";
 import {
     getEnumValue,
     getObjectBody,

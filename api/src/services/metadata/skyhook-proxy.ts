@@ -2,7 +2,7 @@ import { db } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
-import { getDiscogeniusUserAgent } from "../user-agent.js";
+import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 
 export interface LidarrArtist {
   id: string;

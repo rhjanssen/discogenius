@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { appEvents, AppEvent } from "../services/app-events.js";
-import type { AppEventPayloadMap } from "../services/app-events.js";
+import { appEvents, AppEvent } from "../services/jobs/app-events.js";
+import type { AppEventPayloadMap } from "../services/jobs/app-events.js";
 
 const router = Router();
 

@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
-import { DB_PATH } from "./services/config.js";
-import { getCurrentAppReleaseInfo } from "./services/app-release.js";
-import { resolveArtistFolderForPersistence } from "./services/artist-paths.js";
+import { DB_PATH } from "./services/config/config.js";
+import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
+import { resolveArtistFolderForPersistence } from "./services/music/artist-paths.js";
 
 let _db: Database.Database | null = null;
 
@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 20;
+const BASE_SCHEMA_VERSION = 22;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -210,7 +210,145 @@ function tableHasRows(tableName: string): boolean {
 const LEGACY_MIGRATIONS: Array<{ description: string; up: () => void }> = [];
 
 const LEGACY_SCHEMA_VERSION = LEGACY_MIGRATIONS.length;
-const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
+const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [
+  {
+    version: 21,
+    description: "Rename extra file tables and RecordingRelations column casing to snake_case",
+    up: () => {
+      const metadataFilesRenames = [
+        ["ArtistId", "artist_id"],
+        ["AlbumId", "album_id"],
+        ["MediaId", "media_id"],
+        ["Added", "added"],
+        ["Hash", "hash"],
+        ["Type", "type"]
+      ];
+      for (const [oldCol, newCol] of metadataFilesRenames) {
+        if (hasTable("MetadataFiles") && hasColumn("MetadataFiles", oldCol) && !hasColumn("MetadataFiles", newCol)) {
+          db.exec(`ALTER TABLE MetadataFiles RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      const lyricFilesRenames = [
+        ["ArtistId", "artist_id"],
+        ["AlbumId", "album_id"],
+        ["MediaId", "media_id"],
+        ["Added", "added"],
+        ["Quality", "quality"]
+      ];
+      for (const [oldCol, newCol] of lyricFilesRenames) {
+        if (hasTable("LyricFiles") && hasColumn("LyricFiles", oldCol) && !hasColumn("LyricFiles", newCol)) {
+          db.exec(`ALTER TABLE LyricFiles RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      const extraFilesRenames = [
+        ["ArtistId", "artist_id"],
+        ["AlbumId", "album_id"],
+        ["MediaId", "media_id"],
+        ["Added", "added"]
+      ];
+      for (const [oldCol, newCol] of extraFilesRenames) {
+        if (hasTable("ExtraFiles") && hasColumn("ExtraFiles", oldCol) && !hasColumn("ExtraFiles", newCol)) {
+          db.exec(`ALTER TABLE ExtraFiles RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      const recordingRelationsRenames = [
+        ["SourceRecordingId", "source_recording_id"],
+        ["TargetRecordingId", "target_recording_id"],
+        ["SourceForeignRecordingId", "source_foreign_recording_id"],
+        ["TargetForeignRecordingId", "target_foreign_recording_id"],
+        ["RelationType", "relation_type"],
+        ["ForeignRelationTypeId", "foreign_relation_type_id"],
+        ["Source", "source"],
+        ["Confidence", "confidence"],
+        ["Data", "data"],
+        ["CreatedAt", "created_at"],
+        ["UpdatedAt", "updated_at"]
+      ];
+      for (const [oldCol, newCol] of recordingRelationsRenames) {
+        if (hasTable("RecordingRelations") && hasColumn("RecordingRelations", oldCol) && !hasColumn("RecordingRelations", newCol)) {
+          db.exec(`ALTER TABLE RecordingRelations RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+    }
+  },
+  {
+    version: 22,
+    description: "Rename core MusicBrainz tables columns to snake_case",
+    up: () => {
+      // ArtistMetadata
+      const artistMetadataRenames = [
+        ["Id", "id"],
+        ["ForeignArtistId", "foreign_artist_id"]
+      ];
+      for (const [oldCol, newCol] of artistMetadataRenames) {
+        if (hasTable("ArtistMetadata") && hasColumn("ArtistMetadata", oldCol) && !hasColumn("ArtistMetadata", newCol)) {
+          db.exec(`ALTER TABLE ArtistMetadata RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      // Albums
+      const albumsRenames = [
+        ["Id", "id"],
+        ["ForeignAlbumId", "foreign_album_id"],
+        ["Monitored", "monitored"]
+      ];
+      for (const [oldCol, newCol] of albumsRenames) {
+        if (hasTable("Albums") && hasColumn("Albums", oldCol) && !hasColumn("Albums", newCol)) {
+          db.exec(`ALTER TABLE Albums RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      // AlbumReleases
+      const albumReleasesRenames = [
+        ["Id", "id"],
+        ["ForeignReleaseId", "foreign_release_id"],
+        ["Monitored", "monitored"]
+      ];
+      for (const [oldCol, newCol] of albumReleasesRenames) {
+        if (hasTable("AlbumReleases") && hasColumn("AlbumReleases", oldCol) && !hasColumn("AlbumReleases", newCol)) {
+          db.exec(`ALTER TABLE AlbumReleases RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      // Recordings
+      const recordingsRenames = [
+        ["Id", "id"],
+        ["ForeignRecordingId", "foreign_recording_id"],
+        ["ArtistMetadataId", "artist_metadata_id"],
+        ["IsVideo", "is_video"],
+        ["MetadataStatus", "metadata_status"],
+        ["ReleaseDate", "release_date"],
+        ["CoverImageId", "cover_image_id"],
+        ["CoverImageUrl", "cover_image_url"],
+        ["Monitored", "monitored"],
+        ["MonitoredLock", "monitored_lock"],
+        ["MonitoredAt", "monitored_at"],
+        ["LockedAt", "locked_at"]
+      ];
+      for (const [oldCol, newCol] of recordingsRenames) {
+        if (hasTable("Recordings") && hasColumn("Recordings", oldCol) && !hasColumn("Recordings", newCol)) {
+          db.exec(`ALTER TABLE Recordings RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+
+      // Tracks
+      const tracksRenames = [
+        ["Id", "id"],
+        ["ForeignTrackId", "foreign_track_id"],
+        ["ForeignRecordingId", "foreign_recording_id"],
+        ["Monitored", "monitored"]
+      ];
+      for (const [oldCol, newCol] of tracksRenames) {
+        if (hasTable("Tracks") && hasColumn("Tracks", oldCol) && !hasColumn("Tracks", newCol)) {
+          db.exec(`ALTER TABLE Tracks RENAME COLUMN ${oldCol} TO ${newCol}`);
+        }
+      }
+    }
+  }
+];
 
 function ensureMetadataIdentitySchema(): void {
   db.exec(`
@@ -231,93 +369,93 @@ function ensureMetadataIdentitySchema(): void {
 function ensureExtraFileSchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS MetadataFiles (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ArtistId TEXT NOT NULL,
-      AlbumId TEXT,
-      TrackFileId INTEGER,
-      MediaId TEXT,
-      RelativePath TEXT NOT NULL,
-      FilePath TEXT NOT NULL UNIQUE,
-      LibraryRoot TEXT NOT NULL,
-      Extension TEXT NOT NULL,
-      Added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      LastUpdated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      Hash TEXT,
-      Consumer TEXT NOT NULL DEFAULT 'Discogenius',
-      Type TEXT NOT NULL,
-      FileType TEXT NOT NULL,
-      Provider TEXT,
-      ProviderEntityType TEXT,
-      ProviderId TEXT,
-      LibrarySlot TEXT NOT NULL DEFAULT 'stereo',
-      ExpectedPath TEXT,
-      NeedsRename BOOLEAN NOT NULL DEFAULT 0,
-      FOREIGN KEY(TrackFileId) REFERENCES TrackFiles(id) ON DELETE SET NULL
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artist_id TEXT NOT NULL,
+      album_id TEXT,
+      track_file_id INTEGER,
+      media_id TEXT,
+      relative_path TEXT NOT NULL,
+      file_path TEXT NOT NULL UNIQUE,
+      library_root TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      hash TEXT,
+      consumer TEXT NOT NULL DEFAULT 'Discogenius',
+      type TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      provider TEXT,
+      provider_entity_type TEXT,
+      provider_id TEXT,
+      library_slot TEXT NOT NULL DEFAULT 'stereo',
+      expected_path TEXT,
+      needs_rename BOOLEAN NOT NULL DEFAULT 0,
+      FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS LyricFiles (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ArtistId TEXT NOT NULL,
-      AlbumId TEXT,
-      TrackFileId INTEGER,
-      MediaId TEXT,
-      RelativePath TEXT NOT NULL,
-      FilePath TEXT NOT NULL UNIQUE,
-      LibraryRoot TEXT NOT NULL,
-      Extension TEXT NOT NULL,
-      Added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      LastUpdated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      Provider TEXT,
-      ProviderEntityType TEXT,
-      ProviderId TEXT,
-      LibrarySlot TEXT NOT NULL DEFAULT 'stereo',
-      Quality TEXT,
-      CanonicalArtistMbid TEXT,
-      CanonicalReleaseGroupMbid TEXT,
-      CanonicalReleaseMbid TEXT,
-      CanonicalTrackMbid TEXT,
-      CanonicalRecordingMbid TEXT,
-      ExpectedPath TEXT,
-      NeedsRename BOOLEAN NOT NULL DEFAULT 0,
-      FOREIGN KEY(TrackFileId) REFERENCES TrackFiles(id) ON DELETE SET NULL
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artist_id TEXT NOT NULL,
+      album_id TEXT,
+      track_file_id INTEGER,
+      media_id TEXT,
+      relative_path TEXT NOT NULL,
+      file_path TEXT NOT NULL UNIQUE,
+      library_root TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      provider TEXT,
+      provider_entity_type TEXT,
+      provider_id TEXT,
+      library_slot TEXT NOT NULL DEFAULT 'stereo',
+      quality TEXT,
+      canonical_artist_mbid TEXT,
+      canonical_release_group_mbid TEXT,
+      canonical_release_mbid TEXT,
+      canonical_track_mbid TEXT,
+      canonical_recording_mbid TEXT,
+      expected_path TEXT,
+      needs_rename BOOLEAN NOT NULL DEFAULT 0,
+      FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS ExtraFiles (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ArtistId TEXT NOT NULL,
-      AlbumId TEXT,
-      TrackFileId INTEGER,
-      MediaId TEXT,
-      RelativePath TEXT NOT NULL,
-      FilePath TEXT NOT NULL UNIQUE,
-      LibraryRoot TEXT NOT NULL,
-      Extension TEXT NOT NULL,
-      Added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      LastUpdated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FileType TEXT NOT NULL,
-      Provider TEXT,
-      ProviderEntityType TEXT,
-      ProviderId TEXT,
-      LibrarySlot TEXT NOT NULL DEFAULT 'stereo',
-      ExpectedPath TEXT,
-      NeedsRename BOOLEAN NOT NULL DEFAULT 0,
-      FOREIGN KEY(TrackFileId) REFERENCES TrackFiles(id) ON DELETE SET NULL
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artist_id TEXT NOT NULL,
+      album_id TEXT,
+      track_file_id INTEGER,
+      media_id TEXT,
+      relative_path TEXT NOT NULL,
+      file_path TEXT NOT NULL UNIQUE,
+      library_root TEXT NOT NULL,
+      extension TEXT NOT NULL,
+      added DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      file_type TEXT NOT NULL,
+      provider TEXT,
+      provider_entity_type TEXT,
+      provider_id TEXT,
+      library_slot TEXT NOT NULL DEFAULT 'stereo',
+      expected_path TEXT,
+      needs_rename BOOLEAN NOT NULL DEFAULT 0,
+      FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_artist ON MetadataFiles(ArtistId, Type);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_album ON MetadataFiles(AlbumId, Type);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_file_type ON MetadataFiles(FileType);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_track_file ON MetadataFiles(TrackFileId);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_media ON MetadataFiles(MediaId, Type);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_provider ON MetadataFiles(Provider, ProviderEntityType, ProviderId);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_artist ON LyricFiles(ArtistId);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_track_file ON LyricFiles(TrackFileId);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_media ON LyricFiles(MediaId, LibrarySlot);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_provider ON LyricFiles(Provider, ProviderEntityType, ProviderId);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_recording ON LyricFiles(CanonicalRecordingMbid);
-    CREATE INDEX IF NOT EXISTS idx_extra_files_artist ON ExtraFiles(ArtistId, FileType);
-    CREATE INDEX IF NOT EXISTS idx_extra_files_track_file ON ExtraFiles(TrackFileId);
-    CREATE INDEX IF NOT EXISTS idx_extra_files_media ON ExtraFiles(MediaId, FileType);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_artist ON MetadataFiles(artist_id, type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_album ON MetadataFiles(album_id, type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_file_type ON MetadataFiles(file_type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_track_file ON MetadataFiles(track_file_id);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_media ON MetadataFiles(media_id, type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_provider ON MetadataFiles(provider, provider_entity_type, provider_id);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_artist ON LyricFiles(artist_id);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_track_file ON LyricFiles(track_file_id);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_media ON LyricFiles(media_id, library_slot);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_provider ON LyricFiles(provider, provider_entity_type, provider_id);
+    CREATE INDEX IF NOT EXISTS idx_lyric_files_recording ON LyricFiles(canonical_recording_mbid);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_artist ON ExtraFiles(artist_id, file_type);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_track_file ON ExtraFiles(track_file_id);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_media ON ExtraFiles(media_id, file_type);
   `);
 }
 
@@ -335,8 +473,8 @@ function ensureMediaCoverProxyCacheSchema(): void {
 function ensureMusicBrainzProviderSchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ArtistMetadata (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ForeignArtistId TEXT UNIQUE,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      foreign_artist_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
       name TEXT NOT NULL,
       sort_name TEXT,
@@ -354,8 +492,8 @@ function ensureMusicBrainzProviderSchema(): void {
     );
 
     CREATE TABLE IF NOT EXISTS Albums (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ForeignAlbumId TEXT UNIQUE,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      foreign_album_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
       artist_mbid TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -365,14 +503,14 @@ function ensureMusicBrainzProviderSchema(): void {
       disambiguation TEXT,
       data TEXT,
       images TEXT,
-      Monitored BOOLEAN NOT NULL DEFAULT 0,
+      monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS AlbumReleases (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ForeignReleaseId TEXT UNIQUE,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      foreign_release_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
       release_group_mbid TEXT NOT NULL,
       artist_mbid TEXT NOT NULL,
@@ -385,7 +523,7 @@ function ensureMusicBrainzProviderSchema(): void {
       media_count INT,
       track_count INT,
       data TEXT,
-      Monitored BOOLEAN NOT NULL DEFAULT 0,
+      monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
@@ -441,34 +579,34 @@ function ensureMusicBrainzProviderSchema(): void {
     );
 
     CREATE TABLE IF NOT EXISTS Recordings (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ForeignRecordingId TEXT UNIQUE,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      foreign_recording_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
-      ArtistMetadataId INTEGER,
+      artist_metadata_id INTEGER,
       artist_mbid TEXT,
       title TEXT NOT NULL,
       artist_credit TEXT,
       length_ms INT,
-      IsVideo BOOLEAN NOT NULL DEFAULT 0,
-      MetadataStatus TEXT NOT NULL DEFAULT 'musicbrainz',
-      ReleaseDate DATETIME,
-      CoverImageId TEXT,
-      CoverImageUrl TEXT,
-      Monitored BOOLEAN NOT NULL DEFAULT 0,
-      MonitoredLock BOOLEAN NOT NULL DEFAULT 0,
-      MonitoredAt DATETIME,
-      LockedAt DATETIME,
+      is_video BOOLEAN NOT NULL DEFAULT 0,
+      metadata_status TEXT NOT NULL DEFAULT 'musicbrainz',
+      release_date DATETIME,
+      cover_image_id TEXT,
+      cover_image_url TEXT,
+      monitored BOOLEAN NOT NULL DEFAULT 0,
+      monitored_lock BOOLEAN NOT NULL DEFAULT 0,
+      monitored_at DATETIME,
+      locked_at DATETIME,
       isrcs TEXT,
       data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(ArtistMetadataId) REFERENCES ArtistMetadata(Id) ON DELETE SET NULL,
+      FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS Tracks (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ForeignTrackId TEXT UNIQUE,
-      ForeignRecordingId TEXT,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      foreign_track_id TEXT UNIQUE,
+      foreign_recording_id TEXT,
       mbid TEXT UNIQUE,
       release_mbid TEXT NOT NULL,
       recording_mbid TEXT NOT NULL,
@@ -478,7 +616,7 @@ function ensureMusicBrainzProviderSchema(): void {
       title TEXT NOT NULL,
       length_ms INT,
       data TEXT,
-      Monitored BOOLEAN NOT NULL DEFAULT 0,
+      monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, medium_position, position),
       FOREIGN KEY(release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE CASCADE,
@@ -521,22 +659,22 @@ function ensureMusicBrainzProviderSchema(): void {
     );
 
     CREATE TABLE IF NOT EXISTS RecordingRelations (
-      Id INTEGER PRIMARY KEY AUTOINCREMENT,
-      SourceRecordingId INTEGER,
-      TargetRecordingId INTEGER,
-      SourceForeignRecordingId TEXT,
-      TargetForeignRecordingId TEXT,
-      RelationType TEXT NOT NULL,
-      ForeignRelationTypeId TEXT,
-      Source TEXT NOT NULL DEFAULT 'discogenius',
-      Confidence REAL,
-      Data TEXT,
-      CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(SourceRecordingId, TargetRecordingId, RelationType),
-      UNIQUE(SourceForeignRecordingId, TargetForeignRecordingId, RelationType),
-      FOREIGN KEY(SourceRecordingId) REFERENCES Recordings(Id) ON DELETE CASCADE,
-      FOREIGN KEY(TargetRecordingId) REFERENCES Recordings(Id) ON DELETE CASCADE
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_recording_id INTEGER,
+      target_recording_id INTEGER,
+      source_foreign_recording_id TEXT,
+      target_foreign_recording_id TEXT,
+      relation_type TEXT NOT NULL,
+      foreign_relation_type_id TEXT,
+      source TEXT NOT NULL DEFAULT 'discogenius',
+      confidence REAL,
+      data TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_recording_id, target_recording_id, relation_type),
+      UNIQUE(source_foreign_recording_id, target_foreign_recording_id, relation_type),
+      FOREIGN KEY(source_recording_id) REFERENCES Recordings(id) ON DELETE CASCADE,
+      FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS ReleaseGroupSlots (
@@ -587,10 +725,10 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_source ON RecordingRelations(SourceRecordingId, RelationType)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_target ON RecordingRelations(TargetRecordingId, RelationType)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_source ON RecordingRelations(SourceForeignRecordingId, RelationType)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_target ON RecordingRelations(TargetForeignRecordingId, RelationType)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_source ON RecordingRelations(source_recording_id, relation_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_target ON RecordingRelations(target_recording_id, relation_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_source ON RecordingRelations(source_foreign_recording_id, relation_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_target ON RecordingRelations(target_foreign_recording_id, relation_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist ON ReleaseGroupSlots(artist_mbid, slot)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_group_release_slot ON ReleaseGroupSlots(release_group_mbid, selected_release_mbid, slot)");

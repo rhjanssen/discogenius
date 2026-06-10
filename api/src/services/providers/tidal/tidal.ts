@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { updateConfig, Config } from "../../config.js";
+import { updateConfig, Config } from "../../config/config.js";
 import {
   loadStoredTidalToken,
   saveStoredTidalToken,

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
-import { UnmappedFilesService } from "../services/unmapped-files.js";
+import { UnmappedFilesService } from "../services/mediafiles/unmapped-files.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import {
     getEnumValue,

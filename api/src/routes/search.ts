@@ -281,12 +281,12 @@ router.get("/", async (req, res) => {
                 const localVideos = db
                     .prepare(
                         `SELECT
-              recording.Id AS id,
+              recording.id AS id,
               recording.title,
               artist.name AS artist_name,
-              COALESCE(recording.Monitored, 0) AS monitored,
-              COALESCE(recording.CoverImageId, provider_video.asset_id) AS cover,
-              COALESCE(recording.ReleaseDate, provider_video.release_date) AS release_date,
+              COALESCE(recording.monitored, 0) AS monitored,
+              COALESCE(recording.cover_image_id, provider_video.asset_id) AS cover,
+              COALESCE(recording.release_date, provider_video.release_date) AS release_date,
               COALESCE((
                 SELECT lf.quality
                 FROM TrackFiles lf
@@ -299,8 +299,8 @@ router.get("/", async (req, res) => {
                       AND lf.canonical_recording_mbid = recording.mbid
                     )
                     OR (
-                      recording.ForeignRecordingId IS NOT NULL
-                      AND lf.canonical_recording_mbid = recording.ForeignRecordingId
+                      recording.foreign_recording_id IS NOT NULL
+                      AND lf.canonical_recording_mbid = recording.foreign_recording_id
                     )
                   )
                 ORDER BY lf.verified_at DESC, lf.id DESC
@@ -309,7 +309,7 @@ router.get("/", async (req, res) => {
                 SELECT lf.quality
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'video'
-                  AND CAST(lf.media_id AS TEXT) = CAST(recording.Id AS TEXT)
+                  AND CAST(lf.media_id AS TEXT) = CAST(recording.id AS TEXT)
                 ORDER BY lf.verified_at DESC, lf.id DESC
                 LIMIT 1
               ), provider_video.quality) AS current_quality
@@ -322,14 +322,14 @@ router.get("/", async (req, res) => {
                 FROM ProviderItems preferred_provider_video
                 WHERE preferred_provider_video.entity_type = 'video'
                   AND (
-                    preferred_provider_video.recording_id = recording.Id
+                    preferred_provider_video.recording_id = recording.id
                     OR (
                       recording.mbid IS NOT NULL
                       AND preferred_provider_video.recording_mbid = recording.mbid
                     )
                     OR (
-                      recording.ForeignRecordingId IS NOT NULL
-                      AND preferred_provider_video.provider_id = recording.ForeignRecordingId
+                      recording.foreign_recording_id IS NOT NULL
+                      AND preferred_provider_video.provider_id = recording.foreign_recording_id
                     )
                   )
                 ORDER BY
@@ -338,10 +338,10 @@ router.get("/", async (req, res) => {
                   preferred_provider_video.provider_id ASC
                 LIMIT 1
               )
-            WHERE COALESCE(recording.IsVideo, 0) = 1
+            WHERE COALESCE(recording.is_video, 0) = 1
               AND recording.title LIKE ? ESCAPE '\\'
               AND (managed_artist.id IS NOT NULL OR provider_video.provider_id IS NOT NULL)
-            ORDER BY (recording.ReleaseDate IS NULL) ASC, recording.ReleaseDate DESC, recording.title ASC, recording.Id ASC
+            ORDER BY (recording.release_date IS NULL) ASC, recording.release_date DESC, recording.title ASC, recording.id ASC
             LIMIT ?`
                     )
                     .all(like, limit) as any[];

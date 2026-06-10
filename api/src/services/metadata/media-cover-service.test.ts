@@ -97,7 +97,7 @@ test("SkyHook album artwork wins over cached provider fallback artwork", () => {
     .run(
       albumMbid,
       "artist-mbid",
-      "Provider Fallback Album",
+      "provider Fallback Album",
       JSON.stringify([{ coverType: "Cover", url: providerUrl, source: "provider-fallback" }]),
     );
 

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { AudioTagService } from "../services/audio-tag-service.js";
-import { JobTypes, TaskQueueService } from "../services/queue.js";
+import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
+import { JobTypes, TaskQueueService } from "../services/jobs/queue.js";
 
 const router = Router();
 

@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { TaskQueueService } from "../services/queue.js";
-import { CommandManager } from "../services/command.js";
+import { TaskQueueService } from "../services/jobs/queue.js";
+import { CommandManager } from "../services/jobs/command.js";
 import { streamingProviderManager } from "../services/providers/index.js";
-import { getActivitySummary } from "../services/command-history.js";
+import { getActivitySummary } from "../services/jobs/command-history.js";
 import type { StatusOverviewContract, TaskQueueStatContract } from "../contracts/status.js";
 
 const router = Router();

@@ -9,7 +9,7 @@ router.post("/device-login", async (req, res) => {
     const provider = streamingProviderManager.getStreamingProvider(providerId);
 
     if (!provider.startDeviceLogin) {
-      return res.status(400).json({ detail: `Provider ${providerId} does not support device login.` });
+      return res.status(400).json({ detail: `provider ${providerId} does not support device login.` });
     }
 
     const result = await provider.startDeviceLogin();
@@ -38,7 +38,7 @@ router.get("/check-login", async (req, res) => {
     const provider = streamingProviderManager.getStreamingProvider(providerId);
 
     if (!provider.pollDeviceLogin) {
-      return res.status(400).json({ detail: `Provider ${providerId} does not support device login polling.` });
+      return res.status(400).json({ detail: `provider ${providerId} does not support device login polling.` });
     }
 
     res.json(await provider.pollDeviceLogin());

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getObjectBody, getOptionalBoolean, getOptionalInteger, isRequestValidationError, rejectUnknownKeys } from "../utils/request-validation.js";
-import { getSystemTask, listSystemTasks, runSystemTask, updateSystemTaskSchedule } from "../services/system-task-service.js";
+import { getSystemTask, listSystemTasks, runSystemTask, updateSystemTaskSchedule } from "../services/jobs/system-task-service.js";
 
 const router = Router();
 

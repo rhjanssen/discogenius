@@ -1,4 +1,4 @@
-import { getConfigSection } from "../config.js";
+import { getConfigSection } from "../config/config.js";
 import { db } from "../../database.js";
 import crypto from "crypto";
 import path from "path";
@@ -485,7 +485,7 @@ export async function resolveProviderArtworkUrl(
         return url;
       }
     } catch {
-      // Provider artwork is a fallback source; continue to the next candidate.
+      // provider artwork is a fallback source; continue to the next candidate.
     }
   }
 

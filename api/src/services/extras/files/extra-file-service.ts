@@ -28,20 +28,20 @@ export type ExtraFileUpsertInput = {
 };
 
 export type ExtraFileBaseRecord = {
-  ArtistId: string;
-  AlbumId: string | null;
-  TrackFileId: number | null;
-  MediaId: string | null;
-  RelativePath: string;
-  FilePath: string;
-  LibraryRoot: string;
-  Extension: string;
-  Provider: string | null;
-  ProviderEntityType: string | null;
-  ProviderId: string | null;
-  LibrarySlot: string;
-  ExpectedPath: string | null;
-  NeedsRename: number;
+  artist_id: string;
+  album_id: string | null;
+  track_file_id: number | null;
+  media_id: string | null;
+  relative_path: string;
+  file_path: string;
+  library_root: string;
+  extension: string;
+  provider: string | null;
+  provider_entity_type: string | null;
+  provider_id: string | null;
+  library_slot: string;
+  expected_path: string | null;
+  needs_rename: number;
 };
 
 function nullableText(value: unknown): string | null {
@@ -92,20 +92,20 @@ export class ExtraFileService {
     const expectedPath = input.expectedPath || input.filePath;
 
     return {
-      ArtistId: input.artistId,
-      AlbumId: nullableText(input.albumId),
-      TrackFileId: this.resolveTrackFileId(input),
-      MediaId: nullableText(input.mediaId),
-      RelativePath: relativePath || path.basename(input.filePath),
-      FilePath: input.filePath,
-      LibraryRoot: input.libraryRoot,
-      Extension: extension,
-      Provider: nullableText(input.provider),
-      ProviderEntityType: nullableText(input.providerEntityType),
-      ProviderId: nullableText(input.providerId),
-      LibrarySlot: nullableText(input.librarySlot) || "stereo",
-      ExpectedPath: expectedPath,
-      NeedsRename: expectedPath && expectedPath !== input.filePath ? 1 : 0,
+      artist_id: input.artistId,
+      album_id: nullableText(input.albumId),
+      track_file_id: this.resolveTrackFileId(input),
+      media_id: nullableText(input.mediaId),
+      relative_path: relativePath || path.basename(input.filePath),
+      file_path: input.filePath,
+      library_root: input.libraryRoot,
+      extension: extension,
+      provider: nullableText(input.provider),
+      provider_entity_type: nullableText(input.providerEntityType),
+      provider_id: nullableText(input.providerId),
+      library_slot: nullableText(input.librarySlot) || "stereo",
+      expected_path: expectedPath,
+      needs_rename: expectedPath && expectedPath !== input.filePath ? 1 : 0,
     };
   }
 
@@ -113,66 +113,66 @@ export class ExtraFileService {
     const base = this.buildBaseRecord(input);
     const info = db.prepare(`
       INSERT INTO ExtraFiles (
-        ArtistId, AlbumId, TrackFileId, MediaId,
-        RelativePath, FilePath, LibraryRoot, Extension,
-        FileType, Provider, ProviderEntityType, ProviderId,
-        LibrarySlot, ExpectedPath, NeedsRename, LastUpdated
+        artist_id, album_id, track_file_id, media_id,
+        relative_path, file_path, library_root, extension,
+        file_type, provider, provider_entity_type, provider_id,
+        library_slot, expected_path, needs_rename, last_updated
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(FilePath) DO UPDATE SET
-        ArtistId = excluded.ArtistId,
-        AlbumId = excluded.AlbumId,
-        TrackFileId = excluded.TrackFileId,
-        MediaId = excluded.MediaId,
-        RelativePath = excluded.RelativePath,
-        LibraryRoot = excluded.LibraryRoot,
-        Extension = excluded.Extension,
-        FileType = excluded.FileType,
-        Provider = excluded.Provider,
-        ProviderEntityType = excluded.ProviderEntityType,
-        ProviderId = excluded.ProviderId,
-        LibrarySlot = excluded.LibrarySlot,
-        ExpectedPath = excluded.ExpectedPath,
-        NeedsRename = excluded.NeedsRename,
-        LastUpdated = CURRENT_TIMESTAMP
+      ON CONFLICT(file_path) DO UPDATE SET
+        artist_id = excluded.artist_id,
+        album_id = excluded.album_id,
+        track_file_id = excluded.track_file_id,
+        media_id = excluded.media_id,
+        relative_path = excluded.relative_path,
+        library_root = excluded.library_root,
+        extension = excluded.extension,
+        file_type = excluded.file_type,
+        provider = excluded.provider,
+        provider_entity_type = excluded.provider_entity_type,
+        provider_id = excluded.provider_id,
+        library_slot = excluded.library_slot,
+        expected_path = excluded.expected_path,
+        needs_rename = excluded.needs_rename,
+        last_updated = CURRENT_TIMESTAMP
     `).run(
-      base.ArtistId,
-      base.AlbumId,
-      base.TrackFileId,
-      base.MediaId,
-      base.RelativePath,
-      base.FilePath,
-      base.LibraryRoot,
-      base.Extension,
+      base.artist_id,
+      base.album_id,
+      base.track_file_id,
+      base.media_id,
+      base.relative_path,
+      base.file_path,
+      base.library_root,
+      base.extension,
       input.fileType,
-      base.Provider,
-      base.ProviderEntityType,
-      base.ProviderId,
-      base.LibrarySlot,
-      base.ExpectedPath,
-      base.NeedsRename,
+      base.provider,
+      base.provider_entity_type,
+      base.provider_id,
+      base.library_slot,
+      base.expected_path,
+      base.needs_rename,
     );
 
     return Number(info.lastInsertRowid || this.findIdByPath("ExtraFiles", input.filePath) || 0);
   }
 
   static findIdByPath(tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles", filePath: string): number | null {
-    const row = db.prepare(`SELECT Id FROM ${tableName} WHERE FilePath = ? LIMIT 1`).get(filePath) as { Id?: number } | undefined;
-    return row?.Id ?? null;
+    const row = db.prepare(`SELECT id FROM ${tableName} WHERE file_path = ? LIMIT 1`).get(filePath) as { id?: number } | undefined;
+    return row?.id ?? null;
   }
 
   static deleteMissingRows(tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles", artistId?: string): number {
     const rows = db.prepare(`
-      SELECT Id, FilePath
+      SELECT id, file_path
       FROM ${tableName}
-      ${artistId ? "WHERE ArtistId = ?" : ""}
-    `).all(...(artistId ? [artistId] : [])) as Array<{ Id: number; FilePath: string }>;
+      ${artistId ? "WHERE artist_id = ?" : ""}
+    `).all(...(artistId ? [artistId] : [])) as Array<{ id: number; file_path: string }>;
 
-    const missingIds = rows.filter((row) => !fs.existsSync(row.FilePath)).map((row) => row.Id);
+    const missingIds = rows.filter((row) => !fs.existsSync(row.file_path)).map((row) => row.id);
     if (missingIds.length === 0) {
       return 0;
     }
 
-    const deleteStmt = db.prepare(`DELETE FROM ${tableName} WHERE Id = ?`);
+    const deleteStmt = db.prepare(`DELETE FROM ${tableName} WHERE id = ?`);
     db.transaction(() => {
       for (const id of missingIds) {
         deleteStmt.run(id);

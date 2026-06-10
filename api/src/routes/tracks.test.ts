@@ -9,12 +9,12 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.tracks.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
-let tracksRouter: typeof import("./tracks.js").default;
+let tracksRouter: typeof import("./v1/track.js").default;
 
 before(async () => {
   dbModule = await import("../database.js");
   dbModule.initDatabase();
-  tracksRouter = (await import("./tracks.js")).default;
+  tracksRouter = (await import("./v1/track.js")).default;
 });
 
 beforeEach(() => {
@@ -83,7 +83,7 @@ function insertCanonicalTrackFixture() {
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Track Album', 'Official', 'XW', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, IsVideo)
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video)
     VALUES ('recording-mbid', 'artist-mbid', 'Track Recording', 180000, 0)
   `).run();
   dbModule.db.prepare(`
@@ -126,7 +126,7 @@ test("track monitor route rejects provider-only track IDs", async () => {
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitored)
-    VALUES ('provider-track-only', 'artist-id', 'Provider Track', 'Track', 0, 'LOSSLESS', 0)
+    VALUES ('provider-track-only', 'artist-id', 'provider Track', 'Track', 0, 'LOSSLESS', 0)
   `).run();
 
   const res = createMockResponse();

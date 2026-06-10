@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { LibraryStatsQueryService } from "../services/library-stats-query-service.js";
+import { LibraryStatsQueryService } from "../services/music/library-stats-query-service.js";
 
 const router = Router();
 

@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { fileURLToPath } from "url";
-import { Config, REPO_ROOT } from "../../config.js";
+import { Config, REPO_ROOT } from "../../config/config.js";
 import {
     checkCommandAvailability,
     checkWritablePath,

@@ -1,7 +1,7 @@
 import fs from "fs";
 import { db } from "../../../database.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
-import { resolveStoredLibraryPath } from "../../library-paths.js";
+import { resolveStoredLibraryPath } from "../../mediafiles/library-paths.js";
 import { streamingProviderManager } from "../../providers/index.js";
 import type { ProviderLyrics } from "../../providers/streaming-provider.js";
 import { LyricFileService, type LyricFileRow } from "./lyric-file-service.js";
@@ -93,9 +93,9 @@ function lyricFileToResolved(
   sourceProviderId?: string | null,
 ): ResolvedLyrics | null {
   const resolvedPath = resolveStoredLibraryPath({
-    filePath: row.FilePath,
-    libraryRoot: row.LibraryRoot,
-    relativePath: row.RelativePath,
+    filePath: row.file_path,
+    libraryRoot: row.library_root,
+    relativePath: row.relative_path,
   });
 
   if (!fs.existsSync(resolvedPath)) {
@@ -107,17 +107,17 @@ function lyricFileToResolved(
     return null;
   }
 
-  const extension = nullableText(row.Extension)?.toLowerCase();
+  const extension = nullableText(row.extension)?.toLowerCase();
   const isSynced = extension === "lrc";
 
   return {
     text: isSynced ? "" : content,
     subtitles: isSynced ? content : "",
-    provider: row.Provider || provider,
+    provider: row.provider || provider,
     lyricsProvider: null,
     matchType,
-    sourceProviderId: sourceProviderId ?? row.ProviderId ?? null,
-    sourceFileId: row.Id,
+    sourceProviderId: sourceProviderId ?? row.provider_id ?? null,
+    sourceFileId: row.id,
   };
 }
 
@@ -160,9 +160,9 @@ function getRecordingIdForMedia(provider: string, media: ProviderMediaLyricsRow)
   const foreignRecordingId = nullableText(media.mbid);
   if (foreignRecordingId) {
     const row = db.prepare(`
-      SELECT Id
+      SELECT id
       FROM Recordings
-      WHERE ForeignRecordingId = ? OR mbid = ?
+      WHERE foreign_recording_id = ? OR mbid = ?
       LIMIT 1
     `).get(foreignRecordingId, foreignRecordingId) as { Id?: number | null } | undefined;
     if (row?.Id != null) {
@@ -237,17 +237,17 @@ function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow
       candidate.type,
       source_album.mb_release_group_id AS source_release_group_mbid,
       candidate_album.mb_release_group_id AS candidate_release_group_mbid,
-      lf.Id AS lyric_file_id,
-      lf.FilePath AS lyric_file_path,
-      lf.RelativePath AS lyric_relative_path,
-      lf.LibraryRoot AS lyric_library_root,
-      lf.Extension AS lyric_extension,
-      lf.Provider AS lyric_provider,
-      lf.ProviderId AS lyric_provider_id,
-      lf.CanonicalRecordingMbid AS lyric_recording_mbid
+      lf.id AS lyric_file_id,
+      lf.file_path AS lyric_file_path,
+      lf.relative_path AS lyric_relative_path,
+      lf.library_root AS lyric_library_root,
+      lf.extension AS lyric_extension,
+      lf.provider AS lyric_provider,
+      lf.provider_id AS lyric_provider_id,
+      lf.canonical_recording_mbid AS lyric_recording_mbid
     FROM ProviderMedia candidate
     JOIN LyricFiles lf
-      ON CAST(lf.MediaId AS TEXT) = CAST(candidate.id AS TEXT)
+      ON CAST(lf.media_id AS TEXT) = CAST(candidate.id AS TEXT)
     LEFT JOIN ProviderAlbums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
     LEFT JOIN ProviderAlbums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
     WHERE CAST(candidate.artist_id AS TEXT) = CAST(? AS TEXT)
@@ -298,21 +298,21 @@ function findSourceCandidates(media: ProviderMediaLyricsRow): CandidateRow[] {
 
 function lyricCandidateFile(candidate: LyricCandidateRow): LyricFileRow {
   return {
-    Id: candidate.lyric_file_id,
-    ArtistId: candidate.artist_id || "",
-    AlbumId: candidate.album_id,
-    TrackFileId: null,
-    MediaId: candidate.id,
-    RelativePath: candidate.lyric_relative_path || candidate.lyric_file_path,
-    FilePath: candidate.lyric_file_path,
-    LibraryRoot: candidate.lyric_library_root || "",
-    Extension: candidate.lyric_extension || "",
-    Provider: candidate.lyric_provider,
-    ProviderEntityType: "track",
-    ProviderId: candidate.lyric_provider_id,
-    LibrarySlot: "stereo",
-    Quality: candidate.quality,
-    CanonicalRecordingMbid: candidate.lyric_recording_mbid,
+    id: candidate.lyric_file_id,
+    artist_id: candidate.artist_id || "",
+    album_id: candidate.album_id,
+    track_file_id: null,
+    media_id: candidate.id,
+    relative_path: candidate.lyric_relative_path || candidate.lyric_file_path,
+    file_path: candidate.lyric_file_path,
+    library_root: candidate.lyric_library_root || "",
+    extension: candidate.lyric_extension || "",
+    provider: candidate.lyric_provider,
+    provider_entity_type: "track",
+    provider_id: candidate.lyric_provider_id,
+    library_slot: "stereo",
+    quality: candidate.quality,
+    canonical_recording_mbid: candidate.lyric_recording_mbid,
   };
 }
 
@@ -345,14 +345,12 @@ function recordSharedLyricsRelation(provider: string, media: ProviderMediaLyrics
 
   db.prepare(`
     INSERT OR IGNORE INTO RecordingRelations (
-      SourceRecordingId,
-      TargetRecordingId,
-      SourceForeignRecordingId,
-      TargetForeignRecordingId,
-      RelationType,
-      Source,
-      Confidence,
-      UpdatedAt
+      source_recording_id,
+      target_recording_id,
+      source_foreign_recording_id,
+      target_foreign_recording_id,
+      relation_type, source, confidence,
+      updated_at
     ) VALUES (?, ?, ?, ?, 'same_lyrical_content', 'discogenius', 0.92, CURRENT_TIMESTAMP)
   `).run(
     sourceRecordingId,

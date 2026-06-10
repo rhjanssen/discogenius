@@ -374,40 +374,40 @@ class ApiClient {
 
   // Config endpoints
   async getQualityConfig(): Promise<QualityConfigContract> {
-    return this.request('/config/quality', {}, parseQualityConfigContract);
+    return this.request('/v1/config/quality', {}, parseQualityConfigContract);
   }
 
   async updateQualityConfig(config: Partial<QualityConfigContract>) {
-    return this.request('/config/quality', {
+    return this.request('/v1/config/quality', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getAccountConfig(): Promise<AccountConfigContract> {
-    return this.request('/config/account', {}, parseAccountConfigContract);
+    return this.request('/v1/config/account', {}, parseAccountConfigContract);
   }
 
   async updateAccountConfig(config: Partial<AccountConfigContract>) {
-    return this.request('/config/account', {
+    return this.request('/v1/config/account', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getAppConfig(): Promise<PublicAppConfigContract> {
-    return this.request('/config/app', {}, parsePublicAppConfigContract);
+    return this.request('/v1/config/app', {}, parsePublicAppConfigContract);
   }
 
   async updateAppConfig(config: Partial<PublicAppConfigContract>) {
-    return this.request('/config/app', {
+    return this.request('/v1/config/app', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getAppReleaseInfo(): Promise<AppReleaseInfoContract> {
-    return this.request('/config/about', {}, parseAppReleaseInfoContract);
+    return this.request('/v1/config/about', {}, parseAppReleaseInfoContract);
   }
 
   async getMonitoringConfig(): Promise<MonitoringConfigContract> {
@@ -423,51 +423,51 @@ class ApiClient {
   }
 
   async getCurationConfig(): Promise<FilteringConfigContract> {
-    return this.request('/config/curation', {}, parseFilteringConfigContract);
+    return this.request('/v1/config/curation', {}, parseFilteringConfigContract);
   }
 
   async updateCurationConfig(config: Partial<FilteringConfigContract>) {
-    return this.request('/config/curation', {
+    return this.request('/v1/config/curation', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getMetadataConfig(): Promise<MetadataConfigContract> {
-    return this.request('/config/metadata', {}, parseMetadataConfigContract);
+    return this.request('/v1/config/metadata', {}, parseMetadataConfigContract);
   }
 
   async updateMetadataConfig(config: Partial<MetadataConfigContract>) {
-    return this.request('/config/metadata', {
+    return this.request('/v1/config/metadata', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getPathConfig(): Promise<PathConfigContract> {
-    return this.request('/config/path', {}, parsePathConfigContract);
+    return this.request('/v1/config/path', {}, parsePathConfigContract);
   }
 
   async updatePathConfig(config: Partial<PathConfigContract>) {
-    return this.request('/config/path', {
+    return this.request('/v1/config/path', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async getNamingConfig(): Promise<NamingConfigContract> {
-    return this.request('/config/naming', {}, parseNamingConfigContract);
+    return this.request('/v1/config/naming', {}, parseNamingConfigContract);
   }
 
   async updateNamingConfig(config: Partial<NamingConfigContract>) {
-    return this.request('/config/naming', {
+    return this.request('/v1/config/naming', {
       method: 'POST',
       body: JSON.stringify(config),
     });
   }
 
   async validateNamingConfig(config: Partial<NamingConfigContract>) {
-    return this.request('/config/naming/validate', {
+    return this.request('/v1/config/naming/validate', {
       method: 'POST',
       body: JSON.stringify(config),
     });
@@ -483,7 +483,7 @@ class ApiClient {
       video: string;
     } | null;
   }> {
-    return this.request('/config/naming/preview', {
+    return this.request('/v1/config/naming/preview', {
       method: 'POST',
       body: JSON.stringify(config),
     });
@@ -491,11 +491,11 @@ class ApiClient {
 
   // Config TOML raw content endpoints
   async getConfigToml() {
-    return this.request('/config/toml');
+    return this.request('/v1/config/toml');
   }
 
   async updateConfigToml(toml: string) {
-    return this.request('/config/toml', {
+    return this.request('/v1/config/toml', {
       method: 'POST',
       body: JSON.stringify({ toml }),
     });
@@ -533,7 +533,7 @@ class ApiClient {
       term: query,
       limit: limit.toString(),
     });
-    return this.request(`/artists/lookup?${params}`, { signal }, parseSearchResponseContract);
+    return this.request(`/v1/artist/lookup?${params}`, { signal }, parseSearchResponseContract);
   }
 
   // Artist endpoints
@@ -558,7 +558,7 @@ class ApiClient {
     if (params?.includeDownloadStats !== undefined) queryParams.set('includeDownloadStats', params.includeDownloadStats ? 'true' : 'false');
     const query = queryParams.toString();
     return this.request(
-      `/artists${query ? `?${query}` : ''}`,
+      `/v1/artist${query ? `?${query}` : ''}`,
       { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
       parseArtistsListResponseContract,
     );
@@ -569,24 +569,24 @@ class ApiClient {
   }
 
   async getArtist<T = unknown>(artistId: string) {
-    return this.request<T>(`/artists/${artistId}`);
+    return this.request<T>(`/v1/artist/${artistId}`);
   }
 
   async getArtistPage(artistId: string) {
-    return this.request(`/artists/${artistId}/page`);
+    return this.request(`/v1/artist/${artistId}/page`);
   }
 
   async getArtistPageDB(artistId: string, options: RequestControlOptions = {}) {
-    return this.request(`/artists/${artistId}/page-db`, options);
+    return this.request(`/v1/artist/${artistId}/page-db`, options);
   }
 
   async getArtistDetail(artistId: string) {
-    return this.request(`/artists/${artistId}/detail`);
+    return this.request(`/v1/artist/${artistId}/detail`);
   }
 
 
   async addArtist(providerId: string) {
-    return this.request(`/artists`, {
+    return this.request(`/v1/artist`, {
       method: 'POST',
       body: JSON.stringify({ id: providerId }),
     });
@@ -594,18 +594,18 @@ class ApiClient {
 
   // Monitor endpoints - for explicit "Monitor" button action
   async monitorArtist(artistId: string, name?: string) {
-    return this.request(`/artists/${artistId}/monitor`, {
+    return this.request(`/v1/artist/${artistId}/monitor`, {
       method: 'POST',
       body: name ? JSON.stringify({ name }) : undefined,
     });
   }
 
   async monitorAlbum(albumId: string) {
-    return this.request(`/albums/${albumId}/monitor`, { method: 'POST' });
+    return this.request(`/v1/album/${albumId}/monitor`, { method: 'POST' });
   }
 
   async getArtistAlbums(artistId: string, qualityFilter: 'all' | 'stereo' | 'spatial' = 'all') {
-    return this.request(`/artists/${artistId}/albums?quality_filter=${qualityFilter}`);
+    return this.request(`/v1/artist/${artistId}/albums?quality_filter=${qualityFilter}`);
   }
 
   async getProviderAlbumTracks(providerId: string, albumId: string) {
@@ -645,48 +645,48 @@ class ApiClient {
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
     return this.request(
-      `/albums${query ? `?${query}` : ''}`,
+      `/v1/album${query ? `?${query}` : ''}`,
       { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
       parseAlbumsListResponseContract,
     );
   }
 
   async getAlbum<T = unknown>(albumId: string, options: RequestControlOptions = {}) {
-    return this.request<T>(`/albums/${albumId}`, options);
+    return this.request<T>(`/v1/album/${albumId}`, options);
   }
 
   async getAlbumPage(albumId: string, options: RequestControlOptions = {}): Promise<AlbumPageContract> {
-    return this.request(`/albums/${albumId}/page`, options, parseAlbumPageContract);
+    return this.request(`/v1/album/${albumId}/page`, options, parseAlbumPageContract);
   }
 
   async addAlbum(albumId: string, options?: { slot?: 'stereo' | 'spatial' }) {
-    return this.request(`/albums`, {
+    return this.request(`/v1/album`, {
       method: 'POST',
       body: JSON.stringify({ id: albumId, slot: options?.slot }),
     });
   }
 
   async updateAlbum(albumId: string, updates: any) {
-    return this.request(`/albums/${albumId}`, {
+    return this.request(`/v1/album/${albumId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
   }
 
   async deleteAlbum(albumId: string) {
-    return this.request(`/albums/${albumId}`, { method: 'DELETE' });
+    return this.request(`/v1/album/${albumId}`, { method: 'DELETE' });
   }
 
   async getAlbumTracks(albumId: string, options: RequestControlOptions = {}): Promise<AlbumTrackContract[]> {
-    return this.request(`/albums/${albumId}/tracks`, options, parseAlbumTracksContract);
+    return this.request(`/v1/album/${albumId}/tracks`, options, parseAlbumTracksContract);
   }
 
   async getAlbumSimilar(albumId: string, options: RequestControlOptions = {}): Promise<SimilarAlbumContract[]> {
-    return this.request(`/albums/${albumId}/similar`, options, parseSimilarAlbumsContract);
+    return this.request(`/v1/album/${albumId}/similar`, options, parseSimilarAlbumsContract);
   }
 
   async getAlbumVersions(albumId: string, options: RequestControlOptions = {}): Promise<AlbumVersionContract[]> {
-    return this.request(`/albums/${albumId}/versions`, options, parseAlbumVersionsContract);
+    return this.request(`/v1/album/${albumId}/versions`, options, parseAlbumVersionsContract);
   }
 
   async getTracks(params?: {
@@ -713,36 +713,36 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
-    return this.request(`/tracks${query ? `?${query}` : ''}`, {
+    return this.request(`/v1/track${query ? `?${query}` : ''}`, {
       timeoutMs: params?.timeoutMs ?? null,
       signal: params?.signal,
     });
   }
 
   async getTrackFiles(trackId: string) {
-    return this.request(`/tracks/${trackId}/files`);
+    return this.request(`/v1/track/${trackId}/files`);
   }
 
   async getTrack(trackId: string) {
-    return this.request(`/tracks/${trackId}`);
+    return this.request(`/v1/track/${trackId}`);
   }
 
   async addTrack(providerId: string) {
-    return this.request(`/tracks`, {
+    return this.request(`/v1/track`, {
       method: 'POST',
       body: JSON.stringify({ id: providerId }),
     });
   }
 
   async updateTrack(trackId: string, updates: any) {
-    return this.request(`/tracks/${trackId}`, {
+    return this.request(`/v1/track/${trackId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
   }
 
   async deleteTrack(trackId: string) {
-    return this.request(`/tracks/${trackId}`, { method: 'DELETE' });
+    return this.request(`/v1/track/${trackId}`, { method: 'DELETE' });
   }
 
   async getVideos(params?: {
@@ -768,32 +768,32 @@ class ApiClient {
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
     return this.request(
-      `/videos${query ? `?${query}` : ''}`,
+      `/v1/video${query ? `?${query}` : ''}`,
       { timeoutMs: params?.timeoutMs ?? null, signal: params?.signal },
       parseVideosListResponseContract,
     );
   }
 
   async getVideo(videoId: string): Promise<VideoDetailContract> {
-    return this.request(`/videos/${videoId}`, {}, parseVideoDetailContract);
+    return this.request(`/v1/video/${videoId}`, {}, parseVideoDetailContract);
   }
 
   async addVideo(providerId: string) {
-    return this.request(`/videos`, {
+    return this.request(`/v1/video`, {
       method: 'POST',
       body: JSON.stringify({ id: providerId }),
     });
   }
 
   async updateVideo(videoId: string, updates: VideoUpdateContract) {
-    return this.request(`/videos/${videoId}`, {
+    return this.request(`/v1/video/${videoId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
   }
 
   async deleteVideo(videoId: string) {
-    return this.request(`/videos/${videoId}`, { method: 'DELETE' });
+    return this.request(`/v1/video/${videoId}`, { method: 'DELETE' });
   }
 
   // Library files endpoints
@@ -1010,18 +1010,18 @@ class ApiClient {
   }
 
   async scanArtist(artistId: string, options?: { forceUpdate?: boolean }) {
-    return this.request(`/artists/${artistId}/scan`, {
+    return this.request(`/v1/artist/${artistId}/scan`, {
       method: 'POST',
       body: JSON.stringify({ forceUpdate: Boolean(options?.forceUpdate) }),
     });
   }
 
   async getArtistActivity(artistId: string, options: RequestControlOptions = {}) {
-    return this.request(`/artists/${artistId}/activity`, options);
+    return this.request(`/v1/artist/${artistId}/activity`, options);
   }
 
   async updateArtist(artistId: string, updates: any) {
-    return this.request(`/artists/${artistId}`, {
+    return this.request(`/v1/artist/${artistId}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
@@ -1032,14 +1032,14 @@ class ApiClient {
     moveFiles?: boolean;
     applyNamingTemplate?: boolean;
   }) {
-    return this.request(`/artists/${artistId}/path`, {
+    return this.request(`/v1/artist/${artistId}/path`, {
       method: 'POST',
       body: JSON.stringify(updates),
     });
   }
 
   async curateArtist(artistId: string) {
-    return this.request(`/artists/${artistId}/curate`, { method: 'POST' });
+    return this.request(`/v1/artist/${artistId}/curate`, { method: 'POST' });
   }
 
   async toggleArtistMonitored(artistId: string, monitored: boolean) {
@@ -1047,11 +1047,11 @@ class ApiClient {
   }
 
   async deleteArtist(artistId: string) {
-    return this.request(`/artists/${artistId}`, { method: 'DELETE' });
+    return this.request(`/v1/artist/${artistId}`, { method: 'DELETE' });
   }
 
   async importFollowedArtists(providerId?: string | null) {
-    return this.request('/artists/import-followed', {
+    return this.request('/v1/artist/import-followed', {
       method: 'POST',
       body: JSON.stringify(providerId ? { providerId } : {}),
     });
@@ -1063,7 +1063,7 @@ class ApiClient {
     if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
-    return this.request(`/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
+    return this.request(`/v1/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
   }
 
   async getQueueDetails(params?: {
@@ -1076,11 +1076,11 @@ class ApiClient {
     if (params?.albumIds && params.albumIds.length > 0) queryParams.set('albumIds', params.albumIds.join(','));
     if (params?.providerIds && params.providerIds.length > 0) queryParams.set('providerIds', params.providerIds.join(','));
     const query = queryParams.toString();
-    return this.request(`/queue/details${query ? `?${query}` : ''}`, {}, parseQueueDetailsResponseContract);
+    return this.request(`/v1/queue/details${query ? `?${query}` : ''}`, {}, parseQueueDetailsResponseContract);
   }
 
   async getQueueStatus(): Promise<QueueStatusContract> {
-    return this.request('/queue/status', {}, parseQueueStatusContract);
+    return this.request('/v1/queue/status', {}, parseQueueStatusContract);
   }
 
   async getQueueHistory(params?: { limit?: number; offset?: number; timeoutMs?: number | null }): Promise<QueueListResponseContract> {
@@ -1088,7 +1088,7 @@ class ApiClient {
     if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
-    return this.request(`/queue/history${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseQueueListResponseContract);
+    return this.request(`/v1/queue/history${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseQueueListResponseContract);
   }
 
   async getStatusOverview(options: RequestControlOptions = {}): Promise<StatusOverviewContract> {
@@ -1110,7 +1110,7 @@ class ApiClient {
     if (params?.categories && params.categories.length > 0) queryParams.set('categories', params.categories.join(','));
     if (params?.types && params.types.length > 0) queryParams.set('types', params.types.join(','));
     const query = queryParams.toString();
-    return this.request(`/activity${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
+    return this.request(`/v1/history/activity${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
   }
 
   async getTasks(params?: {
@@ -1128,7 +1128,7 @@ class ApiClient {
     if (params?.categories && params.categories.length > 0) queryParams.set('categories', params.categories.join(','));
     if (params?.types && params.types.length > 0) queryParams.set('types', params.types.join(','));
     const query = queryParams.toString();
-    return this.request(`/tasks${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
+    return this.request(`/v1/queue/tasks${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
   }
 
   async getSystemTasks(): Promise<SystemTaskContract[]> {
@@ -1164,11 +1164,11 @@ class ApiClient {
     if (params?.mediaId !== undefined) queryParams.set('mediaId', params.mediaId.toString());
     if (params?.eventType) queryParams.set('eventType', params.eventType);
     const query = queryParams.toString();
-    return this.request(`/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
+    return this.request(`/v1/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
   }
 
   async addToQueue(url: string | null | undefined, type: string, providerId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
-    return this.request<{ id: number; message: string }>('/queue', {
+    return this.request<{ id: number; message: string }>('/v1/queue', {
       method: 'POST',
       body: JSON.stringify({ ...payload, url, type, providerId }),
     });
@@ -1180,34 +1180,34 @@ class ApiClient {
       message: string;
       jobId?: number;
       sourceJobId?: number;
-    }>(`/queue/${id}/retry`, { method: 'POST' });
+    }>(`/v1/queue/${id}/retry`, { method: 'POST' });
   }
 
   async deleteQueueItem(id: number) {
-    return this.request(`/queue/${id}`, { method: 'DELETE' });
+    return this.request(`/v1/queue/${id}`, { method: 'DELETE' });
   }
 
   async reorderQueueItems(params: { jobIds: number[]; beforeJobId?: number; afterJobId?: number }) {
-    return this.request('/queue/reorder', {
+    return this.request('/v1/queue/reorder', {
       method: 'POST',
       body: JSON.stringify(params),
     });
   }
 
   async clearCompleted() {
-    return this.request('/queue/clear-completed', { method: 'POST' });
+    return this.request('/v1/queue/clear-completed', { method: 'POST' });
   }
 
   async pauseQueue() {
-    return this.request('/queue/pause', { method: 'POST' });
+    return this.request('/v1/queue/pause', { method: 'POST' });
   }
 
   async resumeQueue() {
-    return this.request('/queue/resume', { method: 'POST' });
+    return this.request('/v1/queue/resume', { method: 'POST' });
   }
 
   async processMonitoredItems(artistId?: string) {
-    return this.request('/tasks/process-monitored', {
+    return this.request('/v1/queue/tasks/process-monitored', {
       method: 'POST',
       body: JSON.stringify({ artistId })
     });
@@ -1468,7 +1468,7 @@ class ApiClient {
    * CompactDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune
    */
   async executeCommand(commandName: string): Promise<{ id: number }> {
-    return this.request('/command', {
+    return this.request('/v1/command', {
       method: 'POST',
       body: JSON.stringify({ name: commandName }),
     });

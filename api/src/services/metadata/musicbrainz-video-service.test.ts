@@ -81,15 +81,15 @@ test("syncMusicBrainzVideosForArtist upserts relation artists before recording r
   });
 
   const relation = dbModule.db.prepare(`
-    SELECT SourceForeignRecordingId, TargetForeignRecordingId, RelationType
+    SELECT source_foreign_recording_id, target_foreign_recording_id, relation_type
     FROM RecordingRelations
-    WHERE SourceForeignRecordingId = ?
-      AND TargetForeignRecordingId = ?
+    WHERE source_foreign_recording_id = ?
+      AND target_foreign_recording_id = ?
   `).get("video-recording-mbid-1", "audio-recording-mbid-1") as
-    { SourceForeignRecordingId: string; TargetForeignRecordingId: string; RelationType: string } | undefined;
+    { source_foreign_recording_id: string; target_foreign_recording_id: string; relation_type: string } | undefined;
   assert.deepEqual(relation, {
-    SourceForeignRecordingId: "video-recording-mbid-1",
-    TargetForeignRecordingId: "audio-recording-mbid-1",
-    RelationType: "music_video_for",
+    source_foreign_recording_id: "video-recording-mbid-1",
+    target_foreign_recording_id: "audio-recording-mbid-1",
+    relation_type: "music_video_for",
   });
 });

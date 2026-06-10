@@ -1,4 +1,4 @@
-import type { LocalGroup, TidalMatch } from "../import-types.js";
+import type { LocalGroup, TidalMatch } from "../mediafiles/import-types.js";
 
 export type ImportDecisionMode = "ExistingFiles" | "NewDownload";
 

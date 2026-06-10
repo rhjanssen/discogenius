@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { MetadataIdentityService, type MetadataIdentityEntityType } from "../services/metadata-identity-service.js";
-import { AudioTagService } from "../services/audio-tag-service.js";
-import { libraryMetadataBackfillService } from "../services/library-metadata-backfill.js";
+import { MetadataIdentityService, type MetadataIdentityEntityType } from "../services/metadata/metadata-identity-service.js";
+import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
+import { libraryMetadataBackfillService } from "../services/mediafiles/library-metadata-backfill.js";
 
 const router = Router();
 

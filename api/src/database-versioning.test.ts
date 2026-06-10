@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 20;
+const CURRENT_SCHEMA_VERSION = 22;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -135,12 +135,12 @@ test("fresh database initializes with correct schema version", () => {
   }
 
   const metadataFileCols = dbModule.db.prepare("PRAGMA table_info(MetadataFiles)").all() as Array<{ name: string }>;
-  for (const columnName of ["Id", "ArtistId", "AlbumId", "TrackFileId", "RelativePath", "FilePath", "Consumer", "Type", "FileType"]) {
+  for (const columnName of ["id", "artist_id", "album_id", "track_file_id", "relative_path", "file_path", "consumer", "type", "file_type"]) {
     assert.ok(metadataFileCols.some((column) => column.name === columnName), `Expected MetadataFiles.${columnName}`);
   }
 
   const lyricFileCols = dbModule.db.prepare("PRAGMA table_info(LyricFiles)").all() as Array<{ name: string }>;
-  for (const columnName of ["Id", "ArtistId", "AlbumId", "TrackFileId", "RelativePath", "FilePath", "CanonicalRecordingMbid"]) {
+  for (const columnName of ["id", "artist_id", "album_id", "track_file_id", "relative_path", "file_path", "canonical_recording_mbid"]) {
     assert.ok(lyricFileCols.some((column) => column.name === columnName), `Expected LyricFiles.${columnName}`);
   }
 });
@@ -191,40 +191,40 @@ test.skip("provider compatibility rows are mirrored into ProviderItems", () => {
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
-  `).run(artistMbid, "Provider Backfill Artist");
+  `).run(artistMbid, "provider Backfill Artist");
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid)
     VALUES (?, ?, ?)
-  `).run(artistId, "Provider Backfill Artist", artistMbid);
+  `).run(artistId, "provider Backfill Artist", artistMbid);
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title)
     VALUES (?, ?, ?)
-  `).run(releaseGroupMbid, artistMbid, "Provider Backfill Release Group");
+  `).run(releaseGroupMbid, artistMbid, "provider Backfill Release Group");
   dbModule.db.prepare(`
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title)
     VALUES (?, ?, ?, ?)
-  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Provider Backfill Release");
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "provider Backfill Release");
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
-  `).run(recordingMbid, "Provider Backfill Recording");
+  `).run(recordingMbid, "provider Backfill Recording");
   dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, 1, 1, '1', ?)
-  `).run(trackMbid, releaseMbid, recordingMbid, "Provider Backfill Track");
+  `).run(trackMbid, releaseMbid, recordingMbid, "provider Backfill Track");
   dbModule.db.prepare(`
     INSERT INTO ProviderAlbums (
       id, artist_id, title, release_date, type, explicit, quality,
       num_tracks, num_volumes, num_videos, duration, upc, mbid, mb_release_group_id
     ) VALUES (?, ?, ?, '2026-01-01', 'ALBUM', 0, 'LOSSLESS', 1, 1, 0, 180, '123456789012', ?, ?)
-  `).run(albumProviderId, artistId, "Provider Backfill Album", releaseMbid, releaseGroupMbid);
+  `).run(albumProviderId, artistId, "provider Backfill Album", releaseMbid, releaseGroupMbid);
   dbModule.db.prepare(`
     INSERT INTO ProviderMedia (
       id, artist_id, album_id, title, type, explicit, quality,
       track_number, volume_number, duration, isrc, mbid
     ) VALUES (?, ?, ?, ?, 'Track', 0, 'LOSSLESS', 1, 1, 180, 'USRC17607839', ?)
-  `).run(trackProviderId, artistId, albumProviderId, "Provider Backfill Track", trackMbid);
+  `).run(trackProviderId, artistId, albumProviderId, "provider Backfill Track", trackMbid);
 
   dbModule.initDatabase();
 

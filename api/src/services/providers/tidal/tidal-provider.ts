@@ -21,12 +21,12 @@ import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import { db } from "../../../database.js";
-import { Config } from "../../config.js";
+import { Config } from "../../config/config.js";
 import { clearHistory, syncDiscogeniusSettings, buildTidalDlNgEnv, getTidalDlNgCommand, parseProgress } from "./tidal-dl-ng.js";
-import { downloadBackendRegistry } from "../../download-backend.js";
+import { downloadBackendRegistry } from "../../download/download-backend.js";
 import { TiddlBackend } from "./tiddl-backend.js";
 import { loadStoredTidalToken, syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
-import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../orpheus.js";
+import { ensureOrpheusRuntime, syncOrpheusSettings, spawnOrpheusDownload, parseOrpheusProgress, syncTokenToOrpheusSession } from "../../download/orpheus.js";
 
 export type TidalAlbumDownloadTrackInfo = {
   title: string;
@@ -86,7 +86,7 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
     LEFT JOIN Artists canonical_artist
       ON canonical_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
     WHERE matched_releases.release_mbid IS NOT NULL
-      AND COALESCE(recording.IsVideo, 0) = 0
+      AND COALESCE(recording.is_video, 0) = 0
     ORDER BY matched_releases.ord ASC, COALESCE(track.medium_position, 1) ASC, track.position ASC
   `).all(...params) as Array<TidalAlbumDownloadTrackInfo & { ord: number }>;
 

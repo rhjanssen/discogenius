@@ -6,16 +6,14 @@ import path from "path";
 
 import { backfillArtistPaths, closeDatabase, initDatabase } from "./database.js";
 import { authMiddleware } from "./middleware/auth.js";
-import albumsRouter from "./routes/albums.js";
-import activityRouter from "./routes/activity.js";
+import albumsRouter from "./routes/v1/album.js";
 import appAuthRouter from "./routes/app-auth.js";
-import artistsRouter from "./routes/artists.js";
+import artistsRouter from "./routes/v1/artist.js";
 import authRouter from "./routes/auth.js";
-import commandRouter from "./routes/command.js";
-import configRouter from "./routes/config.js";
-import downloadQueueRouter from "./routes/download-queue.js";
+import commandRouter from "./routes/v1/command.js";
+import configRouter from "./routes/v1/config.js";
 import eventsRouter from "./routes/events.js";
-import historyRouter from "./routes/history.js";
+import historyRouter from "./routes/v1/history.js";
 import libraryFilesRouter from "./routes/library-files.js";
 import libraryBulkRouter from "./routes/library-bulk.js";
 import logRouter from "./routes/log.js";
@@ -24,29 +22,29 @@ import metadataRouter from "./routes/metadata.js";
 import monitoringRouter from "./routes/monitoring.js";
 import playbackRouter from "./routes/playback.js";
 import providersRouter from "./routes/providers.js";
-import taskQueueRouter from "./routes/queue.js";
+import queueRouter from "./routes/v1/queue.js";
 import retagRouter from "./routes/retag.js";
 import searchRouter from "./routes/search.js";
 import statsRouter from "./routes/stats.js";
 import statusRouter from "./routes/status.js";
 import systemTaskRouter from "./routes/system-task.js";
-import tracksRouter from "./routes/tracks.js";
+import tracksRouter from "./routes/v1/track.js";
 import ultraBlurRouter from "./routes/ultrablur.js";
 import unmappedRouter from "./routes/unmapped.js";
-import videosRouter from "./routes/videos.js";
-import { closeAppLogging, initAppLogging } from "./services/app-logger.js";
-import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config.js";
-import { initCurationListeners } from "./services/curation.listener.js";
-import { downloadProcessor } from "./services/download-processor.js";
-import { startMonitoring } from "./services/task-scheduler.js";
+import videosRouter from "./routes/v1/video.js";
+import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
+import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
+import { initCurationListeners } from "./services/music/curation.listener.js";
+import { downloadProcessor } from "./services/download/download-processor.js";
+import { startMonitoring } from "./services/jobs/task-scheduler.js";
 import {
   getRuntimeDiagnosticsSnapshot,
   startRuntimeDiagnostics,
   trackRuntimeRequest,
-} from "./services/runtime-diagnostics.js";
-import { runRuntimeMaintenance } from "./services/runtime-maintenance.js";
-import { collectHealthDiagnosticsSnapshot } from "./services/health.js";
-import { Scheduler } from "./services/scheduler.js";
+} from "./services/jobs/runtime-diagnostics.js";
+import { runRuntimeMaintenance } from "./services/jobs/runtime-maintenance.js";
+import { collectHealthDiagnosticsSnapshot } from "./services/jobs/health.js";
+import { Scheduler } from "./services/jobs/scheduler.js";
 import { readIntEnv } from "./utils/env.js";
 
 function initializeAuthEnvironment() {
@@ -186,19 +184,17 @@ app.use("/services/ultrablur", ultraBlurRouter);
 app.use("/MediaCoverProxy", mediaCoverProxyRouter);
 
 app.use("/api/auth", authMiddleware, authRouter);
-app.use("/api/config", authMiddleware, configRouter);
+app.use("/api/v1/config", authMiddleware, configRouter);
 app.use("/api/search", authMiddleware, searchRouter);
-app.use("/api/artists", authMiddleware, artistsRouter);
-app.use("/api/albums", authMiddleware, albumsRouter);
-app.use("/api/tracks", authMiddleware, tracksRouter);
-app.use("/api/videos", authMiddleware, videosRouter);
+app.use("/api/v1/artist", authMiddleware, artistsRouter);
+app.use("/api/v1/album", authMiddleware, albumsRouter);
+app.use("/api/v1/track", authMiddleware, tracksRouter);
+app.use("/api/v1/video", authMiddleware, videosRouter);
 app.use("/api/providers", authMiddleware, providersRouter);
 app.use("/api/retag", authMiddleware, retagRouter);
 app.use("/api/stats", authMiddleware, statsRouter);
-app.use("/api", downloadQueueRouter);
-app.use("/api/tasks", authMiddleware, taskQueueRouter);
-app.use("/api/activity", authMiddleware, activityRouter);
-app.use("/api/command", authMiddleware, commandRouter);
+app.use("/api/v1/queue", queueRouter);
+app.use("/api/v1/command", authMiddleware, commandRouter);
 app.use("/api/system-task", authMiddleware, systemTaskRouter);
 app.use("/api/library-files", authMiddleware, libraryFilesRouter);
 app.use("/api/library-bulk", authMiddleware, libraryBulkRouter);
@@ -208,7 +204,7 @@ app.use("/api/status", authMiddleware, statusRouter);
 app.use("/api/log", authMiddleware, logRouter);
 app.use("/api/playback", playbackRouter);
 app.use("/api/events", authMiddleware, eventsRouter);
-app.use("/api/history", authMiddleware, historyRouter);
+app.use("/api/v1/history", historyRouter);
 app.use("/api/unmapped", authMiddleware, unmappedRouter);
 
 function sendHealthSnapshot(res: express.Response) {
@@ -283,7 +279,7 @@ if (fs.existsSync(frontendPath)) {
 const server = app.listen(port, () => {
   console.log(`⚡️ [SERVER]: Server is running at http://${hostname}:${port}`);
 
-  import("./services/token-refresh.js").then(({ startTokenRefreshInterval }) => {
+  import("./services/providers/token-refresh.js").then(({ startTokenRefreshInterval }) => {
     startTokenRefreshInterval();
   }).catch((error) => {
     console.error("Failed to start token refresh:", error);

@@ -9,18 +9,18 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.route-split.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
-let queueModule: typeof import("../services/queue.js");
-let historyEventsModule: typeof import("../services/history-events.js");
-let tasksRouter: typeof import("./queue.js").default;
-let activityRouter: typeof import("./activity.js").default;
+let queueModule: typeof import("../services/jobs/queue.js");
+let historyEventsModule: typeof import("../services/jobs/history-events.js");
+let tasksRouter: typeof import("./v1/queue.js").default;
+let activityRouter: typeof import("./v1/history.js").default;
 let statusRouter: typeof import("./status.js").default;
 
 before(async () => {
     dbModule = await import("../database.js");
-    queueModule = await import("../services/queue.js");
-    historyEventsModule = await import("../services/history-events.js");
-    tasksRouter = (await import("./queue.js")).default;
-    activityRouter = (await import("./activity.js")).default;
+    queueModule = await import("../services/jobs/queue.js");
+    historyEventsModule = await import("../services/jobs/history-events.js");
+    tasksRouter = (await import("./v1/queue.js")).default;
+    activityRouter = (await import("./v1/history.js")).default;
     statusRouter = (await import("./status.js")).default;
     dbModule.initDatabase();
 });
@@ -75,7 +75,7 @@ test("/api/tasks defaults to pending+processing+completed+failed+cancelled and s
     queueModule.TaskQueueService.fail(failedId, "test failure");
     queueModule.TaskQueueService.cancel(cancelledId);
 
-    const tasksHandler = getGetHandler(tasksRouter as any, "/");
+    const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
     const defaultRes = createMockResponse();
     tasksHandler({ query: {} }, defaultRes);
@@ -112,7 +112,7 @@ test("/api/tasks defaults to pending+processing+completed+failed+cancelled and s
 test("/api/tasks rejects unsupported filters", () => {
     queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
 
-    const tasksHandler = getGetHandler(tasksRouter as any, "/");
+    const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
     const invalidStatusRes = createMockResponse();
     tasksHandler({ query: { status: "not-a-status" } }, invalidStatusRes);
@@ -141,7 +141,7 @@ test("/api/activity defaults to completed+failed+cancelled and supports explicit
     queueModule.TaskQueueService.fail(failedId, "test failure");
     queueModule.TaskQueueService.cancel(cancelledId);
 
-    const activityHandler = getGetHandler(activityRouter as any, "/");
+    const activityHandler = getGetHandler(activityRouter as any, "/activity");
 
     const defaultRes = createMockResponse();
     activityHandler({ query: {} }, defaultRes);
@@ -179,7 +179,7 @@ test("/api/status no longer exposes deprecated /history route", () => {
 
 
 test("/api/activity rejects unsupported filters", () => {
-    const activityHandler = getGetHandler(activityRouter as any, "/");
+    const activityHandler = getGetHandler(activityRouter as any, "/activity");
 
     const invalidStatusRes = createMockResponse();
     activityHandler({ query: { status: "not-a-status" } }, invalidStatusRes);

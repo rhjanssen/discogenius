@@ -1,4 +1,4 @@
-import { normalizeComparableText, stringSimilarity } from "../import-matching-utils.js";
+import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
 
 export type ProviderAlbumForReleaseGroupMatching = {
     providerId: string;
@@ -159,7 +159,7 @@ function titleCandidatesForReleaseGroup(releaseGroup: MusicBrainzReleaseGroupFor
         ...(releaseGroup.releases || []).flatMap((release) => expandedTitleCandidates(release.title)),
     ].filter((value): value is string => Boolean(value));
 
-    // MusicBrainz can use symbolic release-group names. Provider APIs often
+    // MusicBrainz can use symbolic release-group names. provider APIs often
     // expose the spoken title instead, e.g. MB "&" vs TIDAL "Ampersand".
     if (/^[\s"'“”‘’]*&[\s"'“”‘’]*$/u.test(rawTitle)) {
         candidates.push("ampersand");

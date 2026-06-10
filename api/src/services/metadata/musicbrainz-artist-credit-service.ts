@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { requestMusicBrainzJson } from "../fingerprint.js";
+import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 
 export type CanonicalAlbumArtist = {
   artistId: string;

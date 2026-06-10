@@ -15,7 +15,7 @@ class StreamingProviderManager {
   getStreamingProvider(id: string): StreamingProvider {
     const provider = this.providers.get(id);
     if (!provider) {
-      throw new Error(`Provider not found: ${id}`);
+      throw new Error(`provider not found: ${id}`);
     }
     return provider;
   }
