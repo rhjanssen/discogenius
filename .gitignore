@@ -29,33 +29,22 @@ api/src/**/*.js
 
 # Temporary reference folders
 .ref_*/
-.ref_lidarr/
-.ref_tidarr/
-.ref_tiddl/
-.ref_tidal_dl_ng/
-.ref_tidal_dl_ng_dj/
-.ref_python_tidal/
-.ref_jellyfin
-.ref_kodi
-.ref_music/
-config/
-downloads/
-library/
-api/downloads/
-api/config/
+
+# Local runtime state (anchored: source dirs like api/src/services/config must stay tracked)
+/config/
+/downloads/
+/library/
+/api/downloads/
+/api/config/
 
 # Local QA/test output
 /tmp/
 /test-results/
-/tidal-dl-ng-fix/
 
 # Lock files from other package managers
 package-lock.json
 bun.lockb
 pnpm-lock.yaml
-
-# Local runtime (OrpheusDL venv, bootstrap)
-.runtime/
 
 # Agent/session artifacts
 .playwright-mcp/
