@@ -59,6 +59,7 @@ export class UpgraderService {
             lf.extension    as current_extension,
             lf.bit_depth    as current_bit_depth,
             lf.bitrate      as current_bitrate,
+            lf.sample_rate  as current_sample_rate,
             a.quality       as album_quality,
             uq.status       as upgrade_status,
             uq.target_quality as upgrade_target
@@ -101,6 +102,8 @@ export class UpgraderService {
                     sourceQuality: row.source_quality || row.album_quality,
                     codec: row.current_codec,
                     extension: row.current_extension,
+                    bitDepth: row.current_bit_depth,
+                    sampleRate: row.current_sample_rate,
                 });
             }
 

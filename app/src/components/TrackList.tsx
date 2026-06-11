@@ -331,6 +331,7 @@ const TrackList = <T extends TrackListItem>({
   const navigate = useNavigate();
   const {
     getPlaybackSrc,
+    getPlaybackHlsSrc,
     getTrackAudioFile,
     handleTrackPlaybackError,
     playingTrackId,
@@ -524,6 +525,7 @@ const TrackList = <T extends TrackListItem>({
                 <div className={styles.playerRow}>
                   <AudioPlayer
                     src={getPlaybackSrc(track)}
+                    hlsSrc={getPlaybackHlsSrc(track)}
                     knownDuration={track.duration}
                     onEnded={() => setPlayingTrackId(null)}
                     onPlaybackError={() => {

@@ -35,6 +35,7 @@ import {
     QuestionCircle24Regular,
     Checkmark24Regular,
     Dismiss24Regular,
+    Open24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -1529,19 +1530,50 @@ const SettingsPage = () => {
             className={styles.section}
         >
             <div className={styles.card}>
-                {(streamingProviders?.providers ?? []).map((provider) => {
-                    const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
-                    const publiclyAvailable = provider.authenticated
-                        && !provider.management.canAuthenticate
-                        && !provider.management.canDisconnect;
-                    const statusLabel = publiclyAvailable
-                        ? "Available"
-                        : provider.authenticated
-                            ? "Connected"
-                            : "Not connected";
+                {(() => {
+                    const allProviders = streamingProviders?.providers ?? [];
+                    const activeProviders = allProviders.filter(p => p.authenticated || p.management.canDisconnect);
+
+                    if (activeProviders.length === 0 && !providersLoading) {
+                        return (
+                            <div className={styles.profileRow} style={{ justifyContent: 'center', padding: '32px 16px' }}>
+                                <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                    <div>
+                                        <Text weight="semibold" size={400} block style={{ marginBottom: '4px' }}>
+                                            No Provider Connected
+                                        </Text>
+                                        <Caption1 className={styles.mutedTextBlock}>
+                                            Connect a streaming service to enable downloads and metadata features.
+                                        </Caption1>
+                                    </div>
+                                    <Button
+                                        appearance="primary"
+                                        onClick={() => navigate("/auth")}
+                                        size="large"
+                                        icon={<Open24Regular />}
+                                    >
+                                        Add Provider
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    }
 
                     return (
-                        <React.Fragment key={provider.id}>
+                        <>
+                            {activeProviders.map((provider) => {
+                                const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
+                                const publiclyAvailable = provider.authenticated
+                                    && !provider.management.canAuthenticate
+                                    && !provider.management.canDisconnect;
+                                const statusLabel = publiclyAvailable
+                                    ? "Available"
+                                    : provider.authenticated
+                                        ? "Connected"
+                                        : "Not connected";
+
+                                return (
+                                    <React.Fragment key={provider.id}>
                             <div className={styles.profileRow}>
                                 <div className={styles.providerStatusRow}>
                                     <div className={styles.providerIconBox}>
@@ -1629,6 +1661,20 @@ const SettingsPage = () => {
                         </React.Fragment>
                     );
                 })}
+                {activeProviders.length > 0 && (
+                    <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
+                        <Button
+                            appearance="subtle"
+                            onClick={() => navigate("/auth")}
+                            icon={<Open24Regular />}
+                        >
+                            Add Another Provider
+                        </Button>
+                    </div>
+                )}
+                </>
+                );
+                })()}
             </div>
         </SettingsSection>
     );

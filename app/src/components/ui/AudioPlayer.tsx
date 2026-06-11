@@ -6,11 +6,17 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import { Pause24Filled, Play24Regular } from "@fluentui/react-icons";
+import Hls from "hls.js";
 import { formatDurationSeconds } from "@/utils/format";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 interface AudioPlayerProps {
     src: string;
+    /** Optional HLS playlist for the same source. Preferred when supported so
+     *  segmented provider previews stream/seek without buffering the whole
+     *  track; falls back to `src` on any fatal HLS error (including
+     *  progressive-only sources, which report 409 on the playlist URL). */
+    hlsSrc?: string;
     /** Known total duration in seconds (e.g. from DB metadata).
      *  Used as display fallback until the audio element reports its own duration. */
     knownDuration?: number;
@@ -76,7 +82,7 @@ const useStyles = makeStyles({
     },
     scrubberFill: {
         height: "100%",
-        backgroundColor: tokens.colorBrandForeground1,
+        backgroundColor: tokens.colorBrandBackground,
         borderRadius: tokens.borderRadiusCircular,
         transition: "width 0.1s linear",
     },
@@ -86,7 +92,7 @@ const useStyles = makeStyles({
         width: "12px",
         height: "12px",
         borderRadius: tokens.borderRadiusCircular,
-        backgroundColor: tokens.colorBrandForeground1,
+        backgroundColor: tokens.colorBrandBackground,
         transform: "translate(-50%, -50%)",
         boxShadow: tokens.shadow4,
         transition: "transform 0.1s ease",
@@ -106,6 +112,7 @@ const useStyles = makeStyles({
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     src,
+    hlsSrc,
     knownDuration,
     onEnded,
     onPlaybackError,
@@ -118,10 +125,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const [audioDuration, setAudioDuration] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [hlsFailed, setHlsFailed] = useState(false);
     const playbackErrorHandledRef = useRef(false);
     const isDraggingRef = useRef(false);
     const onEndedRef = useRef(onEnded);
     const onPlaybackErrorRef = useRef(onPlaybackError);
+
+    useEffect(() => {
+        setHlsFailed(false);
+    }, [src, hlsSrc]);
 
     useEffect(() => {
         isDraggingRef.current = isDragging;
@@ -154,6 +166,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     })();
 
     const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+    const useHlsSource = Boolean(hlsSrc) && !hlsFailed && Hls.isSupported();
 
     useEffect(() => {
         const audio = audioRef.current;
@@ -196,7 +210,24 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         audio.addEventListener("pause", onPause);
         audio.addEventListener("error", onError);
 
-        audio.load();
+        let hls: Hls | null = null;
+        if (useHlsSource && hlsSrc) {
+            hls = new Hls({ enableWorker: true });
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+                if (!data.fatal) {
+                    return;
+                }
+                // Progressive-only sources answer the playlist with 409; any
+                // other fatal error also drops us back to the proxied stream.
+                hls?.destroy();
+                setHlsFailed(true);
+            });
+            hls.loadSource(hlsSrc);
+            hls.attachMedia(audio);
+        } else {
+            audio.src = src;
+            audio.load();
+        }
 
         if (autoPlay) {
             void audio.play().catch(() => {
@@ -206,6 +237,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
         return () => {
             audio.pause();
+            hls?.destroy();
+            audio.removeAttribute("src");
             audio.removeEventListener("timeupdate", onTimeUpdate);
             audio.removeEventListener("loadedmetadata", onLoadedMetadata);
             audio.removeEventListener("ended", onEndedHandler);
@@ -214,7 +247,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             audio.removeEventListener("pause", onPause);
             audio.removeEventListener("error", onError);
         };
-    }, [autoPlay, src]);
+    }, [autoPlay, src, hlsSrc, useHlsSource]);
 
     const handleTogglePlayback = useCallback(() => {
         const audio = audioRef.current;
@@ -287,7 +320,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             <audio
                 ref={audioRef}
                 className={styles.audioElement}
-                src={src}
                 preload="metadata"
                 playsInline
             />

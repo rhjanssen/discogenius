@@ -339,11 +339,6 @@ const VideoPage = () => {
             }
 
             setIsPlaying(true);
-            setTimeout(() => {
-                if (videoRef.current) {
-                    videoRef.current.play().catch(e => console.error("Auto-play failed:", e));
-                }
-            }, 50);
         } catch (error: any) {
             toast({
                 title: "Playback unavailable",
@@ -405,6 +400,12 @@ const VideoPage = () => {
                 hlsRef.current = hls;
                 hls.loadSource(remoteStreamUrl);
                 hls.attachMedia(videoRef.current);
+
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    if (videoRef.current) {
+                        videoRef.current.play().catch(e => console.error("Play after manifest parsed failed:", e));
+                    }
+                });
 
                 hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
                     if (!data.fatal) {

@@ -384,10 +384,10 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
       video: normalize(preview.video),
     },
     {
-      artistFolder: "Nine Inch Nails",
-      standardTrack: "The Downward Spiral (1994)/14 - Hurt.flac",
-      multiDiscTrack: "The Downward Spiral (1994)/203 - Hurt.flac",
-      video: "Nine Inch Nails - Hurt [123456789].mp4",
+      artistFolder: "Bastille",
+      standardTrack: "Bad Blood (2013)/01 - Pompeii.flac",
+      multiDiscTrack: "Bad Blood (2013)/203 - Pompeii.flac",
+      video: "Bastille - Pompeii [26065587].mp4",
     }
   );
 });

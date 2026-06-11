@@ -33,7 +33,7 @@ import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
-import { getAlbumCover, getVideoThumbnail } from "@/utils/tidalImages";
+import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -842,9 +842,12 @@ const ArtistPage = () => {
     if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const skyHookImageUrl = item.cover_art_url || item.cover || item.cover_id || null;
+    const skyHookImageUrl = item.cover_art_url || null;
     const providerImageUrl = getAlbumCover(item.provider_cover_id, "medium");
-    const imageUrl = getAlbumCover(skyHookImageUrl, "medium") || skyHookImageUrl;
+    const storedImageUrl = getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
+    
+    const imageUrl = skyHookImageUrl || providerImageUrl || storedImageUrl;
+    const fallbackImageUrl = skyHookImageUrl ? (providerImageUrl || storedImageUrl) : storedImageUrl;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
@@ -878,7 +881,7 @@ const ArtistPage = () => {
         key={providerId}
         to={getAlbumPath(providerId)}
         imageUrl={imageUrl}
-        fallbackImageUrl={providerImageUrl}
+        fallbackImageUrl={fallbackImageUrl}
         alt={albumTitle}
         title={albumTitle}
         subtitle={subtitle}
@@ -1298,7 +1301,21 @@ const ArtistPage = () => {
             {/* Artist Avatar */}
             <div className={styles.artistImageShell}>
               {artistPictureUrl ? (
-                <img src={artistPictureUrl} className={styles.artistImage} alt={artistName} />
+                <img 
+                  src={artistPictureUrl} 
+                  className={styles.artistImage} 
+                  alt={artistName} 
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    if (!target.dataset.fallbackTried) {
+                      target.dataset.fallbackTried = 'true';
+                      const fallbackUrl = getArtistPicture((artistInfo as any)?.provider_id || artistId, 'large');
+                      if (fallbackUrl && target.src !== fallbackUrl) {
+                        target.src = fallbackUrl;
+                      }
+                    }
+                  }}
+                />
               ) : (
                 <div
                   className={mergeClasses(styles.artistImage, styles.avatarPlaceholder)}

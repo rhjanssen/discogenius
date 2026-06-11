@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
 import {
     buildTiddlEnv,
+    capTiddlTrackQuality,
     getTiddlBinary,
     mapAudioQualityToTiddl,
     syncTiddlSettings,
@@ -60,8 +61,9 @@ export class TiddlBackend implements DownloadBackend {
         if (request.entityType === "video") {
             args.push("--videos", "only");
         } else {
-            args.push("-q", mapAudioQualityToTiddl(request.quality));
-            if (isSpatialAudioQuality(request.quality)) {
+            const isSpatial = isSpatialAudioQuality(request.quality);
+            args.push("-q", capTiddlTrackQuality(mapAudioQualityToTiddl(request.quality), isSpatial));
+            if (isSpatial) {
                 args.push("--dolby-atmos", "only");
             }
         }

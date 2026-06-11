@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { baseComparableTitle, normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 
@@ -171,10 +171,27 @@ function scoreProviderTrackMatch(track: CanonicalTrackCandidate, providerTrack: 
         }
     }
 
-    const titleSimilarity = stringSimilarity(
+    let titleSimilarity = stringSimilarity(
         normalizeComparableText(track.title || ""),
         normalizeComparableText(providerTrackComparableTitle(providerTrack)),
     );
+    if (titleSimilarity < 0.72) {
+        // Same base-title acceptance as slot coverage: MusicBrainz qualifies
+        // bonus/live tracks with parenthetical suffixes providers omit.
+        const targetBase = baseComparableTitle(track.title || "");
+        const providerBase = baseComparableTitle(providerTrackComparableTitle(providerTrack));
+        if (targetBase && targetBase === providerBase) {
+            const durationSeconds = Number(track.length_ms || 0) / 1000;
+            const providerDuration = Number(providerTrack.duration || 0);
+            const durationKnown = durationSeconds > 0 && providerDuration > 0;
+            const durationClose = durationKnown && Math.abs(durationSeconds - providerDuration) <= 15;
+            const positionAligned = Number(track.medium_position || 1) === Number(providerTrack.volumeNumber || 1)
+                && Number(track.position || 0) === Number(providerTrack.trackNumber || 0);
+            if (durationClose || (!durationKnown && positionAligned)) {
+                titleSimilarity = 0.9;
+            }
+        }
+    }
     if (titleSimilarity < 0.72) {
         return 0;
     }

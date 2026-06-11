@@ -15,7 +15,7 @@ const TIDAL_API_BASE = "https://api.tidal.com/v1";
 // ── Result types ────────────────────────────────────────────────────────────
 export type PlaybackInfo =
     | { type: "bts"; url: string }
-    | { type: "dash"; segments: string[]; contentType: string };
+    | { type: "dash"; segments: string[]; durations?: number[]; contentType: string; sampleRate?: number; bitDepth?: number };
 
 export type VideoPlaybackInfo = {
     url: string;
@@ -85,7 +85,15 @@ function parseBtsManifest(decoded: string): string[] {
  *     </SegmentTimeline>
  *   </SegmentTemplate>
  */
-function parseDashManifest(mpd: string): { segments: string[]; contentType: string } | null {
+export interface DashManifest {
+    segments: string[];
+    durations?: number[];
+    contentType: string;
+    bitDepth?: number;
+    sampleRate?: number;
+}
+
+function parseDashManifest(mpd: string): DashManifest | null {
     try {
         // Extract mimeType and codecs from the manifest so the proxy response preserves
         // the actual audio format instead of collapsing everything to a generic MP4 type.
@@ -96,19 +104,36 @@ function parseDashManifest(mpd: string): { segments: string[]; contentType: stri
         const mimeType = mimeMatch?.[1] || "audio/mp4";
         const contentType = codecsMatch ? `${mimeType}; codecs="${codecsMatch[1]}"` : mimeType;
 
+        // Try extracting sampleRate and bitDepth
+        const idMatch = mpd.match(/Representation[^>]+id="([^"]+)"/);
+        const srMatch = mpd.match(/Representation[^>]+audioSamplingRate="(\d+)"/);
+        
+        let bitDepth: number | undefined;
+        let sampleRate: number | undefined;
+
+        if (srMatch) {
+            sampleRate = parseInt(srMatch[1], 10);
+        }
+        
+        if (idMatch && idMatch[1].includes("24")) {
+            bitDepth = 24; // Simple heuristic from Tidal representation IDs
+        }
+
         // Extract SegmentTemplate attributes
         const initMatch = mpd.match(/initialization="([^"]+)"/);
         const mediaMatch = mpd.match(/<SegmentTemplate[^>]+media="([^"]+)"/);
         const startMatch = mpd.match(/startNumber="(\d+)"/);
+        const tsMatch = mpd.match(/timescale="(\d+)"/);
 
         if (!initMatch || !mediaMatch) {
             console.error("[Playback] DASH: missing initialization or media URL in MPD");
             return null;
         }
 
-        const initUrl = initMatch[1];
-        const mediaTemplate = mediaMatch[1];
+        const initUrl = initMatch[1].replace(/&amp;/g, '&');
+        const mediaTemplate = mediaMatch[1].replace(/&amp;/g, '&');
         const startNumber = startMatch ? parseInt(startMatch[1], 10) : 1;
+        const timescale = tsMatch ? parseInt(tsMatch[1], 10) : 44100;
 
         // Parse SegmentTimeline <S> elements
         const sElements = [...mpd.matchAll(/<S\s+d="(\d+)"(?:\s+r="(\d+)")?/g)];
@@ -119,16 +144,20 @@ function parseDashManifest(mpd: string): { segments: string[]; contentType: stri
 
         // Build segment URL list: init segment first, then numbered media segments
         const segments: string[] = [initUrl];
+        const durations: number[] = [0]; // init segment has 0 duration
         let num = startNumber;
         for (const s of sElements) {
+            const d = parseInt(s[1], 10);
             const repeat = s[2] ? parseInt(s[2], 10) + 1 : 1; // r="N" means N+1 total
+            const durationSec = d / timescale;
             for (let i = 0; i < repeat; i++) {
                 segments.push(mediaTemplate.replace("$Number$", String(num++)));
+                durations.push(durationSec);
             }
         }
 
         console.log(`[Playback] DASH: parsed ${segments.length} segments (init + ${segments.length - 1} media)`);
-        return { segments, contentType };
+        return { segments, durations, contentType, sampleRate, bitDepth };
     } catch (err) {
         console.error("[Playback] DASH: MPD parse error:", err);
         return null;
@@ -188,7 +217,7 @@ async function fetchPlaybackInfo(
         const dash = parseDashManifest(decoded);
         if (dash && dash.segments.length > 0) {
             console.log(`[Playback] DASH ${quality}: ${dash.segments.length} segments, type=${dash.contentType}`);
-            return { type: "dash", segments: dash.segments, contentType: dash.contentType };
+            return { type: "dash", segments: dash.segments, durations: dash.durations, contentType: dash.contentType, sampleRate: dash.sampleRate, bitDepth: dash.bitDepth };
         }
         return null;
     }
@@ -265,10 +294,11 @@ async function fetchVideoPlaybackInfo(
     videoId: string,
     quality: string,
     accessToken: string,
+    countryCode: string
 ): Promise<VideoPlaybackInfo | null> {
     const url =
         `${TIDAL_API_BASE}/videos/${videoId}/urlpostpaywall` +
-        `?urlusagemode=STREAM&videoquality=${quality}&assetpresentation=FULL`;
+        `?countryCode=${countryCode}&urlusagemode=STREAM&videoquality=${quality}&assetpresentation=FULL`;
 
     const res = await fetch(url, {
         headers: {
@@ -300,10 +330,11 @@ export async function getVideoPlaybackInfo(videoId: string): Promise<VideoPlayba
     let token = loadToken();
     if (!token) return null;
 
+    const cc = getCountryCode();
     const qualities = ["HIGH", "MEDIUM", "LOW"];
 
     for (const quality of qualities) {
-        const info = await fetchVideoPlaybackInfo(videoId, quality, token.access_token);
+        const info = await fetchVideoPlaybackInfo(videoId, quality, token.access_token, cc);
         if (info) return info;
     }
 
@@ -313,7 +344,7 @@ export async function getVideoPlaybackInfo(videoId: string): Promise<VideoPlayba
         if (!token) return null;
 
         for (const quality of qualities) {
-            const info = await fetchVideoPlaybackInfo(videoId, quality, token.access_token);
+            const info = await fetchVideoPlaybackInfo(videoId, quality, token.access_token, cc);
             if (info) return info;
         }
     } catch (err) {

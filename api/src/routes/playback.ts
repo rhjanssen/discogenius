@@ -19,6 +19,7 @@ import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../service
 import { authMiddleware } from "../middleware/auth.js";
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from "../services/metadata/provider-track-resolver.js";
 import { materializeSegmentedPlayback, parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
+import { db } from "../database.js";
 
 const streamPipeline = promisify(pipeline);
 const router = Router();
@@ -121,13 +122,142 @@ router.get("/stream/sign/:trackId", authMiddleware, async (req: Request, res: Re
         return res.status(404).json({ error: error?.message || "provider not found" });
     }
 
-    const expires = Math.floor(Date.now() / 1000) + 300; // 5 min
+    const expires = Math.floor(Date.now() / 1000) + 3600; // 1 h — must outlive a full album side
     const sig = signUrl(providerId, trackId, expires, quality);
     const qualityQuery = quality ? `&quality=${encodeURIComponent(quality)}` : "";
     const providerQuery = `&provider=${encodeURIComponent(providerId)}`;
-    const url = `/api/playback/stream/play/${trackId}?exp=${expires}&sig=${sig}${providerQuery}${qualityQuery}`;
+    const signedQuery = `?exp=${expires}&sig=${sig}${providerQuery}${qualityQuery}`;
+    const url = `/api/playback/stream/play/${trackId}${signedQuery}`;
+    // DASH-backed tracks can stream progressively over HLS instead of waiting
+    // for the proxy to materialize the whole file; the player probes this URL
+    // first and falls back to `url` when the source is progressive-only.
+    const hlsUrl = `/api/playback/stream/hls/${trackId}${signedQuery}`;
 
-    res.json({ url });
+    res.json({ url, hlsUrl });
+});
+
+function verifySignedPlayback(req: Request): { ok: false; status: number; error: string } | {
+    ok: true;
+    providerId: string;
+    quality: string | null;
+} {
+    const exp = String(req.query.exp ?? "") || undefined;
+    const sig = String(req.query.sig ?? "") || undefined;
+    const requestedQuality = req.query.quality;
+    const quality = normalizePlaybackQuality(requestedQuality);
+    const providerId = String(req.query.provider ?? "").trim();
+    const trackId = req.params.trackId as string;
+
+    if (!exp || !sig) return { ok: false, status: 403, error: "Missing signature" };
+    if (requestedQuality !== undefined && !quality) return { ok: false, status: 400, error: "Unsupported playback quality" };
+    if (!providerId) return { ok: false, status: 400, error: "Missing provider" };
+
+    const expires = parseInt(exp, 10);
+    if (Date.now() / 1000 > expires) return { ok: false, status: 403, error: "URL expired" };
+
+    const expected = signUrl(providerId, trackId, expires, quality);
+    if (sig !== expected) return { ok: false, status: 403, error: "Invalid signature" };
+
+    return { ok: true, providerId, quality };
+}
+
+async function loadSignedPlaybackInfo(providerId: string, trackId: string, quality: string | null) {
+    const provider = resolvePlaybackProvider(providerId);
+    if (!provider.getPlaybackInfo) {
+        return null;
+    }
+    return getCachedPlaybackInfo(providerId, trackId, quality, () =>
+        provider.getPlaybackInfo!(trackId, quality || undefined),
+    );
+}
+
+/**
+ * GET /stream/hls/:trackId
+ * Serves a VOD HLS media playlist for DASH-backed tracks so the browser can
+ * stream/seek without the proxy materializing the whole file first. The init
+ * segment is exposed via EXT-X-MAP; media segments stream through
+ * /stream/seg/:trackId/:index on demand.
+ */
+router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
+    const trackId = req.params.trackId as string;
+    const verified = verifySignedPlayback(req);
+    if (!verified.ok) return res.status(verified.status).json({ error: verified.error });
+
+    try {
+        const info = await loadSignedPlaybackInfo(verified.providerId, trackId, verified.quality);
+        if (!info) return res.status(502).json({ error: "No playable quality available" });
+        if (info.type !== "dash") {
+            // Progressive source — the client should use the plain play URL.
+            return res.status(409).json({ error: "progressive source", progressiveOnly: true });
+        }
+
+        const signedQuery = `?exp=${encodeURIComponent(String(req.query.exp))}&sig=${encodeURIComponent(String(req.query.sig))}`
+            + `&provider=${encodeURIComponent(verified.providerId)}`
+            + (verified.quality ? `&quality=${encodeURIComponent(verified.quality)}` : "");
+        const segmentUri = (index: number) => `/api/playback/stream/seg/${trackId}/${index}${signedQuery}`;
+
+        const durations = info.durations ?? [];
+        const mediaDurations = info.segments.slice(1).map((_, i) => durations[i + 1] || 4);
+        const targetDuration = Math.max(1, Math.ceil(Math.max(...mediaDurations, 1)));
+
+        const lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:7",
+            `#EXT-X-TARGETDURATION:${targetDuration}`,
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+            `#EXT-X-MAP:URI="${segmentUri(0)}"`,
+        ];
+        for (let index = 1; index < info.segments.length; index++) {
+            lines.push(`#EXTINF:${(durations[index] || 4).toFixed(5)},`);
+            lines.push(segmentUri(index));
+        }
+        lines.push("#EXT-X-ENDLIST");
+
+        res.setHeader("content-type", "application/vnd.apple.mpegurl");
+        res.setHeader("cache-control", "private, max-age=300");
+        res.send(lines.join("\n"));
+    } catch (err: any) {
+        console.error("[Playback] HLS playlist error:", err);
+        if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+/**
+ * GET /stream/seg/:trackId/:index
+ * Streams a single DASH segment (index 0 = init segment) from the provider CDN.
+ */
+router.get("/stream/seg/:trackId/:index", async (req: Request, res: Response) => {
+    const trackId = req.params.trackId as string;
+    const verified = verifySignedPlayback(req);
+    if (!verified.ok) return res.status(verified.status).json({ error: verified.error });
+
+    const index = Number.parseInt(String(req.params.index), 10);
+    if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: "Invalid segment index" });
+
+    try {
+        const info = await loadSignedPlaybackInfo(verified.providerId, trackId, verified.quality);
+        if (!info || info.type !== "dash") return res.status(502).json({ error: "No segmented source available" });
+        if (index >= info.segments.length) return res.status(404).json({ error: "Segment out of range" });
+
+        const upstream = await fetch(info.segments[index]);
+        if (!upstream.ok || !upstream.body) {
+            return res.status(502).json({ error: `Upstream segment fetch failed (${upstream.status})` });
+        }
+
+        res.setHeader("content-type", info.contentType || "audio/mp4");
+        res.setHeader("cache-control", "private, max-age=600");
+        const length = upstream.headers.get("content-length");
+        if (length) res.setHeader("content-length", length);
+
+        const nodeStream = Readable.fromWeb(upstream.body as any);
+        await streamPipeline(nodeStream, res);
+    } catch (err: any) {
+        if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;
+        console.error("[Playback] Segment proxy error:", err);
+        if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+        else res.end();
+    }
 });
 
 /**
@@ -246,26 +376,42 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/video/sign/:videoId", authMiddleware, (req: Request, res: Response) => {
+router.get("/video/sign/:videoId", authMiddleware, async (req: Request, res: Response) => {
     const videoId = req.params.videoId as string;
     if (!videoId) return res.status(400).json({ error: "Missing videoId" });
 
-    let providerId = "";
+    let provider;
     try {
-        const provider = resolvePlaybackProvider(req.query.provider);
-        providerId = provider.id;
-        if (!provider.getVideoPlaybackInfo) {
-            return res.status(501).json({ error: `${provider.name} does not support video preview` });
-        }
+        provider = resolvePlaybackProvider(req.query.provider);
     } catch (error: any) {
         return res.status(404).json({ error: error?.message || "provider not found" });
     }
+    if (!provider.getVideoPlaybackInfo) {
+        return res.status(501).json({ error: `${provider.name} does not support video preview` });
+    }
 
-    const expires = Math.floor(Date.now() / 1000) + 300;
-    const sig = signUrl(providerId, `video:${videoId}`, expires);
-    const url = `/api/playback/video/play/${videoId}?exp=${expires}&sig=${sig}&provider=${encodeURIComponent(providerId)}`;
+    // Accept canonical recording ids and resolve them to the provider's video id.
+    let providerVideoId = videoId;
+    if (!looksLikeMusicBrainzMbid(videoId)) {
+        const row = db.prepare(
+            "SELECT provider_id FROM ProviderItems WHERE entity_type = 'video' AND recording_id = ? AND provider = ? LIMIT 1",
+        ).get(videoId, provider.id) as { provider_id?: string | number | null } | undefined;
+        if (row?.provider_id != null) {
+            providerVideoId = String(row.provider_id);
+        }
+    }
 
-    res.json({ url });
+    try {
+        // Video previews play the provider's HLS manifest directly in the
+        // browser (hls.js); proxying every segment would only add load.
+        const info = await provider.getVideoPlaybackInfo(providerVideoId);
+        if (!info) {
+            return res.status(502).json({ error: "No playable video stream available" });
+        }
+        res.json({ url: info.url });
+    } catch {
+        res.status(500).json({ error: "Internal server error" });
+    }
 });
 
 router.get("/video/play/:videoId", async (req: Request, res: Response) => {
@@ -294,32 +440,7 @@ router.get("/video/play/:videoId", async (req: Request, res: Response) => {
             return res.status(502).json({ error: "No playable video stream available" });
         }
 
-        const range = req.headers["range"];
-        const upstream = await fetch(info.url, {
-            headers: range ? { Range: range } : {},
-        });
-
-        if (!upstream.ok || !upstream.body) {
-            return res.status(upstream.status).json({ error: "Upstream video fetch failed" });
-        }
-
-        res.status(upstream.status);
-        for (const header of [
-            "content-type", "content-length", "accept-ranges",
-            "content-range", "cache-control", "last-modified", "etag",
-        ]) {
-            const value = upstream.headers.get(header);
-            if (value) {
-                res.setHeader(header, value);
-            }
-        }
-
-        if (!res.getHeader("content-type") && info.contentType) {
-            res.setHeader("content-type", info.contentType);
-        }
-
-        const nodeStream = Readable.fromWeb(upstream.body as any);
-        await streamPipeline(nodeStream, res);
+        res.redirect(info.url);
     } catch (err: any) {
         if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;
 

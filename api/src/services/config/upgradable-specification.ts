@@ -127,6 +127,8 @@ export class UpgradableSpecification {
         sourceQuality?: string | null | undefined;
         codec?: string | null | undefined;
         extension?: string | null | undefined;
+        bitDepth?: number | null | undefined;
+        sampleRate?: number | null | undefined;
     }): QualityChangeEvaluation {
         const profile = params.profile ?? this.buildEffectiveProfile();
         const normalizedCurrentQuality = normalizeAudioTier(params.currentQuality);
@@ -153,15 +155,27 @@ export class UpgradableSpecification {
         const codec = String(params.codec || "").toUpperCase();
         const extension = String(params.extension || "").replace(/^\./, "").toLowerCase();
 
-        if (currentRank !== targetRank) {
-            const direction: QualityChangeDirection = currentRank < targetRank ? "upgrade" : "downgrade";
+        if (currentRank < targetRank) {
             return {
                 needsChange: profile.allowRedownloads,
-                direction,
+                direction: "upgrade",
                 currentQuality,
                 targetQuality,
                 qualityCutoffNotMet,
-                reason: `Quality ${direction}: ${currentQuality || "UNKNOWN"} -> ${targetQuality}`,
+                reason: `Quality upgrade: ${currentQuality || "UNKNOWN"} -> ${targetQuality}`,
+            };
+        }
+
+        if (currentRank > targetRank) {
+            // Lidarr semantics: lowering the configured quality never triggers an
+            // automatic re-download — existing better files are kept as-is.
+            return {
+                needsChange: false,
+                direction: "downgrade",
+                currentQuality,
+                targetQuality,
+                qualityCutoffNotMet: false,
+                reason: `Existing ${currentQuality || "UNKNOWN"} exceeds target ${targetQuality}; keeping better file`,
             };
         }
 
@@ -175,6 +189,30 @@ export class UpgradableSpecification {
                 qualityCutoffNotMet,
                 reason: `Format upgrade: ${codec || extension || "unknown"} -> FLAC`,
             };
+        }
+
+        const bitDepth = params.bitDepth || 0;
+        const sampleRate = params.sampleRate || 0;
+        if (bitDepth > 0 && sampleRate > 0) {
+            if (targetQuality === "HIRES_LOSSLESS" && (bitDepth < 24 && sampleRate <= 48000)) {
+                return {
+                    needsChange: profile.allowRedownloads,
+                    direction: "upgrade",
+                    currentQuality,
+                    targetQuality,
+                    qualityCutoffNotMet: true,
+                    reason: `Strict upgrade: target is HIRES_LOSSLESS, but file is ${bitDepth}-bit / ${sampleRate}Hz`,
+                };
+            } else if (targetQuality === "LOSSLESS" && (bitDepth < 16 || sampleRate < 44100)) {
+                return {
+                    needsChange: profile.allowRedownloads,
+                    direction: "upgrade",
+                    currentQuality,
+                    targetQuality,
+                    qualityCutoffNotMet: true,
+                    reason: `Strict upgrade: target is LOSSLESS, but file is ${bitDepth}-bit / ${sampleRate}Hz`,
+                };
+            }
         }
 
         return {

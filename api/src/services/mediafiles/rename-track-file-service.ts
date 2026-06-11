@@ -520,7 +520,7 @@ export class RenameTrackFileService {
     }
 
     if (result.renamed > 0) {
-      this.replicateSeparatedAudioSidecars();
+      this.replicateSeparatedSidecars();
     }
 
     if (result.renamed > 0) {
@@ -534,26 +534,29 @@ export class RenameTrackFileService {
     return this.executeRenameFilesByQuery({ artistId: options.artistId });
   }
 
-  private static replicateSeparatedAudioSidecars() {
+  private static replicateSeparatedSidecars() {
     const musicRoot = Config.getMusicPath();
     const spatialRoot = Config.getSpatialPath();
-    if (normalizeResolvedPath(musicRoot) === normalizeResolvedPath(spatialRoot)) {
+    const videoRoot = Config.getVideoPath();
+    if (normalizeResolvedPath(musicRoot) === normalizeResolvedPath(spatialRoot) &&
+        normalizeResolvedPath(musicRoot) === normalizeResolvedPath(videoRoot)) {
       return;
     }
 
     const tracks = db.prepare(`
-      SELECT tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality,
+      SELECT tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality, tf.file_type,
              pa.title AS album_title, pm.title AS track_title
       FROM TrackFiles tf
       JOIN ProviderAlbums pa ON pa.id = tf.album_id
       JOIN ProviderMedia pm ON pm.id = tf.media_id
-      WHERE tf.file_type = 'track'
-        AND tf.library_slot IN ('stereo', 'spatial')
+      WHERE tf.file_type IN ('track', 'video')
+        AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
     `).all() as Array<{
       artist_id: string;
       album_id: string;
       media_id: string;
-      library_slot: "stereo" | "spatial";
+      library_slot: "stereo" | "spatial" | null;
+      file_type: string;
       quality: string | null;
       album_title: string;
       track_title: string;
@@ -563,7 +566,7 @@ export class RenameTrackFileService {
       artistId: string;
       albumId?: string | null;
       mediaId?: string | null;
-      librarySlot: "stereo" | "spatial";
+      librarySlot?: "stereo" | "spatial" | string | null;
       libraryRoot: string;
       quality?: string | null;
       fileType: string;
@@ -607,7 +610,9 @@ export class RenameTrackFileService {
     };
 
     for (const track of tracks) {
-      const targetRoot = track.library_slot === "spatial" ? spatialRoot : musicRoot;
+      let targetRoot = musicRoot;
+      if (track.file_type === 'video') targetRoot = videoRoot;
+      else if (track.library_slot === "spatial") targetRoot = spatialRoot;
       const artistAssets = db.prepare(`
         SELECT * FROM MetadataFiles
         WHERE artist_id = ? AND album_id IS NULL AND media_id IS NULL

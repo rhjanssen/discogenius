@@ -267,6 +267,8 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
           sourceQuality: item.source_quality || item.album_quality,
           codec: item.codec,
           extension: item.extension,
+          bitDepth: item.bit_depth,
+          sampleRate: item.sample_rate,
         })
         : null;
 

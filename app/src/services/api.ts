@@ -946,7 +946,7 @@ class ApiClient {
       canonicalRecordingMbid?: string | null;
       slot?: string | null;
     },
-  ): Promise<string> {
+  ): Promise<{ url: string; hlsUrl?: string }> {
     const queryParams = new URLSearchParams();
     if (options?.provider) queryParams.set('provider', options.provider);
     if (options?.quality) queryParams.set('quality', options.quality);
@@ -955,9 +955,10 @@ class ApiClient {
     if (options?.canonicalRecordingMbid) queryParams.set('canonicalRecordingMbid', options.canonicalRecordingMbid);
     if (options?.slot) queryParams.set('slot', options.slot);
     const query = queryParams.toString();
-    const data = await this.request(`/playback/stream/sign/${trackId}${query ? `?${query}` : ''}`);
-    // The returned url is relative (/api/playback/stream/play/...), make it absolute
-    return `${this.baseUrl}${(data as any).url}`;
+    const data = await this.request(`/playback/stream/sign/${trackId}${query ? `?${query}` : ''}`) as { url: string; hlsUrl?: string };
+    // Returned urls are relative (/api/playback/stream/...), make them absolute
+    const absolute = (value?: string) => (value ? (value.startsWith("http") ? value : `${this.baseUrl}${value}`) : undefined);
+    return { url: absolute(data.url)!, hlsUrl: absolute(data.hlsUrl) };
   }
 
   async signVideoPreviewStream(videoId: string, options?: { provider?: string | null }): Promise<string> {
@@ -965,7 +966,8 @@ class ApiClient {
     if (options?.provider) queryParams.set('provider', options.provider);
     const query = queryParams.toString();
     const data = await this.request(`/playback/video/sign/${videoId}${query ? `?${query}` : ''}`);
-    return `${this.baseUrl}${(data as any).url}`;
+    const url = (data as any).url;
+    return url.startsWith("http") ? url : `${this.baseUrl}${url}`;
   }
 
   async getFileContent(filePath: string): Promise<string> {

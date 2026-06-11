@@ -202,6 +202,7 @@ const LibraryTrackList = ({
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
   const {
     getPlaybackSrc,
+    getPlaybackHlsSrc,
     handleTrackPlaybackError,
     playingTrackId,
     setPlayingTrackId,
@@ -423,6 +424,7 @@ const LibraryTrackList = ({
                   {isPlaying ? (
                     <AudioPlayer
                       src={getPlaybackSrc(track)}
+                    hlsSrc={getPlaybackHlsSrc(track)}
                       knownDuration={track.duration}
                       onEnded={() => setPlayingTrackId(null)}
                       onPlaybackError={() => {
@@ -551,6 +553,7 @@ const LibraryTrackList = ({
                         <div className={styles.playerRow}>
                           <AudioPlayer
                             src={getPlaybackSrc(track)}
+                    hlsSrc={getPlaybackHlsSrc(track)}
                             knownDuration={track.duration}
                             onEnded={() => setPlayingTrackId(null)}
                             onPlaybackError={() => {

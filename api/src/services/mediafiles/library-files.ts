@@ -447,6 +447,36 @@ function normalizeInlineVideoTitle(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Map a provider video title to a Plex extras suffix
+ * (-behindthescenes / -concert / -interview / -live / -lyrics / -video).
+ *
+ * Classification is best-effort from title qualifiers: providers often title a
+ * lyric video plainly ("Pompeii"), which can only default to "-video". Keyword
+ * checks are word-bounded and biased toward parenthetical/bracketed qualifiers
+ * so song titles like "Oblivion" or "Alive" never classify as live recordings.
+ */
+export function resolvePlexVideoSuffix(title: string | null | undefined): string {
+  const text = String(title || "").trim();
+  if (!text) return "-video";
+  const normalized = text.toLowerCase();
+
+  if (/behind[\s-]*the[\s-]*scenes/.test(normalized)) return "-behindthescenes";
+  if (/\binterview\b/.test(normalized)) return "-interview";
+
+  // Qualifier text: parenthetical/bracketed groups plus anything after " - ".
+  const qualifiers = [
+    ...[...normalized.matchAll(/\(([^)]*)\)|\[([^\]]*)\]/g)].map((m) => m[1] || m[2] || ""),
+    ...(normalized.split(/\s+[-–—]\s+/).slice(1)),
+  ].join(" ");
+
+  if (/\blyrics?\b/.test(qualifiers) || /\blyrics?\s+video\b/.test(normalized)) return "-lyrics";
+  if (/\bconcert\b/.test(qualifiers)) return "-concert";
+  if (/\blive\b/.test(qualifiers) || /\blive\s+(at|from|in|session|performance|lounge)\b/.test(normalized)) return "-live";
+
+  return "-video";
+}
+
 function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: string): string | null {
   if (!videoTitle) return null;
 
@@ -893,14 +923,18 @@ export class LibraryFilesService {
             return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
           }
 
-          const baseExpectedPath = path.join(audioExpectedDir, `${audioExpectedStem}-video.${ext}`);
+          const providerVideoTitle = row.media_id
+            ? (db.prepare("SELECT title FROM ProviderMedia WHERE id = ?").get(row.media_id) as { title?: string | null } | undefined)?.title ?? null
+            : null;
+          const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || providerVideoTitle);
+          const baseExpectedPath = path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`);
           const conflict = row.file_type === "video"
             ? db.prepare("SELECT id FROM TrackFiles WHERE file_type = 'video' AND file_path = ? AND id != ? LIMIT 1")
               .get(baseExpectedPath, row.id)
             : null;
           return {
             expectedPath: conflict
-              ? path.join(audioExpectedDir, `${audioExpectedStem}-video {TIDAL-${row.media_id}}.${ext}`)
+              ? path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix} {TIDAL-${row.media_id}}.${ext}`)
               : baseExpectedPath,
           };
         }
@@ -955,7 +989,9 @@ export class LibraryFilesService {
       };
 
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+      const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
+      const fileName = `${fileStem}${suffixToAppend}.${ext}`;
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -984,8 +1020,12 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
+      // Sidecars must share the video file's stem (including the Plex extras
+      // suffix) so Plex/Kodi pair them with the video.
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+      const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
+      const fileName = `${fileStem}${suffixToAppend}.${ext}`;
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1009,7 +1049,9 @@ export class LibraryFilesService {
           channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
-        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };
+        const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+        const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
+        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}${suffixToAppend}.nfo`) };
       }
     }
 

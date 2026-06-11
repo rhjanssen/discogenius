@@ -144,6 +144,32 @@ export function mapAudioQualityToTiddl(quality?: string | null): TiddlTrackQuali
     return nativeTiddlTrackQuality(Config.getQualityConfig()?.audio_quality) ?? "high";
 }
 
+const TIDDL_TRACK_QUALITY_RANK: Record<TiddlTrackQuality, number> = {
+    low: 0,
+    normal: 1,
+    high: 2,
+    max: 3,
+};
+
+/**
+ * The configured audio quality acts as a ceiling for stereo downloads: a
+ * HIRES_LOSSLESS offer with Audio Quality set to "High" downloads at 16-bit.
+ * Spatial requests are exempt — Atmos streams are selected via --dolby-atmos
+ * and have no FLAC tier to cap.
+ */
+export function capTiddlTrackQuality(requested: TiddlTrackQuality, isSpatial: boolean): TiddlTrackQuality {
+    if (isSpatial) {
+        return requested;
+    }
+    const configured = nativeTiddlTrackQuality(Config.getQualityConfig()?.audio_quality);
+    if (!configured) {
+        return requested;
+    }
+    return TIDDL_TRACK_QUALITY_RANK[requested] > TIDDL_TRACK_QUALITY_RANK[configured]
+        ? configured
+        : requested;
+}
+
 export function mapVideoQualityToTiddl(quality?: string | null): TiddlVideoQuality {
     const normalized = String(quality || "").trim().toLowerCase();
     if (normalized === "sd" || normalized === "hd" || normalized === "fhd") {

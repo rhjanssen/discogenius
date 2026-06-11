@@ -989,3 +989,78 @@ test("slot release follows the edition the chosen provider album actually covers
   assert.equal(selections[0]?.album.providerId, "provider-deluxe-eb");
   assert.equal(selections[0]?.match.releaseMbid, "release-deluxe-eb");
 });
+
+test("MusicBrainz parenthetical bonus-track suffixes do not break edition coverage", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-suffix-coverage";
+  insertReleaseGroup(releaseGroupMbid);
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  // Anniversary edition: MB titles the bonus disc with parenthetical qualifiers.
+  insertRelease.run("release-anniv-sfx", releaseGroupMbid, "artist-mbid-1", "Opera X", "Official", "2023-07-14", 4, 2);
+  insertRelease.run("release-standard-sfx", releaseGroupMbid, "artist-mbid-1", "Opera", "Official", "2013-03-04", 2, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRecording.run("rec-sfx-1", "Track One", 200000);
+  insertRecording.run("rec-sfx-2", "Track Two", 210000);
+  insertRecording.run("rec-sfx-3", "Track One (demo)", 190000);
+  insertRecording.run("rec-sfx-4", "Track Two (live from Unit 24)", 230000);
+  insertTrack.run("track-sfx-a1", "release-anniv-sfx", "rec-sfx-1", "Track One", 1, 1, 200000);
+  insertTrack.run("track-sfx-a2", "release-anniv-sfx", "rec-sfx-2", "Track Two", 2, 1, 210000);
+  insertTrack.run("track-sfx-a3", "release-anniv-sfx", "rec-sfx-3", "Track One (demo)", 1, 2, 190000);
+  insertTrack.run("track-sfx-a4", "release-anniv-sfx", "rec-sfx-4", "Track Two (live from Unit 24)", 2, 2, 230000);
+  insertTrack.run("track-sfx-s1", "release-standard-sfx", "rec-sfx-1", "Track One", 1, 1, 200000);
+  insertTrack.run("track-sfx-s2", "release-standard-sfx", "rec-sfx-2", "Track Two", 2, 1, 210000);
+
+  // The provider carries both editions, but titles the bonus tracks plainly
+  // (no "(demo)" / "(live ...)" suffixes). Durations confirm identity.
+  const standardMatch = buildMatch(releaseGroupMbid, "provider-standard-sfx");
+  const annivMatch = buildMatch(releaseGroupMbid, "provider-anniv-sfx");
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-standard-sfx",
+        title: "Opera",
+        quality: "LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: null, title: "Track One", track_number: 1, volume_number: 1, duration: 200 },
+          { mbid: null, isrc: null, title: "Track Two", track_number: 2, volume_number: 1, duration: 210 },
+        ],
+      },
+      match: standardMatch,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "provider-anniv-sfx",
+        title: "Opera X (10th Anniversary Edition)",
+        quality: "LOSSLESS",
+        trackCount: 4,
+        volumeCount: 2,
+        tracks: [
+          { mbid: null, isrc: null, title: "Track One", track_number: 1, volume_number: 1, duration: 200 },
+          { mbid: null, isrc: null, title: "Track Two", track_number: 2, volume_number: 1, duration: 210 },
+          { mbid: null, isrc: null, title: "Track One", track_number: 1, volume_number: 2, duration: 190 },
+          { mbid: null, isrc: null, title: "Track Two", track_number: 2, volume_number: 2, duration: 230 },
+        ],
+      },
+      match: annivMatch,
+    },
+  ]);
+
+  // The anniversary edition is fully coverable and larger, so it must win even
+  // though the standard edition is also fully covered by its own offer.
+  assert.equal(selections.length, 1);
+  assert.equal(selections[0]?.album.providerId, "provider-anniv-sfx");
+  assert.equal(selections[0]?.match.releaseMbid, "release-anniv-sfx");
+});

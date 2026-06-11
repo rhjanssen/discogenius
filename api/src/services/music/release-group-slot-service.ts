@@ -2,7 +2,7 @@ import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
-import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { baseComparableTitle, normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
@@ -194,10 +194,29 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
     if (!target.title || !pt.title) {
         return 0.0;
     }
-    const titleSimilarity = stringSimilarity(
+    let titleSimilarity = stringSimilarity(
         normalizeComparableText(target.title),
         normalizeComparableText(providerTrackComparableTitle(pt)),
     );
+    if (titleSimilarity < 0.72) {
+        // MusicBrainz disambiguates bonus/live tracks with parenthetical
+        // suffixes the provider usually omits. Accept identical base titles
+        // when duration (or, lacking durations, the exact position) confirms
+        // it is the same recording.
+        const targetBase = baseComparableTitle(target.title);
+        const providerBase = baseComparableTitle(providerTrackComparableTitle(pt));
+        if (targetBase && targetBase === providerBase) {
+            const durationSeconds = Number(target.lengthMs || 0) / 1000;
+            const providerDuration = Number(pt.duration || 0);
+            const durationKnown = durationSeconds > 0 && providerDuration > 0;
+            const durationClose = durationKnown && Math.abs(durationSeconds - providerDuration) <= 15;
+            const positionAligned = Number(target.mediumPosition || 1) === Number(pt.volume_number || 1)
+                && Number(target.position || 0) === Number(pt.track_number || 0);
+            if (durationClose || (!durationKnown && positionAligned)) {
+                titleSimilarity = 0.9;
+            }
+        }
+    }
     if (titleSimilarity < 0.72) {
         return 0.0;
     }
@@ -477,15 +496,16 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // Validate provider albums against every release in the group, with the
-        // representative release tried first and remaining editions ordered by
-        // tracklist size. The slot then records the release that was actually
-        // covered, so the selected MusicBrainz edition always describes the
-        // provider album that will be downloaded.
+        // Validate provider albums against every release in the group, ordered
+        // by tracklist size so the most extensive coverable edition wins (the
+        // curation goal: prefer deluxe/anniversary editions over the standard
+        // when the provider actually carries them). The slot then records the
+        // release that was actually covered, so the selected MusicBrainz
+        // edition always describes the provider album that will be downloaded.
         const releaseTargets = loadReleaseTrackTargets(releaseGroupMbid)
             .sort((left, right) =>
-                Number(right.releaseMbid === preferredReleaseRow?.mbid) - Number(left.releaseMbid === preferredReleaseRow?.mbid)
-                || right.tracks.length - left.tracks.length
+                right.tracks.length - left.tracks.length
+                || Number(right.releaseMbid === preferredReleaseRow?.mbid) - Number(left.releaseMbid === preferredReleaseRow?.mbid)
                 || left.releaseMbid.localeCompare(right.releaseMbid)
             );
 

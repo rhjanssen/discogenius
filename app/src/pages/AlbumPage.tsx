@@ -568,6 +568,11 @@ const AlbumPage = () => {
   const albumBrandColor = useArtworkBrandColor({
     artworkUrl: albumArtworkUrl,
     brandKeyColor: album?.vibrant_color ?? null,
+    // MusicBrainz-canonical albums have no provider vibrant_color, so derive
+    // the accent from the cover like the artist/video pages do — otherwise
+    // brand-driven UI (seekbar, buttons) stays on the default orange while
+    // UltraBlur already shows the artwork tint.
+    deriveBrandFromArtwork: true,
   });
 
   useEffect(() => {

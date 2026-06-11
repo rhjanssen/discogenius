@@ -82,7 +82,10 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusCircular,
     zIndex: 0,
     transform: 'translate(-50%, -50%)',
-    backgroundImage: 'radial-gradient(circle at 45% 45%, rgba(37, 222, 236, 0.62), rgba(117, 38, 245, 0.46) 34%, rgba(255, 122, 24, 0.42) 58%, transparent 74%)',
+    backgroundImage: `url(${logo})`,
+    backgroundSize: 'contain',
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'center',
     filter: 'blur(22px) saturate(1.25)',
     opacity: 0.68,
     pointerEvents: 'none',
@@ -133,6 +136,10 @@ const useStyles = makeStyles({
   leftCopy: {
     width: '100%',
     maxWidth: '560px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    textAlign: 'center',
   },
   brandTitle: {
     display: 'block',
@@ -141,14 +148,14 @@ const useStyles = makeStyles({
     letterSpacing: 0,
     fontWeight: tokens.fontWeightBold,
     marginBottom: tokens.spacingVerticalS,
+    textAlign: 'center',
   },
   leftBody: {
     display: 'block',
     color: tokens.colorNeutralForeground2,
     lineHeight: 1.7,
     maxWidth: '520px',
-    marginLeft: 'auto',
-    marginRight: 'auto',
+    textAlign: 'center',
   },
   rightColumn: {
     width: '100%',
@@ -208,10 +215,11 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalM,
     padding: `clamp(${tokens.spacingVerticalXL}, 4vw, 48px)`,
     borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: 'rgba(13, 14, 26, 0.72)',
-    border: `${tokens.strokeWidthThin} solid rgba(168, 131, 255, 0.32)`,
-    boxShadow: '0 34px 90px rgba(0,0,0,0.36)',
-    backdropFilter: 'blur(28px) saturate(1.25)',
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 75%, transparent)',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 50%, transparent)`,
+    boxShadow: tokens.shadow16,
+    backdropFilter: 'blur(28px)',
+    WebkitBackdropFilter: 'blur(28px)',
     '@media (max-width: 900px)': {
       padding: tokens.spacingVerticalL,
     },
@@ -274,18 +282,20 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalM,
   },
   providerButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 50%, transparent)',
     color: tokens.colorNeutralForeground1,
-    border: `1px solid rgba(255, 255, 255, 0.12)`,
-    boxShadow: 'none',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 50%, transparent)`,
+    boxShadow: tokens.shadow2,
+    backdropFilter: 'blur(10px)',
+    transition: 'background-color 0.2s',
     '&:hover': {
-      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+      backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1Hover) 80%, transparent)',
       color: tokens.colorNeutralForeground1,
     },
     '&:disabled': {
-      backgroundColor: 'rgba(255, 255, 255, 0.035)',
-      border: `1px solid rgba(255, 255, 255, 0.1)`,
-      color: tokens.colorNeutralForeground2,
+      backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 30%, transparent)',
+      border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 30%, transparent)`,
+      color: tokens.colorNeutralForegroundDisabled,
       opacity: 1,
     },
   },
@@ -739,37 +749,37 @@ const Auth = () => {
         </div>
 
         <div className={styles.card}>
-          {!connecting && !userCode && refreshing && (
-            <div className={styles.infoBox}>
-              <div className={styles.stateHeader}>
-                <Title3>Refreshing TIDAL session</Title3>
-                <Body1 className={styles.stateBody}>
-                  Restoring your provider session before continuing.
+          <div className={styles.content}>
+            <div className={styles.leftColumn}>
+              <div className={styles.logoContainer}>
+                <div aria-hidden="true" className={styles.logoGlow} />
+                <img src={logo} alt="Discogenius" className={styles.logo} />
+              </div>
+              <div className={styles.leftCopy}>
+                <Text as="h1" className={styles.brandTitle}>Welcome to Discogenius</Text>
+                <Body1 className={styles.leftBody}>
+                  Connect a streaming service to enable downloading, or skip for now and add your wanted artists first.
                 </Body1>
               </div>
-              <div className={styles.waitingText}>
-                <Spinner size="tiny" />
-                <Text size={200}>Checking token status...</Text>
-              </div>
             </div>
-          )}
 
-          {!connecting && !userCode && !refreshing && (
-            <div className={styles.content}>
-              <div className={styles.leftColumn}>
-                <div className={styles.logoContainer}>
-                  <div aria-hidden="true" className={styles.logoGlow} />
-                  <img src={logo} alt="Discogenius" className={styles.logo} />
+            <div className={styles.rightColumn}>
+              {!connecting && !userCode && refreshing && (
+                <div className={styles.infoBox}>
+                  <div className={styles.stateHeader}>
+                    <Title3>Refreshing TIDAL session</Title3>
+                    <Body1 className={styles.stateBody}>
+                      Restoring your provider session before continuing.
+                    </Body1>
+                  </div>
+                  <div className={styles.waitingText}>
+                    <Spinner size="tiny" />
+                    <Text size={200}>Checking token status...</Text>
+                  </div>
                 </div>
-                <div className={styles.leftCopy}>
-                  <Text as="h1" className={styles.brandTitle}>Welcome to Discogenius</Text>
-                  <Body1 className={styles.leftBody}>
-                    Connect a streaming service to enable downloading, or skip for now and add your wanted artists first.
-                  </Body1>
-                </div>
-              </div>
+              )}
 
-              <div className={styles.rightColumn}>
+              {!connecting && !userCode && !refreshing && (
                 <div className={styles.providerCard} data-test="dsp-button-list">
                   <div className={styles.providerHeader}>
                     <Text weight="semibold" className={styles.providerBadge}>Streaming service</Text>
@@ -811,59 +821,59 @@ const Auth = () => {
                     </Button>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {connecting && !userCode && (
+                <div className={styles.infoBox}>
+                  <div className={styles.stateHeader}>
+                    <Title3>Starting TIDAL authorization</Title3>
+                    <Body1 className={styles.stateBody}>
+                      Requesting a device code from TIDAL...
+                    </Body1>
+                  </div>
+                  <div className={styles.waitingText}>
+                    <Spinner size="tiny" />
+                    <Text size={200}>Opening the authorization page...</Text>
+                  </div>
+                </div>
+              )}
+
+              {connecting && userCode && (
+                <div className={styles.infoBox}>
+                  <div className={styles.stateHeader}>
+                    <Title3>Authorize Discogenius</Title3>
+                    <Body1 className={styles.stateBody}>
+                      Visit the link below and enter this code to authorize:
+                    </Body1>
+                  </div>
+
+                  <div className={styles.codeDisplay}>
+                    <Text className={styles.userCode}>
+                      {userCode}
+                    </Text>
+                  </div>
+
+                  <Button
+                    appearance="outline"
+                    icon={<Open24Regular />}
+                    onClick={() => {
+                      if (verificationUrl) {
+                        openVerificationWindow(verificationUrl);
+                      }
+                    }}
+                    className={styles.fullWidthButton}
+                  >
+                    Open TIDAL Authorization
+                  </Button>
+
+                  <div className={styles.waitingText}>
+                    <Spinner size="tiny" />
+                    <Text size={200}>Waiting for authorization...</Text>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-
-          {connecting && !userCode && (
-            <div className={styles.infoBox}>
-              <div className={styles.stateHeader}>
-                <Title3>Starting TIDAL authorization</Title3>
-                <Body1 className={styles.stateBody}>
-                  Requesting a device code from TIDAL...
-                </Body1>
-              </div>
-              <div className={styles.waitingText}>
-                <Spinner size="tiny" />
-                <Text size={200}>Opening the authorization page...</Text>
-              </div>
-            </div>
-          )}
-
-          {connecting && userCode && (
-            <div className={styles.infoBox}>
-              <div className={styles.stateHeader}>
-                <Title3>Authorize Discogenius</Title3>
-                <Body1 className={styles.stateBody}>
-                  Visit the link below and enter this code to authorize:
-                </Body1>
-              </div>
-
-              <div className={styles.codeDisplay}>
-                <Text className={styles.userCode}>
-                  {userCode}
-                </Text>
-              </div>
-
-              <Button
-                appearance="outline"
-                icon={<Open24Regular />}
-                onClick={() => {
-                  if (verificationUrl) {
-                    openVerificationWindow(verificationUrl);
-                  }
-                }}
-                className={styles.fullWidthButton}
-              >
-                Open TIDAL Authorization
-              </Button>
-
-              <div className={styles.waitingText}>
-                <Spinner size="tiny" />
-                <Text size={200}>Waiting for authorization...</Text>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </>

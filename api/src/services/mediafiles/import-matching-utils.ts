@@ -128,6 +128,24 @@ export function normalizeComparableText(input?: string | null): string {
         .trim();
 }
 
+/**
+ * Comparable title with trailing parenthetical/bracketed qualifiers removed.
+ * MusicBrainz disambiguates bonus and live tracks with suffixes like
+ * "Haunt (demo)" or "Bad Blood (piano version // live from Unit 24)" that
+ * providers usually omit; stripping them exposes the shared base title.
+ */
+export function baseComparableTitle(input?: string | null): string {
+    let text = String(input || "").trim();
+    for (;;) {
+        const next = text.replace(/\s*[([][^()[\]]*[)\]]\s*$/u, "");
+        if (next === text) {
+            break;
+        }
+        text = next;
+    }
+    return normalizeComparableText(text);
+}
+
 export function providerTrackComparableTitle(track: {
     title?: string | null;
     version?: string | null;

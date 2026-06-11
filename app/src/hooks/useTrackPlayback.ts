@@ -49,7 +49,7 @@ function canBrowserPlaySpatialPreview() {
 export function useTrackPlayback() {
   const { toast } = useToast();
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
-  const [signedStreamUrls, setSignedStreamUrls] = useState<Map<string, string>>(new Map());
+  const [signedStreamUrls, setSignedStreamUrls] = useState<Map<string, { url: string; hlsUrl?: string }>>(new Map());
   const [trackFilesById, setTrackFilesById] = useState<Record<string, PlayableTrackFile[]>>({});
   const signingTrackIdsRef = useRef<Set<string>>(new Set());
   const loadingTrackFileIdsRef = useRef<Set<string>>(new Set());
@@ -139,7 +139,17 @@ export function useTrackPlayback() {
       return api.getStreamUrl(audioFile.id);
     }
 
-    return signedStreamUrls.get(track.id) || "";
+    return signedStreamUrls.get(track.id)?.url || "";
+  }, [getTrackAudioFile, shouldUseSignedPreview, signedStreamUrls]);
+
+  /** HLS playlist URL for provider previews (undefined for local file playback). */
+  const getPlaybackHlsSrc = useCallback((track: PlayableTrack) => {
+    const audioFile = getTrackAudioFile(track);
+    if (audioFile && !shouldUseSignedPreview(track)) {
+      return undefined;
+    }
+
+    return signedStreamUrls.get(track.id)?.hlsUrl;
   }, [getTrackAudioFile, shouldUseSignedPreview, signedStreamUrls]);
 
   const ensureSignedStreamUrl = useCallback(async (track: PlayableTrack, preferredQuality?: string | null) => {
@@ -155,14 +165,14 @@ export function useTrackPlayback() {
         throw new Error("Track is not matched to a provider preview resource.");
       }
 
-      const url = await api.signTrackPreviewStream(providerTrackId, {
+      const signed = await api.signTrackPreviewStream(providerTrackId, {
         provider: getPreviewProviderId(track),
         quality: preferredQuality ?? undefined,
         releaseGroupMbid: looksLikeMusicBrainzMbid(track.album_id) ? track.album_id : undefined,
         canonicalTrackMbid: track.musicbrainz_track_id ?? (looksLikeMusicBrainzMbid(track.id) ? track.id : undefined),
         canonicalRecordingMbid: track.musicbrainz_recording_id ?? undefined,
       });
-      setSignedStreamUrls((previous) => new Map(previous).set(track.id, url));
+      setSignedStreamUrls((previous) => new Map(previous).set(track.id, signed));
     } finally {
       signingTrackIdsRef.current.delete(track.id);
     }
@@ -283,6 +293,7 @@ export function useTrackPlayback() {
 
   return {
     getPlaybackSrc,
+    getPlaybackHlsSrc,
     getTrackAudioFile,
     handleTrackPlaybackError,
     playingTrackId,

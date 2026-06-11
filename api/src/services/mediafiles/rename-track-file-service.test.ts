@@ -378,7 +378,7 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
     canonicalArtistMbid: "artist-mbid-1",
   });
 
-  const expectedPath = path.join(videoRoot, "Artist One", "Artist One - Canonical Video.mp4");
+  const expectedPath = path.join(videoRoot, "Artist One", "Artist One - Canonical Video-video.mp4");
   const statusBefore = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ artistId: "1", libraryRoot: "videos" }, 10);
   assert.equal(statusBefore.renameNeeded, 1);
   assert.equal(path.resolve(statusBefore.sample[0]?.expected_path || ""), path.resolve(expectedPath));

@@ -738,13 +738,23 @@ export class OrganizerService {
    * Remove old library files for a media item when a new file replaces them.
    * This handles the case where the extension changes (e.g. .m4a → .flac during upgrade)
    * so the new file goes to a different path and the old file would be orphaned.
+   *
+   * Replacement is slot-scoped: the stereo and spatial copies of the same
+   * canonical track share a media identity but are siblings, never
+   * replacements — without the slot constraint a spatial import would delete
+   * the freshly imported stereo file (and vice versa).
    */
-  private static cleanupOldMediaFiles(mediaId: string, newFilePath: string, fileType: "track" | "video") {
+  private static cleanupOldMediaFiles(
+    mediaId: string,
+    newFilePath: string,
+    fileType: "track" | "video",
+    librarySlot: string | null,
+  ) {
     const oldFiles = db.prepare(
       `SELECT id, artist_id, album_id, media_id, file_path, library_root, quality
        FROM TrackFiles
-       WHERE media_id = ? AND file_type = ? AND file_path != ?`
-    ).all(mediaId, fileType, newFilePath) as Array<{
+       WHERE media_id = ? AND file_type = ? AND library_slot IS ? AND file_path != ?`
+    ).all(mediaId, fileType, librarySlot, newFilePath) as Array<{
       id: number;
       artist_id: number;
       album_id: number | null;
@@ -1492,7 +1502,7 @@ export class OrganizerService {
           }
 
           if (mediaIdStr) {
-            this.cleanupOldMediaFiles(mediaIdStr, destFile, "track");
+            this.cleanupOldMediaFiles(mediaIdStr, destFile, "track", canonicalIdentity.librarySlot ?? null);
             this.cleanupSiblingMediaVariants(destFile, "track");
           }
         })();
@@ -1863,7 +1873,15 @@ export class OrganizerService {
 
         // Keep the track branch aligned with album/video organization so quality
         // changes replace the previous file instead of leaving duplicates behind.
-        this.cleanupOldMediaFiles(providerId, dest, "track");
+        const trackIdentity = resolveLibraryFileIdentity({
+          artistId,
+          albumId,
+          mediaId: providerId,
+          libraryRoot: targetRoot,
+          fileType: "track",
+          quality: derivedQuality,
+        });
+        this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null);
         this.cleanupSiblingMediaVariants(dest, "track");
       })();
 
@@ -2094,7 +2112,7 @@ export class OrganizerService {
           INSERT INTO ProviderMedia (
             id, artist_id, album_id, title, version, release_date, type,
             explicit, quality, duration, popularity, cover,
-            monitor, downloaded
+            monitored, downloaded
           ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, 0, 0)
           ON CONFLICT(id) DO UPDATE SET
             artist_id=excluded.artist_id,
@@ -2252,7 +2270,15 @@ export class OrganizerService {
         }
 
         // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-        this.cleanupOldMediaFiles(providerId, dest, "video");
+        const videoIdentity = resolveLibraryFileIdentity({
+          artistId,
+          albumId: video.album_id ? String(video.album_id) : null,
+          mediaId: providerId,
+          libraryRoot: organizedVideoRoot,
+          fileType: "video",
+          quality: derivedVideoQuality,
+        });
+        this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null);
         this.cleanupSiblingMediaVariants(dest, "video");
       })();
 

@@ -30,14 +30,25 @@ function pruneToFit() {
 }
 
 async function fetchSegments(segments: string[]): Promise<Buffer> {
-  const buffers: Buffer[] = [];
-  for (let index = 0; index < segments.length; index++) {
-    const response = await fetch(segments[index]);
-    if (!response.ok) {
-      throw new Error(`Segment ${index + 1} of ${segments.length} failed with status ${response.status}`);
+  const buffers: Buffer[] = new Array(segments.length);
+  const BATCH_SIZE = 10;
+  
+  for (let i = 0; i < segments.length; i += BATCH_SIZE) {
+    const batch = segments.slice(i, i + BATCH_SIZE);
+    const batchPromises = batch.map(async (url, index) => {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Segment ${i + index + 1} of ${segments.length} failed with status ${response.status}`);
+      }
+      return Buffer.from(await response.arrayBuffer());
+    });
+    
+    const results = await Promise.all(batchPromises);
+    for (let j = 0; j < results.length; j++) {
+      buffers[i + j] = results[j];
     }
-    buffers.push(Buffer.from(await response.arrayBuffer()));
   }
+  
   return Buffer.concat(buffers);
 }
 
