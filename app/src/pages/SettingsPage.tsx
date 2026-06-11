@@ -123,6 +123,9 @@ const TRACK_NAMING_TOKENS: NamingToken[] = [
     { section: "Track", token: "{Track ArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
     { section: "Track", token: "{Track MbId}", example: "8f1b4f76-8c53-4f28-bb73-0e1d1b97a3ef" },
     { section: "Track", token: "{Track Id}", example: "1550546" },
+    { section: "Track", token: "{Recording MbId}", example: "9f2c5e0a-32b1-4f30-9d96-1c8a2c1efb10" },
+    { section: "Track", token: "{Recording Id}", example: "42" },
+    { section: "Track", token: "{Media Id}", example: "1550546" },
     { section: "Numbering", token: "{track:00}", example: "01" },
     { section: "Numbering", token: "{track:000}", example: "001" },
     { section: "Numbering", token: "{medium:00}", example: "01" },
@@ -146,6 +149,8 @@ const PROVIDER_NAMING_TOKENS: NamingToken[] = [
     { section: "Provider", token: "{Provider ArtistId}", example: "8847" },
     { section: "Provider", token: "{Provider AlbumId}", example: "1550545" },
     { section: "Provider", token: "{Provider TrackId}", example: "1550546" },
+    { section: "Provider", token: "{Provider MediaId}", example: "1550546" },
+    { section: "Provider", token: "{Provider VideoId}", example: "44187439" },
 ];
 
 const NAMING_HELP: Record<
@@ -189,7 +194,7 @@ const NAMING_HELP: Record<
     },
     video_file: {
         title: "Video File",
-        description: "Template for the video filename (without extension).",
+        description: "Template for the video filename (without extension). A Plex extras suffix (-video, -lyrics, -live, ...) is appended automatically based on the detected video type.",
         tokens: [
             { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {tidal-{Video Id}}", example: "Daft Punk - Around the World {tidal-44187439}", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
@@ -199,6 +204,7 @@ const NAMING_HELP: Record<
             { section: "Video", token: "{Video CleanTitleThe}", example: "Around the World" },
             { section: "Video", token: "{Video Id}", example: "44187439" },
             { section: "Video", token: "{Track Id}", example: "1550546" },
+            ...ALBUM_NAMING_TOKENS,
             ...QUALITY_NAMING_TOKENS,
             ...PROVIDER_NAMING_TOKENS,
         ],

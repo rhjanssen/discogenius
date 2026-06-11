@@ -127,6 +127,9 @@ export interface RefreshArtistJobPayload extends QueuePayloadCommon {
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
   expandCreditedArtists?: boolean;
+  /** "basic" limits the refresh to canonical metadata (no provider catalog,
+   *  video, or slot hydration). Used for credit-only collaborator intake. */
+  scanDepth?: "basic" | "deep";
 }
 
 export interface RefreshAlbumJobPayload extends QueuePayloadCommon {

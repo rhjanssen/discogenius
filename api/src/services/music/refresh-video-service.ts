@@ -169,12 +169,19 @@ function findRelatedAudioRecordingForVideo(video: any, artistMbid: string | null
 
     const videoDurationMs = durationMs(video.duration);
     const videoIsrcs = parseIsrcValues(video.isrc ?? video.isrcs);
+    // Recordings created from MusicBrainz tracklists don't carry artist_mbid,
+    // so resolve the artist's audio recordings through their release groups —
+    // matching against Recordings.artist_mbid alone returns nothing.
     const rows = db.prepare(`
-        SELECT id, mbid, title, length_ms, isrcs
-        FROM Recordings
-        WHERE is_video = 0
-          AND artist_mbid = ?
-    `).all(normalizedArtistMbid) as Array<{
+        SELECT DISTINCT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
+        FROM Recordings rec
+        LEFT JOIN Tracks t ON t.recording_mbid = rec.mbid
+        LEFT JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+        LEFT JOIN Albums rg ON rg.mbid = ar.release_group_mbid
+        LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+        WHERE COALESCE(rec.is_video, 0) = 0
+          AND (rec.artist_mbid = ? OR rg.artist_mbid = ? OR scope.artist_mbid = ?)
+    `).all(normalizedArtistMbid, normalizedArtistMbid, normalizedArtistMbid) as Array<{
         id: number;
         mbid?: string | null;
         title?: string | null;

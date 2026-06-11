@@ -1,7 +1,8 @@
 import { db } from "../../database.js";
 import { JobTypes, TaskQueueService } from "../jobs/queue.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
-import { LibraryFilesService } from "../mediafiles/library-files.js";
+import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
+import { baseComparableTitle } from "../mediafiles/import-matching-utils.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
@@ -696,6 +697,7 @@ export class CurationService {
                     CAST(r.id AS TEXT) as recording_id,
                     r.mbid as recording_mbid,
                     r.title as video_title,
+                    r.artist_mbid as artist_mbid,
                     r.cover_image_url as cover_image_url,
                     artist.name as artist_name,
                     pi.provider,
@@ -729,13 +731,72 @@ export class CurationService {
             `;
 
             const videos = db.prepare(videosQuery).all(...videoParams) as any[];
+
+            // Providers expose several videos for the same song (official,
+            // lyric, live, anniversary re-uploads as separate recordings).
+            // Queue exactly one per song: group by artist + base title and
+            // prefer the official video, falling back along the Plex extras
+            // ranking; within a rank, the SQL order (confidence, status,
+            // recency) decides. Songs that already have ANY imported video
+            // in the group are skipped entirely.
+            const videoTypeRank: Record<string, number> = {
+                "-video": 0,
+                "-lyrics": 1,
+                "-live": 2,
+                "-concert": 3,
+                "-behindthescenes": 4,
+                "-interview": 5,
+            };
+            const videoGroupKey = (artistMbid: unknown, title: unknown) => {
+                const base = baseComparableTitle(String(title || "")) || String(title || "").trim().toLowerCase();
+                return `${String(artistMbid || "")}:${base}`;
+            };
+
+            const importedVideoGroups = new Set<string>(
+                (db.prepare(`
+                    SELECT r.artist_mbid AS artist_mbid, r.title AS title
+                    FROM TrackFiles lf
+                    JOIN Recordings r
+                      ON (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = r.mbid)
+                      OR (lf.provider_entity_type = 'video' AND EXISTS (
+                            SELECT 1 FROM ProviderItems pv
+                            WHERE pv.entity_type = 'video'
+                              AND CAST(pv.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+                              AND pv.recording_id = r.id
+                          ))
+                    WHERE lf.file_type = 'video' AND r.is_video = 1
+                `).all() as Array<{ artist_mbid: string | null; title: string | null }>)
+                    .map((row) => videoGroupKey(row.artist_mbid, row.title)),
+            );
+
+            const rankedVideos = videos
+                .map((video, index) => ({
+                    video,
+                    index,
+                    groupKey: videoGroupKey(video.artist_mbid, video.video_title),
+                    typeRank: videoTypeRank[resolvePlexVideoSuffix(video.video_title)] ?? 9,
+                    officialRank: /\bofficial\b/i.test(String(video.video_title || "")) ? 0 : 1,
+                }))
+                .sort((left, right) =>
+                    left.groupKey.localeCompare(right.groupKey)
+                    || left.typeRank - right.typeRank
+                    || left.officialRank - right.officialRank
+                    || left.index - right.index,
+                );
+
             const queuedRecordings = new Set<string>();
-            for (const video of videos) {
+            const queuedGroups = new Set<string>();
+            for (const { video, groupKey } of rankedVideos) {
                 const recordingId = String(video.recording_id || "");
                 const providerId = String(video.provider_id || "");
                 const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
                 if (!recordingId || !providerId || queuedRecordings.has(recordingId)) continue;
-                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], queueRefId)) continue;
+                if (queuedGroups.has(groupKey) || importedVideoGroups.has(groupKey)) continue;
+                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], queueRefId)) {
+                    // An in-flight job already covers this song.
+                    queuedGroups.add(groupKey);
+                    continue;
+                }
 
                 const artistName = video.artist_name || 'Unknown';
                 const title = video.video_title || 'Unknown Video';
@@ -756,6 +817,7 @@ export class CurationService {
                     description: `${title} by ${artistName}`,
                 }, queueRefId);
                 queuedRecordings.add(recordingId);
+                queuedGroups.add(groupKey);
                 videoJobs++;
             }
         }

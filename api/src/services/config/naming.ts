@@ -861,11 +861,15 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     channels: 2,
   };
 
+  // Previews are display strings: always use forward slashes regardless of
+  // the server platform so examples don't mix path separators on Windows.
+  const displayPath = (value: string) => value.replace(/\\/g, "/");
+
   return {
-    artistFolder: renderRelativePath(config.artist_folder, baseContext),
-    standardTrack: `${renderRelativePath(config.album_track_path_single, baseContext)}.flac`,
-    multiDiscTrack: `${renderRelativePath(config.album_track_path_multi, { ...baseContext, volumeNumber: 2, trackNumber: 3 })}.flac`,
-    video: `${renderFileStem(config.video_file, baseContext)}.mp4`,
+    artistFolder: displayPath(renderRelativePath(config.artist_folder, baseContext)),
+    standardTrack: `${displayPath(renderRelativePath(config.album_track_path_single, baseContext))}.flac`,
+    multiDiscTrack: `${displayPath(renderRelativePath(config.album_track_path_multi, { ...baseContext, volumeNumber: 2, trackNumber: 3 }))}.flac`,
+    video: `${displayPath(renderFileStem(config.video_file, baseContext))}.mp4`,
   };
 }
 

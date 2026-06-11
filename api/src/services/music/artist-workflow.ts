@@ -98,6 +98,7 @@ export function buildRefreshArtistJobPayload(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
+  scanDepth?: "basic" | "deep";
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   const hydrateCatalog = phases.refreshMetadata;
@@ -118,6 +119,7 @@ export function buildRefreshArtistJobPayload(params: {
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     expandCreditedArtists: params.expandCreditedArtists === true,
+    scanDepth: params.scanDepth ?? "deep",
   };
 }
 
@@ -141,6 +143,7 @@ export function buildArtistWorkflowEntryJob(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
+  scanDepth?: "basic" | "deep";
 }) {
   switch (params.workflow) {
     case "metadata-refresh":
@@ -155,6 +158,7 @@ export function buildArtistWorkflowEntryJob(params: {
           workflow: params.workflow,
           forceUpdate: params.forceUpdate,
           expandCreditedArtists: params.expandCreditedArtists,
+          scanDepth: params.scanDepth,
         }),
       };
     case "library-scan":
@@ -184,6 +188,7 @@ export function queueArtistWorkflow(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
+  scanDepth?: "basic" | "deep";
   priority?: number;
   trigger?: number;
 }) {
@@ -203,6 +208,7 @@ export function queueArtistIntake(params: {
   monitored: boolean;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
+  scanDepth?: "basic" | "deep";
   priority?: number;
   trigger?: number;
 }) {
@@ -212,6 +218,7 @@ export function queueArtistIntake(params: {
     workflow: params.monitored ? "monitoring-intake" : "metadata-refresh",
     forceUpdate: params.forceUpdate,
     expandCreditedArtists: params.expandCreditedArtists === true,
+    scanDepth: params.scanDepth,
     priority: params.priority,
     trigger: params.trigger,
   });

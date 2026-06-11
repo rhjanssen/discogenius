@@ -227,6 +227,21 @@ export class Scheduler {
                         progress: 5,
                         description: this.formatArtistPhaseDescription(job, "preparing artist refresh"),
                     });
+                    if (job.payload.scanDepth === "basic") {
+                        // Credit-only collaborator intake: canonical metadata
+                        // without provider catalog/video/slot hydration.
+                        await RefreshArtistService.scanBasic(job.payload.artistId, {
+                            monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
+                            includeSimilarArtists: false,
+                            seedSimilarArtists: false,
+                            forceUpdate: job.payload.forceUpdate ?? false,
+                        });
+                        this.updateJobDescription(job, {
+                            progress: 100,
+                            description: this.formatArtistPhaseDescription(job, "metadata refreshed"),
+                        });
+                        break;
+                    }
                     await RefreshArtistService.scanDeep(job.payload.artistId, {
                         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
                         monitorAlbums: job.payload.monitorAlbums,

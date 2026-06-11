@@ -412,6 +412,71 @@ export class RenameTrackFileService {
 
         const fsConflict = fs.existsSync(expectedPath);
         if (dbConflict || fsConflict) {
+          // Merged-root sidecar dedup: when library roots are combined,
+          // artist/album-scoped sidecars (artist.nfo, folder.jpg, cover.jpg)
+          // from the previously separate roots map to one target path. The
+          // destination already holds the same logical artifact, so drop the
+          // source duplicate instead of reporting an unresolvable conflict.
+          const isScopedSidecar = row.media_id == null && (row.file_type === "nfo" || row.file_type === "cover");
+          let duplicateOfSameScope = false;
+          if (isScopedSidecar) {
+            if (dbConflict) {
+              const occupant = db.prepare(`
+                SELECT artist_id, album_id, media_id, file_type
+                FROM ${tableName}
+                WHERE ${idCol} = ?
+              `).get(dbConflict.id) as {
+                artist_id?: string | number | null;
+                album_id?: string | number | null;
+                media_id?: string | number | null;
+                file_type?: string | null;
+              } | undefined;
+              duplicateOfSameScope = Boolean(
+                occupant
+                && occupant.media_id == null
+                && occupant.file_type === row.file_type
+                && String(occupant.artist_id ?? "") === String(row.artist_id ?? "")
+                && String(occupant.album_id ?? "") === String(row.album_id ?? ""),
+              );
+            } else {
+              // Target exists on disk at this scope's canonical sidecar path.
+              duplicateOfSameScope = true;
+            }
+          }
+
+          if (duplicateOfSameScope) {
+            const sourceDir = path.dirname(resolvedFilePath);
+            try {
+              fs.rmSync(resolvedFilePath, { force: true });
+            } catch (removeError) {
+              result.errors.push({ id, error: removeError instanceof Error ? removeError.message : String(removeError) });
+              continue;
+            }
+            dbUpdates.push({
+              sql: `DELETE FROM ${tableName} WHERE ${idCol} = ?`,
+              args: [decoded.id],
+            });
+            historyEvents.push({
+              artistId: row.artist_id,
+              albumId: row.album_id,
+              mediaId: row.media_id,
+              libraryFileId: row.id,
+              eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
+              data: {
+                deletedPath: resolvedFilePath,
+                replacementPath: expectedPath,
+                fileType: row.file_type,
+                reason: "merged-root-sidecar-duplicate",
+              },
+            });
+            const sourceRoot = resolveLibraryRootPath(row.library_root, resolvedFilePath);
+            if (sourceRoot) {
+              removeEmptyParents(sourceDir, sourceRoot);
+            }
+            result.renamed++;
+            continue;
+          }
+
           dbUpdates.push({
             sql: `UPDATE ${tableName} SET ${expectedPathCol} = ?, ${needsRenameCol} = 1 WHERE ${idCol} = ?`,
             args: [expectedPath, decoded.id],

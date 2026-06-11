@@ -16,11 +16,14 @@ export function useArtworkBrandColor({
   const { setArtwork, colors } = useUltraBlurContext();
 
   useEffect(() => {
-    setArtwork(artworkUrl || undefined);
-
-    return () => {
-      setArtwork(undefined);
-    };
+    // Only push real artwork into the global UltraBlur state — and keep the
+    // previous ambience alive on unmount. Resetting to the theme default here
+    // made the background snap to neutral between page navigations (and on
+    // dashboard/settings) while the brand accent persisted, which read as the
+    // blur "disappearing" and the next page's blur "popping in".
+    if (artworkUrl) {
+      setArtwork(artworkUrl);
+    }
   }, [artworkUrl, setArtwork]);
 
   return useMemo(() => {
