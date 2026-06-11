@@ -1,4 +1,5 @@
-FROM python:3.12-slim-bookworm AS base
+# tiddl requires Python >= 3.13
+FROM python:3.13-slim-bookworm AS base
 
 # Install Node.js 20.x and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

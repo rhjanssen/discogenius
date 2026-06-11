@@ -138,7 +138,7 @@ docker compose up -d
 
 - Node.js 20+
 - Yarn 1.22.x
-- Python 3.12+ with `tiddl` on PATH (`pip install tiddl`) for downloads
+- Python 3.13+ with `tiddl` on PATH (`pip install tiddl`) for downloads
 - FFmpeg on PATH (video conversion, FLAC extraction)
 - Docker (optional, for parity testing)
 
