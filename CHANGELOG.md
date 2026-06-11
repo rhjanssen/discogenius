@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.0] - 2026-06-11
+
+### Added
+- Provider-match visibility in the UI: album pages show a per-slot TIDAL match badge (matched / probable / ambiguous / not available) with the provider release and selected MusicBrainz edition in the tooltip, and the "Other releases" list labels the selected edition.
+- tiddl integration test coverage (auth file shape, quality mapping, environment pinning) and regression tests for edition-aware release matching.
+
+### Changed
+- **Single download backend:** all TIDAL downloads (stereo, Dolby Atmos, music videos) now run through tiddl. OrpheusDL and tidal-dl-ng have been removed, together with their runtime setup, token sync paths, and health checks. The Docker image installs tiddl and pins `TIDDL_PATH=/config/.tiddl`.
+- **One login:** the in-app TIDAL device login is synced straight into tiddl (`auth.json` in the exact shape tiddl expects, plus matching OAuth client credentials via `TIDDL_AUTH`), so downloads work immediately after connecting your account — no separate downloader authentication.
+- **Edition-aware matching:** provider albums are validated against the tracklist of every release in a MusicBrainz release group (representative edition first, then by tracklist size). The slot records the edition that the chosen provider album actually covers, so a standard edition on TIDAL no longer shows as "unavailable" just because MusicBrainz's largest release is a deluxe, and the stored release MBID always describes the content that gets downloaded.
+- Documentation and agent guidance consolidated: one `AGENTS.md` at the repository root, refreshed `ARCHITECTURE.md`/`CURATION_DEDUPLICATION.md`/`ROADMAP.md`, and removal of ~30 stale agent-session documents, RFCs, and instruction files.
+
+### Fixed
+- Album imports failed for every download: the organizer referenced a never-created `MediaCovers` table and a non-existent `AlbumReleases.primary_type` column. Canonical artwork now resolves through the existing album-artwork cache.
+- `api/src/services/config` (18 source files) was never committed because the runtime-state ignore patterns (`config/`, `downloads/`, `library/`) were unanchored; fresh clones could not compile and CI failed on every run. Patterns are now anchored to the repository root.
+- TIDAL's `HIGH` quality tag (320 kbps AAC) was conflated with tiddl's `high` tier (16-bit FLAC); config values now pass through verbatim and provider tags are mapped explicitly.
+- Combined slot selections (`id1;id2`) were passed to the downloader as a single URL; they now download sequentially into the same workspace with aggregated progress.
+- Hardcoded album-specific words were removed from the release-group matcher's edition-suffix heuristic.
+- Vite dev proxy: use the IPv4 loopback (Node 17+ resolves `localhost` to `::1` while the API listens on IPv4) and ignore a `PORT` value that points at the dev server itself.
+
 ## [1.2.6] - 2026-04-28
 
 ### Changed
