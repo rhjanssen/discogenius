@@ -10,10 +10,17 @@ const pkg = JSON.parse(
 ) as { version?: string };
 
 const DEFAULT_BACKEND_PORT = 3737;
+const DEV_SERVER_PORT = 8080;
 
 function resolveBackendPort(rawPort: string | undefined): number {
   const parsed = Number.parseInt(String(rawPort || "").trim(), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_BACKEND_PORT;
+  }
+
+  // Some harnesses export PORT for the dev server itself; proxying to our own
+  // port would loop back, so treat it as "no backend port configured".
+  if (parsed === DEV_SERVER_PORT) {
     return DEFAULT_BACKEND_PORT;
   }
 
@@ -23,7 +30,10 @@ function resolveBackendPort(rawPort: string | undefined): number {
 export default defineConfig(({ mode }) => {
   const repoRoot = path.resolve(__dirname, "..");
   const env = loadEnv(mode, repoRoot, "");
-  const backendTarget = `http://localhost:${resolveBackendPort(env.PORT || process.env.PORT)}`;
+  // Use the IPv4 loopback explicitly: Node 17+ resolves "localhost" to ::1
+  // first, but the backend listens on 0.0.0.0 (IPv4), so a "localhost"
+  // proxy target times out on dual-stack machines.
+  const backendTarget = `http://127.0.0.1:${resolveBackendPort(env.PORT || process.env.PORT)}`;
 
   return {
     define: {
@@ -32,7 +42,7 @@ export default defineConfig(({ mode }) => {
     envDir: repoRoot,
     server: {
       host: "::",
-      port: 8080,
+      port: DEV_SERVER_PORT,
       proxy: {
         '/api': {
           target: backendTarget,

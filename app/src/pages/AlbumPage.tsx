@@ -36,6 +36,7 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderMatchBadge } from "@/components/ui/ProviderMatchBadge";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -990,6 +991,25 @@ const AlbumPage = () => {
                 <Text>
                   {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
                 </Text>
+                <div className={styles.metadataSeparator} />
+                <div className={styles.metadataBadges}>
+                  <ProviderMatchBadge
+                    slot="stereo"
+                    provider={album.stereo_provider || album.selected_provider}
+                    matchStatus={album.stereo_match_status}
+                    providerAlbumId={album.stereo_provider_id}
+                    selectedReleaseMbid={album.stereo_release_mbid || album.selected_release_mbid}
+                  />
+                  {hasSpatialOffer && (
+                    <ProviderMatchBadge
+                      slot="spatial"
+                      provider={album.spatial_provider || album.selected_provider}
+                      matchStatus={album.spatial_match_status}
+                      providerAlbumId={album.spatial_provider_id}
+                      selectedReleaseMbid={album.spatial_release_mbid || album.selected_release_mbid}
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Album Review Section */}
@@ -1150,7 +1170,14 @@ const AlbumPage = () => {
               <div className={styles.carousel}>
                 {otherVersions.map((version) => {
                   const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
-                  const subtitle = [version.version, year].filter(Boolean).join(' · ');
+                  const isSelectedEdition = Boolean(version.id) && [
+                    album.stereo_release_mbid,
+                    album.spatial_release_mbid,
+                    album.selected_release_mbid,
+                  ].includes(version.id);
+                  const subtitle = [isSelectedEdition ? 'Selected edition' : null, version.version, year]
+                    .filter(Boolean)
+                    .join(' · ');
                   return renderMiniAlbumCard(version, subtitle, undefined, { to: null });
                 })}
               </div>

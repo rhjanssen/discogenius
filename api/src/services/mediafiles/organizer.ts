@@ -19,6 +19,7 @@ import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
+import { chooseCachedAlbumArtwork } from "../metadata/media-cover-service.js";
 
 
 type OrganizeType = "album" | "track" | "video";
@@ -396,10 +397,10 @@ export class OrganizerService {
         rg.title,
         rg.artist_mbid AS artistMbid,
         am.name AS artistName,
-        COALESCE(mc.local_path, mc.url, json_extract(rgs.provider_data, '$.cover'), json_extract(pi.data, '$.cover')) AS cover,
+        COALESCE(json_extract(rgs.provider_data, '$.cover'), json_extract(pi.data, '$.cover')) AS providerCover,
         json_extract(rgs.provider_data, '$.video_cover') AS videoCover,
         selected_release.date AS releaseDate,
-        selected_release.primary_type AS albumType,
+        rg.primary_type AS albumType,
         (
           SELECT COUNT(DISTINCT media.position)
           FROM AlbumReleaseMedia media
@@ -418,18 +419,12 @@ export class OrganizerService {
       LEFT JOIN Albums rg ON rg.mbid = COALESCE(rgs.release_group_mbid, pi.release_group_mbid, ?)
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
       LEFT JOIN AlbumReleases selected_release ON selected_release.mbid = COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?)
-      LEFT JOIN MediaCovers mc
-        ON mc.entity_type = 'release_group'
-       AND mc.entity_id = rg.mbid
-       AND mc.cover_type = 'front'
-       AND mc.provider IN ('musicbrainz', 'cover_art_archive', 'skyhook')
       WHERE pi.provider = ?
         AND pi.entity_type = 'album'
         AND pi.provider_id = ?
         AND (? = '' OR pi.release_group_mbid = ? OR rgs.release_group_mbid = ?)
       ORDER BY
         CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END,
-        CASE mc.provider WHEN 'musicbrainz' THEN 0 WHEN 'cover_art_archive' THEN 1 WHEN 'skyhook' THEN 2 ELSE 3 END,
         pi.updated_at DESC
       LIMIT 1
     `).get(
@@ -454,6 +449,12 @@ export class OrganizerService {
       return null;
     }
 
+    // Canonical artwork (SkyHook/Cover Art Archive) is stored on Albums.images;
+    // the provider cover from the selected offer snapshot is the fallback.
+    const canonicalCover = row.releaseGroupMbid
+      ? chooseCachedAlbumArtwork({ albumMbid: row.releaseGroupMbid })
+      : null;
+
     const slot = String(row.slot || requestedSlot || "stereo").toLowerCase() === "spatial" ? "spatial" : "stereo";
     return {
       provider: String(row.provider || provider),
@@ -465,7 +466,7 @@ export class OrganizerService {
       title: row.title || null,
       artistMbid: row.artistMbid || null,
       artistName: row.artistName || null,
-      cover: row.cover || null,
+      cover: canonicalCover || row.providerCover || null,
       videoCover: row.videoCover || null,
       volumeCount: row.volumeCount == null ? null : Number(row.volumeCount),
       releaseDate: row.releaseDate || null,

@@ -96,11 +96,23 @@ export function clearTiddlAuth(): void {
 }
 
 /**
- * Map a quality label to a tiddl track quality.
- *
- * Accepts both tiddl's own values (from the quality config section) and the
- * provider quality tags carried by slots/offers (LOSSLESS, HIRES_LOSSLESS,
- * DOLBY_ATMOS, ...). Falls back to the configured audio quality.
+ * Validate a tiddl-native track quality value (the quality config section
+ * already uses tiddl's low/normal/high/max vocabulary).
+ */
+export function nativeTiddlTrackQuality(value: unknown): TiddlTrackQuality | null {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (normalized === "low" || normalized === "normal" || normalized === "high" || normalized === "max") {
+        return normalized;
+    }
+    return null;
+}
+
+/**
+ * Map a provider quality tag (LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS, ...) to
+ * a tiddl track quality. Note the vocabulary clash: TIDAL's "HIGH" tier is
+ * 320 kbps AAC (= tiddl "normal"), while tiddl's own "high" means 16-bit
+ * FLAC — config values must go through nativeTiddlTrackQuality instead.
+ * Falls back to the configured audio quality.
  */
 export function mapAudioQualityToTiddl(quality?: string | null): TiddlTrackQuality {
     const normalized = String(quality || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
@@ -129,11 +141,7 @@ export function mapAudioQualityToTiddl(quality?: string | null): TiddlTrackQuali
         return "max";
     }
 
-    const configured = String(Config.getQualityConfig()?.audio_quality || "high").toLowerCase();
-    if (configured === "low" || configured === "normal" || configured === "high" || configured === "max") {
-        return configured;
-    }
-    return "high";
+    return nativeTiddlTrackQuality(Config.getQualityConfig()?.audio_quality) ?? "high";
 }
 
 export function mapVideoQualityToTiddl(quality?: string | null): TiddlVideoQuality {
@@ -164,7 +172,7 @@ export function syncTiddlSettings(downloadPath: string = Config.getDownloadPath(
     ensureTiddlConfigDir();
 
     const quality = Config.getQualityConfig();
-    const trackQuality = mapAudioQualityToTiddl(quality?.audio_quality);
+    const trackQuality = nativeTiddlTrackQuality(quality?.audio_quality) ?? "high";
     const videoQuality = mapVideoQualityToTiddl(quality?.video_quality);
     const embedCover = quality?.embed_cover !== false;
     const embedLyrics = quality?.embed_lyrics !== false;

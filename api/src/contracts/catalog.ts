@@ -38,14 +38,17 @@ export interface AlbumContract {
   type?: string;
   album_type?: string;
   quality?: string | null;
+  stereo_provider?: string | null;
   stereo_provider_id?: string | null;
   stereo_quality?: string | null;
   stereo_match_status?: string | null;
   stereo_release_mbid?: string | null;
+  spatial_provider?: string | null;
   spatial_provider_id?: string | null;
   spatial_quality?: string | null;
   spatial_match_status?: string | null;
   spatial_release_mbid?: string | null;
+  selected_provider?: string | null;
   selected_provider_id?: string | null;
   selected_release_mbid?: string | null;
   review?: string | null;
@@ -192,14 +195,17 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     type: expectOptionalString(record.type, `${label}.type`),
     album_type: expectOptionalString(record.album_type, `${label}.album_type`),
     quality: expectNullableString(record.quality, `${label}.quality`),
+    stereo_provider: expectOptionalString(record.stereo_provider, `${label}.stereo_provider`) ?? null,
     stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
     stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
     stereo_release_mbid: expectOptionalString(record.stereo_release_mbid, `${label}.stereo_release_mbid`) ?? null,
+    spatial_provider: expectOptionalString(record.spatial_provider, `${label}.spatial_provider`) ?? null,
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
     spatial_release_mbid: expectOptionalString(record.spatial_release_mbid, `${label}.spatial_release_mbid`) ?? null,
+    selected_provider: expectOptionalString(record.selected_provider, `${label}.selected_provider`) ?? null,
     selected_provider_id: expectOptionalString(record.selected_provider_id, `${label}.selected_provider_id`) ?? null,
     selected_release_mbid: expectOptionalString(record.selected_release_mbid, `${label}.selected_release_mbid`) ?? null,
     review: expectNullableString(record.review, `${label}.review`),

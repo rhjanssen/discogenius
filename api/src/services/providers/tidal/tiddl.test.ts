@@ -10,6 +10,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const {
     mapAudioQualityToTiddl,
     mapVideoQualityToTiddl,
+    nativeTiddlTrackQuality,
     syncTokenToTiddl,
     readTiddlAuth,
     clearTiddlAuth,
@@ -28,10 +29,17 @@ test("mapAudioQualityToTiddl maps provider quality tags to tiddl tiers", () => {
     assert.equal(mapAudioQualityToTiddl("Sony 360"), "max");
 });
 
-test("mapAudioQualityToTiddl passes through tiddl-native values", () => {
+test("mapAudioQualityToTiddl passes through unambiguous tiddl-native values", () => {
     assert.equal(mapAudioQualityToTiddl("low"), "low");
     assert.equal(mapAudioQualityToTiddl("normal"), "normal");
     assert.equal(mapAudioQualityToTiddl("max"), "max");
+});
+
+test("nativeTiddlTrackQuality keeps config values verbatim (tiddl 'high' is FLAC, not TIDAL's AAC tier)", () => {
+    assert.equal(nativeTiddlTrackQuality("high"), "high");
+    assert.equal(nativeTiddlTrackQuality("max"), "max");
+    assert.equal(nativeTiddlTrackQuality("LOSSLESS"), null);
+    assert.equal(nativeTiddlTrackQuality(undefined), null);
 });
 
 test("mapAudioQualityToTiddl falls back to configured audio quality", () => {
