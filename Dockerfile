@@ -1,15 +1,18 @@
 # tiddl requires Python >= 3.13
 FROM python:3.13-slim-bookworm AS base
 
-# Install Node.js 20.x and system dependencies
+# Install Node.js 20.x and system dependencies.
+# curl/gnupg are only needed to set up the NodeSource repo and are purged again.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg ffmpeg git gosu libchromaprint-tools \
+    ca-certificates curl gnupg ffmpeg gosu libchromaprint-tools \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y nodejs \
     && npm install -g yarn \
+    && apt-get purge -y curl gnupg \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install tiddl (TIDAL downloader) in its own venv
@@ -53,13 +56,15 @@ RUN groupadd --gid 1000 node \
 RUN mkdir -p /config /downloads /library/stereo-music /library/spatial-music /library/music-videos /app \
     && chown -R node:node /config /downloads /library /app
 
-# Copy package files (workspaces setup)
+# Copy package files. Only the api workspace gets runtime dependencies — the
+# frontend ships as pre-built static files, so installing its React/Fluent
+# dependency tree would only bloat the image. app/package.json itself stays:
+# the server's repo-root detection expects both workspace manifests on disk.
 COPY --chown=node:node package.json yarn.lock ./
 COPY --chown=node:node api/package.json ./api/
 COPY --chown=node:node app/package.json ./app/
-
-# Install production dependencies from root lockfile
-RUN yarn install --frozen-lockfile --production
+RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.workspaces=['api'];fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
+    && yarn install --frozen-lockfile --production
 
 # Copy built files from builder
 COPY --from=builder --chown=node:node /app/api/dist ./api/dist

@@ -21,10 +21,12 @@ services:
     volumes:
       # Persistent config directory (database, settings, tidal tokens)
       - ./config:/config
+      # Transient download/import workspace (optional but recommended)
+      - ./downloads:/downloads
       # Library directory
       # You can map these individually to different NAS shares if needed
       - ./library:/library
-      # - /path/to/nas/music:/library/music
-      # - /path/to/nas/atmos:/library/atmos
-      # - /path/to/nas/videos:/library/videos
+      # - /path/to/nas/stereo:/library/stereo-music
+      # - /path/to/nas/spatial:/library/spatial-music
+      # - /path/to/nas/videos:/library/music-videos
     restart: unless-stopped

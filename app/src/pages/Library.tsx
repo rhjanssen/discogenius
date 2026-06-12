@@ -96,9 +96,12 @@ const useStyles = makeStyles({
     },
   },
   mobileSearchBox: {
-    minWidth: "100%",
+    // minWidth 0 lets the box shrink to the padded container instead of
+    // pushing its dismiss icon past the viewport edge on narrow screens.
+    minWidth: 0,
     maxWidth: "100%",
     width: "100%",
+    boxSizing: "border-box",
   },
   container: {
     display: "flex",

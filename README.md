@@ -88,6 +88,7 @@ services:
       - ${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}
     volumes:
       - /any/path/to/discogenius/config:/config
+      - /any/path/to/discogenius/downloads:/downloads
       - /any/path/to/your/library:/library
     restart: unless-stopped
 ```
@@ -103,10 +104,15 @@ docker run -d \
   -e TZ=Etc/UTC \
   -p 127.0.0.1:3737:3737 \
   -v /any/path/to/discogenius/config:/config \
+  -v /any/path/to/discogenius/downloads:/downloads \
   -v /any/path/to/your/library:/library \
   --restart unless-stopped \
   rhjanssen/discogenius:latest
 ```
+
+`/downloads` is a transient staging workspace (in-progress downloads before
+they are imported into the library). Mounting it is optional but keeps large
+temporary files out of the container's writable layer.
 
 Open the app at [http://localhost:3737](http://localhost:3737)
 

@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.1] - 2026-06-12
+
+### Added
+- **HLS audio previews**: provider previews now stream over HLS (generated VOD playlist + per-segment proxy), so lossless DASH-backed tracks start instantly and seek anywhere without the server materializing the whole file first. The player falls back to the buffered proxy automatically for progressive-only sources.
+- **Provider-match visibility**: album pages show per-slot match badges (matched / probable / ambiguous / not available) with the provider release and selected MusicBrainz edition, and "Other releases" labels the selected edition.
+- **Plex extras naming for music videos**: video files and their thumbnail/NFO sidecars get a type suffix (`-video`, `-lyrics`, `-live`, `-concert`, `-behindthescenes`, `-interview`) classified from the provider title, in both separated and inline layouts.
+- An "Add Provider" empty state and "Add Another Provider" action in the provider settings section.
+
+### Changed
+- **Most-extensive-edition selection**: coverage targets are ordered by tracklist size and track matching understands MusicBrainz parenthetical bonus-track qualifiers ("Haunt (demo)" vs the provider's plain "Haunt"), so anniversary/deluxe editions are selected when the provider carries them (Bastille's Bad Blood now selects the 33-track Bad Blood X).
+- **Lidarr-style upgrade semantics**: lowering the audio quality never queues automatic re-downloads (existing better files are kept), and the configured quality now caps download quality for stereo tracks.
+- **One video per song**: duplicate provider videos (official/lyric/live re-uploads) are grouped by song and only the best one is queued, preferring official videos.
+- Credit-only collaborator artists get a basic metadata refresh instead of a full provider catalog/video sweep, and hydrate once instead of on every parent refresh.
+- Page ambience (UltraBlur background + accent) persists across navigation and on dashboard/settings, cross-fading between artworks instead of snapping through the neutral default.
+- The Docker image is ~40% smaller (2.31GB → ~1.4GB): runtime installs only the API workspace dependencies, and git plus repo-setup tools are no longer shipped.
+- Naming examples render with consistent separators and real Bastille/MusicBrainz sample data, and the token help now documents recording/media/provider-video ids and album tokens for video templates.
+
+### Fixed
+- Importing one slot of a release group no longer deletes the other slot's file: stereo FLAC and Atmos M4A of the same release now coexist instead of ping-pong replacing each other.
+- Music video imports failed on a phantom `ProviderMedia.monitor` column; video downloads now import with thumbnail and NFO.
+- Video↔track matching never linked anything because it filtered audio recordings by an always-empty `artist_mbid` column; candidates now resolve through release groups (Men I Trust: 0/13 → 13/13 videos linked), giving inline video placement real anchors.
+- Merging library roots no longer strands artist/album sidecars in unresolvable rename conflicts — same-scope duplicates are merged automatically.
+- Album pages derive the accent color from cover art like artist/video pages, so seekbars and brand UI no longer stay default orange.
+- Artist images load in dev (`/MediaCoverProxy` proxy), artist-page album cards prefer canonical Cover Art Archive artwork over provider art, and `docker-compose.yml` no longer points `TIDDL_BIN` at the removed tidal-dl-ng.
+- Restored authentication on the video preview sign endpoint and fixed TIDAL video playback URLs (countryCode + HTML-entity unescaping in DASH manifests).
+
 ## [2.0.0] - 2026-06-11
 
 ### Added
