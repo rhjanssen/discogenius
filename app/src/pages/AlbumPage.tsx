@@ -1022,6 +1022,14 @@ const AlbumPage = () => {
                 <Text>
                   {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
                 </Text>
+                {hasSpatialOffer && !hasStereoOffer && (
+                  <>
+                    <div className={styles.metadataSeparator} />
+                    {/* Spatial-only: no stereo-capable release exists on the provider.
+                        Make that explicit so it reads as correct, not a missing match. */}
+                    <Text weight="semibold">Dolby Atmos only</Text>
+                  </>
+                )}
               </div>
 
               {/* Album Review Section */}

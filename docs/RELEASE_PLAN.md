@@ -155,15 +155,23 @@ sound; it just needs a clean, tested implementation rather than a one-liner.
 
 ### 2.0.2-C · Spatial-only availability, done correctly (F4)
 
-- Do **not** route Atmos IDs into the stereo slot.
-- When a release group has a spatial offer but no stereo-capable offer, mark the
-  stereo slot `unavailable` with reason `spatial_only` and surface it in the UI
-  ("Dolby Atmos only on TIDAL"). The album should read as *correctly* spatial-
-  only, not as a broken/missing stereo match.
-- (Investigate, possibly defer to 2.1) an **opt-in** ffmpeg Atmos→stereo
-  downmix to populate a stereo file when no native stereo exists — off by
-  default, clearly labeled as derived (audiophiles will not want a downmix in a
-  "lossless stereo" library).
+- Do **not** route Atmos IDs into the stereo slot. _(Already correct:
+  `slotForQuality` routes a DOLBY_ATMOS candidate to the spatial slot, so a
+  spatial-only release group simply produces no stereo selection — no empty
+  stereo download is ever queued.)_
+- **Done in 2.0.2:** when a release group has a spatial offer but no stereo
+  offer, the album header now reads **"Dolby Atmos only"** beside the spatial
+  pill, so it presents as *correctly* spatial-only rather than a broken/missing
+  stereo match.
+- **Deferred to 2.0.3 — the opt-in stereo-from-spatial setting.** Three options
+  Robert wants: *don't use for stereo* (default) / *put the spatial version in
+  the stereo slot as-is* / *downmix the spatial version to stereo before adding
+  it to the library*. The downmix path is an ffmpeg Atmos→2ch derivation that
+  must be validated against a **real** Atmos file (e.g. Bakermat "Grace Note")
+  inside the Docker image (which bundles ffmpeg + fpcalc) before shipping; it is
+  clearly labeled as a derived file (audiophiles will not want a downmix in a
+  "lossless stereo" library). Scoped to its own 2.0.3 change so it ships proven,
+  not bolted onto 2.0.2.
 
 ### 2.0.2-D · Remix-monitored-but-original-not (`90c3f3ac…`)
 
