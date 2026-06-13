@@ -199,9 +199,10 @@ const useStyles = makeStyles({
     display: "none",
     "@media (min-width: 768px)": {
       display: "flex",
-      width: "100px",
+      width: "110px",
       flexShrink: 0,
       alignItems: "center",
+      columnGap: tokens.spacingHorizontalXS,
       paddingLeft: tokens.spacingHorizontalS,
       paddingRight: tokens.spacingHorizontalS,
       boxSizing: "border-box",

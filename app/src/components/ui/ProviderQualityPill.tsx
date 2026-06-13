@@ -45,7 +45,7 @@ const useStyles = makeStyles({
         flexShrink: 0,
         whiteSpace: "nowrap",
         columnGap: tokens.spacingHorizontalXXS,
-        height: "24px",
+        height: "22px",
         ...shorthands.padding(0, tokens.spacingHorizontalXXS),
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
         ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralStroke2),
@@ -57,22 +57,22 @@ const useStyles = makeStyles({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        width: "18px",
-        height: "18px",
+        width: "16px",
+        height: "16px",
         flexShrink: 0,
     },
     // Full-colour brand mark.
     iconImg: {
-        width: "16px",
-        height: "16px",
+        width: "14px",
+        height: "14px",
         display: "block",
         objectFit: "contain",
     },
     // Monochrome brand mark, recoloured to the theme foreground via masking so
     // it never disappears on a same-colour background (the white TIDAL bug).
     iconGlyph: {
-        width: "16px",
-        height: "16px",
+        width: "14px",
+        height: "14px",
         display: "block",
         backgroundColor: tokens.colorNeutralForeground1,
         WebkitMaskRepeat: "no-repeat",
@@ -97,9 +97,9 @@ const useStyles = makeStyles({
     },
     dotProbable: { backgroundColor: tokens.colorPaletteYellowBackground3 },
     dotAmbiguous: { backgroundColor: tokens.colorPaletteRedBackground3 },
-    // Concentric inner badge: circular to echo the outer capsule.
+    // Concentric inner badge: circular to echo the outer capsule, inset evenly.
     quality: {
-        height: "18px",
+        height: "16px",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
     },
     tooltipBody: {
