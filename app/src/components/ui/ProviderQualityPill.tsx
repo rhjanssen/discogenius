@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
+import { Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { QualityBadge } from "./QualityBadge";
 
 type SlotName = "stereo" | "spatial";
@@ -16,30 +16,40 @@ interface ProviderQualityPillProps {
     className?: string;
 }
 
-// Per-provider brand marks. Keys cover both the hyphenated and underscored
-// provider ids we persist (apple-music / apple_music).
-const PROVIDER_ICONS: Record<string, string> = {
-    tidal: "/assets/images/tidal_icon.svg",
-    apple: "/assets/images/apple_music_icon.svg",
-    apple_music: "/assets/images/apple_music_icon.svg",
-    "apple-music": "/assets/images/apple_music_icon.svg",
-    deezer: "/assets/images/deezer_icon.svg",
+type ProviderMark = {
+    src: string;
+    /**
+     * Monochrome brand marks (e.g. TIDAL's white diamonds) are rendered as a
+     * masked glyph tinted with the theme foreground, so they stay visible on
+     * both light and dark pills. Full-colour marks (Apple Music, Deezer) keep
+     * their brand colours and render as an <img>.
+     */
+    monochrome: boolean;
+};
+
+// Keys cover both the hyphenated and underscored provider ids we persist.
+const PROVIDER_MARKS: Record<string, ProviderMark> = {
+    tidal: { src: "/assets/images/tidal_icon.svg", monochrome: true },
+    apple: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
+    apple_music: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
+    "apple-music": { src: "/assets/images/apple_music_icon.svg", monochrome: false },
+    deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
 };
 
 const useStyles = makeStyles({
-    // The pill groups a provider mark with its quality badge into one chip that
-    // never squishes — text stays inside the rounded body at any container width.
+    // Outer capsule. Fully rounded; the inner quality badge is made circular too
+    // so the two radii stay concentric instead of fighting each other.
     pill: {
         display: "inline-flex",
         alignItems: "center",
         flexShrink: 0,
         whiteSpace: "nowrap",
-        columnGap: tokens.spacingHorizontalXS,
+        columnGap: tokens.spacingHorizontalXXS,
         height: "24px",
-        ...shorthands.padding(0, tokens.spacingHorizontalXS, 0, tokens.spacingHorizontalXXS),
+        ...shorthands.padding(0, tokens.spacingHorizontalXXS),
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
         ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralStroke2),
-        backgroundColor: tokens.colorNeutralBackground1,
+        backgroundColor: tokens.colorNeutralBackground3,
         cursor: "default",
     },
     iconWrap: {
@@ -47,34 +57,50 @@ const useStyles = makeStyles({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        width: "20px",
-        height: "20px",
+        width: "18px",
+        height: "18px",
         flexShrink: 0,
     },
-    icon: {
+    // Full-colour brand mark.
+    iconImg: {
         width: "16px",
         height: "16px",
         display: "block",
         objectFit: "contain",
     },
-    // A small status dot in the corner of the provider mark; only drawn when the
-    // match needs attention (probable / ambiguous), so verified offers stay clean.
+    // Monochrome brand mark, recoloured to the theme foreground via masking so
+    // it never disappears on a same-colour background (the white TIDAL bug).
+    iconGlyph: {
+        width: "16px",
+        height: "16px",
+        display: "block",
+        backgroundColor: tokens.colorNeutralForeground1,
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        WebkitMaskSize: "contain",
+        maskSize: "contain",
+    },
+    // Small status dot in the mark's corner; only drawn for matches that need
+    // attention (probable / ambiguous) so verified offers stay clean. Its ring
+    // matches the pill background so it reads as a cutout.
     statusDot: {
         position: "absolute",
-        right: 0,
-        bottom: 0,
+        right: "-1px",
+        bottom: "-1px",
         width: "7px",
         height: "7px",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralBackground1),
+        ...shorthands.border("1.5px", "solid", tokens.colorNeutralBackground3),
         boxSizing: "content-box",
     },
     dotProbable: { backgroundColor: tokens.colorPaletteYellowBackground3 },
     dotAmbiguous: { backgroundColor: tokens.colorPaletteRedBackground3 },
-    // The embedded quality badge keeps its own brand colours; trim its size so it
-    // reads as part of the pill rather than a second free-floating badge.
+    // Concentric inner badge: circular to echo the outer capsule.
     quality: {
         height: "18px",
+        ...shorthands.borderRadius(tokens.borderRadiusCircular),
     },
     tooltipBody: {
         display: "flex",
@@ -100,11 +126,10 @@ function slotDisplayName(slot: SlotName): string {
 }
 
 /**
- * One chip per filled library slot: a provider mark fused with its quality
- * badge (e.g. TIDAL · 24-BIT). With multiple providers this lets the user see
- * at a glance where each version came from — stereo from one, spatial from
- * another. Match confidence and the selected MusicBrainz edition live in the
- * hover tooltip to keep the row uncluttered.
+ * One capsule per filled library slot: a provider mark fused with its quality
+ * badge (e.g. TIDAL · 24-BIT). With multiple providers this shows where each
+ * version came from — stereo from one, spatial from another. Match confidence
+ * and the selected MusicBrainz edition live in the hover tooltip.
  */
 export const ProviderQualityPill: React.FC<ProviderQualityPillProps> = ({
     slot,
@@ -121,7 +146,7 @@ export const ProviderQualityPill: React.FC<ProviderQualityPillProps> = ({
     const status = hasSelection ? String(matchStatus || "probable").toLowerCase() : "unmatched";
     const providerName = providerDisplayName(provider);
     const key = providerKey(provider);
-    const iconSrc = PROVIDER_ICONS[key] || PROVIDER_ICONS[key.replace(/-/g, "_")];
+    const mark = PROVIDER_MARKS[key] || PROVIDER_MARKS[key.replace(/-/g, "_")];
     const combinedCount = String(providerAlbumId || "").split(";").filter(Boolean).length;
 
     const dotClass =
@@ -150,6 +175,22 @@ export const ProviderQualityPill: React.FC<ProviderQualityPillProps> = ({
         selectedReleaseMbid ? `MusicBrainz edition ${selectedReleaseMbid}` : null,
     ].filter(Boolean) as string[];
 
+    let mark_node: React.ReactNode = null;
+    if (mark?.monochrome) {
+        mark_node = (
+            <span
+                aria-hidden="true"
+                className={styles.iconGlyph}
+                style={{ WebkitMaskImage: `url("${mark.src}")`, maskImage: `url("${mark.src}")` }}
+            />
+        );
+    } else if (mark) {
+        mark_node = <img src={mark.src} alt="" aria-hidden="true" className={styles.iconImg} />;
+    } else {
+        // Unknown provider — fall back to its initial.
+        mark_node = <span aria-hidden="true">{providerName.charAt(0)}</span>;
+    }
+
     return (
         <Tooltip
             withArrow
@@ -164,15 +205,12 @@ export const ProviderQualityPill: React.FC<ProviderQualityPillProps> = ({
                 ),
             }}
         >
-            <span className={mergeClasses(styles.pill, className)} aria-label={`${providerName} ${slotDisplayName(slot)} ${statusLabel}`}>
+            <span
+                className={mergeClasses(styles.pill, className)}
+                aria-label={`${providerName} ${slotDisplayName(slot)} ${statusLabel}`}
+            >
                 <span className={styles.iconWrap}>
-                    {iconSrc ? (
-                        <img src={iconSrc} alt="" aria-hidden="true" className={styles.icon} />
-                    ) : (
-                        <Badge size="small" appearance="tint" color="informative" shape="circular">
-                            {providerName.charAt(0)}
-                        </Badge>
-                    )}
+                    {mark_node}
                     {dotClass ? <span className={mergeClasses(styles.statusDot, dotClass)} aria-hidden="true" /> : null}
                 </span>
                 {quality ? <QualityBadge quality={quality} size="small" className={styles.quality} /> : null}
