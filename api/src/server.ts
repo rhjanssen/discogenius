@@ -34,6 +34,7 @@ import unmappedRouter from "./routes/unmapped.js";
 import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
 import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
+import { migrateLegacyTiddlDir } from "./services/providers/tidal/tiddl.js";
 import { initCurationListeners } from "./services/music/curation.listener.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
 import { startMonitoring } from "./services/jobs/task-scheduler.js";
@@ -49,6 +50,9 @@ import { readIntEnv } from "./utils/env.js";
 
 function initializeAuthEnvironment() {
   ensureConfigExists();
+  // Relocate a pre-2.0.2 tiddl directory into config/providers/tidal/ before
+  // any TIDAL auth/health path reads it.
+  migrateLegacyTiddlDir();
 
   if (!process.env.ADMIN_PASSWORD) {
     const configuredPassword = String(getConfigSection("app").admin_password || "").trim();

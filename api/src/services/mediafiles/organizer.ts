@@ -362,7 +362,14 @@ export class OrganizerService {
       : [];
 
     if (positionedCandidates.length === 1) {
-      return positionedCandidates[0];
+      // A track that was also released as a standalone single carries an
+      // embedded trackNumber of 1. Trusting position alone would map it onto
+      // the album's real track 1 (e.g. an "Intro") and collide. Only accept the
+      // positional candidate when we have no title to check or the title agrees;
+      // otherwise fall through to title-based matching below.
+      if (!normalizedTitle || this.buildTrackMatchTitles(positionedCandidates[0]).includes(normalizedTitle)) {
+        return positionedCandidates[0];
+      }
     }
 
     if (positionedCandidates.length > 1 && normalizedTitle) {

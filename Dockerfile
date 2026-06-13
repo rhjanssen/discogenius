@@ -84,8 +84,10 @@ EXPOSE 3737
 ENV NODE_ENV=production
 ENV PORT=3737
 ENV DOCKER=true
-# tiddl stores auth.json/config.toml in TIDDL_PATH (kept inside the config volume)
-ENV TIDDL_PATH=/config/.tiddl
+# tiddl stores auth.json/config.toml in TIDDL_PATH, kept beside the rest of the
+# TIDAL plugin files inside the config volume. Startup migrates a pre-2.0.2
+# /config/.tiddl into this location automatically.
+ENV TIDDL_PATH=/config/providers/tidal/.tiddl
 
 # Declare volumes for persistent data
 VOLUME ["/config", "/downloads", "/library"]
