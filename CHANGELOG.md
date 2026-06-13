@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.2] - 2026-06-13
+
+### Changed
+- **Unified track matching**: curation, the album page, and playback now score MusicBrainz↔provider track matches through one shared matcher (recording-MBID / ISRC exact → position+title+duration structural → title-dominant fallback), so the three paths can no longer disagree. Fixes albums showing "no tracks matched / available" while the same release downloaded fine elsewhere (e.g. Bad Blood now reads 33/33).
+- **Verified status for full-coverage editions**: a release group whose provider release fully covers an "… EP" / "… X" style title-expansion now reads **verified** instead of being capped at "probable" (e.g. Goosebumps EP).
+- **Combined provider + quality pill**: the album header shows one chip per filled slot — a provider mark fused with its quality badge (e.g. TIDAL · 24-BIT, TIDAL · Atmos). With multiple providers this makes it obvious where each version came from; match confidence, combined-release count, and the selected MusicBrainz edition moved into the hover tooltip. A small corner dot flags only probable/ambiguous matches.
+- **Spatial-only albums** now read **"Dolby Atmos only"** in the header when the provider has no stereo release, presenting correctly instead of as a missing stereo match. (No empty stereo download was ever queued — Atmos candidates already route to the spatial slot.)
+- **TIDAL plugin files consolidated** under `config/providers/tidal/` (`.tiddl/` beside the token), with a one-time migration of a pre-2.0.2 `config/.tiddl`. Our app owns token refresh and writes the derived tiddl `auth.json`, so the app and `tiddl` no longer contend over the token. `TIDDL_PATH` now points at `config/providers/tidal/.tiddl`.
+
+### Fixed
+- **Badge squishing**: quality badges held their intrinsic width (`flex-shrink: 0`, no-wrap), so labels no longer spill outside the rounded body when a row gets tight — album header, media cards, and the dashboard alike.
+- **Single-track organizer collision**: a track that was also released as a standalone single embeds `trackNumber: 1`; the organizer only overrides album position with that embedded number when the candidate's title also matches, so track 13 no longer maps onto position 1.
+- **Artwork source consistency**: artist-page album cards now prefer the same persisted canonical (Cover Art Archive) cover the album page resolves, instead of falling through to provider art whenever the cached data blob lacked an image. (Backfilling canonical art for never-viewed release groups is tracked for 2.0.3.)
+- The misleading "Add Another Provider" button (it re-ran the already-connected TIDAL flow and bounced to the library) is replaced by a roadmap hint until the universal provider-onboarding flow lands.
+
 ## [2.0.1] - 2026-06-12
 
 ### Added
