@@ -448,6 +448,7 @@ export class ArtistQueryService {
                 }
             })() as { explicit?: boolean | number | null } | null;
             const coverUrl = chooseCachedAlbumArtwork({
+                albumMbid: row.mbid,
                 skyHookData: parseJsonObject(row.data),
                 providerCandidates: albumProviderArtworkCandidatesFromRow(row),
             });
@@ -928,6 +929,7 @@ export class ArtistQueryService {
                 || selectedProviderData?.cover
                 || null;
             const coverUrl = chooseCachedAlbumArtwork({
+                albumMbid: row.mbid,
                 skyHookData: parseJsonObject(row.data),
                 providerCandidates: albumProviderArtworkCandidatesFromRow(row),
             });
