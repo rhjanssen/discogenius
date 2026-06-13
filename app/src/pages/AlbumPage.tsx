@@ -36,7 +36,7 @@ import {
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { ProviderMatchBadge } from "@/components/ui/ProviderMatchBadge";
+import { ProviderQualityPill } from "@/components/ui/ProviderQualityPill";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -243,8 +243,8 @@ const useStyles = makeStyles({
   },
   metadataBadges: {
     display: "inline-flex",
-    alignItems: "flex-start",
-    columnGap: tokens.spacingHorizontalXXS,
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalXS,
     rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
   },
@@ -979,7 +979,33 @@ const AlbumPage = () => {
               </div>
 
               <div className={styles.metadata}>
-                {headerQualityBadges.length > 0 ? (
+                {hasAnyProviderOffer ? (
+                  <>
+                    <div className={styles.metadataBadges}>
+                      {hasStereoOffer && (
+                        <ProviderQualityPill
+                          slot="stereo"
+                          quality={album.stereo_quality || album.quality}
+                          provider={album.stereo_provider || album.selected_provider}
+                          matchStatus={album.stereo_match_status}
+                          providerAlbumId={album.stereo_provider_id}
+                          selectedReleaseMbid={album.stereo_release_mbid || album.selected_release_mbid}
+                        />
+                      )}
+                      {hasSpatialOffer && (
+                        <ProviderQualityPill
+                          slot="spatial"
+                          quality={album.spatial_quality || "DOLBY_ATMOS"}
+                          provider={album.spatial_provider || album.selected_provider}
+                          matchStatus={album.spatial_match_status}
+                          providerAlbumId={album.spatial_provider_id}
+                          selectedReleaseMbid={album.spatial_release_mbid || album.selected_release_mbid}
+                        />
+                      )}
+                    </div>
+                    <div className={styles.metadataSeparator} />
+                  </>
+                ) : headerQualityBadges.length > 0 ? (
                   <>
                     <div className={styles.metadataBadges}>
                       {headerQualityBadges.map((badge) => (
@@ -996,25 +1022,6 @@ const AlbumPage = () => {
                 <Text>
                   {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
                 </Text>
-                <div className={styles.metadataSeparator} />
-                <div className={styles.metadataBadges}>
-                  <ProviderMatchBadge
-                    slot="stereo"
-                    provider={album.stereo_provider || album.selected_provider}
-                    matchStatus={album.stereo_match_status}
-                    providerAlbumId={album.stereo_provider_id}
-                    selectedReleaseMbid={album.stereo_release_mbid || album.selected_release_mbid}
-                  />
-                  {hasSpatialOffer && (
-                    <ProviderMatchBadge
-                      slot="spatial"
-                      provider={album.spatial_provider || album.selected_provider}
-                      matchStatus={album.spatial_match_status}
-                      providerAlbumId={album.spatial_provider_id}
-                      selectedReleaseMbid={album.spatial_release_mbid || album.selected_release_mbid}
-                    />
-                  )}
-                </div>
               </div>
 
               {/* Album Review Section */}

@@ -17,6 +17,10 @@ const useStyles = makeStyles({
     base: {
         fontWeight: tokens.fontWeightBold,
         ...shorthands.border("none"),
+        // Never let a flex parent squeeze the badge — that pushed the label
+        // outside the rounded body. Hold the intrinsic width and clip cleanly.
+        flexShrink: 0,
+        whiteSpace: "nowrap",
         "::after": {
             display: "none",
         },

@@ -1667,15 +1667,18 @@ const SettingsPage = () => {
                         </React.Fragment>
                     );
                 })}
+                {/*
+                  * "Add another provider" returns with the universal provider
+                  * onboarding flow in 2.1 (Apple Music, …). Until a second
+                  * provider exists, /auth just re-runs the TIDAL connect and
+                  * bounces back to the library, so we show a roadmap hint
+                  * instead of a control that leads nowhere.
+                  */}
                 {activeProviders.length > 0 && (
                     <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
-                        <Button
-                            appearance="subtle"
-                            onClick={() => navigate("/auth")}
-                            icon={<Open24Regular />}
-                        >
-                            Add Another Provider
-                        </Button>
+                        <Caption1 className={styles.mutedText}>
+                            More providers (Apple Music, …) arrive in a future release.
+                        </Caption1>
                     </div>
                 )}
                 </>
