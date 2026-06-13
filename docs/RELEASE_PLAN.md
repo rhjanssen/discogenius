@@ -238,6 +238,33 @@ config/providers/tidal/token.json                                       ← our 
   contract — investigate, but the "single refresher + co-located + documented
   derived file" option is the low-risk win for 2.0.2.)
 
+### 2.0.2-H · Album artwork source unification
+
+Robert saw an album show **provider art on the artist card** but **canonical
+(MusicBrainz/CAA) art on the album page** — "why isn't this a unified method?"
+
+What's actually going on (verified):
+
+- The resolution logic is already shared: both the sync `chooseCachedAlbumArtwork`
+  (artist list) and the async `resolveAlbumArtwork` (album page) try
+  Albums.images canonical → skyhook `data.images` → provider fallback, in the
+  same order.
+- The divergence was an **input** gap, not a logic gap: the artist-list call
+  sites omitted `albumMbid`, so they skipped the Albums.images canonical lookup
+  and fell straight to provider art whenever the cached `data` blob lacked a CAA
+  image. Album pages persist canonical art into Albums.images when viewed, so the
+  two paths disagreed for any release group that had been viewed (cached) but
+  whose `data` blob had no image. **Fixed in 2.0.2** by passing `albumMbid` at
+  both sites — the read paths now agree for any RG whose canonical art is cached.
+- Residual gap (deferred): release groups that have **never been individually
+  synced** carry no canonical art in any store (only ~6/94 Bastille RGs were
+  cached), so they still show provider art until first viewed. Closing this
+  needs a refresh-time backfill that resolves Cover Art Archive front covers for
+  every RG and persists them to Albums.images. That means rate-limited CAA/skyhook
+  lookups (≈1 req/s) fanned across an artist's full discography, so it belongs in
+  its own change with proper throttling + a background job — **tracked for 2.0.3**,
+  not bolted onto a refresh synchronously.
+
 ### 2.0.2 acceptance
 
 - Bad Blood X and VS. show all tracks matched in the UI (no false "missing").
@@ -245,6 +272,10 @@ config/providers/tidal/token.json                                       ← our 
 - Grace Note reads "Dolby Atmos only" (not a broken stereo slot); no empty
   stereo download is ever queued for it.
 - Badges are aligned, consistently spaced, never clip their text.
+- Provider + quality read as one chip per slot (provider mark fused with its
+  quality badge); match confidence/edition live in the hover tooltip.
+- Artist cards and album pages show the same canonical-first cover for any
+  cached release group.
 - `yarn ci` green; container re-verified.
 
 ---
