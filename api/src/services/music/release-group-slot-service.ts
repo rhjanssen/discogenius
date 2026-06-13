@@ -2,7 +2,7 @@ import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
-import { baseComparableTitle, normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
@@ -184,58 +184,34 @@ type ProviderAlbumCandidateWithTracks = {
     tracks: Array<ProviderTrackDetail>;
 };
 
+// Adapter to the shared matcher. The slot path stores provider tracks in
+// snake_case (built from provider rows that way in refresh-artist-service), so
+// we map into the normalized shape here rather than changing the stored type.
 function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
-    if (target.recordingMbid && pt.mbid && target.recordingMbid === pt.mbid) {
-        return 1.0;
-    }
-    if (pt.isrc && target.isrcs.has(pt.isrc)) {
-        return 1.0;
-    }
-    if (!target.title || !pt.title) {
-        return 0.0;
-    }
-    let titleSimilarity = stringSimilarity(
-        normalizeComparableText(target.title),
-        normalizeComparableText(providerTrackComparableTitle(pt)),
+    return sharedScoreTrackMatch(
+        {
+            recordingMbid: target.recordingMbid,
+            isrcs: target.isrcs,
+            title: target.title,
+            trackNumber: target.position,
+            volumeNumber: target.mediumPosition,
+            durationSec: target.lengthMs == null ? null : Number(target.lengthMs) / 1000,
+        },
+        {
+            mbid: pt.mbid,
+            isrc: pt.isrc,
+            title: pt.title || "",
+            version: pt.version ?? null,
+            trackNumber: pt.track_number,
+            volumeNumber: pt.volume_number,
+            durationSec: pt.duration == null ? null : Number(pt.duration),
+        },
     );
-    if (titleSimilarity < 0.72) {
-        // MusicBrainz disambiguates bonus/live tracks with parenthetical
-        // suffixes the provider usually omits. Accept identical base titles
-        // when duration (or, lacking durations, the exact position) confirms
-        // it is the same recording.
-        const targetBase = baseComparableTitle(target.title);
-        const providerBase = baseComparableTitle(providerTrackComparableTitle(pt));
-        if (targetBase && targetBase === providerBase) {
-            const durationSeconds = Number(target.lengthMs || 0) / 1000;
-            const providerDuration = Number(pt.duration || 0);
-            const durationKnown = durationSeconds > 0 && providerDuration > 0;
-            const durationClose = durationKnown && Math.abs(durationSeconds - providerDuration) <= 15;
-            const positionAligned = Number(target.mediumPosition || 1) === Number(pt.volume_number || 1)
-                && Number(target.position || 0) === Number(pt.track_number || 0);
-            if (durationClose || (!durationKnown && positionAligned)) {
-                titleSimilarity = 0.9;
-            }
-        }
-    }
-    if (titleSimilarity < 0.72) {
-        return 0.0;
-    }
-
-    const volumeScore = Number(target.mediumPosition || 1) === Number(pt.volume_number || 1) ? 0.2 : 0;
-    const trackScore = Number(target.position || 0) === Number(pt.track_number || 0) ? 0.2 : 0;
-    const titleScore = titleSimilarity * 0.5;
-    const durationSeconds = Number(target.lengthMs || 0) / 1000;
-    const durationDelta = Math.abs(durationSeconds - Number(pt.duration || 0));
-    const durationScore = durationSeconds > 0 && Number(pt.duration || 0) > 0
-        ? Math.max(0, 1 - (durationDelta / Math.max(8, durationSeconds * 0.08))) * 0.1
-        : 0;
-
-    return volumeScore + trackScore + titleScore + durationScore;
 }
 
 function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrackDetail>): boolean {
     return providerTracks.some(pt => {
-        return scoreTrackMatch(target, pt) >= 0.55;
+        return scoreTrackMatch(target, pt) >= TRACK_MATCH_THRESHOLD;
     });
 }
 
@@ -250,7 +226,7 @@ function getMatchedTargets1to1(targetTracks: TargetTrack[], providerTracks: Prov
         for (let i = 0; i < providerTracks.length; i++) {
             if (usedProviderIndices.has(i)) continue;
             const score = scoreTrackMatch(target, providerTracks[i]);
-            if (score >= 0.55 && score > bestScore) {
+            if (score >= TRACK_MATCH_THRESHOLD && score > bestScore) {
                 bestScore = score;
                 bestIdx = i;
             }
@@ -621,7 +597,7 @@ export function selectReleaseGroupSlotAlbums(
             if (selectedCandidates.length > 1) {
                 const allProviderTracks = selectedCandidates.flatMap(c => c.tracks);
                 const hasLeftover = allProviderTracks.some(pt => {
-                    return !target.tracks.some(targetTrack => scoreTrackMatch(targetTrack, pt) >= 0.55);
+                    return !target.tracks.some(targetTrack => scoreTrackMatch(targetTrack, pt) >= TRACK_MATCH_THRESHOLD);
                 });
                 if (hasLeftover) {
                     continue;

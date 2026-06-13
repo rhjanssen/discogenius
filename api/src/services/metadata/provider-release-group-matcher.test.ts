@@ -77,6 +77,36 @@ test("matches expanded provider editions to the MusicBrainz release group", () =
     assert.ok(match.confidence >= 0.78);
 });
 
+test("a fully-track-covered '… EP' expansion is verified, not just probable", () => {
+    // Provider titles an EP "Goosebumps EP" while MusicBrainz titles the release
+    // group "Goosebumps"; the track count matches the MB edition exactly.
+    const goosebumps = [
+        {
+            mbid: "ggg-mbid",
+            title: "Goosebumps",
+            primaryType: "EP",
+            secondaryTypes: [],
+            firstReleaseDate: "2023-01-01",
+            releases: [
+                { mbid: "ggg-release", trackCount: 4, mediaCount: 1 },
+            ],
+        },
+    ];
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "ggg-provider",
+        title: "Goosebumps EP",
+        releaseDate: "2023-01-01",
+        type: "EP",
+        trackCount: 4,
+        volumeCount: 1,
+    }, goosebumps);
+
+    assert.equal(match.releaseGroup?.mbid, "ggg-mbid");
+    assert.equal(match.evidence.titleExpansionMatched, true);
+    assert.equal(match.evidence.trackCountMatched, true);
+    assert.equal(match.status, "verified");
+});
+
 test("matches expanded provider editions even when they contain bonus discs", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "243863069",

@@ -3,7 +3,7 @@ import type { AlbumContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
 import { skyHookProxy } from "./skyhook-proxy.js";
-import { normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-track-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
@@ -525,33 +525,33 @@ function getReleaseTrackContracts(
     });
 }
 
+// The album-page UI uses the same matcher as curation, so a "matched" badge can
+// never disagree with the per-track availability shown below it. Adapts the
+// camelCase ProviderTrack shape into the shared matcher.
 function scoreProviderTrackMatch(
     track: AlbumTrackContract,
     providerTrack: ProviderTrack,
     canonicalIsrcs: Set<string> = new Set(),
 ): number {
-    const providerIsrc = String(providerTrack.isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (providerIsrc && canonicalIsrcs.has(providerIsrc)) {
-        return 1;
-    }
-
-    const titleSimilarity = stringSimilarity(
-        normalizeComparableText(track.title),
-        normalizeComparableText(providerTrackComparableTitle(providerTrack)),
+    return sharedScoreTrackMatch(
+        {
+            recordingMbid: track.musicbrainz_recording_id ?? null,
+            isrcs: canonicalIsrcs,
+            title: track.title,
+            trackNumber: Number(track.track_number || 0),
+            volumeNumber: Number(track.volume_number || 1),
+            durationSec: track.duration == null ? null : Number(track.duration),
+        },
+        {
+            mbid: null,
+            isrc: providerTrack.isrc ?? null,
+            title: providerTrack.title,
+            version: (providerTrack as { version?: string | null }).version ?? null,
+            trackNumber: providerTrack.trackNumber ?? null,
+            volumeNumber: providerTrack.volumeNumber ?? null,
+            durationSec: providerTrack.duration == null ? null : Number(providerTrack.duration),
+        },
     );
-    if (titleSimilarity < 0.72) {
-        return 0;
-    }
-
-    const volumeScore = Number(track.volume_number || 1) === Number(providerTrack.volumeNumber || 1) ? 0.2 : 0;
-    const trackScore = Number(track.track_number || 0) === Number(providerTrack.trackNumber || 0) ? 0.2 : 0;
-    const titleScore = titleSimilarity * 0.5;
-    const durationDelta = Math.abs(Number(track.duration || 0) - Number(providerTrack.duration || 0));
-    const durationScore = Number(track.duration || 0) > 0 && Number(providerTrack.duration || 0) > 0
-        ? Math.max(0, 1 - (durationDelta / Math.max(8, Number(track.duration || 0) * 0.08))) * 0.1
-        : 0;
-
-    return volumeScore + trackScore + titleScore + durationScore;
 }
 
 function normalizeLibraryFileFromRow(row: any) {

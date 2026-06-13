@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { baseComparableTitle, normalizeComparableText, providerTrackComparableTitle, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "../music/provider-track-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 
@@ -155,57 +155,45 @@ function getProviderAlbumSelections(
         .filter((row) => row.slot && row.provider && row.providerAlbumId);
 }
 
+function parseCanonicalIsrcs(value: string | null): Set<string> {
+    const set = new Set<string>();
+    if (!value) return set;
+    try {
+        const parsed = JSON.parse(value) as unknown;
+        if (Array.isArray(parsed)) {
+            for (const isrc of parsed) {
+                const norm = String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                if (norm) set.add(norm);
+            }
+        }
+    } catch {
+        // Ignore malformed ISRC json; structural matching still applies.
+    }
+    return set;
+}
+
+// Resolve which provider track to download/preview for a canonical track —
+// same shared matcher as curation and the album page.
 function scoreProviderTrackMatch(track: CanonicalTrackCandidate, providerTrack: ProviderTrack): number {
-    const providerIsrc = String(providerTrack.isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (providerIsrc && track.isrcs) {
-        try {
-            const canonicalIsrcs = JSON.parse(track.isrcs) as unknown;
-            if (
-                Array.isArray(canonicalIsrcs)
-                && canonicalIsrcs.some((isrc) => String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "") === providerIsrc)
-            ) {
-                return 1;
-            }
-        } catch {
-            // Fall through to conservative metadata matching.
-        }
-    }
-
-    let titleSimilarity = stringSimilarity(
-        normalizeComparableText(track.title || ""),
-        normalizeComparableText(providerTrackComparableTitle(providerTrack)),
+    return sharedScoreTrackMatch(
+        {
+            recordingMbid: track.recording_mbid ?? null,
+            isrcs: parseCanonicalIsrcs(track.isrcs),
+            title: track.title || "",
+            trackNumber: Number(track.position || 0),
+            volumeNumber: Number(track.medium_position || 1),
+            durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
+        },
+        {
+            mbid: null,
+            isrc: providerTrack.isrc ?? null,
+            title: providerTrack.title,
+            version: (providerTrack as { version?: string | null }).version ?? null,
+            trackNumber: providerTrack.trackNumber ?? null,
+            volumeNumber: providerTrack.volumeNumber ?? null,
+            durationSec: providerTrack.duration == null ? null : Number(providerTrack.duration),
+        },
     );
-    if (titleSimilarity < 0.72) {
-        // Same base-title acceptance as slot coverage: MusicBrainz qualifies
-        // bonus/live tracks with parenthetical suffixes providers omit.
-        const targetBase = baseComparableTitle(track.title || "");
-        const providerBase = baseComparableTitle(providerTrackComparableTitle(providerTrack));
-        if (targetBase && targetBase === providerBase) {
-            const durationSeconds = Number(track.length_ms || 0) / 1000;
-            const providerDuration = Number(providerTrack.duration || 0);
-            const durationKnown = durationSeconds > 0 && providerDuration > 0;
-            const durationClose = durationKnown && Math.abs(durationSeconds - providerDuration) <= 15;
-            const positionAligned = Number(track.medium_position || 1) === Number(providerTrack.volumeNumber || 1)
-                && Number(track.position || 0) === Number(providerTrack.trackNumber || 0);
-            if (durationClose || (!durationKnown && positionAligned)) {
-                titleSimilarity = 0.9;
-            }
-        }
-    }
-    if (titleSimilarity < 0.72) {
-        return 0;
-    }
-
-    const volumeScore = Number(track.medium_position || 1) === Number(providerTrack.volumeNumber || 1) ? 0.2 : 0;
-    const trackScore = Number(track.position || 0) === Number(providerTrack.trackNumber || 0) ? 0.2 : 0;
-    const titleScore = titleSimilarity * 0.5;
-    const durationSeconds = Number(track.length_ms || 0) / 1000;
-    const durationDelta = Math.abs(durationSeconds - Number(providerTrack.duration || 0));
-    const durationScore = durationSeconds > 0 && Number(providerTrack.duration || 0) > 0
-        ? Math.max(0, 1 - (durationDelta / Math.max(8, durationSeconds * 0.08))) * 0.1
-        : 0;
-
-    return volumeScore + trackScore + titleScore + durationScore;
 }
 
 export async function resolveProviderTrackForCanonicalTrack(input: {
@@ -252,5 +240,5 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
         }
     }
 
-    return best && best.score >= 0.55 ? best : null;
+    return best && best.score >= TRACK_MATCH_THRESHOLD ? best : null;
 }

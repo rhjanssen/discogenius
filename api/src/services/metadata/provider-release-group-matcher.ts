@@ -263,12 +263,21 @@ function scoreAlbumAgainstReleaseGroup(
         .sort((left, right) => right.titleScore - left.titleScore);
     const bestTitle = titleScores[0] || { candidateTitle: null, titleScore: 0 };
     const normalizedProviderTitle = normalizeComparableText(album.title);
+    // The provider title expands on the MusicBrainz title when it starts with
+    // one of the release group's title candidates plus extra words ("Goosebumps
+    // EP" → "Goosebumps", "Bad Blood X" → "Bad Blood"). Check that relationship
+    // directly against the RG-side candidates rather than against the winning
+    // provider candidate — providerTitleCandidates does not always strip the
+    // suffix ("EP"/"X" are not edition keywords), so the base title may only
+    // exist on the MB side.
     const titleExpansionMatched = Boolean(
-        bestTitle.titleScore === 1
-        && bestTitle.candidateTitle
+        bestTitle.titleScore >= 0.82
         && normalizedProviderTitle
-        && bestTitle.candidateTitle !== normalizedProviderTitle
-        && normalizedProviderTitle.startsWith(`${bestTitle.candidateTitle} `),
+        && releaseGroupTitleCandidates.some((releaseGroupTitle) =>
+            releaseGroupTitle
+            && releaseGroupTitle !== normalizedProviderTitle
+            && normalizedProviderTitle.startsWith(`${releaseGroupTitle} `),
+        ),
     );
     const expandedCompatibleReleases = titleExpansionMatched
         ? releases.filter((release) => {
@@ -414,9 +423,13 @@ export function matchProviderAlbumToReleaseGroup(
     const exactTitleMatch = best.titleScore === 1;
     const exactProviderTitleMatch = exactTitleMatch && !best.titleExpansionMatched;
     const strongIdentityMatch = best.upcMatched || best.isrcOverlap >= 2 || (best.isrcOverlap >= 1 && best.providerTrackCount === 1);
+    // A prefix-expansion title ("… EP", "… X") whose track count matches the MB
+    // edition is as trustworthy as an exact title — promote it to verified so a
+    // fully-covered EP doesn't sit at "probable".
+    const verifiedTrackMatch = best.titleExpansionMatched && best.trackCountMatched;
     const status: ProviderReleaseGroupMatchStatus = ambiguousWith.length > 0
         ? "ambiguous"
-        : (strongIdentityMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
+        : (strongIdentityMatch || verifiedTrackMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
             ? "verified"
             : "probable";
     const method = best.upcMatched
