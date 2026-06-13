@@ -1,9 +1,22 @@
 # Discogenius Roadmap
 
-_Last updated: 2026-06-11_
+_Last updated: 2026-06-12_
 
 This roadmap is intentionally short and forward-looking. Architecture
 current-state detail lives in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+> **Active release planning** — concrete, evidence-based plans for the next two
+> releases (2.0.2 correctness/polish, 2.1.0 providers/exact-matching/video
+> metadata) live in **[RELEASE_PLAN.md](RELEASE_PLAN.md)**. That document is the
+> source of truth for what ships next; this roadmap keeps only the long-horizon
+> direction.
+
+## Shipped
+
+- **2.0.0 / 2.0.1** — single tiddl download backend; edition-aware MusicBrainz ↔
+  TIDAL matching; provider-match visibility; HLS audio previews; slot-aware
+  imports; Plex-style music-video typing + per-song dedup; Lidarr upgrade
+  semantics; 40%-smaller Docker image. See [CHANGELOG](../CHANGELOG.md).
 
 ## 2.0 priorities
 
