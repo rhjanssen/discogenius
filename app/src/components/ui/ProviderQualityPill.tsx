@@ -45,8 +45,10 @@ const PROVIDER_MARKS: Record<string, ProviderMark> = {
 
 // Provider pill diameters match the quality-badge heights so the round source
 // token lines up with the badges beside it.
-const PILL_DIAMETER: Record<BadgeSize, number> = { small: 18, medium: 22, large: 26 };
-const GLYPH_SIZE: Record<BadgeSize, number> = { small: 11, medium: 13, large: 16 };
+// Diameters match the quality-badge heights (the pill is border-box) so the
+// round source token renders at the exact same height as the badges beside it.
+const PILL_DIAMETER: Record<BadgeSize, number> = { small: 18, medium: 24, large: 28 };
+const GLYPH_SIZE: Record<BadgeSize, number> = { small: 11, medium: 14, large: 16 };
 
 const useStyles = makeStyles({
     row: {
@@ -66,6 +68,7 @@ const useStyles = makeStyles({
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
+        boxSizing: "border-box",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
         ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralStroke2),
         backgroundColor: tokens.colorNeutralBackground3,

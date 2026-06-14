@@ -229,7 +229,7 @@ const useStyles = makeStyles({
   },
   metadata: {
     display: "flex",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "center",
     columnGap: tokens.spacingHorizontalS,
     rowGap: tokens.spacingVerticalXS,
@@ -251,7 +251,6 @@ const useStyles = makeStyles({
   metadataSeparator: {
     width: "4px",
     height: "4px",
-    marginTop: "8px",
     flexShrink: 0,
     borderRadius: tokens.borderRadiusCircular,
     backgroundColor: tokens.colorNeutralForeground2,
