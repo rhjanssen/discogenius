@@ -106,6 +106,38 @@ export async function readFormatTags(filePath: string): Promise<Record<string, s
     });
 }
 
+/**
+ * Read a media file's duration (seconds) with ffprobe. Used as a fallback when
+ * music-metadata can't parse the container/codec — notably TIDAL Dolby Atmos
+ * MP4s (E-AC-3/JOC) — so unmapped-file discovery still gets a duration. Returns
+ * null if ffprobe is unavailable (e.g. a bare-metal host without ffmpeg) or the
+ * probe fails.
+ */
+export async function probeMediaDuration(filePath: string): Promise<number | null> {
+    const ffprobeBin = resolveFfprobeBinary();
+
+    return new Promise((resolve) => {
+        execFile(
+            ffprobeBin,
+            ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath],
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            (error, stdout) => {
+                if (error || !stdout) {
+                    resolve(null);
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(stdout);
+                    const duration = Number(parsed?.format?.duration);
+                    resolve(Number.isFinite(duration) && duration > 0 ? duration : null);
+                } catch {
+                    resolve(null);
+                }
+            },
+        );
+    });
+}
+
 export interface AudioMetrics {
     bitrate?: number;
     sampleRate?: number;

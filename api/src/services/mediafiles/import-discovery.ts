@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
+import { probeMediaDuration } from "./audioUtils.js";
 import type { library_root } from "../config/naming.js";
 import type { AutoImportedGroupSummary, ImportCandidate, LocalFile, LocalGroup } from "./import-types.js";
 
@@ -80,6 +81,18 @@ export async function scanImportDirectory(
                         metadata = await mm.parseFile(fullPath, { skipCovers: true });
                     } catch {
                         metadata = undefined;
+                    }
+
+                    // music-metadata can't always read a duration from MP4/Atmos
+                    // (E-AC-3/JOC) containers; fall back to ffprobe so the file
+                    // still carries a duration for matching and the unmapped view.
+                    if (!metadata?.format?.duration) {
+                        const probed = await probeMediaDuration(fullPath);
+                        if (probed) {
+                            metadata = metadata
+                                ? { ...metadata, format: { ...metadata.format, duration: probed } }
+                                : ({ format: { duration: probed }, common: {}, native: {} } as unknown as mm.IAudioMetadata);
+                        }
                     }
 
                     files.push({
