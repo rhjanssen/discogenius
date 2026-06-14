@@ -419,7 +419,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     }
   }
 
-  return tracks.map((track) => {
+  const hydrated = tracks.map((track) => {
     const trackId = String(track.id);
     const files = filesByTrack.get(trackId) || [];
     const isDownloaded = Boolean(track.is_downloaded) || files.some((file) => file.file_type === "track");
@@ -474,6 +474,45 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       artist_credits,
     };
   });
+
+  // Collaboration credits from MusicBrainz recording data often carry the
+  // artist name but no id, so the UI can't link them. Resolve any blank credit
+  // ids against artists we actually hold (by name) so those become clickable;
+  // artists not in our library stay plain text rather than dead links.
+  const namesToResolve = new Set<string>();
+  for (const track of hydrated) {
+    for (const credit of track.artist_credits) {
+      if (!credit.id && credit.name) {
+        namesToResolve.add(credit.name);
+      }
+    }
+  }
+  if (namesToResolve.size > 0) {
+    const names = [...namesToResolve];
+    const placeholders = names.map(() => "?").join(",");
+    const rows = db.prepare(
+      `SELECT mbid, name FROM ArtistMetadata WHERE name COLLATE NOCASE IN (${placeholders})`,
+    ).all(...names) as Array<{ mbid: string | null; name: string | null }>;
+    const mbidByName = new Map<string, string>();
+    for (const row of rows) {
+      const key = String(row.name || "").trim().toLowerCase();
+      if (row.mbid && key && !mbidByName.has(key)) {
+        mbidByName.set(key, row.mbid);
+      }
+    }
+    for (const track of hydrated) {
+      for (const credit of track.artist_credits) {
+        if (!credit.id && credit.name) {
+          const resolved = mbidByName.get(credit.name.trim().toLowerCase());
+          if (resolved) {
+            credit.id = resolved;
+          }
+        }
+      }
+    }
+  }
+
+  return hydrated;
 }
 
 export function listTracks(input: ListTracksQuery): TracksListResponse {
