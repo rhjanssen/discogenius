@@ -39,6 +39,8 @@ import {
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { ProviderMark } from "@/components/ui/ProviderMark";
+import { providerMarkFor } from "@/components/ui/providerMarks";
 import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
@@ -73,18 +75,6 @@ type NamingToken = {
 };
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
-const PROVIDER_ICONS: Record<string, string> = {
-    tidal: "/assets/images/tidal_icon.svg",
-    apple: "/assets/images/apple_music_icon.svg",
-    apple_music: "/assets/images/apple_music_icon.svg",
-    amazon: "/assets/images/amazon_icon.svg",
-    amazon_music: "/assets/images/amazon_icon.svg",
-    spotify: "/assets/images/spotify_icon.svg",
-    youtube: "/assets/images/youtube_icon.svg",
-    youtube_music: "/assets/images/youtube_icon.svg",
-    deezer: "/assets/images/deezer_icon.svg",
-};
-
 const ARTIST_NAMING_TOKENS: NamingToken[] = [
     { section: "Artist", token: "{Artist Name}", example: "Daft Punk" },
     { section: "Artist", token: "{Artist CleanName}", example: "Daft Punk" },
@@ -1568,7 +1558,7 @@ const SettingsPage = () => {
                     return (
                         <>
                             {activeProviders.map((provider) => {
-                                const icon = PROVIDER_ICONS[provider.id] || PROVIDER_ICONS[provider.id.replace(/-/g, "_")];
+                                const hasMark = Boolean(providerMarkFor(provider.id));
                                 const publiclyAvailable = provider.authenticated
                                     && !provider.management.canAuthenticate
                                     && !provider.management.canDisconnect;
@@ -1583,8 +1573,8 @@ const SettingsPage = () => {
                             <div className={styles.profileRow}>
                                 <div className={styles.providerStatusRow}>
                                     <div className={styles.providerIconBox}>
-                                        {icon ? (
-                                            <img src={icon} alt="" className={styles.providerIcon} />
+                                        {hasMark ? (
+                                            <ProviderMark provider={provider.id} size={30} />
                                         ) : (
                                             <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
                                         )}

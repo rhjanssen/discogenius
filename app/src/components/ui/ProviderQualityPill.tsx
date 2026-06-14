@@ -1,6 +1,8 @@
 import React from "react";
 import { Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { QualityBadge } from "./QualityBadge";
+import { ProviderMark } from "./ProviderMark";
+import { providerKey, providerMarkFor } from "./providerMarks";
 
 type SlotName = "stereo" | "spatial";
 type BadgeSize = "small" | "medium" | "large";
@@ -29,19 +31,6 @@ interface ProviderQualityRowProps {
     size?: BadgeSize;
     className?: string;
 }
-
-type ProviderMark = { src: string; monochrome: boolean };
-
-// Monochrome marks (TIDAL's white diamonds) render as a foreground-tinted glyph
-// so they stay visible on both light and dark pills; full-colour marks (Apple
-// Music, Deezer) keep their brand colours.
-const PROVIDER_MARKS: Record<string, ProviderMark> = {
-    tidal: { src: "/assets/images/tidal_icon.svg", monochrome: true },
-    apple: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
-    apple_music: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
-    "apple-music": { src: "/assets/images/apple_music_icon.svg", monochrome: false },
-    deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
-};
 
 // Provider pill diameters match the quality-badge heights so the round source
 // token lines up with the badges beside it.
@@ -74,20 +63,6 @@ const useStyles = makeStyles({
         backgroundColor: tokens.colorNeutralBackground3,
         cursor: "default",
     },
-    glyphImg: {
-        display: "block",
-        objectFit: "contain",
-    },
-    glyph: {
-        display: "block",
-        backgroundColor: tokens.colorNeutralForeground1,
-        WebkitMaskRepeat: "no-repeat",
-        maskRepeat: "no-repeat",
-        WebkitMaskPosition: "center",
-        maskPosition: "center",
-        WebkitMaskSize: "contain",
-        maskSize: "contain",
-    },
     badge: {
         cursor: "default",
     },
@@ -97,10 +72,6 @@ const useStyles = makeStyles({
         rowGap: tokens.spacingVerticalXXS,
     },
 });
-
-function providerKey(provider?: string | null): string {
-    return String(provider || "").trim().toLowerCase();
-}
 
 function providerDisplayName(provider?: string | null): string {
     const normalized = providerKey(provider);
@@ -167,35 +138,9 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
 
     const renderProviderPill = (group: ProviderGroup, groupIndex: number) => {
         const providerName = providerDisplayName(group.provider);
-        const mark = PROVIDER_MARKS[group.key] || PROVIDER_MARKS[group.key.replace(/-/g, "_")];
-
-        let glyph: React.ReactNode;
-        if (mark?.monochrome) {
-            glyph = (
-                <span
-                    aria-hidden="true"
-                    className={styles.glyph}
-                    style={{
-                        width: `${glyphSize}px`,
-                        height: `${glyphSize}px`,
-                        WebkitMaskImage: `url("${mark.src}")`,
-                        maskImage: `url("${mark.src}")`,
-                    }}
-                />
-            );
-        } else if (mark) {
-            glyph = (
-                <img
-                    src={mark.src}
-                    alt=""
-                    aria-hidden="true"
-                    className={styles.glyphImg}
-                    style={{ width: `${glyphSize}px`, height: `${glyphSize}px` }}
-                />
-            );
-        } else {
-            glyph = providerName.charAt(0);
-        }
+        const glyph = providerMarkFor(group.provider)
+            ? <ProviderMark provider={group.provider} size={glyphSize} />
+            : providerName.charAt(0);
 
         const tooltipLines = [
             providerName,

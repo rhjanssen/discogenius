@@ -25,13 +25,8 @@ import { useTheme } from "@/providers/themeContext";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
+import { ProviderMark } from "@/components/ui/ProviderMark";
 const logo = "/assets/images/logo.png";
-const tidalIcon = "/assets/images/tidal_icon.svg";
-const appleIcon = "/assets/images/apple_music_icon.svg";
-const amazonIcon = "/assets/images/amazon_icon.svg";
-const spotifyIcon = "/assets/images/spotify_icon.svg";
-const youtubeIcon = "/assets/images/youtube_icon.svg";
-const deezerIcon = "/assets/images/deezer_icon.svg";
 
 const useStyles = makeStyles({
   container: {
@@ -704,23 +699,21 @@ const Auth = () => {
     key: "tidal",
     name: "TIDAL",
     className: styles.tidalButton,
-    logoUrl: tidalIcon,
     available: true,
     onClick: connectTidal,
   }, {
     key: "apple",
     name: "Apple Music",
     className: styles.appleButton,
-    logoUrl: appleIcon,
     available: false,
   }, {
-    key: "amazon", name: "Amazon Music", className: styles.amazonButton, logoUrl: amazonIcon, available: false,
+    key: "amazon", name: "Amazon Music", className: styles.amazonButton, available: false,
   }, {
-    key: "spotify", name: "Spotify", className: styles.spotifyButton, logoUrl: spotifyIcon, available: false,
+    key: "spotify", name: "Spotify", className: styles.spotifyButton, available: false,
   }, {
-    key: "youtube", name: "YouTube Music", className: styles.youtubeButton, logoUrl: youtubeIcon, available: false,
+    key: "youtube", name: "YouTube Music", className: styles.youtubeButton, available: false,
   }, {
-    key: "deezer", name: "Deezer", className: styles.deezerButton, logoUrl: deezerIcon, available: false,
+    key: "deezer", name: "Deezer", className: styles.deezerButton, available: false,
   }];
 
   return (
@@ -796,7 +789,7 @@ const Auth = () => {
                         size="large"
                         icon={
                           <div className={styles.providerIconPanel}>
-                            <img src={providerButton.logoUrl} alt="" className={styles.providerIcon} />
+                            <ProviderMark provider={providerButton.key} size={28} />
                           </div>
                         }
                         iconPosition="before"
