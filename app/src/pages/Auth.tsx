@@ -30,11 +30,19 @@ const logo = "/assets/images/logo.png";
 
 const useStyles = makeStyles({
   container: {
-    minHeight: '100vh',
+    // The app shell clips its content area (overflow-y: hidden, 100vh), so the
+    // auth page must be its own scroller: a fixed viewport height with internal
+    // overflow, rather than min-height that grows past the clip and can't scroll.
+    height: '100dvh',
+    maxHeight: '100dvh',
     width: '100%',
     display: 'flex',
-    alignItems: 'center',
+    // "safe center" keeps the card centred when it fits but falls back to
+    // top-aligned (scrollable) when the content is taller than the viewport,
+    // instead of clipping the top off-screen with no way to scroll to it.
+    alignItems: 'safe center',
     justifyContent: 'center',
+    overflowY: 'auto',
     padding: `clamp(${tokens.spacingVerticalL}, 5vw, 72px)`,
     boxSizing: 'border-box',
     position: 'relative',
@@ -138,8 +146,12 @@ const useStyles = makeStyles({
   },
   brandTitle: {
     display: 'block',
-    fontSize: 'clamp(36px, 4.8vw, 56px)',
-    lineHeight: 1.08,
+    // Keep "Welcome to Discogenius" on a single line at every width. The clamp is
+    // tuned so even the narrower two-column left column (~480px near the 980px
+    // breakpoint) fits the ~22-char title without wrapping.
+    whiteSpace: 'nowrap',
+    fontSize: 'clamp(21px, 3.7vw, 46px)',
+    lineHeight: 1.1,
     letterSpacing: 0,
     fontWeight: tokens.fontWeightBold,
     marginBottom: tokens.spacingVerticalS,
