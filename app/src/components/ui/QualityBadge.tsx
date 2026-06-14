@@ -18,7 +18,7 @@ interface QualityBadgeProps {
 // logo renders at a fixed height per size and the badge widens to fit it, so the
 // Atmos badge lines up in height with the text badges — it's just longer.
 const ATMOS_ASPECT = 110.7599945 / 15.6427517;
-const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 9, medium: 13, large: 15 };
+const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 13, large: 15 };
 
 const useStyles = makeStyles({
     base: {
@@ -62,8 +62,8 @@ const useStyles = makeStyles({
     // Consistent heights for ALL variants (text and Atmos) so a row of badges
     // lines up. Slightly larger than before for legibility.
     small: {
-        height: "18px",
-        fontSize: tokens.fontSizeBase100,
+        height: "20px",
+        fontSize: tokens.fontSizeBase200,
         ...shorthands.padding(0, tokens.spacingHorizontalSNudge),
     },
     medium: {

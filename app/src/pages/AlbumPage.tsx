@@ -229,6 +229,9 @@ const useStyles = makeStyles({
   },
   metadata: {
     display: "flex",
+    // Mobile: stack the quality badges above the year/track/duration facts so the
+    // row never cuts off. Desktop: lay them out inline.
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     columnGap: tokens.spacingHorizontalS,
@@ -236,6 +239,7 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     color: tokens.colorNeutralForeground2,
     "@media (min-width: 768px)": {
+      flexDirection: "row",
       justifyContent: "flex-start",
       columnGap: tokens.spacingHorizontalM,
       rowGap: tokens.spacingVerticalS,
@@ -247,6 +251,15 @@ const useStyles = makeStyles({
     columnGap: tokens.spacingHorizontalXS,
     rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  metadataFacts: {
+    display: "inline-flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+    rowGap: tokens.spacingVerticalXXS,
+    flexWrap: "wrap",
+    justifyContent: "center",
   },
   metadataSeparator: {
     width: "4px",
@@ -895,8 +908,8 @@ const AlbumPage = () => {
     const qualityBadges = isMatched
       ? (
         <>
-          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="medium" /> : null}
-          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="medium" /> : null}
+          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
+          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
         </>
       )
       : undefined;
@@ -979,61 +992,58 @@ const AlbumPage = () => {
 
               <div className={styles.metadata}>
                 {hasAnyProviderOffer ? (
-                  <>
-                    <div className={styles.metadataBadges}>
-                      <ProviderQualityRow
-                        size="medium"
-                        offers={[
-                          ...(hasStereoOffer
-                            ? [{
-                                slot: "stereo",
-                                quality: album.stereo_quality || album.quality,
-                                provider: album.stereo_provider || album.selected_provider,
-                                matchStatus: album.stereo_match_status,
-                                providerAlbumId: album.stereo_provider_id,
-                                selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
-                              }]
-                            : []),
-                          ...(hasSpatialOffer
-                            ? [{
-                                slot: "spatial",
-                                quality: album.spatial_quality || "DOLBY_ATMOS",
-                                provider: album.spatial_provider || album.selected_provider,
-                                matchStatus: album.spatial_match_status,
-                                providerAlbumId: album.spatial_provider_id,
-                                selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
-                              }]
-                            : []),
-                        ] as ProviderQualityOffer[]}
-                      />
-                    </div>
-                    <div className={styles.metadataSeparator} />
-                  </>
+                  <div className={styles.metadataBadges}>
+                    <ProviderQualityRow
+                      size="medium"
+                      offers={[
+                        ...(hasStereoOffer
+                          ? [{
+                              slot: "stereo",
+                              quality: album.stereo_quality || album.quality,
+                              provider: album.stereo_provider || album.selected_provider,
+                              matchStatus: album.stereo_match_status,
+                              providerAlbumId: album.stereo_provider_id,
+                              selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+                            }]
+                          : []),
+                        ...(hasSpatialOffer
+                          ? [{
+                              slot: "spatial",
+                              quality: album.spatial_quality || "DOLBY_ATMOS",
+                              provider: album.spatial_provider || album.selected_provider,
+                              matchStatus: album.spatial_match_status,
+                              providerAlbumId: album.spatial_provider_id,
+                              selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+                            }]
+                          : []),
+                      ] as ProviderQualityOffer[]}
+                    />
+                  </div>
                 ) : headerQualityBadges.length > 0 ? (
-                  <>
-                    <div className={styles.metadataBadges}>
-                      {headerQualityBadges.map((badge) => (
-                        <QualityBadge key={badge.key} quality={badge.quality} />
-                      ))}
-                    </div>
-                    <div className={styles.metadataSeparator} />
-                  </>
+                  <div className={styles.metadataBadges}>
+                    {headerQualityBadges.map((badge) => (
+                      <QualityBadge key={badge.key} quality={badge.quality} />
+                    ))}
+                  </div>
                 ) : null}
-                <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
-                <div className={styles.metadataSeparator} />
-                <Text>{tracks.length} Tracks</Text>
-                <div className={styles.metadataSeparator} />
-                <Text>
-                  {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
-                </Text>
-                {hasSpatialOffer && !hasStereoOffer && (
-                  <>
-                    <div className={styles.metadataSeparator} />
-                    {/* Spatial-only: no stereo-capable release exists on the provider.
-                        Make that explicit so it reads as correct, not a missing match. */}
-                    <Text weight="semibold">Dolby Atmos only</Text>
-                  </>
-                )}
+                {/* Facts sit on their own line below the quality badges on mobile
+                    (the metadata container is column on narrow screens) so the
+                    row never cuts off; inline beside the badges on desktop. */}
+                <div className={styles.metadataFacts}>
+                  <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>{tracks.length} Tracks</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>
+                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
+                  </Text>
+                  {hasSpatialOffer && !hasStereoOffer && (
+                    <>
+                      <div className={styles.metadataSeparator} />
+                      <Text weight="semibold">Dolby Atmos only</Text>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Album Review Section */}

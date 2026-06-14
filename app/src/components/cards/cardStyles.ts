@@ -159,7 +159,10 @@ export const useCardStyles = makeStyles({
     // Quality badge overlay (top-left of preview)
     qualityBadge: {
         position: "absolute",
-        top: tokens.spacingVerticalS,
+        // Mobile: cards are narrow so the two badges stack — anchor bottom-left so
+        // the long Atmos pill sits on the bottom with the short stereo pill above.
+        // Desktop: cards are wide enough for one row — anchor top-left.
+        bottom: tokens.spacingVerticalS,
         left: tokens.spacingHorizontalS,
         zIndex: 2,
         display: "flex",
@@ -167,7 +170,11 @@ export const useCardStyles = makeStyles({
         flexWrap: "wrap",
         columnGap: tokens.spacingHorizontalXXS,
         rowGap: tokens.spacingVerticalXXS,
-        maxWidth: `calc(100% - ${tokens.spacingHorizontalXXL})`,
+        maxWidth: `calc(100% - ${tokens.spacingHorizontalM})`,
+        "@media (min-width: 768px)": {
+            bottom: "auto",
+            top: tokens.spacingVerticalS,
+        },
     },
 
     // Monitor indicator overlay (bottom-right of preview)

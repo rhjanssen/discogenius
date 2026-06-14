@@ -168,6 +168,20 @@ const useStyles = makeStyles({
       display: "none",
     },
   },
+  // Quality badges get their own row under the meta line on mobile so a wrap
+  // never splits the duration from the badges mid-line.
+  mobileQualityRow: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
+    flexWrap: "wrap",
+    minWidth: 0,
+    marginTop: tokens.spacingVerticalXS,
+    "@media (min-width: 768px)": {
+      display: "none",
+    },
+  },
   desktopArtistColumn: {
     display: "none",
     "@media (min-width: 768px)": {
@@ -450,11 +464,14 @@ const TrackList = <T extends TrackListItem>({
                     {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
                     {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
                     <Text className={styles.metaText}>{durationText}</Text>
-                    {showQuality && qualityTags.length > 0 ? <Text className={styles.separator}>•</Text> : null}
-                    {showQuality && qualityTags.map((quality) => (
-                      <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
-                    ))}
                   </div>
+                  {showQuality && qualityTags.length > 0 ? (
+                    <div className={styles.mobileQualityRow}>
+                      {qualityTags.map((quality) => (
+                        <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
                 {showArtist ? (

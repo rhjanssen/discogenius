@@ -157,7 +157,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
 
                 {(quality || qualityBadges) && (
                     <div className={styles.qualityBadge}>
-                        {qualityBadges ?? <QualityBadge quality={quality as string} size="medium" />}
+                        {qualityBadges ?? <QualityBadge quality={quality as string} size="small" />}
                     </div>
                 )}
 
