@@ -1,22 +1,32 @@
 import React from "react";
 import { Badge, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { tidalBadgeColor } from "@/theme/theme";
-import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 
 // Standard quality values we store in DB (no underscore in HIRES)
 export type AudioQuality = string;
 
+type BadgeSize = "small" | "medium" | "large";
+
 interface QualityBadgeProps {
     quality: string;
     className?: string;
-    size?: "small" | "medium" | "large";
+    size?: BadgeSize;
 }
+
+// Horizontal "Dolby Atmos" lockup aspect ratio (viewBox 110.76 × 15.64). The
+// logo renders at a fixed height per size and the badge widens to fit it, so the
+// Atmos badge lines up in height with the text badges — it's just longer.
+const ATMOS_ASPECT = 110.7599945 / 15.6427517;
+const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 9, medium: 11, large: 13 };
 
 const useStyles = makeStyles({
     base: {
         fontWeight: tokens.fontWeightBold,
         ...shorthands.border("none"),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
         // Never let a flex parent squeeze the badge — that pushed the label
         // outside the rounded body. Hold the intrinsic width and clip cleanly.
         flexShrink: 0,
@@ -25,9 +35,9 @@ const useStyles = makeStyles({
             display: "none",
         },
     },
-    spatial: {
-        backgroundColor: "#000000",
-        color: "#ffffff",
+    label: {
+        textTransform: "uppercase",
+        letterSpacing: "0.02em",
     },
     hiRes: {
         backgroundColor: tidalBadgeColor.YellowBackground,
@@ -37,6 +47,10 @@ const useStyles = makeStyles({
         backgroundColor: tidalBadgeColor.TealBackground,
         color: tidalBadgeColor.TealText,
     },
+    spatial: {
+        backgroundColor: "#000000",
+        color: "#ffffff",
+    },
     high: {
         backgroundColor: tokens.colorNeutralBackground3,
         color: tokens.colorNeutralForeground3,
@@ -45,50 +59,37 @@ const useStyles = makeStyles({
         backgroundColor: tokens.colorNeutralBackground3,
         color: tokens.colorNeutralForeground3,
     },
-    label: {
-        textTransform: "uppercase",
-    },
-    // Sizes
+    // Consistent heights for ALL variants (text and Atmos) so a row of badges
+    // lines up. Slightly larger than before for legibility.
     small: {
-        height: "16px",
-        fontSize: tokens.fontSizeBase100,
-        ...shorthands.padding(0, tokens.spacingHorizontalXS),
-    },
-    medium: {
-        height: "20px",
+        height: "18px",
         fontSize: tokens.fontSizeBase100,
         ...shorthands.padding(0, tokens.spacingHorizontalSNudge),
     },
-    large: {
-        height: "24px",
+    medium: {
+        height: "22px",
         fontSize: tokens.fontSizeBase200,
         ...shorthands.padding(0, tokens.spacingHorizontalS),
     },
-    atmosBadge: {
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        ...shorthands.borderStyle("solid"),
-        ...shorthands.borderWidth(tokens.strokeWidthThin),
+    large: {
+        height: "26px",
+        fontSize: tokens.fontSizeBase300,
+        ...shorthands.padding(0, tokens.spacingHorizontalM),
+    },
+    // Dolby Atmos: the canonical white-on-black lockup. Always white-on-black in
+    // both themes (no theme flip); a faint light border keeps the chip defined
+    // when it sits on a dark page.
+    atmos: {
+        backgroundColor: "#0a0a0a",
+        ...shorthands.border(tokens.strokeWidthThin, "solid", "rgba(255, 255, 255, 0.16)"),
         lineHeight: 0,
-        textTransform: "none",
-    },
-    atmosBadgeDark: {
-        backgroundColor: "#ffffff",
-        ...shorthands.borderColor("rgba(255, 255, 255, 0.82)"),
-        color: "#020202",
-    },
-    atmosBadgeLight: {
-        backgroundColor: "#111111",
-        ...shorthands.borderColor("rgba(0, 0, 0, 0.72)"),
-        color: "#ffffff",
     },
     atmosLogo: {
         display: "block",
         flexShrink: 0,
-        backgroundColor: "currentColor",
-        WebkitMaskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
-        maskImage: 'url("/assets/images/dolby_atmos_logo.svg")',
+        backgroundColor: "#ffffff",
+        WebkitMaskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
+        maskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
         WebkitMaskRepeat: "no-repeat",
         maskRepeat: "no-repeat",
         WebkitMaskPosition: "center",
@@ -96,44 +97,34 @@ const useStyles = makeStyles({
         WebkitMaskSize: "contain",
         maskSize: "contain",
     },
-    atmosSmall: {
-        height: "22px",
-        minWidth: "52px",
-        padding: `0 ${tokens.spacingHorizontalXS}`,
-        borderRadius: tokens.borderRadiusMedium,
-    },
-    atmosMedium: {
-        height: "27px",
-        minWidth: "63px",
-        padding: `0 ${tokens.spacingHorizontalSNudge}`,
-        borderRadius: tokens.borderRadiusMedium,
-    },
-    atmosLarge: {
-        height: "32px",
-        minWidth: "76px",
-        padding: `0 ${tokens.spacingHorizontalS}`,
-        borderRadius: tokens.borderRadiusLarge,
-    },
-    atmosLogoSmall: {
-        width: "40px",
-        height: "16px",
-    },
-    atmosLogoMedium: {
-        width: "54px",
-        height: "20px",
-    },
-    atmosLogoLarge: {
-        width: "64px",
-        height: "24px",
-    },
 });
 
 export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, size = "medium" }) => {
     const styles = useStyles();
-    const { isDarkMode } = useTheme();
 
     // Normalize input string
     const normalizedQuality = normalizeQualityTag(quality);
+
+    const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
+
+    if (normalizedQuality === "DOLBY_ATMOS") {
+        const logoHeight = ATMOS_LOGO_HEIGHT[size];
+        return (
+            <Badge
+                shape="circular"
+                appearance="tint"
+                className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
+                aria-label="Dolby Atmos"
+                title="Dolby Atmos"
+            >
+                <span
+                    aria-hidden="true"
+                    className={styles.atmosLogo}
+                    style={{ height: `${logoHeight}px`, width: `${Math.round(logoHeight * ATMOS_ASPECT)}px` }}
+                />
+            </Badge>
+        );
+    }
 
     let badgeClass = styles.default;
     let badgeText = quality;
@@ -155,37 +146,9 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
         badgeText = normalizedQuality.replace("MP4_", "").toLowerCase();
     }
 
-    const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
-
-    if (normalizedQuality === "DOLBY_ATMOS") {
-        const atmosSizeClass = size === "small" ? styles.atmosSmall : size === "large" ? styles.atmosLarge : styles.atmosMedium;
-        const atmosLogoSizeClass = size === "small" ? styles.atmosLogoSmall : size === "large" ? styles.atmosLogoLarge : styles.atmosLogoMedium;
-
-        return (
-            <Badge
-                shape="rounded"
-                appearance="tint"
-                className={mergeClasses(
-                    styles.base,
-                    styles.atmosBadge,
-                    isDarkMode ? styles.atmosBadgeDark : styles.atmosBadgeLight,
-                    atmosSizeClass,
-                    className
-                )}
-                aria-label="Dolby Atmos"
-                title="Dolby Atmos"
-            >
-                <span
-                    aria-hidden="true"
-                    className={mergeClasses(styles.atmosLogo, atmosLogoSizeClass)}
-                />
-            </Badge>
-        );
-    }
-
     return (
         <Badge
-            shape="rounded"
+            shape="circular"
             appearance="tint"
             className={mergeClasses(styles.base, styles.label, badgeClass, sizeClass, className)}
         >

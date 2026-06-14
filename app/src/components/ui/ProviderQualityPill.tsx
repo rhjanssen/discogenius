@@ -3,8 +3,9 @@ import { Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui
 import { QualityBadge } from "./QualityBadge";
 
 type SlotName = "stereo" | "spatial";
+type BadgeSize = "small" | "medium" | "large";
 
-interface ProviderQualityPillProps {
+export interface ProviderQualityOffer {
     /** Library slot this offer fills. */
     slot: SlotName;
     /** Audio quality tag (LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS, …). */
@@ -13,21 +14,27 @@ interface ProviderQualityPillProps {
     matchStatus?: string | null;
     providerAlbumId?: string | null;
     selectedReleaseMbid?: string | null;
+}
+
+interface ProviderQualityRowProps {
+    /** One entry per filled slot, in display order (stereo first, then spatial). */
+    offers: ProviderQualityOffer[];
+    /**
+     * Show the provider pill(s). The icon appears once per contiguous run of the
+     * same provider, and again whenever the provider changes — so a single source
+     * shows one icon, while a stereo-from-A / spatial-from-B split shows both.
+     * Turn off in dense lists where the provider is constant and implied.
+     */
+    showProvider?: boolean;
+    size?: BadgeSize;
     className?: string;
 }
 
-type ProviderMark = {
-    src: string;
-    /**
-     * Monochrome brand marks (e.g. TIDAL's white diamonds) are rendered as a
-     * masked glyph tinted with the theme foreground, so they stay visible on
-     * both light and dark pills. Full-colour marks (Apple Music, Deezer) keep
-     * their brand colours and render as an <img>.
-     */
-    monochrome: boolean;
-};
+type ProviderMark = { src: string; monochrome: boolean };
 
-// Keys cover both the hyphenated and underscored provider ids we persist.
+// Monochrome marks (TIDAL's white diamonds) render as a foreground-tinted glyph
+// so they stay visible on both light and dark pills; full-colour marks (Apple
+// Music, Deezer) keep their brand colours.
 const PROVIDER_MARKS: Record<string, ProviderMark> = {
     tidal: { src: "/assets/images/tidal_icon.svg", monochrome: true },
     apple: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
@@ -36,43 +43,39 @@ const PROVIDER_MARKS: Record<string, ProviderMark> = {
     deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
 };
 
+// Provider pill diameters match the quality-badge heights so the round source
+// token lines up with the badges beside it.
+const PILL_DIAMETER: Record<BadgeSize, number> = { small: 18, medium: 22, large: 26 };
+const GLYPH_SIZE: Record<BadgeSize, number> = { small: 11, medium: 13, large: 16 };
+
 const useStyles = makeStyles({
-    // Outer capsule. Fully rounded; the inner quality badge is made circular too
-    // so the two radii stay concentric instead of fighting each other.
-    pill: {
+    row: {
         display: "inline-flex",
         alignItems: "center",
+        columnGap: tokens.spacingHorizontalXS,
+        rowGap: tokens.spacingVerticalXS,
+        flexWrap: "wrap",
+    },
+    // A little extra breathing room before a second provider group so its icon
+    // visibly "owns" the badges to its right.
+    groupGap: {
+        marginLeft: tokens.spacingHorizontalSNudge,
+    },
+    providerPill: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
         flexShrink: 0,
-        whiteSpace: "nowrap",
-        columnGap: tokens.spacingHorizontalXXS,
-        height: "22px",
-        ...shorthands.padding(0, tokens.spacingHorizontalXXS),
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
         ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralStroke2),
         backgroundColor: tokens.colorNeutralBackground3,
         cursor: "default",
     },
-    iconWrap: {
-        position: "relative",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "16px",
-        height: "16px",
-        flexShrink: 0,
-    },
-    // Full-colour brand mark.
-    iconImg: {
-        width: "14px",
-        height: "14px",
+    glyphImg: {
         display: "block",
         objectFit: "contain",
     },
-    // Monochrome brand mark, recoloured to the theme foreground via masking so
-    // it never disappears on a same-colour background (the white TIDAL bug).
-    iconGlyph: {
-        width: "14px",
-        height: "14px",
+    glyph: {
         display: "block",
         backgroundColor: tokens.colorNeutralForeground1,
         WebkitMaskRepeat: "no-repeat",
@@ -82,25 +85,8 @@ const useStyles = makeStyles({
         WebkitMaskSize: "contain",
         maskSize: "contain",
     },
-    // Small status dot in the mark's corner; only drawn for matches that need
-    // attention (probable / ambiguous) so verified offers stay clean. Its ring
-    // matches the pill background so it reads as a cutout.
-    statusDot: {
-        position: "absolute",
-        right: "-1px",
-        bottom: "-1px",
-        width: "7px",
-        height: "7px",
-        ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        ...shorthands.border("1.5px", "solid", tokens.colorNeutralBackground3),
-        boxSizing: "content-box",
-    },
-    dotProbable: { backgroundColor: tokens.colorPaletteYellowBackground3 },
-    dotAmbiguous: { backgroundColor: tokens.colorPaletteRedBackground3 },
-    // Concentric inner badge: circular to echo the outer capsule, inset evenly.
-    quality: {
-        height: "16px",
-        ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    badge: {
+        cursor: "default",
     },
     tooltipBody: {
         display: "flex",
@@ -125,96 +111,157 @@ function slotDisplayName(slot: SlotName): string {
     return slot === "spatial" ? "Spatial" : "Stereo";
 }
 
+function statusLabel(offer: ProviderQualityOffer): string {
+    const hasSelection = Boolean(String(offer.providerAlbumId || "").trim());
+    if (!hasSelection) return "no provider release selected";
+    const status = String(offer.matchStatus || "probable").toLowerCase();
+    if (status === "verified") return "verified match";
+    if (status === "ambiguous") return "ambiguous match";
+    if (status === "unmatched") return "no provider release selected";
+    return "probable match";
+}
+
+interface ProviderGroup {
+    provider?: string | null;
+    key: string;
+    offers: ProviderQualityOffer[];
+}
+
 /**
- * One capsule per filled library slot: a provider mark fused with its quality
- * badge (e.g. TIDAL · 24-BIT). With multiple providers this shows where each
- * version came from — stereo from one, spatial from another. Match confidence
- * and the selected MusicBrainz edition live in the hover tooltip.
+ * A row of provider + quality indicators for an album/track. The provider mark
+ * sits in its own round pill to the left of the quality badges it covers; a
+ * single source shows one icon, while a stereo-from-A / spatial-from-B split
+ * shows each provider before its badge. Match confidence and the selected
+ * MusicBrainz edition live in the hover tooltips.
  */
-export const ProviderQualityPill: React.FC<ProviderQualityPillProps> = ({
-    slot,
-    quality,
-    provider,
-    matchStatus,
-    providerAlbumId,
-    selectedReleaseMbid,
+export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
+    offers,
+    showProvider = true,
+    size = "medium",
     className,
 }) => {
     const styles = useStyles();
 
-    const hasSelection = Boolean(String(providerAlbumId || "").trim());
-    const status = hasSelection ? String(matchStatus || "probable").toLowerCase() : "unmatched";
-    const providerName = providerDisplayName(provider);
-    const key = providerKey(provider);
-    const mark = PROVIDER_MARKS[key] || PROVIDER_MARKS[key.replace(/-/g, "_")];
-    const combinedCount = String(providerAlbumId || "").split(";").filter(Boolean).length;
-
-    const dotClass =
-        status === "probable"
-            ? styles.dotProbable
-            : status === "ambiguous"
-              ? styles.dotAmbiguous
-              : null;
-
-    const statusLabel =
-        status === "verified"
-            ? "verified match"
-            : status === "probable"
-              ? "probable match"
-              : status === "ambiguous"
-                ? "ambiguous match"
-                : "no provider release selected";
-
-    const tooltipLines = [
-        `${providerName} · ${slotDisplayName(slot)} · ${statusLabel}`,
-        hasSelection
-            ? combinedCount > 1
-                ? `${combinedCount} ${providerName} releases combined to cover the tracklist`
-                : `${providerName} release ${providerAlbumId}`
-            : `Refresh & curate the artist to look for a ${providerName} release.`,
-        selectedReleaseMbid ? `MusicBrainz edition ${selectedReleaseMbid}` : null,
-    ].filter(Boolean) as string[];
-
-    let mark_node: React.ReactNode = null;
-    if (mark?.monochrome) {
-        mark_node = (
-            <span
-                aria-hidden="true"
-                className={styles.iconGlyph}
-                style={{ WebkitMaskImage: `url("${mark.src}")`, maskImage: `url("${mark.src}")` }}
-            />
-        );
-    } else if (mark) {
-        mark_node = <img src={mark.src} alt="" aria-hidden="true" className={styles.iconImg} />;
-    } else {
-        // Unknown provider — fall back to its initial.
-        mark_node = <span aria-hidden="true">{providerName.charAt(0)}</span>;
+    const visible = (offers || []).filter((offer) => offer && offer.quality);
+    if (visible.length === 0) {
+        return null;
     }
 
-    return (
-        <Tooltip
-            withArrow
-            relationship="description"
-            content={{
-                children: (
-                    <div className={styles.tooltipBody}>
-                        {tooltipLines.map((line) => (
-                            <span key={line}>{line}</span>
-                        ))}
-                    </div>
-                ),
-            }}
-        >
-            <span
-                className={mergeClasses(styles.pill, className)}
-                aria-label={`${providerName} ${slotDisplayName(slot)} ${statusLabel}`}
+    // Group contiguous offers that share a provider.
+    const groups: ProviderGroup[] = [];
+    for (const offer of visible) {
+        const key = providerKey(offer.provider);
+        const last = groups[groups.length - 1];
+        if (last && last.key === key) {
+            last.offers.push(offer);
+        } else {
+            groups.push({ provider: offer.provider, key, offers: [offer] });
+        }
+    }
+
+    const diameter = PILL_DIAMETER[size];
+    const glyphSize = GLYPH_SIZE[size];
+
+    const renderProviderPill = (group: ProviderGroup, groupIndex: number) => {
+        const providerName = providerDisplayName(group.provider);
+        const mark = PROVIDER_MARKS[group.key] || PROVIDER_MARKS[group.key.replace(/-/g, "_")];
+
+        let glyph: React.ReactNode;
+        if (mark?.monochrome) {
+            glyph = (
+                <span
+                    aria-hidden="true"
+                    className={styles.glyph}
+                    style={{
+                        width: `${glyphSize}px`,
+                        height: `${glyphSize}px`,
+                        WebkitMaskImage: `url("${mark.src}")`,
+                        maskImage: `url("${mark.src}")`,
+                    }}
+                />
+            );
+        } else if (mark) {
+            glyph = (
+                <img
+                    src={mark.src}
+                    alt=""
+                    aria-hidden="true"
+                    className={styles.glyphImg}
+                    style={{ width: `${glyphSize}px`, height: `${glyphSize}px` }}
+                />
+            );
+        } else {
+            glyph = providerName.charAt(0);
+        }
+
+        const tooltipLines = [
+            providerName,
+            ...group.offers.map((offer) => `${slotDisplayName(offer.slot)} · ${statusLabel(offer)}`),
+        ];
+
+        return (
+            <Tooltip
+                key={`p-${groupIndex}`}
+                withArrow
+                relationship="description"
+                content={{
+                    children: (
+                        <div className={styles.tooltipBody}>
+                            {tooltipLines.map((line, i) => (
+                                <span key={i}>{line}</span>
+                            ))}
+                        </div>
+                    ),
+                }}
             >
-                <span className={styles.iconWrap}>
-                    {mark_node}
-                    {dotClass ? <span className={mergeClasses(styles.statusDot, dotClass)} aria-hidden="true" /> : null}
+                <span
+                    className={mergeClasses(styles.providerPill, groupIndex > 0 ? styles.groupGap : undefined)}
+                    style={{ width: `${diameter}px`, height: `${diameter}px` }}
+                    aria-label={`${providerName} source`}
+                >
+                    {glyph}
                 </span>
-                {quality ? <QualityBadge quality={quality} size="small" className={styles.quality} /> : null}
-            </span>
-        </Tooltip>
+            </Tooltip>
+        );
+    };
+
+    const renderQualityBadge = (offer: ProviderQualityOffer, groupIndex: number, offerIndex: number) => {
+        const providerName = providerDisplayName(offer.provider);
+        const tooltipLines = [
+            `${providerName} · ${slotDisplayName(offer.slot)} · ${statusLabel(offer)}`,
+            offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
+        ].filter(Boolean) as string[];
+
+        return (
+            <Tooltip
+                key={`q-${groupIndex}-${offerIndex}`}
+                withArrow
+                relationship="description"
+                content={{
+                    children: (
+                        <div className={styles.tooltipBody}>
+                            {tooltipLines.map((line, i) => (
+                                <span key={i}>{line}</span>
+                            ))}
+                        </div>
+                    ),
+                }}
+            >
+                <span style={{ display: "inline-flex" }}>
+                    <QualityBadge quality={offer.quality as string} size={size} className={styles.badge} />
+                </span>
+            </Tooltip>
+        );
+    };
+
+    return (
+        <span className={mergeClasses(styles.row, className)}>
+            {groups.map((group, groupIndex) => (
+                <React.Fragment key={groupIndex}>
+                    {showProvider ? renderProviderPill(group, groupIndex) : null}
+                    {group.offers.map((offer, offerIndex) => renderQualityBadge(offer, groupIndex, offerIndex))}
+                </React.Fragment>
+            ))}
+        </span>
     );
 };
