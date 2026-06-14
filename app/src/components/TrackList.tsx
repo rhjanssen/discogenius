@@ -14,6 +14,7 @@ import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { formatDurationSeconds } from "@/utils/format";
+import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 import type { TrackListItem } from "@/types/track-list";
 
 type TrackNumbering = "track" | "index";
@@ -158,7 +159,7 @@ const useStyles = makeStyles({
   },
   mobileMetaRow: {
     display: "flex",
-    alignItems: "flex-start",
+    alignItems: "center",
     columnGap: tokens.spacingHorizontalXS,
     rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
@@ -199,7 +200,7 @@ const useStyles = makeStyles({
     display: "none",
     "@media (min-width: 768px)": {
       display: "flex",
-      width: "110px",
+      width: "164px",
       flexShrink: 0,
       alignItems: "center",
       columnGap: tokens.spacingHorizontalXS,
@@ -276,7 +277,10 @@ const getQualityTags = (track: TrackListItem): string[] => {
       }
       seen.add(key);
       return true;
-    });
+    })
+    // Stereo first, spatial (Dolby Atmos) last — matches the album-header order.
+    .sort((a, b) =>
+      Number(isSpatialAudioQuality(normalizeQualityTag(a))) - Number(isSpatialAudioQuality(normalizeQualityTag(b))));
 };
 
 const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
@@ -448,7 +452,7 @@ const TrackList = <T extends TrackListItem>({
                     <Text className={styles.metaText}>{durationText}</Text>
                     {showQuality && qualityTags.length > 0 ? <Text className={styles.separator}>•</Text> : null}
                     {showQuality && qualityTags.map((quality) => (
-                      <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                      <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
                     ))}
                   </div>
                 </div>
@@ -473,7 +477,7 @@ const TrackList = <T extends TrackListItem>({
                   <div className={styles.desktopQualityColumn}>
                     {qualityTags.length > 0 ? (
                       qualityTags.map((quality) => (
-                        <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                        <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
                       ))
                     ) : (
                       <Text className={styles.desktopMetaText}>—</Text>

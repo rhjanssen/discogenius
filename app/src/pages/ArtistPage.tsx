@@ -858,8 +858,8 @@ const ArtistPage = () => {
     const releaseGroupSlotBadges = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
       ? (
         <div className={styles.slotBadgeRow}>
-          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
-          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
+          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="medium" /> : null}
+          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="medium" /> : null}
         </div>
       )
       : null;

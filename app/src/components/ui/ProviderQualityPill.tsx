@@ -59,8 +59,14 @@ const useStyles = makeStyles({
         flexShrink: 0,
         boxSizing: "border-box",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        ...shorthands.border(tokens.strokeWidthThin, "solid", tokens.colorNeutralStroke2),
-        backgroundColor: tokens.colorNeutralBackground3,
+        // Dark chip styled to match the Dolby Atmos badge exactly, so the white
+        // TIDAL mark reads white-on-black in both themes and the source token
+        // sits as a sibling to the quality chips.
+        ...shorthands.border(tokens.strokeWidthThin, "solid", "rgba(255, 255, 255, 0.16)"),
+        backgroundColor: "#0a0a0a",
+        color: "#ffffff",
+        fontSize: tokens.fontSizeBase200,
+        fontWeight: tokens.fontWeightSemibold,
         cursor: "default",
     },
     badge: {
@@ -139,7 +145,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const renderProviderPill = (group: ProviderGroup, groupIndex: number) => {
         const providerName = providerDisplayName(group.provider);
         const glyph = providerMarkFor(group.provider)
-            ? <ProviderMark provider={group.provider} size={glyphSize} />
+            ? <ProviderMark provider={group.provider} size={glyphSize} tone="onDark" />
             : providerName.charAt(0);
 
         const tooltipLines = [

@@ -1375,7 +1375,7 @@ const QueueTab = () => {
                                                             (isDownloading || isImportPending) ? styles.downloadBadgeRowInline : '',
                                                         )}>
                                                             <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
-                                                            {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
+                                                            {group.quality ? <QualityBadge quality={group.quality} size="medium" /> : null}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1782,7 +1782,7 @@ const QueueTab = () => {
                                                         {row.mediaBadge ? (
                                                             <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />
                                                         ) : null}
-                                                        {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
+                                                        {row.quality ? <QualityBadge quality={row.quality} size="medium" /> : null}
                                                     </div>
                                                 </div>
                                             </div>
