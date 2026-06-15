@@ -46,11 +46,14 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
 const useStyles = makeStyles({
   table: {
     width: "100%",
-    // Tighten cell gutters on mobile so the title isn't starved of width.
+    // Tighten cell gutters on mobile so the title isn't starved of width, but
+    // give the two-line rows a little vertical breathing room.
     "@media (max-width: 767px)": {
       "& [role=row] > *": {
         paddingLeft: tokens.spacingHorizontalXXS,
         paddingRight: tokens.spacingHorizontalXXS,
+        paddingTop: tokens.spacingVerticalS,
+        paddingBottom: tokens.spacingVerticalS,
       },
     },
   },
