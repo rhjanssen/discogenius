@@ -49,8 +49,8 @@ const useStyles = makeStyles({
     // Tighten cell gutters on mobile so the title isn't starved of width.
     "@media (max-width: 767px)": {
       "& [role=row] > *": {
-        paddingLeft: tokens.spacingHorizontalXS,
-        paddingRight: tokens.spacingHorizontalXS,
+        paddingLeft: tokens.spacingHorizontalXXS,
+        paddingRight: tokens.spacingHorizontalXXS,
       },
     },
   },
@@ -100,7 +100,7 @@ const useStyles = makeStyles({
 
   // Columns — fixed widths on the rails, equal flex on title + artist/album.
   indexCell: {
-    flex: "0 0 36px",
+    flex: "0 0 26px",
     justifyContent: "center",
     position: "relative",
     "@media (min-width: 768px)": {
@@ -204,17 +204,10 @@ const useStyles = makeStyles({
 
   qualityCell: {
     flex: "0 0 auto",
-    // Stacked on mobile (one badge wide) so the title keeps its room; inline on
-    // desktop where there's space for stereo + spatial side by side.
-    flexDirection: "column",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    rowGap: tokens.spacingVerticalXXS,
+    justifyContent: "flex-end",
     columnGap: tokens.spacingHorizontalXXS,
     "@media (min-width: 768px)": {
       flex: "0 0 120px",
-      flexDirection: "row",
-      justifyContent: "flex-end",
     },
   },
   timeCell: {
