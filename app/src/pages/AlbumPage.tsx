@@ -114,15 +114,15 @@ const useStyles = makeStyles({
     },
   },
   coverArt: {
-    width: "140px",
-    height: "140px",
+    width: "168px",
+    height: "168px",
     objectFit: "cover",
     borderRadius: tokens.borderRadiusLarge,
     boxShadow: tokens.shadow28,
     flexShrink: 0,
     "@media (min-width: 480px)": {
-      width: "180px",
-      height: "180px",
+      width: "200px",
+      height: "200px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
@@ -131,8 +131,8 @@ const useStyles = makeStyles({
     },
   },
   coverPlaceholder: {
-    width: "140px",
-    height: "140px",
+    width: "168px",
+    height: "168px",
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
     color: tokens.colorNeutralForeground4,
@@ -141,8 +141,8 @@ const useStyles = makeStyles({
     justifyContent: "center",
     flexShrink: 0,
     "@media (min-width: 480px)": {
-      width: "180px",
-      height: "180px",
+      width: "200px",
+      height: "200px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
@@ -349,15 +349,23 @@ const useStyles = makeStyles({
     flexDirection: "column",
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
     backdropFilter: "blur(10px)",
+    // Match the shared card surface (cardStyles.ts) so the glassmorphism is
+    // identical across Library / Artist / Album.
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
     borderRadius: tokens.borderRadiusMedium,
     overflow: "hidden",
+    boxShadow: tokens.shadow8,
     transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
     padding: tokens.spacingVerticalNone,
     "&:hover": {
       transform: "translateY(-2px)",
+      boxShadow: tokens.shadow28,
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
-      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha}`,
+      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
+    },
+    "&:active": {
+      transform: "translateY(0px)",
+      boxShadow: tokens.shadow8,
     },
   },
   albumCardPreview: {

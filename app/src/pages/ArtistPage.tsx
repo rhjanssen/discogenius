@@ -328,7 +328,9 @@ const useStyles = makeStyles({
     flexDirection: "column",
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
     backdropFilter: "blur(10px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    // Match the shared card surface (cardStyles.ts) so the glassmorphism is
+    // identical across Library / Artist / Album.
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
     borderRadius: tokens.borderRadiusMedium,
     overflow: "hidden",
     boxShadow: tokens.shadow8,
