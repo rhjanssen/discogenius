@@ -80,7 +80,7 @@ const useStyles = makeStyles({
     position: 'absolute',
     top: '50%',
     left: '50%',
-    width: '64%',
+    width: '82%',
     aspectRatio: '1',
     borderRadius: tokens.borderRadiusCircular,
     zIndex: 0,
@@ -89,12 +89,12 @@ const useStyles = makeStyles({
     backgroundSize: 'contain',
     backgroundRepeat: 'no-repeat',
     backgroundPosition: 'center',
-    filter: 'blur(22px) saturate(1.25)',
-    opacity: 0.68,
+    filter: 'blur(26px) saturate(1.45)',
+    opacity: 0.95,
     pointerEvents: 'none',
     '@media (max-width: 640px)': {
-      filter: 'blur(18px) saturate(1.3)',
-      opacity: 0.62,
+      filter: 'blur(20px) saturate(1.5)',
+      opacity: 0.9,
     },
   },
   logo: {
@@ -274,12 +274,12 @@ const useStyles = makeStyles({
     objectFit: 'contain',
   },
   providerIconPanel: {
-    width: '42px',
-    height: '42px',
+    // No framed square behind the logo — the icon sits directly on the list item.
+    width: '32px',
+    height: '32px',
     display: 'grid',
     placeItems: 'center',
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    flexShrink: 0,
   },
   actionButton: {
     width: '100%',
@@ -406,9 +406,10 @@ const Auth = () => {
         setAuthStatus(status);
 
         if (isConnectedStatus(status)) {
+          // No auto-redirect when already connected — keep this page reachable so
+          // more providers can be added (Apple Music, Spotify, …) without being
+          // bounced straight back to the library.
           refreshProviderAuthStatusCache(status);
-          navigateAfterAuth();
-          return;
         }
 
         if (status?.refreshing) {

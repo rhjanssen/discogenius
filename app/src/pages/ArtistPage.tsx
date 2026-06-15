@@ -41,7 +41,6 @@ import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
 import { MediaCard } from "@/components/cards/MediaCard";
-import { QualityBadge } from "@/components/ui/QualityBadge";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
@@ -855,14 +854,6 @@ const ArtistPage = () => {
     const itemProgress = getProgressByProviderId(String(item.stereo_provider_id || ""))
       || getProgressByProviderId(String(item.spatial_provider_id || ""))
       || getProgressByProviderId(String(providerId));
-    const releaseGroupSlotBadges = item.source === "musicbrainz" && (hasStereoOffer || hasSpatialOffer)
-      ? (
-        <div className={styles.slotBadgeRow}>
-          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
-          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
-        </div>
-      )
-      : null;
     const stateBadge = isLocked ? (
       <Badge appearance="filled" color="informative" icon={<LockClosed24Regular />}>
         Locked
@@ -886,8 +877,6 @@ const ArtistPage = () => {
         title={albumTitle}
         subtitle={subtitle}
         explicit={item.explicit}
-        quality={item.source === "musicbrainz" ? undefined : (quality as any)}
-        qualityBadges={releaseGroupSlotBadges}
         monitored={isAlbumMonitored}
         onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, providerId, !isAlbumMonitored)}
         statusBadge={statusBadge}

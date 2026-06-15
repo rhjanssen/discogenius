@@ -905,15 +905,8 @@ const AlbumPage = () => {
       </div>
     ) : undefined;
 
-    const qualityBadges = isMatched
-      ? (
-        <>
-          {hasStereoOffer ? <QualityBadge quality={item.stereo_quality || "LOSSLESS"} size="small" /> : null}
-          {hasSpatialOffer ? <QualityBadge quality={item.spatial_quality || "DOLBY_ATMOS"} size="small" /> : null}
-        </>
-      )
-      : undefined;
-
+    // Quality is surfaced in the library list/table view, not on the card
+    // overlay — keeping it off the card avoids colliding with the monitor button.
     return (
       <MediaCard
         key={item.id}
@@ -925,8 +918,6 @@ const AlbumPage = () => {
         title={item.title}
         subtitle={subtitle}
         explicit={item.explicit}
-        quality={item.quality}
-        qualityBadges={qualityBadges}
         mini
         statusBadge={statusBadge}
         downloadStatus={itemProgress?.state}
@@ -991,6 +982,23 @@ const AlbumPage = () => {
               </div>
 
               <div className={styles.metadata}>
+                {/* Info row sits in the middle; the provider+quality pills go on
+                    the bottom row (the metadata container is a column on mobile). */}
+                <div className={styles.metadataFacts}>
+                  <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>{tracks.length} Tracks</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>
+                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
+                  </Text>
+                  {hasSpatialOffer && !hasStereoOffer && (
+                    <>
+                      <div className={styles.metadataSeparator} />
+                      <Text weight="semibold">Dolby Atmos only</Text>
+                    </>
+                  )}
+                </div>
                 {hasAnyProviderOffer ? (
                   <div className={styles.metadataBadges}>
                     <ProviderQualityRow
@@ -1026,24 +1034,6 @@ const AlbumPage = () => {
                     ))}
                   </div>
                 ) : null}
-                {/* Facts sit on their own line below the quality badges on mobile
-                    (the metadata container is column on narrow screens) so the
-                    row never cuts off; inline beside the badges on desktop. */}
-                <div className={styles.metadataFacts}>
-                  <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
-                  <div className={styles.metadataSeparator} />
-                  <Text>{tracks.length} Tracks</Text>
-                  <div className={styles.metadataSeparator} />
-                  <Text>
-                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
-                  </Text>
-                  {hasSpatialOffer && !hasStereoOffer && (
-                    <>
-                      <div className={styles.metadataSeparator} />
-                      <Text weight="semibold">Dolby Atmos only</Text>
-                    </>
-                  )}
-                </div>
               </div>
 
               {/* Album Review Section */}
