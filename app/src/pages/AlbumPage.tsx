@@ -519,16 +519,6 @@ const AlbumPage = () => {
     staleTime: 10_000,
     retry: 1,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
-  const showTrackArtists = useMemo(
-    () =>
-      tracks.some((track) => {
-        if (track.artist_credits && track.artist_credits.length > 1) {
-          return true;
-        }
-        return Boolean(track.artist_name) && track.artist_name !== album?.artist_name;
-      }),
-    [tracks, album?.artist_name],
-  );
   const similarAlbums = useMemo(() => {
     const items = pageData?.similarAlbums ?? [];
 
@@ -1155,7 +1145,7 @@ const AlbumPage = () => {
         ) : (
           <TrackList
             tracks={tracks}
-            showArtist={showTrackArtists}
+            showArtist
             showQuality={true}
             showVolumeHeaders
             contextArtistName={album.artist_name}

@@ -7,6 +7,7 @@ import {
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
+import { Play24Regular, Stop24Filled } from "@fluentui/react-icons";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -66,17 +67,31 @@ const useStyles = makeStyles({
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
     },
   },
-  number: {
+  numberPlay: {
     width: "28px",
-    paddingTop: tokens.spacingVerticalXXS,
     flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: tokens.spacingVerticalXXS,
+    "@media (min-width: 768px)": {
+      width: "32px",
+      paddingTop: 0,
+    },
+  },
+  numberPlayActive: {
+    cursor: "pointer",
+  },
+  numberText: {
     textAlign: "center",
     color: tokens.colorNeutralForeground3,
     fontFamily: tokens.fontFamilyMonospace,
     fontSize: tokens.fontSizeBase200,
-    "@media (min-width: 768px)": {
-      paddingTop: 0,
-    },
+  },
+  playIcon: {
+    fontSize: "20px",
+    color: tokens.colorNeutralForeground1,
+    display: "block",
   },
   cover: {
     width: "44px",
@@ -157,30 +172,44 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: tokens.spacingVerticalXXS,
   },
-  mobileMetaRow: {
+  // Artist shown below the title on mobile (desktop uses its own column).
+  mobileArtistRow: {
     display: "flex",
     alignItems: "center",
-    columnGap: tokens.spacingHorizontalXS,
-    rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
+    columnGap: tokens.spacingHorizontalXXS,
     minWidth: 0,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground3,
     "@media (min-width: 768px)": {
       display: "none",
     },
   },
-  // Quality badges get their own row under the meta line on mobile so a wrap
-  // never splits the duration from the badges mid-line.
-  mobileQualityRow: {
+  // Compact cluster on the right of every row: quality + duration + action,
+  // the same layout on desktop and mobile.
+  rightGroup: {
     display: "flex",
     alignItems: "center",
-    columnGap: tokens.spacingHorizontalXS,
-    rowGap: tokens.spacingVerticalXXS,
-    flexWrap: "wrap",
-    minWidth: 0,
-    marginTop: tokens.spacingVerticalXS,
+    gap: tokens.spacingHorizontalS,
+    marginLeft: "auto",
+    flexShrink: 0,
+    paddingTop: tokens.spacingVerticalXXS,
     "@media (min-width: 768px)": {
-      display: "none",
+      paddingTop: 0,
     },
+  },
+  qualityCluster: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    flexShrink: 0,
+  },
+  durationText: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    flexShrink: 0,
+    minWidth: "36px",
+    textAlign: "right",
   },
   desktopArtistColumn: {
     display: "none",
@@ -305,18 +334,6 @@ const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackN
   return track.track_number || index + 1;
 };
 
-const shouldShowArtist = (
-  track: TrackListItem,
-  showArtist: boolean,
-  contextArtistName?: string | null,
-) => {
-  if (!showArtist || !track.artist_name) {
-    return false;
-  }
-
-  return !contextArtistName || track.artist_name !== contextArtistName;
-};
-
 const shouldShowAlbum = (
   track: TrackListItem,
   showAlbum: boolean,
@@ -358,6 +375,7 @@ const TrackList = <T extends TrackListItem>({
     toggleTrackPlayback,
   } = useTrackPlayback();
   const [infoTrack, setInfoTrack] = useState<T | null>(null);
+  const [hoveredTrackId, setHoveredTrackId] = useState<string | number | null>(null);
 
   const renderArtistCredits = (track: T) => {
     const handleArtistClick = (artistId: string, event: React.MouseEvent) => {
@@ -419,7 +437,6 @@ const TrackList = <T extends TrackListItem>({
           const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
           const isMonitored = isTruthy(track.is_monitored);
           const isLocked = isTruthy(track.monitored_lock);
-          const displayArtist = shouldShowArtist(track, showArtist, contextArtistName) ? track.artist_name : null;
           const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
             ? getAlbumTitle(track, contextAlbumTitle)
             : null;
@@ -441,8 +458,25 @@ const TrackList = <T extends TrackListItem>({
                 className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
                 data-album-track-id={track.id}
                 onClick={onTrackClick ? () => onTrackClick(track) : undefined}
+                onMouseEnter={() => setHoveredTrackId(track.id)}
+                onMouseLeave={() => setHoveredTrackId((current) => (current === track.id ? null : current))}
               >
-                <Text className={styles.number}>{displayNumber}</Text>
+                {/* Number that turns into a play/stop control: shown on row hover
+                    (desktop) or while playing; tap the cell to play on mobile. */}
+                <div
+                  className={mergeClasses(styles.numberPlay, canPlay ? styles.numberPlayActive : undefined)}
+                  role={canPlay ? "button" : undefined}
+                  aria-label={canPlay ? (isPlaying ? "Stop track" : "Play track") : undefined}
+                  onClick={canPlay ? (event) => { event.stopPropagation(); toggleTrackPlayback(track, event); } : undefined}
+                >
+                  {canPlay && (hoveredTrackId === track.id || isPlaying) ? (
+                    isPlaying
+                      ? <Stop24Filled className={styles.playIcon} />
+                      : <Play24Regular className={styles.playIcon} />
+                  ) : (
+                    <span className={styles.numberText}>{displayNumber}</span>
+                  )}
+                </div>
 
                 {showCover ? (
                   coverUrl ? (
@@ -457,23 +491,16 @@ const TrackList = <T extends TrackListItem>({
                     <Text className={styles.title}>{getDisplayTitle(track)}</Text>
                     {track.explicit ? <ExplicitBadge /> : null}
                   </div>
-
-                  <div className={styles.mobileMetaRow}>
-                    {displayArtist ? renderArtistCredits(track) : null}
-                    {displayArtist && displayAlbum ? <Text className={styles.separator}>•</Text> : null}
-                    {displayAlbum ? <Text className={styles.metaText}>{displayAlbum}</Text> : null}
-                    {(displayArtist || displayAlbum) ? <Text className={styles.separator}>•</Text> : null}
-                    <Text className={styles.metaText}>{durationText}</Text>
-                  </div>
-                  {showQuality && qualityTags.length > 0 ? (
-                    <div className={styles.mobileQualityRow}>
-                      {qualityTags.map((quality) => (
-                        <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
-                      ))}
+                  {/* Artist always shows (no same-as-album suppression); it sits
+                      below the title on mobile. */}
+                  {showArtist ? (
+                    <div className={styles.mobileArtistRow}>
+                      {renderArtistCredits(track)}
                     </div>
                   ) : null}
                 </div>
 
+                {/* Artist in its own column on desktop. */}
                 {showArtist ? (
                   <div className={styles.desktopArtistColumn}>
                     {renderArtistCredits(track)}
@@ -482,41 +509,28 @@ const TrackList = <T extends TrackListItem>({
 
                 {showAlbum ? (
                   <div className={styles.desktopAlbumColumn}>
-                    {displayAlbum ? (
-                      <Text className={styles.desktopMetaText}>{displayAlbum}</Text>
-                    ) : (
-                      <Text className={styles.desktopMetaText}>—</Text>
-                    )}
+                    <Text className={styles.desktopMetaText}>{displayAlbum || "—"}</Text>
                   </div>
                 ) : null}
 
-                {showQuality ? (
-                  <div className={styles.desktopQualityColumn}>
-                    {qualityTags.length > 0 ? (
-                      qualityTags.map((quality) => (
-                        <QualityBadge key={quality} quality={quality} size="medium" className={styles.qualityBadge} />
-                      ))
-                    ) : (
-                      <Text className={styles.desktopMetaText}>—</Text>
-                    )}
-                  </div>
-                ) : null}
-
-                <div className={styles.desktopDurationColumn}>
-                  <Text className={styles.desktopMetaText}>{durationText}</Text>
-                </div>
-
-                <div className={styles.trailing}>
+                {/* Compact right cluster: quality + duration + the toggling action. */}
+                <div className={styles.rightGroup}>
+                  {showQuality && qualityTags.length > 0 ? (
+                    <div className={styles.qualityCluster}>
+                      {qualityTags.map((quality) => (
+                        <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                      ))}
+                    </div>
+                  ) : null}
+                  <Text className={styles.durationText}>{durationText}</Text>
                   <TrackRowActions
                     className={styles.actions}
-                    isPlaying={isPlaying}
                     isMonitored={isMonitored}
                     isLocked={isLocked}
                     isDownloaded={isDownloaded}
                     isDownloading={isDownloading}
                     canShowInfo={Boolean(audioFile)}
                     showDownload={Boolean(onDownloadTrack)}
-                    onPlay={canPlay ? (event) => toggleTrackPlayback(track, event) : undefined}
                     onToggleMonitor={onToggleMonitor
                       ? (event) => {
                         event.stopPropagation();
