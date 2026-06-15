@@ -4,8 +4,11 @@ import { ChevronDown16Regular, ChevronUp16Regular } from '@fluentui/react-icons'
 
 const useStyles = makeStyles({
     container: {
-        marginTop: tokens.spacingVerticalS,
-        marginBottom: tokens.spacingVerticalS,
+        // Small own-margins so the block keeps a little air without doubling up
+        // on the parent's flex gap (which would push the name↔bio / album-review
+        // spacing out too far). Shared by the artist bio and the album review.
+        marginTop: tokens.spacingVerticalXS,
+        marginBottom: tokens.spacingVerticalXS,
     },
     content: {
         fontSize: tokens.fontSizeBase300,

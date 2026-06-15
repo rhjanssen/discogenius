@@ -52,8 +52,8 @@ const useStyles = makeStyles({
     display: "flex",
     flexWrap: "nowrap",
     alignItems: "flex-start",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    gap: tokens.spacingHorizontalSNudge,
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     scrollMarginTop: `calc(${tokens.spacingVerticalXXL} * 2)`,
     transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
@@ -123,6 +123,8 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
   },
   metaRow: {
     display: "flex",
@@ -190,7 +192,8 @@ const useStyles = makeStyles({
   rightGroup: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalS,
+    // Tight, symmetric gaps between quality · duration · action.
+    gap: tokens.spacingHorizontalSNudge,
     marginLeft: "auto",
     flexShrink: 0,
     paddingTop: tokens.spacingVerticalXXS,
@@ -206,20 +209,24 @@ const useStyles = makeStyles({
   },
   durationText: {
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
+    fontSize: tokens.fontSizeBase100,
     flexShrink: 0,
-    minWidth: "36px",
+    // Right-aligned but only as wide as the longest duration, so there's no
+    // dead space between the quality pills and the time.
+    minWidth: "28px",
     textAlign: "right",
   },
   desktopArtistColumn: {
     display: "none",
     "@media (min-width: 768px)": {
       display: "block",
-      width: "220px",
+      width: "200px",
       flexShrink: 0,
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
+      fontSize: tokens.fontSizeBase200,
+      color: tokens.colorNeutralForeground3,
       paddingLeft: tokens.spacingHorizontalS,
       paddingRight: tokens.spacingHorizontalS,
       boxSizing: "border-box",
