@@ -173,7 +173,8 @@ const useStyles = makeStyles({
   artistInfo: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    // Tighter on mobile so the name sits closer to the bio.
+    gap: tokens.spacingVerticalXS,
     minWidth: 0,
     width: "100%",
     alignItems: "center",
