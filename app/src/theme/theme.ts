@@ -185,6 +185,7 @@ export function buildDiscogeniusSearchUnderlineGradient(accentTokens: Discogeniu
  * Used for QualityBadge component and file quality indicators
  */
 export const tidalBadgeColor = {
+    // Dark mode — dark fill + bright text (Tidal's canonical look).
     // Hi-Res / 24-bit (Gold/Yellow)
     YellowText: "#ffd432",
     YellowBackground: "#4d3c00",
@@ -193,8 +194,26 @@ export const tidalBadgeColor = {
     TealBackground: "#004d46",
     // Spatial audio
     SpatialText: "#ffffff",
-    SpatialBackground: "#000000",
+    SpatialBackground: "#0a0a0a",
 } as const;
+
+/**
+ * Light-mode quality badge colours — soft coloured fill + dark text, so the
+ * pills flip to "dark-on-light" in light mode instead of staying dark chips.
+ */
+export const tidalBadgeColorLight = {
+    YellowText: "#5a4500",
+    YellowBackground: "#ffe48a",
+    TealText: "#00463f",
+    TealBackground: "#9cefe4",
+    SpatialText: "#111111",
+    SpatialBackground: "#ededed",
+} as const;
+
+/** Consistent faint stroke applied to every quality/provider pill, per theme. */
+export function badgeStrokeColor(isDarkMode: boolean): string {
+    return isDarkMode ? "rgba(255, 255, 255, 0.14)" : "rgba(0, 0, 0, 0.12)";
+}
 
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
     const baseTheme = mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);

@@ -1,6 +1,7 @@
 import React from "react";
 import { Badge, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
-import { tidalBadgeColor } from "@/theme/theme";
+import { tidalBadgeColor, tidalBadgeColorLight, badgeStrokeColor } from "@/theme/theme";
+import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 
 // Standard quality values we store in DB (no underscore in HIRES)
@@ -23,10 +24,14 @@ const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 13, la
 const useStyles = makeStyles({
     base: {
         fontWeight: tokens.fontWeightBold,
-        ...shorthands.border("none"),
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
+        boxSizing: "border-box",
+        // Consistent thin stroke on every badge; the colour is applied inline so
+        // it can flip per theme (faint light stroke on dark, faint dark on light).
+        ...shorthands.borderStyle("solid"),
+        ...shorthands.borderWidth(tokens.strokeWidthThin),
         // Never let a flex parent squeeze the badge — that pushed the label
         // outside the rounded body. Hold the intrinsic width and clip cleanly.
         flexShrink: 0,
@@ -38,26 +43,6 @@ const useStyles = makeStyles({
     label: {
         textTransform: "uppercase",
         letterSpacing: "0.02em",
-    },
-    hiRes: {
-        backgroundColor: tidalBadgeColor.YellowBackground,
-        color: tidalBadgeColor.YellowText,
-    },
-    lossless: {
-        backgroundColor: tidalBadgeColor.TealBackground,
-        color: tidalBadgeColor.TealText,
-    },
-    spatial: {
-        backgroundColor: "#000000",
-        color: "#ffffff",
-    },
-    high: {
-        backgroundColor: tokens.colorNeutralBackground3,
-        color: tokens.colorNeutralForeground3,
-    },
-    default: {
-        backgroundColor: tokens.colorNeutralBackground3,
-        color: tokens.colorNeutralForeground3,
     },
     // Consistent heights for ALL variants (text and Atmos) so a row of badges
     // lines up. Slightly larger than before for legibility.
@@ -76,18 +61,13 @@ const useStyles = makeStyles({
         fontSize: tokens.fontSizeBase300,
         ...shorthands.padding(0, tokens.spacingHorizontalM),
     },
-    // Dolby Atmos: the canonical white-on-black lockup. Always white-on-black in
-    // both themes (no theme flip); a faint light border keeps the chip defined
-    // when it sits on a dark page.
     atmos: {
-        backgroundColor: "#0a0a0a",
-        ...shorthands.border(tokens.strokeWidthThin, "solid", "rgba(255, 255, 255, 0.16)"),
         lineHeight: 0,
     },
     atmosLogo: {
         display: "block",
         flexShrink: 0,
-        backgroundColor: "#ffffff",
+        // colour set inline (white on dark, near-black on light)
         WebkitMaskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
         maskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
         WebkitMaskRepeat: "no-repeat",
@@ -101,10 +81,11 @@ const useStyles = makeStyles({
 
 export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, size = "medium" }) => {
     const styles = useStyles();
+    const { isDarkMode } = useTheme();
+    const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
+    const borderColor = badgeStrokeColor(isDarkMode);
 
-    // Normalize input string
     const normalizedQuality = normalizeQualityTag(quality);
-
     const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
 
     if (normalizedQuality === "DOLBY_ATMOS") {
@@ -114,35 +95,42 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                 shape="circular"
                 appearance="tint"
                 className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
+                style={{ backgroundColor: palette.SpatialBackground, borderColor }}
                 aria-label="Dolby Atmos"
                 title="Dolby Atmos"
             >
                 <span
                     aria-hidden="true"
                     className={styles.atmosLogo}
-                    style={{ height: `${logoHeight}px`, width: `${Math.round(logoHeight * ATMOS_ASPECT)}px` }}
+                    style={{
+                        height: `${logoHeight}px`,
+                        width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
+                        backgroundColor: palette.SpatialText,
+                    }}
                 />
             </Badge>
         );
     }
 
-    let badgeClass = styles.default;
+    let backgroundColor: string = tokens.colorNeutralBackground3;
+    let color: string = tokens.colorNeutralForeground3;
     let badgeText = quality;
 
     if (isSpatialAudioQuality(normalizedQuality)) {
-        badgeClass = styles.spatial;
+        backgroundColor = palette.SpatialBackground;
+        color = palette.SpatialText;
         badgeText = "Spatial";
     } else if (normalizedQuality === "HIRES_LOSSLESS") {
-        badgeClass = styles.hiRes;
+        backgroundColor = palette.YellowBackground;
+        color = palette.YellowText;
         badgeText = "24-BIT";
     } else if (normalizedQuality === "LOSSLESS") {
-        badgeClass = styles.lossless;
+        backgroundColor = palette.TealBackground;
+        color = palette.TealText;
         badgeText = "16-BIT";
     } else if (normalizedQuality?.includes("HIGH")) {
-        badgeClass = styles.high;
         badgeText = "High";
     } else if (normalizedQuality?.startsWith("MP4_")) {
-        badgeClass = styles.high; // Use standard badge colors for video
         badgeText = normalizedQuality.replace("MP4_", "").toLowerCase();
     }
 
@@ -150,7 +138,8 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
         <Badge
             shape="circular"
             appearance="tint"
-            className={mergeClasses(styles.base, styles.label, badgeClass, sizeClass, className)}
+            className={mergeClasses(styles.base, styles.label, sizeClass, className)}
+            style={{ backgroundColor, color, borderColor }}
         >
             {badgeText}
         </Badge>

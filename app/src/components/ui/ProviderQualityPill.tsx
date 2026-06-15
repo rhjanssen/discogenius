@@ -3,6 +3,8 @@ import { Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui
 import { QualityBadge } from "./QualityBadge";
 import { ProviderMark } from "./ProviderMark";
 import { providerKey, providerMarkFor } from "./providerMarks";
+import { tidalBadgeColor, tidalBadgeColorLight, badgeStrokeColor } from "@/theme/theme";
+import { useTheme } from "@/providers/themeContext";
 
 type SlotName = "stereo" | "spatial";
 type BadgeSize = "small" | "medium" | "large";
@@ -59,12 +61,11 @@ const useStyles = makeStyles({
         flexShrink: 0,
         boxSizing: "border-box",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        // Dark chip styled to match the Dolby Atmos badge exactly, so the white
-        // TIDAL mark reads white-on-black in both themes and the source token
-        // sits as a sibling to the quality chips.
-        ...shorthands.border(tokens.strokeWidthThin, "solid", "rgba(255, 255, 255, 0.16)"),
-        backgroundColor: "#0a0a0a",
-        color: "#ffffff",
+        // Theme-aware fill matching the Dolby Atmos chip — light chip + dark glyph
+        // in light mode, dark chip + white glyph in dark mode (colours applied
+        // inline from the badge palette).
+        ...shorthands.borderStyle("solid"),
+        ...shorthands.borderWidth(tokens.strokeWidthThin),
         fontSize: tokens.fontSizeBase200,
         fontWeight: tokens.fontWeightSemibold,
         cursor: "default",
@@ -121,6 +122,13 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     className,
 }) => {
     const styles = useStyles();
+    const { isDarkMode } = useTheme();
+    const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
+    const pillStyle = {
+        backgroundColor: palette.SpatialBackground,
+        color: palette.SpatialText,
+        borderColor: badgeStrokeColor(isDarkMode),
+    };
 
     const visible = (offers || []).filter((offer) => offer && offer.quality);
     if (visible.length === 0) {
@@ -145,7 +153,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const renderProviderPill = (group: ProviderGroup, groupIndex: number) => {
         const providerName = providerDisplayName(group.provider);
         const glyph = providerMarkFor(group.provider)
-            ? <ProviderMark provider={group.provider} size={glyphSize} tone="onDark" />
+            ? <ProviderMark provider={group.provider} size={glyphSize} tone="auto" />
             : providerName.charAt(0);
 
         const tooltipLines = [
@@ -170,7 +178,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             >
                 <span
                     className={mergeClasses(styles.providerPill, groupIndex > 0 ? styles.groupGap : undefined)}
-                    style={{ width: `${diameter}px`, height: `${diameter}px` }}
+                    style={{ width: `${diameter}px`, height: `${diameter}px`, ...pillStyle }}
                     aria-label={`${providerName} source`}
                 >
                     {glyph}

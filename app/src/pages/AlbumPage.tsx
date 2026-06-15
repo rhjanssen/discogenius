@@ -982,23 +982,8 @@ const AlbumPage = () => {
               </div>
 
               <div className={styles.metadata}>
-                {/* Info row sits in the middle; the provider+quality pills go on
-                    the bottom row (the metadata container is a column on mobile). */}
-                <div className={styles.metadataFacts}>
-                  <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
-                  <div className={styles.metadataSeparator} />
-                  <Text>{tracks.length} Tracks</Text>
-                  <div className={styles.metadataSeparator} />
-                  <Text>
-                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
-                  </Text>
-                  {hasSpatialOffer && !hasStereoOffer && (
-                    <>
-                      <div className={styles.metadataSeparator} />
-                      <Text weight="semibold">Dolby Atmos only</Text>
-                    </>
-                  )}
-                </div>
+                {/* Provider+quality pills sit in the middle; the year/track/
+                    duration facts go on the bottom row (column on mobile). */}
                 {hasAnyProviderOffer ? (
                   <div className={styles.metadataBadges}>
                     <ProviderQualityRow
@@ -1034,6 +1019,21 @@ const AlbumPage = () => {
                     ))}
                   </div>
                 ) : null}
+                <div className={styles.metadataFacts}>
+                  <Text>{album.release_date ? new Date(album.release_date).getFullYear() : "—"}</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>{tracks.length} Tracks</Text>
+                  <div className={styles.metadataSeparator} />
+                  <Text>
+                    {formatDurationSeconds(tracks.reduce((acc, t) => acc + t.duration, 0))}
+                  </Text>
+                  {hasSpatialOffer && !hasStereoOffer && (
+                    <>
+                      <div className={styles.metadataSeparator} />
+                      <Text weight="semibold">Dolby Atmos only</Text>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Album Review Section */}
