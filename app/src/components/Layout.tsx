@@ -229,8 +229,8 @@ const useStyles = makeStyles({
     marginRight: "auto",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     // Safe area insets for PWA - left/right for notch devices, bottom for home indicator
-    paddingLeft: `max(${tokens.spacingHorizontalXS}, env(safe-area-inset-left))`,
-    paddingRight: `max(${tokens.spacingHorizontalXS}, env(safe-area-inset-right))`,
+    paddingLeft: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-left))`,
+    paddingRight: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-right))`,
     // Extra bottom padding on mobile for bottom tab bar (56px tab bar + safe area)
     paddingBottom: `max(calc(64px + env(safe-area-inset-bottom)), ${tokens.spacingVerticalM})`,
     paddingTop: `max(${tokens.spacingVerticalM}, env(safe-area-inset-top))`,
