@@ -1,7 +1,13 @@
-import { useState, type MouseEvent } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Link,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
   Text,
   makeStyles,
   mergeClasses,
@@ -38,272 +44,219 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
 }
 
 const useStyles = makeStyles({
-  root: {
-    display: "flex",
-    flexDirection: "column",
+  table: {
+    width: "100%",
+    // Tighten cell gutters on mobile so the title isn't starved of width.
+    "@media (max-width: 767px)": {
+      "& [role=row] > *": {
+        paddingLeft: tokens.spacingHorizontalXS,
+        paddingRight: tokens.spacingHorizontalXS,
+      },
+    },
   },
-  volumeHeader: {
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
-    color: tokens.colorNeutralForeground2,
-    fontWeight: tokens.fontWeightSemibold,
-    fontSize: tokens.fontSizeBase300,
-  },
-  row: {
-    display: "flex",
-    flexWrap: "nowrap",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalSNudge,
-    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    scrollMarginTop: `calc(${tokens.spacingVerticalXXL} * 2)`,
-    transition: `background-color ${tokens.durationNormal} ${tokens.curveEasyEase}`,
+  // Header is a desktop-only orientation row; mobile stays compact like TIDAL.
+  headerRow: {
+    display: "none",
     "@media (min-width: 768px)": {
-      alignItems: "center",
+      display: "flex",
+    },
+  },
+  headerLabel: {
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground3,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+
+  // A full-width separator row that introduces each disc/volume.
+  volumeRow: {
+    ":hover": {
+      backgroundColor: "transparent",
+    },
+  },
+  volumeCell: {
+    flex: "1 1 0px",
+  },
+  volumeLabel: {
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightSemibold,
+    color: tokens.colorNeutralForeground2,
+    paddingTop: tokens.spacingVerticalM,
+    paddingBottom: tokens.spacingVerticalXXS,
+  },
+
+  // Body row: on hover the index number fades out and the play affordance fades in.
+  row: {
+    "&:hover [data-row-number]": {
+      opacity: 0,
+    },
+    "&:hover [data-row-play]": {
+      opacity: 1,
+      pointerEvents: "auto",
     },
   },
   rowClickable: {
     cursor: "pointer",
-    ":hover": {
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    },
   },
-  numberPlay: {
-    width: "28px",
-    flexShrink: 0,
-    display: "flex",
-    alignItems: "center",
+
+  // Columns — fixed widths on the rails, equal flex on title + artist/album.
+  indexCell: {
+    flex: "0 0 36px",
     justifyContent: "center",
-    paddingTop: tokens.spacingVerticalXXS,
+    position: "relative",
     "@media (min-width: 768px)": {
-      width: "32px",
-      paddingTop: 0,
+      flex: "0 0 40px",
     },
   },
-  numberPlayActive: {
+  indexPlayable: {
     cursor: "pointer",
   },
   numberText: {
-    textAlign: "center",
     color: tokens.colorNeutralForeground3,
     fontFamily: tokens.fontFamilyMonospace,
     fontSize: tokens.fontSizeBase200,
+    transition: `opacity ${tokens.durationFaster} ${tokens.curveEasyEase}`,
+  },
+  playReveal: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: 0,
+    pointerEvents: "none",
+    transition: `opacity ${tokens.durationFaster} ${tokens.curveEasyEase}`,
+  },
+  playRevealActive: {
+    opacity: 1,
+    pointerEvents: "auto",
   },
   playIcon: {
     fontSize: "20px",
     color: tokens.colorNeutralForeground1,
     display: "block",
   },
+
   cover: {
-    width: "44px",
-    height: "44px",
+    width: "36px",
+    height: "36px",
     borderRadius: tokens.borderRadiusSmall,
     objectFit: "cover",
     flexShrink: 0,
+    marginRight: tokens.spacingHorizontalS,
     backgroundColor: tokens.colorNeutralBackground3,
   },
-  coverPlaceholder: {
-    backgroundColor: tokens.colorNeutralBackground3,
-  },
-  main: {
-    flex: 1,
-    minWidth: 0,
+
+  titleStack: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    width: "100%",
+    rowGap: "2px",
   },
-  titleRow: {
+  titleLine: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
     minWidth: 0,
   },
-  title: {
+  titleText: {
+    minWidth: 0,
+    fontWeight: tokens.fontWeightSemibold,
+    // Smaller on mobile where the artist stacks underneath; full size on desktop.
+    fontSize: "13px",
+    lineHeight: "18px",
+    "@media (min-width: 768px)": {
+      fontSize: tokens.fontSizeBase300,
+      lineHeight: tokens.lineHeightBase300,
+    },
+  },
+  // Artist shown beneath the title on mobile only (its own column on desktop).
+  mobileArtist: {
     minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    fontWeight: tokens.fontWeightSemibold,
-    fontSize: tokens.fontSizeBase300,
-    lineHeight: tokens.lineHeightBase300,
-  },
-  metaRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    flexWrap: "wrap",
-    minWidth: 0,
-  },
-  metaText: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-    lineHeight: tokens.lineHeightBase200,
-  },
-  separator: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-  },
-  qualityBadge: {
-    display: "inline-flex",
-    flexShrink: 0,
-  },
-  trailing: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalS,
-    marginLeft: "auto",
-    paddingTop: tokens.spacingVerticalXXS,
-    flexShrink: 0,
-    "@media (min-width: 768px)": {
-      alignItems: "center",
-      paddingTop: 0,
-    },
-  },
-  actions: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXXS,
-    flexShrink: 0,
-  },
-  playerRow: {
-    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
-  },
-  titleColumn: {
-    flex: 1,
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  // Artist shown below the title on mobile (desktop uses its own column).
-  mobileArtistRow: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    columnGap: tokens.spacingHorizontalXXS,
-    minWidth: 0,
-    fontSize: tokens.fontSizeBase200,
+    fontSize: "11px",
     color: tokens.colorNeutralForeground3,
     "@media (min-width: 768px)": {
       display: "none",
     },
   },
-  // Compact cluster on the right of every row: quality + duration + action,
-  // the same layout on desktop and mobile.
-  rightGroup: {
-    display: "flex",
-    alignItems: "center",
-    // Tight, symmetric gaps between quality · duration · action.
-    gap: tokens.spacingHorizontalSNudge,
-    marginLeft: "auto",
-    flexShrink: 0,
-    paddingTop: tokens.spacingVerticalXXS,
-    "@media (min-width: 768px)": {
-      paddingTop: 0,
-    },
-  },
-  qualityCluster: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXXS,
-    flexShrink: 0,
-  },
-  durationText: {
+
+  // Desktop-only columns.
+  desktopColumn: {
+    display: "none",
+    fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase100,
-    flexShrink: 0,
-    // Right-aligned but only as wide as the longest duration, so there's no
-    // dead space between the quality pills and the time.
-    minWidth: "28px",
-    textAlign: "right",
-  },
-  desktopArtistColumn: {
-    display: "none",
-    "@media (min-width: 768px)": {
-      display: "block",
-      width: "200px",
-      flexShrink: 0,
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap",
-      fontSize: tokens.fontSizeBase200,
-      color: tokens.colorNeutralForeground3,
-      paddingLeft: tokens.spacingHorizontalS,
-      paddingRight: tokens.spacingHorizontalS,
-      boxSizing: "border-box",
-    },
-  },
-  desktopAlbumColumn: {
-    display: "none",
-    "@media (min-width: 768px)": {
-      display: "block",
-      width: "220px",
-      flexShrink: 0,
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap",
-      paddingLeft: tokens.spacingHorizontalS,
-      paddingRight: tokens.spacingHorizontalS,
-      boxSizing: "border-box",
-    },
-  },
-  desktopQualityColumn: {
-    display: "none",
     "@media (min-width: 768px)": {
       display: "flex",
-      width: "164px",
-      flexShrink: 0,
-      alignItems: "center",
-      columnGap: tokens.spacingHorizontalXS,
-      paddingLeft: tokens.spacingHorizontalS,
-      paddingRight: tokens.spacingHorizontalS,
-      boxSizing: "border-box",
     },
   },
-  desktopDurationColumn: {
-    display: "none",
+  truncate: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  qualityCell: {
+    flex: "0 0 auto",
+    // Stacked on mobile (one badge wide) so the title keeps its room; inline on
+    // desktop where there's space for stereo + spatial side by side.
+    flexDirection: "column",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    rowGap: tokens.spacingVerticalXXS,
+    columnGap: tokens.spacingHorizontalXXS,
     "@media (min-width: 768px)": {
-      display: "block",
-      width: "60px",
-      flexShrink: 0,
-      textAlign: "right",
-      paddingLeft: tokens.spacingHorizontalS,
-      paddingRight: tokens.spacingHorizontalS,
-      boxSizing: "border-box",
+      flex: "0 0 120px",
+      flexDirection: "row",
+      justifyContent: "flex-end",
     },
   },
-  desktopMetaText: {
+  timeCell: {
+    flex: "0 0 auto",
+    justifyContent: "flex-end",
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
-  },
-  artistLink: {
-    display: "inline",
-    padding: 0,
-    border: 0,
-    backgroundColor: "transparent",
-    color: "inherit",
-    font: "inherit",
-    cursor: "pointer",
-    textDecoration: "none",
-    ":hover": {
-      textDecoration: "underline",
-      opacity: 0.8,
+    fontVariantNumeric: "tabular-nums",
+    "@media (min-width: 768px)": {
+      flex: "0 0 52px",
     },
   },
-  artistJoinPhrase: {
-    color: tokens.colorNeutralForeground3,
-    marginRight: tokens.spacingHorizontalXS,
-    marginLeft: tokens.spacingHorizontalXS,
+  actionsCell: {
+    flex: "0 0 auto",
+    justifyContent: "flex-end",
   },
+
+  playerCell: {
+    flex: "1 1 0px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalS,
+  },
+
   artistContainer: {
     display: "inline-flex",
     alignItems: "center",
     flexWrap: "wrap",
+    minWidth: 0,
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
+    fontSize: "inherit",
+  },
+  artistLink: {
+    fontSize: "inherit",
+    lineHeight: "inherit",
+    color: "inherit",
+  },
+  artistJoinPhrase: {
+    color: tokens.colorNeutralForeground3,
+    marginRight: tokens.spacingHorizontalXXS,
+    marginLeft: tokens.spacingHorizontalXXS,
   },
 });
-
-const isTruthy = (value: unknown) => Boolean(value);
 
 const getAlbumTitle = (track: TrackListItem, fallback?: string | null) =>
   track.album?.title ?? track.album_title ?? fallback ?? null;
@@ -382,10 +335,15 @@ const TrackList = <T extends TrackListItem>({
     toggleTrackPlayback,
   } = useTrackPlayback();
   const [infoTrack, setInfoTrack] = useState<T | null>(null);
-  const [hoveredTrackId, setHoveredTrackId] = useState<string | number | null>(null);
+
+  // How many flex/rail columns a full-width row (volume / player) should span.
+  const columnSpan = 3
+    + (showArtist ? 1 : 0)
+    + (showAlbum ? 1 : 0)
+    + (showQuality ? 1 : 0);
 
   const renderArtistCredits = (track: T) => {
-    const handleArtistClick = (artistId: string, event: React.MouseEvent) => {
+    const handleArtistClick = (artistId: string, event: MouseEvent) => {
       event.stopPropagation();
       navigate(`/artist/${artistId}`);
     };
@@ -396,15 +354,11 @@ const TrackList = <T extends TrackListItem>({
           {track.artist_credits.map((credit, idx) => (
             <span key={`${credit.id}-${idx}`}>
               {credit.id ? (
-                <Link
-                  inline
-                  className={styles.artistLink}
-                  onClick={(e) => handleArtistClick(credit.id, e)}
-                >
+                <Link inline className={styles.artistLink} onClick={(e) => handleArtistClick(credit.id, e)}>
                   {credit.name}
                 </Link>
               ) : (
-                <Text>{credit.name}</Text>
+                <span>{credit.name}</span>
               )}
               {credit.join_phrase ? (
                 <span className={styles.artistJoinPhrase}>{credit.join_phrase}</span>
@@ -417,15 +371,11 @@ const TrackList = <T extends TrackListItem>({
 
     if (track.artist_name) {
       return track.artist_id ? (
-        <Link
-          inline
-          className={styles.artistLink}
-          onClick={(e) => handleArtistClick(track.artist_id!, e)}
-        >
+        <Link inline className={styles.artistLink} onClick={(e) => handleArtistClick(track.artist_id!, e)}>
           {track.artist_name}
         </Link>
       ) : (
-        <Text>{track.artist_name}</Text>
+        <span>{track.artist_name}</span>
       );
     }
 
@@ -434,153 +384,171 @@ const TrackList = <T extends TrackListItem>({
 
   return (
     <>
-      <div className={styles.root}>
-        {tracks.map((track, index) => {
-          const displayNumber = getDisplayNumber(track, index, numbering);
-          const isPlaying = playingTrackId === track.id;
-          const audioFile = getTrackAudioFile(track);
-          const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
-          const canPlay = Boolean(isDownloaded || audioFile || track.preview_provider_track_id);
-          const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
-          const isMonitored = isTruthy(track.is_monitored);
-          const isLocked = isTruthy(track.monitored_lock);
-          const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
-            ? getAlbumTitle(track, contextAlbumTitle)
-            : null;
-          const qualityTags = getQualityTags(track);
-          const durationText = formatDurationSeconds(track.duration);
-          const coverUrl = showCover ? getAlbumArtworkUrl(track) : null;
-          const isDownloading = Boolean(isTrackDownloading?.(track));
-          const currentVolume = track.volume_number || 1;
-          const previousVolume = index > 0 ? (tracks[index - 1]?.volume_number || 1) : currentVolume;
-          const showVolumeHeader = showVolumeHeaders && (index === 0 || currentVolume !== previousVolume);
+      <Table className={styles.table} noNativeElements size="small" aria-label="Tracklist">
+        <TableHeader>
+          <TableRow className={styles.headerRow}>
+            <TableHeaderCell className={styles.indexCell}>
+              <span className={styles.headerLabel}>#</span>
+            </TableHeaderCell>
+            <TableHeaderCell>
+              <span className={styles.headerLabel}>Title</span>
+            </TableHeaderCell>
+            {showArtist ? (
+              <TableHeaderCell>
+                <span className={styles.headerLabel}>Artist</span>
+              </TableHeaderCell>
+            ) : null}
+            {showAlbum ? (
+              <TableHeaderCell>
+                <span className={styles.headerLabel}>Album</span>
+              </TableHeaderCell>
+            ) : null}
+            {showQuality ? <TableHeaderCell className={styles.qualityCell} /> : null}
+            <TableHeaderCell className={styles.timeCell}>
+              <span className={styles.headerLabel}>Time</span>
+            </TableHeaderCell>
+            <TableHeaderCell className={styles.actionsCell} />
+          </TableRow>
+        </TableHeader>
 
-          return (
-            <div key={track.id}>
-              {showVolumeHeader ? (
-                <div className={styles.volumeHeader}>Volume {currentVolume}</div>
-              ) : null}
+        <TableBody>
+          {tracks.map((track, index) => {
+            const displayNumber = getDisplayNumber(track, index, numbering);
+            const isPlaying = playingTrackId === track.id;
+            const audioFile = getTrackAudioFile(track);
+            const isDownloaded = Boolean(track.is_downloaded ?? track.downloaded);
+            const canPlay = Boolean(isDownloaded || audioFile || track.preview_provider_track_id);
+            const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
+            const isMonitored = Boolean(track.is_monitored);
+            const isLocked = Boolean(track.monitored_lock);
+            const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
+              ? getAlbumTitle(track, contextAlbumTitle)
+              : null;
+            const qualityTags = getQualityTags(track);
+            const durationText = formatDurationSeconds(track.duration);
+            const coverUrl = showCover ? getAlbumArtworkUrl(track) : null;
+            const isDownloading = Boolean(isTrackDownloading?.(track));
+            const currentVolume = track.volume_number || 1;
+            const previousVolume = index > 0 ? (tracks[index - 1]?.volume_number || 1) : currentVolume;
+            const showVolumeHeader = showVolumeHeaders && (index === 0 || currentVolume !== previousVolume);
+            const artistCredits = showArtist ? renderArtistCredits(track) : null;
 
-              <div
-                className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
-                data-album-track-id={track.id}
-                onClick={onTrackClick ? () => onTrackClick(track) : undefined}
-                onMouseEnter={() => setHoveredTrackId(track.id)}
-                onMouseLeave={() => setHoveredTrackId((current) => (current === track.id ? null : current))}
-              >
-                {/* Number that turns into a play/stop control: shown on row hover
-                    (desktop) or while playing; tap the cell to play on mobile. */}
-                <div
-                  className={mergeClasses(styles.numberPlay, canPlay ? styles.numberPlayActive : undefined)}
-                  role={canPlay ? "button" : undefined}
-                  aria-label={canPlay ? (isPlaying ? "Stop track" : "Play track") : undefined}
-                  onClick={canPlay ? (event) => { event.stopPropagation(); toggleTrackPlayback(track, event); } : undefined}
+            return (
+              <FragmentRow key={track.id}>
+                {showVolumeHeader ? (
+                  <TableRow className={styles.volumeRow}>
+                    <TableCell className={styles.volumeCell} style={{ flex: `1 1 ${columnSpan * 100}%` }}>
+                      <span className={styles.volumeLabel}>Volume {currentVolume}</span>
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+
+                <TableRow
+                  className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
+                  data-album-track-id={track.id}
+                  onClick={onTrackClick ? () => onTrackClick(track) : undefined}
                 >
-                  {canPlay && (hoveredTrackId === track.id || isPlaying) ? (
-                    isPlaying
-                      ? <Stop24Filled className={styles.playIcon} />
-                      : <Play24Regular className={styles.playIcon} />
-                  ) : (
-                    <span className={styles.numberText}>{displayNumber}</span>
-                  )}
-                </div>
+                  {/* Number ↔ play/stop. The number fades on hover; play fades in. */}
+                  <TableCell
+                    className={mergeClasses(styles.indexCell, canPlay ? styles.indexPlayable : undefined)}
+                    role={canPlay ? "button" : undefined}
+                    aria-label={canPlay ? (isPlaying ? "Stop track" : "Play track") : undefined}
+                    onClick={canPlay
+                      ? (event) => { event.stopPropagation(); toggleTrackPlayback(track, event); }
+                      : undefined}
+                  >
+                    <span className={styles.numberText} data-row-number>
+                      {displayNumber}
+                    </span>
+                    {canPlay ? (
+                      <span
+                        className={mergeClasses(styles.playReveal, isPlaying ? styles.playRevealActive : undefined)}
+                        data-row-play
+                      >
+                        {isPlaying
+                          ? <Stop24Filled className={styles.playIcon} />
+                          : <Play24Regular className={styles.playIcon} />}
+                      </span>
+                    ) : null}
+                  </TableCell>
 
-                {showCover ? (
-                  coverUrl ? (
-                    <img src={coverUrl} alt={displayAlbum || track.title} className={styles.cover} />
-                  ) : (
-                    <div className={mergeClasses(styles.cover, styles.coverPlaceholder)} />
-                  )
-                ) : null}
+                  <TableCell>
+                    {coverUrl ? <img src={coverUrl} alt="" className={styles.cover} /> : null}
+                    <div className={styles.titleStack}>
+                      <div className={styles.titleLine}>
+                        <Text truncate wrap={false} className={styles.titleText}>
+                          {getDisplayTitle(track)}
+                        </Text>
+                        {track.explicit ? <ExplicitBadge /> : null}
+                      </div>
+                      {artistCredits ? (
+                        <span className={styles.mobileArtist}>{artistCredits}</span>
+                      ) : null}
+                    </div>
+                  </TableCell>
 
-                <div className={styles.titleColumn}>
-                  <div className={styles.titleRow}>
-                    <Text className={styles.title}>{getDisplayTitle(track)}</Text>
-                    {track.explicit ? <ExplicitBadge /> : null}
-                  </div>
-                  {/* Artist always shows (no same-as-album suppression); it sits
-                      below the title on mobile. */}
                   {showArtist ? (
-                    <div className={styles.mobileArtistRow}>
-                      {renderArtistCredits(track)}
-                    </div>
+                    <TableCell className={mergeClasses(styles.desktopColumn, styles.truncate)}>
+                      {artistCredits}
+                    </TableCell>
                   ) : null}
-                </div>
 
-                {/* Artist in its own column on desktop. */}
-                {showArtist ? (
-                  <div className={styles.desktopArtistColumn}>
-                    {renderArtistCredits(track)}
-                  </div>
-                ) : null}
+                  {showAlbum ? (
+                    <TableCell className={mergeClasses(styles.desktopColumn, styles.truncate)}>
+                      {displayAlbum || "—"}
+                    </TableCell>
+                  ) : null}
 
-                {showAlbum ? (
-                  <div className={styles.desktopAlbumColumn}>
-                    <Text className={styles.desktopMetaText}>{displayAlbum || "—"}</Text>
-                  </div>
-                ) : null}
-
-                {/* Compact right cluster: quality + duration + the toggling action. */}
-                <div className={styles.rightGroup}>
-                  {showQuality && qualityTags.length > 0 ? (
-                    <div className={styles.qualityCluster}>
+                  {showQuality ? (
+                    <TableCell className={styles.qualityCell}>
                       {qualityTags.map((quality) => (
-                        <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                        <QualityBadge key={quality} quality={quality} size="small" />
                       ))}
-                    </div>
+                    </TableCell>
                   ) : null}
-                  <Text className={styles.durationText}>{durationText}</Text>
-                  <TrackRowActions
-                    className={styles.actions}
-                    isMonitored={isMonitored}
-                    isLocked={isLocked}
-                    isDownloaded={isDownloaded}
-                    isDownloading={isDownloading}
-                    canShowInfo={Boolean(audioFile)}
-                    showDownload={Boolean(onDownloadTrack)}
-                    onToggleMonitor={onToggleMonitor
-                      ? (event) => {
-                        event.stopPropagation();
-                        onToggleMonitor(track, event);
-                      }
-                      : undefined}
-                    onToggleLock={onToggleLock
-                      ? (event) => {
-                        event.stopPropagation();
-                        onToggleLock(track, event);
-                      }
-                      : undefined}
-                    onShowInfo={(event) => {
-                      event.stopPropagation();
-                      setInfoTrack(track);
-                    }}
-                    onDownload={canDownload && onDownloadTrack
-                      ? (event) => {
-                        event.stopPropagation();
-                        onDownloadTrack(track, event);
-                      }
-                      : undefined}
-                  />
-                </div>
-              </div>
 
-              {isPlaying ? (
-                <div className={styles.playerRow}>
-                  <AudioPlayer
-                    src={getPlaybackSrc(track)}
-                    hlsSrc={getPlaybackHlsSrc(track)}
-                    knownDuration={track.duration}
-                    onEnded={() => setPlayingTrackId(null)}
-                    onPlaybackError={() => {
-                      void handleTrackPlaybackError(track);
-                    }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+                  <TableCell className={styles.timeCell}>{durationText}</TableCell>
+
+                  <TableCell className={styles.actionsCell}>
+                    <TrackRowActions
+                      isMonitored={isMonitored}
+                      isLocked={isLocked}
+                      isDownloaded={isDownloaded}
+                      isDownloading={isDownloading}
+                      canShowInfo={Boolean(audioFile)}
+                      showDownload={Boolean(onDownloadTrack)}
+                      onToggleMonitor={onToggleMonitor
+                        ? (event) => { event.stopPropagation(); onToggleMonitor(track, event); }
+                        : undefined}
+                      onToggleLock={onToggleLock
+                        ? (event) => { event.stopPropagation(); onToggleLock(track, event); }
+                        : undefined}
+                      onShowInfo={(event) => { event.stopPropagation(); setInfoTrack(track); }}
+                      onDownload={canDownload && onDownloadTrack
+                        ? (event) => { event.stopPropagation(); onDownloadTrack(track, event); }
+                        : undefined}
+                    />
+                  </TableCell>
+                </TableRow>
+
+                {isPlaying ? (
+                  <TableRow className={styles.volumeRow}>
+                    <TableCell className={styles.playerCell} style={{ flex: `1 1 ${columnSpan * 100}%` }}>
+                      <AudioPlayer
+                        src={getPlaybackSrc(track)}
+                        hlsSrc={getPlaybackHlsSrc(track)}
+                        knownDuration={track.duration}
+                        onEnded={() => setPlayingTrackId(null)}
+                        onPlaybackError={() => { void handleTrackPlaybackError(track); }}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </FragmentRow>
+            );
+          })}
+        </TableBody>
+      </Table>
 
       {infoTrack ? (
         <TrackInfoDialog
@@ -598,5 +566,11 @@ const TrackList = <T extends TrackListItem>({
     </>
   );
 };
+
+// Groups a track's optional volume header, its row, and its player row without
+// adding DOM (Table only expects row children).
+function FragmentRow({ children }: { children: ReactNode }) {
+  return <>{children}</>;
+}
 
 export default TrackList;
