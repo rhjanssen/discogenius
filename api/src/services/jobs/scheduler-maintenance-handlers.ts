@@ -48,7 +48,7 @@ export async function runLowCouplingMaintenanceJob(
                 description: 'Queueing metadata refresh for all monitored artists',
             });
             // Queue a single RefreshMetadata job that iterates all artists inline (no staleness skip)
-            const { queueMetadataRefreshPass } = await import('./task-scheduler.js');
+            const { queueMetadataRefreshPass } = await import('./scheduler.js');
             queueMetadataRefreshPass({ trigger: job.trigger ?? 1 });
             context.updateJobDescription({
                 progress: 100,
@@ -83,7 +83,7 @@ export async function runLowCouplingMaintenanceJob(
                 progress: 10,
                 description: 'Queueing library-wide folder rescan',
             });
-            const { queueRescanFoldersPass } = await import('./task-scheduler.js');
+            const { queueRescanFoldersPass } = await import('./scheduler.js');
             queueRescanFoldersPass({ trigger: job.trigger ?? 1, addNewArtists: true });
             context.updateJobDescription({
                 progress: 100,

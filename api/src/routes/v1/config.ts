@@ -21,7 +21,7 @@ import * as TOML from "@iarna/toml";
 import fs from "fs";
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
-import { queueCurationPass } from "../../services/jobs/task-scheduler.js";
+import { queueCurationPass } from "../../services/jobs/scheduler.js";
 
 const router = Router();
 

@@ -19,7 +19,7 @@ import {
   queueRescanFoldersPass,
   queueUpdateLibraryMetadata,
   queueCheckUpgradesPass,
-} from "./task-scheduler.js";
+} from "./scheduler.js";
 
 export interface CommandDefinition {
   type: JobType;

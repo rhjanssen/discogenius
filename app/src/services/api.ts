@@ -110,6 +110,33 @@ function parseAppAuthStatusContract(value: unknown): AppAuthStatusContract {
 
 const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
+const API_V1_PREFIX = '/api/v1';
+
+// Business/resource endpoints are served under a single /api/v1 namespace
+// (Lidarr-style). A small set of infra/streaming endpoints stay un-versioned
+// under /api and must match the backend mounts in server.ts.
+const UNVERSIONED_API_PREFIXES = ['/auth', '/app-auth', '/playback', '/health'];
+
+function toApiUrl(endpoint: string): string {
+  // Already-absolute (/api/...) or proxy URLs are passed through unchanged.
+  if (endpoint.startsWith(`${API_PREFIX}/`) || endpoint === API_PREFIX || endpoint.startsWith('/proxy')) {
+    return endpoint;
+  }
+
+  // Infra endpoints stay un-versioned under /api.
+  if (
+    UNVERSIONED_API_PREFIXES.some(
+      (prefix) => endpoint === prefix || endpoint.startsWith(`${prefix}/`) || endpoint.startsWith(`${prefix}?`),
+    )
+  ) {
+    return `${API_PREFIX}${endpoint}`;
+  }
+
+  // Everything else lives under /api/v1. Accept legacy '/v1/...' call sites and
+  // normalize them onto the single versioned root.
+  const path = endpoint === '/v1' ? '' : endpoint.startsWith('/v1/') ? endpoint.slice(3) : endpoint;
+  return `${API_V1_PREFIX}${path}`;
+}
 
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number | null;
@@ -241,14 +268,9 @@ class ApiClient {
     options: ApiRequestOptions = {},
     parser?: (value: unknown) => T,
   ): Promise<T> {
-    // All backend routes are namespaced under /api to avoid collisions with SPA routes.
-    // Keep /api/* and /proxy/* as-is, prefix everything else.
-    const normalizedEndpoint =
-      endpoint.startsWith(`${API_PREFIX}/`) || endpoint === API_PREFIX
-        ? endpoint
-        : endpoint.startsWith('/proxy')
-          ? endpoint
-          : `${API_PREFIX}${endpoint}`;
+    // All backend routes are namespaced under /api to avoid collisions with SPA
+    // routes; business endpoints live under /api/v1 (see toApiUrl).
+    const normalizedEndpoint = toApiUrl(endpoint);
 
     const url = `${this.baseUrl}${normalizedEndpoint}`;
 
@@ -920,11 +942,11 @@ class ApiClient {
   }
 
   getScanRootFoldersUrl(): string {
-    return `${this.baseUrl}${API_PREFIX}/library-files/scan-roots-now`;
+    return `${this.baseUrl}${API_V1_PREFIX}/library-files/scan-roots-now`;
   }
 
   getStreamUrl(fileId: number): string {
-    const base = `${this.baseUrl}${API_PREFIX}/library-files/stream/${fileId}`;
+    const base = `${this.baseUrl}${API_V1_PREFIX}/library-files/stream/${fileId}`;
     // Append auth token as query param since <audio>/<video> elements can't send headers
     if (this.authToken) {
       return `${base}?token=${encodeURIComponent(this.authToken)}`;
@@ -1375,7 +1397,7 @@ class ApiClient {
     onEvent: (event: string, data: any) => void,
     onError?: (error: Error) => void
   ): EventSource {
-    let url = `${this.baseUrl}/api/queue/progress-stream`;
+    let url = `${this.baseUrl}${API_V1_PREFIX}/queue/progress-stream`;
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
@@ -1416,7 +1438,7 @@ class ApiClient {
   }
 
   createGlobalEventStream(onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
-    let url = `${this.baseUrl}${API_PREFIX}/events`;
+    let url = `${this.baseUrl}${API_V1_PREFIX}/events`;
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }

@@ -36,11 +36,11 @@ function shouldTrackPath(path: string) {
 
 function isStreamingLikePath(path: string) {
   return (
-    path === "/api/events" ||
-    path === "/api/queue/progress-stream" ||
-    path === "/api/monitoring/check-stream" ||
-    path === "/api/artists/import-followed-stream" ||
-    path === "/api/library-files/scan-roots-now"
+    path === "/api/v1/events" ||
+    path === "/api/v1/queue/progress-stream" ||
+    path === "/api/v1/monitoring/check-stream" ||
+    path === "/api/v1/artist/import-followed-stream" ||
+    path === "/api/v1/library-files/scan-roots-now"
   );
 }
 

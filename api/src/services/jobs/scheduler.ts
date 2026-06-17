@@ -1,716 +1,897 @@
-import { JobTypes, TaskQueueService, Job, NON_DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES } from "./queue.js";
-import { RefreshArtistService } from "../music/refresh-artist-service.js";
-import { RefreshAlbumService } from "../music/refresh-album-service.js";
-import { CurationService } from "../music/curation-service.js";
-import { CommandManager } from "./command.js";
-import { DiskScanService } from "../mediafiles/library-scan.js";
-import { readIntEnv } from "../../utils/env.js";
-import { UpgraderService } from "../mediafiles/upgrader.js";
-import { appEvents, AppEvent } from "./app-events.js";
-import { getArtistWorkflowLabel } from "../music/artist-workflow.js";
-import { runRuntimeMaintenance } from "./runtime-maintenance.js";
-import { queueManagedArtistsWorkflow } from "../music/artist-workflow.js";
-import { getManagedArtists } from "../music/managed-artists.js";
-import { queueNextMonitoringPass } from "./task-scheduler.js";
-import { shouldRefreshArtist } from "../config/refresh-policy.js";
-import { AudioTagService } from "../mediafiles/audio-tag-service.js";
 import { db } from "../../database.js";
-import { MoveArtistService } from "../mediafiles/move-artist-service.js";
-import { RenameTrackFileService } from "../mediafiles/rename-track-file-service.js";
-import { runLowCouplingMaintenanceJob } from "./scheduler-maintenance-handlers.js";
+import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
+import { CurationService } from "../music/curation-service.js";
+import { RefreshArtistService } from "../music/refresh-artist-service.js";
+import { JobTypes, TaskQueueService, type Job } from "./queue.js";
+import { getManagedArtists, getManagedArtistsDueForRefresh } from "../music/managed-artists.js";
+import { readIntEnv } from "../../utils/env.js";
+import {
+    getArtistsWithPendingJobs,
+    getEffectiveMonitoringRuntimeState,
+    hasActiveHousekeepingTask,
+    hasActiveMonitoringCycleWorkflow,
+    hasActiveTask,
+    loadMonitoringProgress,
+    saveMonitoringProgress,
+} from "./task-state.js";
+import {
+    isScheduledTaskDue,
+    normalizeArtistIds,
+    normalizeMonitoringPassWorkflow,
+    parseScheduledTaskTime,
+    resolveMonitoringPassWorkflow,
+    type MonitoringPassWorkflow,
+} from "../config/schedule-policy.js";
 
-export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
+export type { MonitoringConfig } from "./task-state.js";
+export type { MonitoringPassWorkflow } from "../config/schedule-policy.js";
 
-const POLL_INTERVAL = readIntEnv('DISCOGENIUS_SCHEDULER_POLL_MS', 2000, 1); // 2 seconds default
-const BLOCKED_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_SCHEDULER_BLOCKED_LOG_THROTTLE_MS', 30_000, 0);
-const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_SCHEDULER_STUCK_JOB_MS', 0, 0); // 0 = disabled
-const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_SCHEDULER_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
-const SCHEDULER_THREAD_LIMIT = readIntEnv('DISCOGENIUS_SCHEDULER_THREAD_LIMIT', 3, 1);
+let schedulerInterval: NodeJS.Timeout | null = null;
+let isMonitoring = false;
+let isChecking = false;
 
-/**
- * Scheduler - Handles non-download jobs (scans, curation, maintenance)
- *
- * Respects command exclusivity rules:
- * - Per-ref-exclusive commands (e.g. only one RefreshArtist/CurateArtist per artist at a time;
- *   different artists can run concurrently up to SCHEDULER_THREAD_LIMIT)
- * - Type-exclusive commands (only one of that type globally; e.g. RefreshMetadata)
- * - Disk-intensive commands (only one at a time)
- * - Exclusive commands (block everything else)
- *
- * Supports bounded concurrency:
- * Up to SCHEDULER_THREAD_LIMIT non-exclusive jobs may run in parallel.
- */
-export class Scheduler {
-    private static isRunning = false;
-    private static blockedLogAt = new Map<string, number>();
-    private static lastStuckCleanupAt = 0;
-    private static activeJobs = new Map<number, Promise<void>>();
+let scheduledTaskUpsertStmt: any | null = null;
+let scheduledTaskGetStmt: any | null = null;
+let scheduledTaskQueueStampStmt: any | null = null;
+let activeMonitoringDownloadPassStmt: any | null = null;
 
-    static start() {
-        if (this.isRunning) return;
-        this.isRunning = true;
+const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
+const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
+const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 50, 1);
 
-        // Recover interrupted non-download jobs after process restart.
-        const recovered = TaskQueueService.resetProcessingJobsByTypes(NON_DOWNLOAD_JOB_TYPES);
-        if (recovered > 0) {
-            console.log(`[Scheduler] Re-queued ${recovered} interrupted non-download job(s)`);
+export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
+
+interface ScheduledTaskDefinition {
+    key: ScheduledTaskKey;
+    name: string;
+    taskName: typeof JobTypes.RefreshMetadata | typeof JobTypes.RescanFolders | typeof JobTypes.Housekeeping;
+    intervalMinutes: number;
+    enabled: boolean;
+}
+
+interface ScheduledTaskRow {
+    task_key: ScheduledTaskKey;
+    name: string;
+    interval_minutes: number;
+    enabled: number;
+    last_queued_at?: string | null;
+}
+
+export interface ScheduledTaskSnapshot {
+    key: ScheduledTaskKey;
+    name: string;
+    taskName: string;
+    intervalMinutes: number;
+    enabled: boolean;
+    lastQueuedAt: string | null;
+    nextRunAt: string | null;
+    active: boolean;
+}
+
+function getScheduledTaskUpsertStmt() {
+    if (!scheduledTaskUpsertStmt) {
+        scheduledTaskUpsertStmt = db.prepare(`
+      INSERT INTO scheduled_tasks (task_key, name, interval_minutes, enabled, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(task_key) DO UPDATE SET
+        name = excluded.name,
+        interval_minutes = excluded.interval_minutes,
+        enabled = excluded.enabled,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+    }
+    return scheduledTaskUpsertStmt;
+}
+
+function getScheduledTaskGetStmt() {
+    if (!scheduledTaskGetStmt) {
+        scheduledTaskGetStmt = db.prepare(`
+      SELECT task_key, name, interval_minutes, enabled, last_queued_at
+      FROM scheduled_tasks
+      WHERE task_key = ?
+    `);
+    }
+    return scheduledTaskGetStmt;
+}
+
+function getScheduledTaskQueueStampStmt() {
+    if (!scheduledTaskQueueStampStmt) {
+        scheduledTaskQueueStampStmt = db.prepare(`
+      UPDATE scheduled_tasks
+      SET last_queued_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE task_key = ?
+    `);
+    }
+    return scheduledTaskQueueStampStmt;
+}
+
+function getActiveMonitoringDownloadPassStmt() {
+        if (!activeMonitoringDownloadPassStmt) {
+                activeMonitoringDownloadPassStmt = db.prepare(`
+            SELECT 1
+            FROM job_queue
+            WHERE type = ?
+                AND json_extract(payload, '$.monitoringCycle') IS NOT NULL
+                AND status IN ('pending', 'processing')
+            LIMIT 1
+        `);
         }
 
-        console.log("🚀 Scheduler started");
-        void this.loop();
+        return activeMonitoringDownloadPassStmt;
+}
+
+function getScheduledTaskInsertStmt() {
+    return db.prepare(`
+      INSERT OR IGNORE INTO scheduled_tasks (task_key, name, interval_minutes, enabled, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+}
+
+function getScheduledTaskUpdateStmt() {
+    return db.prepare(`
+      UPDATE scheduled_tasks
+      SET name = ?,
+          interval_minutes = ?,
+          enabled = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE task_key = ?
+    `);
+}
+
+export function getMonitoringStatus(): { running: boolean; checking: boolean; config: import("./task-state.js").MonitoringConfig } {
+    const configFromFile = getConfigSection("monitoring");
+    const runtimeState = getEffectiveMonitoringRuntimeState(configFromFile, { isChecking });
+    const checking = runtimeState.checkInProgress;
+
+    const config: import("./task-state.js").MonitoringConfig = {
+        ...configFromFile,
+        ...runtimeState,
+    };
+
+    return {
+        running: isMonitoring,
+        checking,
+        config,
+    };
+}
+
+export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>): import("./task-state.js").MonitoringConfig {
+    updateConfig("monitoring", updates);
+    const config = getMonitoringStatus().config;
+
+    updateScheduledTask("monitoring-cycle", {
+        enabled: config.enable_active_monitoring,
+        intervalMinutes: Math.max(1, config.scan_interval_hours * 60),
+    });
+
+    if (!isMonitoring) {
+        startMonitoring();
     }
 
-    static stop() {
-        this.isRunning = false;
-        this.blockedLogAt.clear();
-        this.lastStuckCleanupAt = 0;
-        this.activeJobs.clear();
-        console.log("🛑 Scheduler stopped");
-    }
+    return config;
+}
 
-    private static async sleep(ms: number) {
-        await new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    private static updateJobDescription(job: Job, options: { progress?: number; description?: string }) {
-        const payloadPatch: Record<string, unknown> = {};
-        if (options.description) {
-            payloadPatch.description = options.description;
-        }
-
-        TaskQueueService.updateState(job.id, {
-            progress: options.progress,
-            payloadPatch: Object.keys(payloadPatch).length > 0 ? payloadPatch : undefined,
+function selectMetadataRefreshArtists(options: {
+    artistIds?: string[];
+    dueOnly?: boolean;
+}) {
+    const artistIds = normalizeArtistIds(options.artistIds);
+    if (options.dueOnly) {
+        return getManagedArtistsDueForRefresh({
+            artistIds,
+            refreshDays: getConfigSection("monitoring").artist_refresh_days,
         });
     }
 
-    private static resolveArtistLabel(job: Job) {
-        const payloadArtist = String(job.payload?.artistName || "").trim();
-        if (payloadArtist && payloadArtist.toLowerCase() !== 'unknown artist') {
-            return payloadArtist;
-        }
+    return getManagedArtists({ orderByLastScanned: true, artistIds });
+}
 
-        const workflow = String(job.payload?.workflow || "").trim();
-        switch (workflow) {
-            case 'monitoring-intake':
-            case 'full-monitoring':
-                return '';
-            case 'refresh-scan':
-                return '';
-            case 'metadata-refresh':
-                return 'artist metadata';
-            case 'library-scan':
-                return 'library folders';
-            default:
-                return '';
-        }
+export function queueMetadataRefreshPass(options: {
+    trigger?: number;
+    monitoringCycle?: MonitoringPassWorkflow;
+    dueOnly?: boolean;
+    artistIds?: string[];
+} = {}) {
+    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const selectedArtistIds = normalizeArtistIds(options.artistIds) ?? [];
+    const artists = selectMetadataRefreshArtists({
+        artistIds: options.artistIds,
+        dueOnly: options.dueOnly,
+    });
+    const shouldBatchDueRefresh = Boolean(options.dueOnly) && selectedArtistIds.length === 0;
+    const queuedArtists = shouldBatchDueRefresh
+        ? artists.slice(0, METADATA_REFRESH_BATCH_SIZE)
+        : artists;
+    const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
+    const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
+    const refId = monitoringCycle ? `metadata-refresh:${monitoringCycle}` : "metadata-refresh";
+    const jobId = TaskQueueService.addJob(
+        JobTypes.RefreshMetadata,
+        {
+            title: "Refreshing metadata",
+            description: queuedArtists.length > 0
+                ? shouldBatchDueRefresh && queuedArtists.length < artists.length
+                    ? `Queueing metadata refresh for ${queuedArtists.length} of ${artists.length} ${artistLabel}`
+                    : `Queueing metadata refresh for ${queuedArtists.length} ${artistLabel}`
+                : (options.dueOnly ? "No managed artists are due for metadata refresh" : "Queueing metadata refresh"),
+            artistIds: queuedArtistIds,
+            expectedArtists: queuedArtists.length,
+            monitoringCycle,
+        },
+        refId,
+        0,
+        options.trigger ?? 1,
+    );
+
+    return jobId;
+}
+
+export function queueMonitoringCyclePass(options: { trigger?: number; includeRootScan?: boolean } = {}) {
+    return queueMetadataRefreshPass({
+        trigger: options.trigger,
+        dueOnly: true,
+        monitoringCycle: (options.includeRootScan ?? true) ? "full-cycle" : "curation-cycle",
+    });
+}
+
+export function queueRescanFoldersPass(options: {
+    trigger?: number;
+    fullProcessing?: boolean;
+    monitoringCycle?: Extract<MonitoringPassWorkflow, "full-cycle" | "root-scan-cycle">;
+    artistIds?: string[];
+    monitorArtist?: boolean;
+    addNewArtists?: boolean;
+    trackUnmappedFiles?: boolean;
+} = {}) {
+    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const refId = monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders";
+    const jobId = TaskQueueService.addJob(
+        JobTypes.RescanFolders,
+        {
+            addNewArtists: options.addNewArtists ?? false,
+            artistIds: normalizeArtistIds(options.artistIds),
+            monitorArtist: options.monitorArtist ?? true,
+            fullProcessing: options.fullProcessing ?? false,
+            trackUnmappedFiles: options.trackUnmappedFiles ?? true,
+            monitoringCycle,
+        },
+        refId,
+        0,
+        options.trigger ?? 1,
+    );
+
+    return jobId;
+}
+
+export function queueCurationPass(options: {
+    trigger?: number;
+    monitoringCycle?: MonitoringPassWorkflow;
+    artistIds?: string[];
+} = {}) {
+    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const artistIds = normalizeArtistIds(options.artistIds);
+    const artists = getManagedArtists({ orderByLastScanned: true, artistIds });
+    const refId = monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation";
+    return TaskQueueService.addJob(
+        JobTypes.ApplyCuration,
+        {
+            title: "Applying curation",
+            description: artists.length > 0
+                ? `Queueing curation for ${artists.length} managed artist(s)`
+                : "Queueing curation",
+            artistIds,
+            expectedArtists: artists.length,
+            monitoringCycle,
+        },
+        refId,
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueDownloadMissingPass(options: {
+    trigger?: number;
+    monitoringCycle?: MonitoringPassWorkflow;
+    artistIds?: string[];
+} = {}) {
+    const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
+    const refId = monitoringCycle ? `download-missing:${monitoringCycle}` : "download-missing";
+    return TaskQueueService.addJob(
+        JobTypes.DownloadMissing,
+        {
+            artistIds: normalizeArtistIds(options.artistIds),
+            title: "Queueing missing downloads",
+            description: "Adding monitored missing items to the download queue",
+            monitoringCycle,
+        },
+        refId,
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+function hasActiveMonitoringCycleDownloadPass(): boolean {
+    return Boolean(getActiveMonitoringDownloadPassStmt().get(JobTypes.DownloadMissing));
+}
+
+function markMonitoringCycleCompleted() {
+    markScheduledTaskQueued("monitoring-cycle");
+    updateConfig("monitoring", { last_check: new Date().toISOString() });
+}
+
+export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
+    const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
+    if (!monitoringCycle) {
+        return;
     }
 
-    private static formatArtistPhaseDescription(job: Job, phase: string, fallback = 'Artist') {
-        const subject = this.resolveArtistLabel(job) || fallback;
-        return `${subject} · ${phase}`;
-    }
-
-    private static formatWorkflowJobLabel(job: Job, fallback: string) {
-        const workflow = String(job.payload?.workflow || '').trim();
-        const subject = this.resolveArtistLabel(job) || fallback;
-
-        switch (workflow) {
-            case 'monitoring-intake':
-            case 'full-monitoring':
-                return `Monitoring ${subject}`;
-            case 'refresh-scan':
-                return `Refreshing ${subject}`;
-            case 'metadata-refresh':
-                return `Refreshing metadata for ${subject}`;
-            case 'library-scan':
-                return `Scanning ${subject}`;
-            case 'curation':
-                return `Curating ${subject}`;
-            default:
-                return subject;
-        }
-    }
-
-    private static logBlocked(type: string, reason?: string) {
-        const key = `${type}:${reason ?? 'unknown'}`;
-        const now = Date.now();
-        const last = this.blockedLogAt.get(key) ?? 0;
-
-        if (now - last >= BLOCKED_LOG_THROTTLE_MS) {
-            this.blockedLogAt.set(key, now);
-            console.log(`[Scheduler] Cannot start ${type}: ${reason ?? 'blocked by command rules'}`);
-        }
-    }
-
-    private static maybeCleanupStuckJobs() {
-        if (STUCK_JOB_MS <= 0) return;
-
-        const now = Date.now();
-        if (now - this.lastStuckCleanupAt < STUCK_CLEANUP_INTERVAL_MS) {
-            return;
-        }
-        this.lastStuckCleanupAt = now;
-
-        let recovered = 0;
-        const excludeIds = [...this.activeJobs.keys()];
-        for (const type of NON_DOWNLOAD_JOB_TYPES) {
-            recovered += TaskQueueService.requeueStaleProcessingJobs({
-                typePattern: type,
-                olderThanMs: STUCK_JOB_MS,
-                excludeIds,
+    switch (job.type) {
+        case JobTypes.RefreshMetadata:
+            // Per-artist curation is handled by the event-driven pipeline:
+            // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist.
+            // Only queue the library-wide root scan if full-cycle; DownloadMissing
+            // is deferred until all monitoring-originated follow-up work drains.
+            if (monitoringCycle === "full-cycle") {
+                queueRescanFoldersPass({
+                    trigger: job.trigger ?? 0,
+                    fullProcessing: true,
+                    trackUnmappedFiles: false,
+                    monitoringCycle,
+                    addNewArtists: false,
+                });
+            }
+            break;
+        case JobTypes.RescanFolders:
+            break;
+        case JobTypes.ApplyCuration:
+            // Manual ApplyCuration still chains to DownloadMissing
+            queueDownloadMissingPass({
+                trigger: job.trigger ?? 0,
+                monitoringCycle,
             });
-        }
-
-        if (recovered > 0) {
-            console.warn(`[Scheduler] Re-queued ${recovered} stale processing non-download job(s)`);
-        }
+            return;
+        default:
+            break;
     }
 
-    private static async loop() {
-        while (this.isRunning) {
+    if (hasActiveMonitoringCycleWorkflow()) {
+        return;
+    }
+
+    if (job.type === JobTypes.DownloadMissing) {
+        markMonitoringCycleCompleted();
+        return;
+    }
+
+    if (!hasActiveMonitoringCycleDownloadPass()) {
+        queueDownloadMissingPass({
+            trigger: job.trigger ?? 0,
+            monitoringCycle,
+        });
+    }
+}
+
+export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CheckUpgrades,
+        {
+            title: "Checking upgrades",
+            description: "Scanning the library for quality upgrades",
+        },
+        "check-upgrades",
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueHousekeepingPass(options: { trigger?: number } = {}) {
+    const trigger = options.trigger ?? 2;
+    const jobId = TaskQueueService.addJob(
+        JobTypes.Housekeeping,
+        {
+            title: "Running housekeeping",
+            description: "Cleaning runtime state and stale library records",
+        },
+        "housekeeping",
+        0,
+        trigger,
+    );
+    if (jobId !== -1) {
+        markScheduledTaskQueued("housekeeping");
+    }
+    return jobId;
+}
+
+function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
+    const { config } = getMonitoringStatus();
+    const refreshIntervalMinutes = Math.max(1, config.scan_interval_hours * 60);
+
+    return [
+        {
+            key: "monitoring-cycle",
+            name: "Monitoring Cycle",
+            taskName: JobTypes.RescanFolders,
+            intervalMinutes: refreshIntervalMinutes,
+            enabled: Boolean(config.enable_active_monitoring),
+        },
+        {
+            key: "housekeeping",
+            name: "Housekeeping",
+            taskName: JobTypes.Housekeeping,
+            intervalMinutes: Math.max(1, Math.round(HOUSEKEEPING_INTERVAL_MS / 60_000)),
+            enabled: true,
+        },
+    ];
+}
+function syncScheduledTasks() {
+    const definitions = getScheduledTaskDefinitions();
+
+    for (const definition of definitions) {
+        getScheduledTaskInsertStmt().run(
+            definition.key,
+            definition.name,
+            definition.intervalMinutes,
+            definition.enabled ? 1 : 0,
+        );
+    }
+
+    db.prepare(`
+    DELETE FROM scheduled_tasks
+    WHERE task_key NOT IN (${definitions.map(() => "?").join(", ")})
+  `).run(...definitions.map((definition) => definition.key));
+}
+
+function getScheduledTask(taskKey: ScheduledTaskKey): ScheduledTaskRow | null {
+    return (getScheduledTaskGetStmt().get(taskKey) as ScheduledTaskRow | undefined) ?? null;
+}
+
+function markScheduledTaskQueued(taskKey: ScheduledTaskKey) {
+    getScheduledTaskQueueStampStmt().run(taskKey);
+}
+
+function getScheduledTaskDefinitionByKey(taskKey: ScheduledTaskKey): ScheduledTaskDefinition | null {
+    return getScheduledTaskDefinitions().find((definition) => definition.key === taskKey) ?? null;
+}
+
+function getEffectiveScheduledTaskDefinition(definition: ScheduledTaskDefinition) {
+    const task = getScheduledTask(definition.key);
+    return {
+        ...definition,
+        name: task?.name ?? definition.name,
+        intervalMinutes: task?.interval_minutes ?? definition.intervalMinutes,
+        enabled: task ? Boolean(task.enabled) : definition.enabled,
+        lastQueuedAt: task?.last_queued_at ?? null,
+    };
+}
+
+function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boolean {
+    switch (definition.key) {
+        case "monitoring-cycle":
+            return hasActiveMonitoringCycleWorkflow();
+        case "housekeeping":
+            return hasActiveHousekeepingTask();
+        default:
+            return hasActiveTask(definition.taskName);
+    }
+}
+
+export function updateScheduledTask(taskKey: ScheduledTaskKey, updates: { enabled?: boolean; intervalMinutes?: number }) {
+    syncScheduledTasks();
+
+    const definition = getScheduledTaskDefinitionByKey(taskKey);
+    if (!definition) {
+        throw new Error(`Unknown scheduled task: ${taskKey}`);
+    }
+
+    const current = getScheduledTask(taskKey);
+    const nextEnabled = updates.enabled ?? (current ? Boolean(current.enabled) : definition.enabled);
+    const nextIntervalMinutes = updates.intervalMinutes ?? (current ? current.interval_minutes : definition.intervalMinutes);
+
+    getScheduledTaskUpdateStmt().run(
+        definition.name,
+        nextIntervalMinutes,
+        nextEnabled ? 1 : 0,
+        taskKey,
+    );
+
+    const updated = getScheduledTask(taskKey);
+    if (!updated) {
+        throw new Error(`Failed to update scheduled task: ${taskKey}`);
+    }
+
+    const effective = getEffectiveScheduledTaskDefinition(definition);
+    return {
+        key: definition.key,
+        name: definition.name,
+        taskName: definition.taskName,
+        intervalMinutes: updated.interval_minutes,
+        enabled: Boolean(updated.enabled),
+        lastQueuedAt: updated.last_queued_at ?? null,
+        nextRunAt: effective.enabled
+            ? new Date((parseScheduledTaskTime(updated.last_queued_at ?? null) ?? Date.now()) + updated.interval_minutes * 60_000).toISOString()
+            : null,
+        active: getScheduledTaskActiveState(definition),
+    };
+}
+
+export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
+    syncScheduledTasks();
+
+    return getScheduledTaskDefinitions().map((definition) => {
+        const effective = getEffectiveScheduledTaskDefinition(definition);
+        const task = getScheduledTask(definition.key);
+        const lastQueuedAt = effective.lastQueuedAt;
+        const parsedLastQueued = parseScheduledTaskTime(lastQueuedAt);
+        const nextDueAt = parsedLastQueued !== null
+            ? parsedLastQueued + effective.intervalMinutes * 60_000
+            : Date.now();
+
+        const nextRunAt = effective.enabled ? new Date(nextDueAt).toISOString() : null;
+
+        return {
+            key: definition.key,
+            name: definition.name,
+            taskName: definition.taskName,
+            intervalMinutes: effective.intervalMinutes,
+            enabled: effective.enabled,
+            lastQueuedAt,
+            nextRunAt,
+            active: getScheduledTaskActiveState(definition),
+        };
+    });
+}
+
+function queueDueScheduledTasks() {
+    syncScheduledTasks();
+
+    for (const definition of getScheduledTaskDefinitions()) {
+        const effective = getEffectiveScheduledTaskDefinition(definition);
+
+        if (!effective.enabled) {
+            continue;
+        }
+
+        if (!isScheduledTaskDue(effective.intervalMinutes, effective.lastQueuedAt ?? null)) {
+            continue;
+        }
+
+        if (definition.key === "monitoring-cycle") {
+            // Lidarr-style: run purely on the interval, in UTC, with no time-of-day
+            // window. (The old start_hour/duration_hours window only gated queuing
+            // and never stopped in-flight work, so it mostly caused confusion +
+            // timezone surprises.)
+            if (isChecking || hasActiveMonitoringCycleWorkflow()) {
+                continue;
+            }
+
+            isChecking = true;
+            saveMonitoringProgress(0, true);
             try {
-                this.maybeCleanupStuckJobs();
-
-                // Try to fill all available slots
-                const slotsAvailable = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
-                if (slotsAvailable > 0) {
-                    const candidates = TaskQueueService.getTopPendingJobsByTypes(NON_DOWNLOAD_JOB_TYPES, 20);
-                    let started = 0;
-
-                    for (const candidate of candidates) {
-                        if (started >= slotsAvailable) break;
-                        // Skip jobs already being processed
-                        if (this.activeJobs.has(candidate.id)) continue;
-
-                        const { canStart, reason } = CommandManager.canStartCommand(
-                            candidate.type, candidate.payload, candidate.ref_id,
-                            { excludeRunningTypes: DOWNLOAD_OR_IMPORT_JOB_TYPES },
-                        );
-                        if (canStart) {
-                            this.startJob(candidate);
-                            started++;
-                        } else {
-                            this.logBlocked(candidate.type, reason);
-                        }
-                    }
+                const jobId = queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+                if (jobId !== -1) {
+                    // Stamp at queue time (like Lidarr measures the next run from when
+                    // the task fires) so a cycle that fails to fully complete still
+                    // won't re-queue every tick. markMonitoringCycleCompleted()
+                    // refreshes it again when the full chain drains.
+                    markScheduledTaskQueued("monitoring-cycle");
+                    console.log("🔄 Scheduled monitoring cycle queued");
                 }
+            } finally {
+                isChecking = false;
+                saveMonitoringProgress(0, false);
+            }
 
-                await this.sleep(POLL_INTERVAL);
-            } catch (error) {
-                // Defensive catch: never let loop crash due to unexpected worker error.
-                console.error('[Scheduler] Worker loop error:', error);
-                await this.sleep(POLL_INTERVAL);
+            continue;
+        }
+
+        if (definition.key === "housekeeping") {
+            if (hasActiveHousekeepingTask()) {
+                continue;
+            }
+
+            const jobId = queueHousekeepingPass({ trigger: 2 });
+            if (jobId !== -1) {
+                markScheduledTaskQueued(definition.key);
+                console.log("🧹 Scheduled housekeeping queued");
             }
         }
     }
-
-    private static startJob(job: Job) {
-        // Mark as processing synchronously BEFORE launching async work,
-        // so the next poll loop won't re-select this job from the DB.
-        if (!TaskQueueService.markProcessing(job.id)) {
-            return;
-        }
-        const promise = this.processJob(job).finally(() => {
-            this.activeJobs.delete(job.id);
-        });
-        this.activeJobs.set(job.id, promise);
+}
+export function startMonitoring() {
+    if (isMonitoring) {
+        console.log("⚠️  Monitoring already running");
+        return;
     }
 
-    private static async processJob(job: Job) {
-        console.log(`⚙️ Processing Job #${job.id}: ${job.type}`);
+    loadMonitoringProgress();
+    syncScheduledTasks();
+
+    const { config } = getMonitoringStatus();
+    console.log(`🔍 Starting scheduled task runner (monitoring cycle every ${config.scan_interval_hours}h, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h — UTC interval schedule, Lidarr-style)`);
+    isMonitoring = true;
+
+    const tick = () => {
+        try {
+            queueDueScheduledTasks();
+        } catch (error) {
+            console.error("[Monitoring] Scheduler tick failed:", error);
+        }
+    };
+
+    tick();
+    schedulerInterval = setInterval(tick, SCHEDULED_TASK_TICK_MS);
+}
+
+export function stopMonitoring() {
+    if (!isMonitoring) {
+        console.log("⚠️  Monitoring not running");
+        return;
+    }
+
+    console.log("🛑 Stopping artist monitoring");
+    isMonitoring = false;
+    isChecking = false;
+
+    if (schedulerInterval) {
+        clearInterval(schedulerInterval);
+        schedulerInterval = null;
+    }
+}
+
+export async function checkNow(): Promise<{ newAlbums: number; artists: number }> {
+    console.log("🔍 Manual metadata refresh triggered (TIDAL data only, no curation/downloads)");
+
+    const artists = getManagedArtists({ orderByLastScanned: true }) as any[];
+
+    if (artists.length === 0) {
+        console.log("📭 No artists with monitored items");
+        return { newAlbums: 0, artists: 0 };
+    }
+
+    const artistsWithPendingJobs = getArtistsWithPendingJobs();
+
+    const totalNewAlbums = 0;
+    const scanTargets = artists;
+
+    for (const artist of scanTargets) {
+        if (artistsWithPendingJobs.has(String(artist.id))) {
+            console.log(`  Skipping ${artist.name} (pending scan/curation job)`);
+            continue;
+        }
 
         try {
-            switch (job.type) {
-                case JobTypes.RefreshArtist:
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: this.formatArtistPhaseDescription(job, "preparing artist refresh"),
-                    });
-                    if (job.payload.scanDepth === "basic") {
-                        // Credit-only collaborator intake: canonical metadata
-                        // without provider catalog/video/slot hydration.
-                        await RefreshArtistService.scanBasic(job.payload.artistId, {
-                            monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
-                            includeSimilarArtists: false,
-                            seedSimilarArtists: false,
-                            forceUpdate: job.payload.forceUpdate ?? false,
-                        });
-                        this.updateJobDescription(job, {
-                            progress: 100,
-                            description: this.formatArtistPhaseDescription(job, "metadata refreshed"),
-                        });
-                        break;
-                    }
-                    await RefreshArtistService.scanDeep(job.payload.artistId, {
-                        monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
-                        monitorAlbums: job.payload.monitorAlbums,
-                        hydrateCatalog: job.payload.hydrateCatalog,
-                        hydrateAlbumTracks: job.payload.hydrateAlbumTracks,
-                        includeSimilarArtists: job.payload.includeSimilarArtists ?? true,
-                        seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
-                        forceUpdate: job.payload.forceUpdate ?? false,
-                        expandCreditedArtists: job.payload.expandCreditedArtists ?? true,
-                        progress: (event) => {
-                            if (event.kind === "status") {
-                                this.updateJobDescription(job, {
-                                    progress: 10,
-                                    description: this.formatArtistPhaseDescription(job, "refreshing metadata"),
-                                });
-                                return;
-                            }
-
-                            if (event.kind === "albums_total") {
-                                this.updateJobDescription(job, {
-                                    progress: event.total > 0 ? 15 : 75,
-                                    description: event.total > 0
-                                        ? this.formatArtistPhaseDescription(job, `indexing releases (0/${event.total})`)
-                                        : this.formatArtistPhaseDescription(job, "no releases found"),
-                                });
-                                return;
-                            }
-
-                            if (event.kind === "album") {
-                                const total = Math.max(event.total, 1);
-                                const progress = Math.min(45, 15 + Math.round((event.index / total) * 30));
-                                this.updateJobDescription(job, {
-                                    progress,
-                                    description: this.formatArtistPhaseDescription(job, `indexing releases (${event.index}/${event.total})`),
-                                });
-                            }
-
-                            if (event.kind === "album_tracks") {
-                                const total = Math.max(event.total, 1);
-                                const progress = Math.min(85, 45 + Math.round((event.index / total) * 40));
-                                this.updateJobDescription(job, {
-                                    progress,
-                                    description: this.formatArtistPhaseDescription(job, `scanning tracks (${event.index}/${event.total}: ${event.title})`),
-                                });
-                            }
-                        },
-                    });
-                    this.updateJobDescription(job, {
-                        progress: 90,
-                        description: this.formatArtistPhaseDescription(job, "finalizing version groups"),
-                    });
-
-                    // Emit event so decoupled listeners (like curation.listener) can chain the redundancy check
-                    appEvents.emit(AppEvent.ARTIST_SCANNED, {
-                        artistId: job.payload.artistId,
-                        artistName: job.payload.artistName,
-                        workflow: job.payload.workflow,
-                        scanLibrary: job.payload.scanLibrary ?? false,
-                        forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
-                        trigger: job.trigger ?? 0
-                    });
-                    break;
-                case JobTypes.RefreshAlbum:
-                    // SCAN_ALBUM means: ensure album SHALLOW metadata (tracks + review + similar)
-                    await RefreshAlbumService.scanShallow(job.payload.albumId, {
-                        forceUpdate: Boolean(job.payload?.forceUpdate),
-                        includeSimilarAlbums: false,
-                        seedSimilarAlbums: false,
-                    });
-                    break;
-                case JobTypes.RefreshMetadata: {
-                    const baseLabel = "Managed artists";
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: `${baseLabel} - preparing metadata refresh`,
-                    });
-
-                    // Resolve target artists (monitoring cycle uses dueOnly with staleness skip)
-                    const selectedArtistIds = Array.isArray(job.payload.artistIds)
-                        ? job.payload.artistIds.map((id: any) => String(id))
-                        : undefined;
-                    const allArtists = getManagedArtists({ orderByLastScanned: true, artistIds: selectedArtistIds });
-
-                    let refreshed = 0;
-                    let skipped = 0;
-
-                    for (let i = 0; i < allArtists.length; i++) {
-                        const artist = allArtists[i];
-                        const artistId = String(artist.id);
-                        const artistName = String((artist as any).name || '').trim();
-
-                        // Staleness skip: check if artist needs refresh
-                        if (!selectedArtistIds && !shouldRefreshArtist({
-                            artistId,
-                            lastScanned: (artist as any).last_scanned,
-                        })) {
-                            skipped++;
-                            continue;
-                        }
-
-                        const progress = Math.min(90, 10 + Math.round(((i + 1) / allArtists.length) * 80));
-                        this.updateJobDescription(job, {
-                            progress,
-                            description: `${baseLabel} - refreshing ${artistName || 'artist'} (${i + 1}/${allArtists.length}, ${refreshed} refreshed, ${skipped} skipped)`,
-                        });
-
-                        try {
-                            await RefreshArtistService.scanDeep(artistId, {
-                                monitorArtist: Boolean((artist as any).monitor),
-                                hydrateCatalog: true,
-                                hydrateAlbumTracks: false,
-                                includeSimilarArtists: false,
-                                seedSimilarArtists: false,
-                            });
-                            refreshed++;
-
-                            const monitoringCycle = Boolean(job.payload.monitoringCycle);
-
-                            // Emit event so per-artist pipeline can chain (curation listener handles this)
-                            appEvents.emit(AppEvent.ARTIST_SCANNED, {
-                                artistId,
-                                artistName,
-                                workflow: monitoringCycle ? 'monitoring-intake' : 'metadata-refresh',
-                                monitoringCycle: job.payload.monitoringCycle,
-                                scanLibrary: monitoringCycle,
-                                forceDownloadQueue: false,
-                                trigger: job.trigger ?? 0,
-                            });
-                        } catch (error: any) {
-                            console.error(`[Scheduler] RefreshMetadata: failed to refresh ${artistName} (${artistId}):`, error?.message);
-                        }
-                    }
-
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Refreshed ${refreshed} artist(s), skipped ${skipped} (${allArtists.length} total)`,
-                    });
-                    break;
-                }
-                case JobTypes.ApplyCuration: {
-                    const baseLabel = "Managed artists";
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: `${baseLabel} - preparing curation`,
-                    });
-
-                    const selectedCurationArtistIds = Array.isArray(job.payload.artistIds)
-                        ? job.payload.artistIds.map((id: any) => String(id))
-                        : undefined;
-                    const artists = getManagedArtists({ orderByLastScanned: true, artistIds: selectedCurationArtistIds });
-
-                    let curated = 0;
-                    let errors = 0;
-
-                    for (let i = 0; i < artists.length; i++) {
-                        const artist = artists[i];
-                        const artistId = String(artist.id);
-                        const artistName = String((artist as any).name || '').trim();
-
-                        const progress = Math.min(90, 10 + Math.round(((i + 1) / artists.length) * 80));
-                        this.updateJobDescription(job, {
-                            progress,
-                            description: `${baseLabel} - curating ${artistName || 'artist'} (${i + 1}/${artists.length})`,
-                        });
-
-                        try {
-                            await CurationService.processAll(artistId, {
-                                skipDownloadQueue: true,
-                                forceDownloadQueue: false,
-                            });
-                            curated++;
-                        } catch (error: any) {
-                            errors++;
-                            console.error(`[Scheduler] ApplyCuration: failed to curate ${artistName} (${artistId}):`, error?.message);
-                        }
-                    }
-
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Curated ${curated} artist(s)${errors > 0 ? `, ${errors} error(s)` : ''} (${artists.length} total)`,
-                    });
-                    break;
-                }
-                case JobTypes.DownloadMissing: {
-                    const selectedArtistIds = Array.isArray(job.payload.artistIds)
-                        ? job.payload.artistIds.map((artistId) => String(artistId))
-                        : undefined;
-                    const artists = getManagedArtists({ artistIds: selectedArtistIds }) as Array<{ id: string | number; name?: string }>;
-                    let totalAlbums = 0;
-                    let totalTracks = 0;
-                    let totalVideos = 0;
-
-                    if (artists.length > 0) {
-                        this.updateJobDescription(job, {
-                            progress: 5,
-                            description: `Managed artists - checking monitored items (0/${artists.length})`,
-                        });
-                    }
-
-                    for (let index = 0; index < artists.length; index += 1) {
-                        const artist = artists[index];
-                        const artistName = String((artist as { name?: string }).name || "").trim();
-                        this.updateJobDescription(job, {
-                            progress: Math.min(90, 10 + Math.round((index / Math.max(artists.length, 1)) * 80)),
-                            description: artistName
-                                ? `Managed artists - checking monitored items for ${artistName} (${index + 1}/${artists.length})`
-                                : `Managed artists - checking monitored items (${index + 1}/${artists.length})`,
-                        });
-
-                        const queued = await CurationService.queueMonitoredItems(String(artist.id));
-                        totalAlbums += queued.albums;
-                        totalTracks += queued.tracks;
-                        totalVideos += queued.videos;
-                    }
-
-                    const total = totalAlbums + totalTracks + totalVideos;
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Queued ${total} download(s) (${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos)`,
-                    });
-                    break;
-                }
-                case JobTypes.CheckUpgrades: {
-                    const result = await UpgraderService.checkUpgrades(true);
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Queued ${result.details.length} upgrade candidate(s)`,
-                    });
-                    break;
-                }
-                case JobTypes.CurateArtist:
-                    await CurationService.processAll(
-                        job.payload.artistId,
-                        {
-                            skipDownloadQueue: true,
-                            forceDownloadQueue: false,
-                        }
-                    );
-                    break;
-                case JobTypes.RescanFolders: {
-                    const artistId = job.payload.artistId;
-                    const addNewArtists = job.payload.addNewArtists ?? false;
-
-                    if (artistId && !addNewArtists) {
-                        // Per-artist scan (existing behavior)
-                        const baseLabel = this.formatWorkflowJobLabel(job, "Rescan folders");
-
-                        // Step 1: Disk scan — reconcile track_files with disk reality
-                        await DiskScanService.scan({
-                            artistIds: [artistId],
-                            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-                            onProgress: (event) => {
-                                this.updateJobDescription(job, {
-                                    progress: event.progress,
-                                    description: `${baseLabel} - ${event.message}`,
-                                });
-                            },
-                        });
-
-                        // Step 2: Optional metadata backfill.
-                        // Manual/local-only scans stop after reconciling files and importing from disk.
-                        if (!(job.payload.skipMetadataBackfill ?? false)) {
-                            this.updateJobDescription(job, {
-                                progress: 90,
-                                description: `${baseLabel} - backfilling metadata files`,
-                            });
-                            await DiskScanService.fillMissingMetadataFiles(artistId);
-                        }
-
-                        this.updateJobDescription(job, {
-                            progress: 95,
-                            description: `${baseLabel} - finalizing`,
-                        });
-
-                        // Step 3: Emit completion so artist curation cascades when requested
-                        appEvents.emit(AppEvent.RESCAN_COMPLETED, {
-                            artistId,
-                            artistName: job.payload.artistName ?? "",
-                            workflow: job.payload.workflow,
-                            monitoringCycle: job.payload.monitoringCycle,
-                            skipDownloadQueue: job.payload.skipDownloadQueue ?? false,
-                            skipCuration: job.payload.skipCuration ?? false,
-                            skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
-                            forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
-                            trigger: job.trigger ?? 0
-                        });
-                    } else {
-                        // Library-wide scan (RescanFolders with addNewArtists)
-                        this.updateJobDescription(job, {
-                            progress: 5,
-                            description: "Scanning library root folders",
-                        });
-                        await DiskScanService.scan({
-                            addNewArtists: addNewArtists,
-                            monitorNewArtists: job.payload.monitorArtist ?? true,
-                            fullProcessing: job.payload.fullProcessing ?? false,
-                            trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
-                            trigger: job.trigger ?? 0,
-                            onProgress: (event) => {
-                                this.updateJobDescription(job, {
-                                    progress: event.progress ?? 50,
-                                    description: `Scanning library root folders - ${event.message}`,
-                                });
-                            },
-                        });
-                        this.updateJobDescription(job, {
-                            progress: 95,
-                            description: "Scanning library root folders - finalizing",
-                        });
-                    }
-                    break;
-                }
-                case JobTypes.BulkRefreshArtist:
-                case JobTypes.DownloadMissingForce:
-                case JobTypes.RescanAllRoots:
-                case JobTypes.CheckHealth:
-                case JobTypes.CompactDatabase:
-                case JobTypes.CleanupTempFiles:
-                case JobTypes.UpdateLibraryMetadata:
-                case JobTypes.ConfigPrune: {
-                    await runLowCouplingMaintenanceJob(job, {
-                        updateJobDescription: (options) => this.updateJobDescription(job, options),
-                    });
-                    break;
-                }
-                case JobTypes.MoveArtist: {
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: 'Move Artist - moving artist folders into the stored artist path',
-                    });
-                    if (!job.payload.artistId) {
-                        throw new Error("MoveArtist job missing artistId");
-                    }
-                    if (!job.payload.sourcePath) {
-                        throw new Error("MoveArtist job missing sourcePath");
-                    }
-                    const result = MoveArtistService.executeMoveArtistJob({
-                        artistId: job.payload.artistId,
-                        sourcePath: job.payload.sourcePath,
-                        destinationPath: job.payload.destinationPath,
-                    });
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Moved artist folders in ${result.movedRoots} root(s), updated ${result.updatedFiles} tracked file(s), cleaned ${result.cleanedDirectories} empty folder(s)`,
-                    });
-                    break;
-                }
-                case JobTypes.RenameArtist: {
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: 'Rename Artist - applying artist-wide rename plan',
-                    });
-                    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
-                        ? job.payload.artistIds
-                        : (job.payload.artistId ? [job.payload.artistId] : []);
-                    let renamed = 0;
-                    let conflicts = 0;
-                    let missing = 0;
-                    let cleanedDirectories = 0;
-                    for (const artistId of artistIds) {
-                        const result = RenameTrackFileService.executeRenameArtist({ artistId });
-                        renamed += result.renamed;
-                        conflicts += result.conflicts;
-                        missing += result.missing;
-                        cleanedDirectories += result.cleanedDirectories;
-                    }
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
-                    });
-                    break;
-                }
-                case JobTypes.RenameFiles: {
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: 'Rename Files - applying rename plan',
-                    });
-                    const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-                        ? RenameTrackFileService.executeRenameFiles(job.payload.ids)
-                        : RenameTrackFileService.executeRenameFilesByQuery({
-                            artistId: job.payload.artistId,
-                            albumId: job.payload.albumId,
-                            libraryRoot: job.payload.libraryRoot,
-                            fileTypes: job.payload.fileTypes,
-                        });
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,
-                    });
-                    break;
-                }
-                case JobTypes.RetagArtist: {
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: 'Retag Artist - applying artist-wide audio tag plan',
-                    });
-                    const artistIds = Array.isArray(job.payload.artistIds) && job.payload.artistIds.length > 0
-                        ? job.payload.artistIds
-                        : (job.payload.artistId ? [job.payload.artistId] : []);
-                    let retagged = 0;
-                    let missing = 0;
-                    const errors: Array<{ id: number; error: string }> = [];
-                    for (const artistId of artistIds) {
-                        const result = await AudioTagService.applyByQuery({ artistId });
-                        retagged += result.retagged;
-                        missing += result.missing;
-                        errors.push(...result.errors);
-                    }
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Retagged ${retagged} file(s), ${missing} missing, ${errors.length} error(s)`,
-                    });
-                    break;
-                }
-                case JobTypes.RetagFiles: {
-                    this.updateJobDescription(job, {
-                        progress: 5,
-                        description: 'Retag Files - applying audio tag plan',
-                    });
-                    const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-                        ? await AudioTagService.apply(job.payload.ids)
-                        : await AudioTagService.applyByQuery({
-                            artistId: job.payload.artistId,
-                            albumId: job.payload.albumId,
-                        });
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
-                    });
-                    break;
-                }
-                case JobTypes.Housekeeping: {
-                    this.updateJobDescription(job, {
-                        progress: 10,
-                        description: 'Running housekeeping and optimizing the database',
-                    });
-                    const summary = runRuntimeMaintenance();
-                    const parts = [
-                        `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
-                        `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
-                        `repaired ${summary.mediaMonitorRepairs + summary.albumMonitorRepairs} monitor state gap(s)`,
-                        `pruned ${summary.historyJobsPruned} old job(s)`,
-                        `and optimized the database`,
-                    ];
-                    this.updateJobDescription(job, {
-                        progress: 100,
-                        description: parts.join(', '),
-                    });
-                    break;
-                }
-                default:
-                    // If we accidentally picked up a download job or unknown
-                    console.warn(`Scheduler picked up unhandled job type: ${job.type}`);
-            }
-
-            TaskQueueService.complete(job.id);
-            queueNextMonitoringPass(job);
-            console.log(`✅ Job #${job.id} completed`);
-
-        } catch (error: any) {
-            console.error(`❌ Job #${job.id} failed:`, error);
-            TaskQueueService.fail(job.id, error?.message || 'Unknown scheduler error');
-            queueNextMonitoringPass(job);
+            console.log(`  Checking ${artist.name}...`);
+            const isMonitored = Boolean(artist.monitor);
+            await RefreshArtistService.scanDeep(artist.id, {
+                monitorArtist: isMonitored,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: false,
+                includeSimilarArtists: false,
+                seedSimilarArtists: false,
+            });
+        } catch (error) {
+            console.error(`  ❌ Error checking ${artist.name}:`, error);
         }
     }
+
+    console.log(`✅ Manual metadata refresh complete: scanned ${artists.length} artist(s)`);
+    return { newAlbums: totalNewAlbums, artists: artists.length };
+}
+
+export async function queueCheckNow(): Promise<{ success: boolean; jobId?: number }> {
+    const jobId = TaskQueueService.addJob(
+        "RefreshMetadata",
+        {
+            title: "Refreshing provider metadata",
+            description: "Refreshing MusicBrainz metadata and provider availability",
+        },
+        "refresh_metadata_manual",
+        1,
+        1,
+    );
+
+    return { success: jobId > 0, jobId };
+}
+
+export async function checkNowStreaming(sendEvent: (event: string, data: any) => void): Promise<{ newAlbums: number; artists: number }> {
+    sendEvent("status", { message: "Refreshing MusicBrainz metadata and provider availability..." });
+
+    const artists = getManagedArtists({ orderByLastScanned: true }) as any[];
+
+    if (artists.length === 0) {
+        sendEvent("status", { message: "No artists with monitored items found" });
+        sendEvent("complete", { newAlbums: 0, artists: 0 });
+        return { newAlbums: 0, artists: 0 };
+    }
+
+    const artistsWithPendingJobs = getArtistsWithPendingJobs();
+
+    const scanTargets = artists;
+    const monitoredCount = artists.filter((artist: any) => artist.monitor).length;
+    sendEvent("total", { total: scanTargets.length, monitored: monitoredCount });
+
+    let skippedCount = 0;
+
+    for (let index = 0; index < scanTargets.length; index += 1) {
+        const artist = scanTargets[index];
+
+        if (artistsWithPendingJobs.has(String(artist.id))) {
+            console.log(`[Monitoring] Skipping ${artist.name} (id=${artist.id}) - pending scan/curation job`);
+            sendEvent("artist-skipped", {
+                name: artist.name,
+                reason: "pending_jobs",
+                progress: index + 1,
+                total: scanTargets.length,
+            });
+            skippedCount += 1;
+            continue;
+        }
+
+        try {
+            const isMonitored = Boolean(artist.monitor);
+            sendEvent("artist-progress", {
+                name: artist.name,
+                progress: index + 1,
+                total: scanTargets.length,
+            });
+
+            await RefreshArtistService.scanDeep(artist.id, {
+                monitorArtist: isMonitored,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: false,
+                includeSimilarArtists: false,
+                seedSimilarArtists: false,
+            });
+
+            sendEvent("artist-checked", {
+                name: artist.name,
+                progress: index + 1,
+                total: scanTargets.length,
+            });
+        } catch (error) {
+            console.error(`Error checking ${artist.name}:`, error);
+            sendEvent("error", {
+                message: `Failed to check ${artist.name}`,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    sendEvent("complete", { artists: artists.length, skipped: skippedCount });
+    return { newAlbums: 0, artists: artists.length };
+}
+
+export async function downloadMissing(): Promise<{ albums: number; tracks: number; videos: number }> {
+    console.log("📥 Queueing downloads for all monitored artists...");
+
+    const monitoredArtists = getManagedArtists();
+
+    if (monitoredArtists.length === 0) {
+        console.log("📭 No monitored artists");
+        return { albums: 0, tracks: 0, videos: 0 };
+    }
+
+    let totalAlbums = 0;
+    let totalTracks = 0;
+    let totalVideos = 0;
+
+    for (const artist of monitoredArtists) {
+        try {
+            const queued = await CurationService.queueMonitoredItems(String(artist.id));
+            totalAlbums += queued.albums;
+            totalTracks += queued.tracks;
+            totalVideos += queued.videos;
+
+            const total = queued.albums + queued.tracks + queued.videos;
+            if (total > 0) {
+                console.log(`  📥 ${artist.name}: ${queued.albums} albums, ${queued.tracks} tracks, ${queued.videos} videos`);
+            }
+        } catch (error) {
+            console.error(`  ❌ Error queueing downloads for ${artist.name}:`, error);
+        }
+    }
+
+    console.log(`✅ Download queue complete: ${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos`);
+    return { albums: totalAlbums, tracks: totalTracks, videos: totalVideos };
 }
 
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+// ============================================================================
+// Phase 1: Manual Command Queue Functions
+// ============================================================================
+
+export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.BulkRefreshArtist,
+        {},
+        'bulk-refresh-artist',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
+    const skipFlags = true;  // Clear skip_* flags before queueing DownloadMissing
+    return TaskQueueService.addJob(
+        JobTypes.DownloadMissingForce,
+        { skipFlags },
+        'download-missing-force',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueRescanAllRoots(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.RescanAllRoots,
+        { addNewArtists: false },
+        'rescan-all-roots',
+        10,  // manual trigger boost
+        options.trigger ?? 1,
+    );
+}
+
+export function queueCheckHealth(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CheckHealth,
+        {},
+        'check-health',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueCompactDatabase(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CompactDatabase,
+        {},
+        'compact-database',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueCleanupTempFiles(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.CleanupTempFiles,
+        {},
+        'cleanup-temp-files',
+        0,
+        options.trigger ?? 1,
+    );
+}
+
+export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.UpdateLibraryMetadata,
+        {},
+        'update-library-metadata',
+        0,
+        options.trigger ?? 1,
+    );
+}
+export function queueConfigPrune(options: { trigger?: number } = {}) {
+    return TaskQueueService.addJob(
+        JobTypes.ConfigPrune,
+        {},
+        'config-prune',
+        0,
+        options.trigger ?? 1,
+    );
+}
 

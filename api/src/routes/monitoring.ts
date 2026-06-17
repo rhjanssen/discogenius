@@ -13,7 +13,7 @@ import {
   queueCurationPass,
   queueDownloadMissingPass,
   queueCheckUpgradesPass,
-} from "../services/jobs/task-scheduler.js";
+} from "../services/jobs/scheduler.js";
 
 const router = Router();
 

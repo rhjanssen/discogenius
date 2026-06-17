@@ -10,14 +10,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./queue.js");
-let schedulerModule: typeof import("./scheduler.js");
+let schedulerModule: typeof import("./command-executor.js");
 let healthModule: typeof import("./health.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
     queueModule = await import("./queue.js");
     healthModule = await import("./health.js");
-    schedulerModule = await import("./scheduler.js");
+    schedulerModule = await import("./command-executor.js");
 
     dbModule.initDatabase();
 });
@@ -45,7 +45,7 @@ test("DownloadMissingForce skips legacy flag reset when skip_download/skip_upgra
     const job = queueModule.TaskQueueService.getById(jobId);
     assert.ok(job);
 
-    await (schedulerModule.Scheduler as any).processJob(job);
+    await (schedulerModule.CommandExecutor as any).processJob(job);
 
     const completed = queueModule.TaskQueueService.getById(jobId);
     assert.equal(completed?.status, "completed");
@@ -66,7 +66,7 @@ test("RescanAllRoots delegates to queueRescanFoldersPass and queues a RescanFold
     const job = queueModule.TaskQueueService.getById(jobId);
     assert.ok(job);
 
-    await (schedulerModule.Scheduler as any).processJob(job);
+    await (schedulerModule.CommandExecutor as any).processJob(job);
 
     const completed = queueModule.TaskQueueService.getById(jobId);
     assert.equal(completed?.status, "completed");
@@ -92,7 +92,7 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
     const job = queueModule.TaskQueueService.getById(jobId);
     assert.ok(job);
 
-    await (schedulerModule.Scheduler as any).processJob(job);
+    await (schedulerModule.CommandExecutor as any).processJob(job);
 
     const completed = queueModule.TaskQueueService.getById(jobId);
     assert.equal(completed?.status, "completed");
@@ -113,7 +113,7 @@ test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a Refre
     const job = queueModule.TaskQueueService.getById(jobId);
     assert.ok(job);
 
-    await (schedulerModule.Scheduler as any).processJob(job);
+    await (schedulerModule.CommandExecutor as any).processJob(job);
 
     const completed = queueModule.TaskQueueService.getById(jobId);
     assert.equal(completed?.status, "completed");

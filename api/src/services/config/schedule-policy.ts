@@ -85,56 +85,10 @@ export function isScheduledTaskDue(intervalMinutes: number, lastQueuedAt?: strin
     return Date.now() - lastQueuedTime >= intervalMinutes * 60_000;
 }
 
-export function getNextMonitoringWindowAtOrAfter(
-    minTimestamp: number,
-    startHour: number,
-    durationHours: number,
-): string | null {
-    const normalizedDurationHours = Math.max(1, durationHours);
-    const normalizedStartHour = Math.max(0, Math.min(23, startHour));
-    const candidate = new Date(minTimestamp);
-    candidate.setSeconds(0, 0);
-
-    for (let dayOffset = 0; dayOffset < 8; dayOffset += 1) {
-        const day = new Date(candidate);
-        day.setDate(candidate.getDate() + dayOffset);
-
-        const windowStart = new Date(day);
-        windowStart.setHours(normalizedStartHour, 0, 0, 0);
-
-        const windowEnd = new Date(windowStart);
-        windowEnd.setHours(windowEnd.getHours() + normalizedDurationHours);
-
-        if (dayOffset === 0) {
-            if (minTimestamp < windowStart.getTime()) {
-                return windowStart.toISOString();
-            }
-
-            if (minTimestamp >= windowStart.getTime() && minTimestamp < windowEnd.getTime()) {
-                return new Date(minTimestamp).toISOString();
-            }
-
-            continue;
-        }
-
-        return windowStart.toISOString();
-    }
-
-    return null;
-}
-
-export function isWithinTimeWindow(startHour: number, durationHours: number): boolean {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
-
-    const startTimeInMinutes = startHour * 60;
-    const endTimeInMinutes = (startHour + durationHours) * 60;
-
-    if (endTimeInMinutes > 24 * 60) {
-        return currentTimeInMinutes >= startTimeInMinutes || currentTimeInMinutes < (endTimeInMinutes % (24 * 60));
-    }
-
-    return currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes < endTimeInMinutes;
-}
+// NOTE: Discogenius previously gated the monitoring cycle to a start_hour /
+// duration_hours time-of-day window. That window only controlled when a cycle
+// was *queued* (it never stopped in-flight work) and ran in the container's
+// local time, which caused timezone surprises. We now follow Lidarr's model:
+// scheduled tasks run purely on their interval in UTC, no time-of-day window.
+// The start_hour/duration_hours config fields are retained for backwards
+// compatibility but are no longer consulted by the scheduler.

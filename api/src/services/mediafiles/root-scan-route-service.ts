@@ -1,6 +1,6 @@
 import { Config } from "../config/config.js";
 import { DiskScanService, type ScanOptions, type ScanResult } from "./library-scan.js";
-import { queueRescanFoldersPass } from "../jobs/task-scheduler.js";
+import { queueRescanFoldersPass } from "../jobs/scheduler.js";
 
 export type RootScanSsePayload =
     | { type: "progress"; message: string }

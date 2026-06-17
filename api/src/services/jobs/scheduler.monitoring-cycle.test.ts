@@ -10,13 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./queue.js");
-let taskSchedulerModule: typeof import("./task-scheduler.js");
+let taskSchedulerModule: typeof import("./scheduler.js");
 let taskStateModule: typeof import("./task-state.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
     queueModule = await import("./queue.js");
-    taskSchedulerModule = await import("./task-scheduler.js");
+    taskSchedulerModule = await import("./scheduler.js");
     taskStateModule = await import("./task-state.js");
 
     dbModule.initDatabase();
