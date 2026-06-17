@@ -539,6 +539,7 @@ export class OrganizerService {
             ON pi.provider = ?
            AND pi.entity_type = 'track'
            AND pi.release_mbid = t.release_mbid
+           AND pi.library_slot = ?
            AND (
               pi.track_mbid = t.mbid
               OR (
@@ -551,7 +552,7 @@ export class OrganizerService {
           WHERE t.release_mbid = ?
             AND COALESCE(r.is_video, 0) = 0
           ORDER BY t.medium_position, t.position, t.mbid
-        `).all(context.provider, context.releaseGroupMbid, context.releaseMbid) as AlbumTrackRow[]
+        `).all(context.provider, context.slot || 'stereo', context.releaseGroupMbid, context.releaseMbid) as AlbumTrackRow[]
       : db.prepare(`
           SELECT id, title, version, track_number, volume_number, isrc
           FROM ProviderMedia

@@ -668,7 +668,22 @@ export function selectReleaseGroupSlotAlbums(
         });
     }
 
-    return Array.from(bestByReleaseGroupAndSlot.values())
+    const finalSelections = Array.from(bestByReleaseGroupAndSlot.values());
+    const releaseGroups = Array.from(new Set(finalSelections.map(s => s.releaseGroupMbid)));
+    for (const mbid of releaseGroups) {
+        const slots = finalSelections.filter(s => s.releaseGroupMbid === mbid);
+        const hasStereo = slots.some(s => s.slot === "stereo");
+        const spatialSelection = slots.find(s => s.slot === "spatial");
+
+        if (!hasStereo && spatialSelection) {
+            finalSelections.push({
+                ...spatialSelection,
+                slot: "stereo",
+            });
+        }
+    }
+
+    return finalSelections
         .sort((left, right) => left.releaseGroupMbid.localeCompare(right.releaseGroupMbid) || left.slot.localeCompare(right.slot));
 }
 

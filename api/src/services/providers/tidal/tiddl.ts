@@ -237,7 +237,7 @@ export function syncTiddlSettings(downloadPath: string = Config.getDownloadPath(
         `scan_path = ${tomlString(downloadPath.replace(/\\/g, "/"))}`,
         "singles_filter = \"include\"",
         "videos_filter = \"none\"",
-        "atmos_filter = \"none\"",
+        "atmos_filter = \"allow\"",
         "",
         "[metadata]",
         "enable = true",
