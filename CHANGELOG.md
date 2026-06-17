@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.6] - 2026-06-17
+
+### Fixed
+- Download queue and tracklist quality pills now match the height of the media-type pill (the `QualityBadge` no longer forces its own height, so a small quality badge lines up exactly with a small `MediaTypeBadge`).
+- Album page now shows a single quality pill when one provider release fills both the stereo and spatial library slots (the Atmos-fallback case), with a hover explaining it covers both libraries, instead of two identical Dolby Atmos pills.
+- Album page split Download button no longer clips its hover shadow/lift; the whole control now lifts and shadows as one unit like the other action buttons.
+- Atmos-only releases that fall back into the stereo slot now organize into `stereo-music` (not `spatial-music`), and `--dolby-atmos allow` is applied for stereo downloads so the fallback actually downloads.
+- Eliminated the concurrent stereo+spatial download race that caused `ENOENT … rename` import failures: each download job now uses its own `job_<id>` workspace, so jobs can't wipe each other's files.
+- Resolved "ghost" queue items that lingered as active after a job completed until a manual page reload.
+- Removed the constant GPU load from the background: the full-viewport `backdrop-filter` (re-sampled on every repaint) was replaced with a static `filter` baked onto the cached gradient image.
+- Reduced the visible grain/texture on the background by dialing the gradient dither way down.
+
+### Changed
+- tiddl is now steered with a clean split: `config.toml` holds only global settings (video quality, threads, metadata embedding, templates, …) while per-job values (download/scan path, track-quality cap, Dolby Atmos mode, video filter) are passed as CLI args. This removes the previous config/args duplication.
+- Removed a stale Playwright smoke test for the `/search` route that was dropped in 2.0.4 (search now lives in the nav bar), fixing CI.
+
 ## [2.0.5] - 2026-06-17
 
 ### Added
