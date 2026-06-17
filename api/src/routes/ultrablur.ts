@@ -791,8 +791,11 @@ router.get("/image", (req, res) => {
     bottomLeft: parseHexQuery(req.query.bottomLeft, "#083A3C"),
     bottomRight: parseHexQuery(req.query.bottomRight, "#6A3B1F"),
   };
-  const width = Math.max(320, Math.min(1920, Number(req.query.width || 1280) || 1280));
-  const height = Math.max(180, Math.min(1080, Number(req.query.height || 720) || 720));
+  // Cap at QHD: the client requests its own screen resolution, and the gradient
+  // is smooth enough that a QHD image upscaled to a 4K display is imperceptible —
+  // while keeping the per-pixel generation off the event loop for too long.
+  const width = Math.max(320, Math.min(2560, Number(req.query.width || 1280) || 1280));
+  const height = Math.max(180, Math.min(1440, Number(req.query.height || 720) || 720));
 
   try {
     const buffer = renderUltraBlurImage(colors, Math.round(width), Math.round(height));

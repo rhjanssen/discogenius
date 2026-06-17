@@ -54,6 +54,23 @@ interface UltraBlurBackgroundProps {
   transitionDuration?: number;
 }
 
+// Generate the gradient at (roughly) the client's physical screen resolution
+// instead of a fixed 1280×720 that the browser then upscales. The image is a
+// smooth gradient so it compresses tiny and is cached immutable per colour set;
+// we use the *screen* size (stable across window resizes, so no refetch) and a
+// QHD ceiling so the server-side per-pixel generation stays cheap. Anything
+// above the cap is a sub-pixel-smooth upscale of a gradient — imperceptible.
+const ULTRABLUR_MAX = { width: 2560, height: 1440 };
+function computeUltraBlurSize(): { width: number; height: number } {
+  if (typeof window === "undefined" || !window.screen) {
+    return { width: 1920, height: 1080 };
+  }
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.min(ULTRABLUR_MAX.width, Math.max(640, Math.round(window.screen.width * dpr)));
+  const height = Math.min(ULTRABLUR_MAX.height, Math.max(360, Math.round(window.screen.height * dpr)));
+  return { width, height };
+}
+
 export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const styles = useStyles();
 
@@ -98,13 +115,14 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     let cancelled = false;
 
     function run() {
+      const { width, height } = computeUltraBlurSize();
       const params = new URLSearchParams({
         topLeft: colors.topLeft,
         topRight: colors.topRight,
         bottomLeft: colors.bottomLeft,
         bottomRight: colors.bottomRight,
-        width: "1280",
-        height: "720",
+        width: String(width),
+        height: String(height),
       });
       const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
       if (cancelled) {

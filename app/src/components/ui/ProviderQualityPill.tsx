@@ -235,6 +235,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             fillsBothLibraries
                 ? "Same release fills both libraries (no separate stereo release available)"
                 : null,
+            offer.providerAlbumId ? `${providerName} ID ${offer.providerAlbumId}` : null,
             offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
         ].filter(Boolean) as string[];
 

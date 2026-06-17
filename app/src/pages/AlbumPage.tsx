@@ -70,7 +70,7 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     width: "100%",
     paddingBottom: `calc(${tokens.spacingVerticalXXXL} * 3)`,
   },
@@ -90,10 +90,12 @@ const useStyles = makeStyles({
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
     "@media (min-width: 768px)": {
-      minHeight: "300px",
+      // Let the 220px cover + padding define the height instead of forcing a tall
+      // 300px box that left dead space below the action buttons.
+      minHeight: "240px",
       padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalXXL,
-      paddingBottom: tokens.spacingVerticalXXL,
+      paddingTop: tokens.spacingVerticalXL,
+      paddingBottom: tokens.spacingVerticalL,
       gap: tokens.spacingHorizontalXXL,
     },
   },

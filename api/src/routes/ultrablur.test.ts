@@ -57,8 +57,8 @@ test("ultrablur image endpoint clamps excessive render dimensions", async () => 
   assert.equal(response.status, 200);
   const bytes = Buffer.from(await response.arrayBuffer());
   const decoded = PNG.sync.read(bytes);
-  assert.equal(decoded.width, 1920);
-  assert.equal(decoded.height, 1080);
+  assert.equal(decoded.width, 2560);
+  assert.equal(decoded.height, 1440);
 });
 
 test("ultrablur colors endpoint rejects non-http image URLs", async () => {
