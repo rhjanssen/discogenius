@@ -1062,10 +1062,19 @@ export class DownloadProcessor {
 
             TaskQueueService.complete(job.id);
 
+            downloadEvents.emitCompleted(job.id, {
+                providerId,
+                type,
+                quality: payload.quality ?? null,
+                title: resolved.title,
+                artist: resolved.artist,
+                cover: resolved.cover,
+                silent: true,
+            });
+
             // The ImportDownload job will clean up the item workspace after import.
             this.currentDownloadPath = undefined;
 
-            // Note: We do NOT emit completed event here, it will be emitted by ImportDownload
             console.log(`[DOWNLOAD-PROCESSOR] Successfully downloaded ${type} ${providerId} - dispatched to import queue`);
         } catch (error: any) {
             if (this.cancelCurrentDownload && this.isPaused) {

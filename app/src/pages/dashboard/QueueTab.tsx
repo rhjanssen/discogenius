@@ -1782,7 +1782,7 @@ const QueueTab = () => {
                                                         {row.mediaBadge ? (
                                                             <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />
                                                         ) : null}
-                                                        {row.quality ? <QualityBadge quality={row.quality} size="medium" /> : null}
+                                                        {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
                                                     </div>
                                                 </div>
                                             </div>

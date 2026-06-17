@@ -269,10 +269,12 @@ function useQueueStatusContextValue(): QueueStatusContextType {
             updateProgressState((previous) => removeTrackedProgress(previous, Number(data?.jobId), data?.providerId));
             scheduleStatusRefresh(0);
             invalidateQueueQueries();
-            toastRef.current({
-              title: "Download completed",
-              description: data?.title || "Track downloaded successfully",
-            });
+            if (!data?.silent) {
+              toastRef.current({
+                title: "Download completed",
+                description: data?.title || "Track downloaded successfully",
+              });
+            }
             dispatchActivityRefresh();
             return;
           }

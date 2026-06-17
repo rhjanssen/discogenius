@@ -400,7 +400,7 @@ export const useDashboardStyles = makeStyles({
     },
     downloadBadgeRow: {
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
         minWidth: 0,

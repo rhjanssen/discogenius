@@ -213,6 +213,7 @@ export interface DownloadCompletedData {
     artist?: string;
     cover?: string | null;
     path?: string;
+    silent?: boolean;
 }
 
 export interface DownloadFailedData {

@@ -65,6 +65,8 @@ export class TiddlBackend implements DownloadBackend {
             args.push("-q", capTiddlTrackQuality(mapAudioQualityToTiddl(request.quality), isSpatial));
             if (isSpatial) {
                 args.push("--dolby-atmos", "only");
+            } else {
+                args.push("--dolby-atmos", "allow");
             }
         }
 
