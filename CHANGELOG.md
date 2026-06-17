@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.3] - 2026-06-17
+
+### Changed
+- docs: add Lidarr schema audit + alignment, DB migration, and threading plans
+- fix(ui): consolidate card styles, rebalance spacing, align loading skeletons to real UI
+- refactor(api): consolidate routes under /api/v1 and adopt Lidarr-aligned job execution
+- perf(db): fix event-loop-blocking queries on large libraries
+- fix(ui): unify card glassmorphism + enlarge mobile album cover
+- fix(ui): nudge mobile page edge padding back up to SNudge
+- fix(ui): add vertical breathing room to mobile tracklist rows
+- fix(ui): tighten mobile tracklist spacing instead of stacking pills
+- refactor(ui): rebuild tracklist on Fluent UI Table
+- fix(ui): tighten tracklist sizing and bio/review spacing
+- feat(ui): rework tracklist — hover-play, artist always, compact right cluster
+- fix(ui): tighten mobile artist name↔bio spacing
+- feat(ui): theme-aware quality/provider pills + revert header order
+- feat(ui): album header row swap, declutter cards, auth page polish
+- fix(import): ffprobe duration fallback for unmapped Atmos/MP4 files
+- fix(ui): auth page scrolls; welcome header stays one line
+- fix(api): resolve blank artist-credit ids so tracklist artists link
+- fix(ui): mobile badge layout — own lines, card stacking, smaller card pills
+- fix(ui): white-on-black provider chip, consistent badge size & order
+- fix(ui): theme-aware provider marks everywhere (settings + auth too)
+- fix(ui): 24px badges, center the header badge block
+- feat(ui): unified provider pill + quality badges, horizontal Atmos logo
+- fix(ui): tighten provider pill size, space tracklist quality badges
+- fix(ui): theme-aware provider pill, concentric radii
+
 ## [2.0.2] - 2026-06-13
 
 ### Changed
