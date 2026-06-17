@@ -7,10 +7,10 @@ at the bottom.
 Status: ⬜ pending · 🟡 in progress · ✅ done · ♻️ marked done before, needs revisit.
 
 ## Implementation-order rationale
-1. **Finish UI/UX + download fixes (2.0.4–2.0.6)** — quick wins, no deep dependencies.
-2. **Clean the DB (2.0.7)** before generalizing anything schema-level — don't
+1. **Finish UI/UX + download/artwork/search fixes (2.0.4–2.0.7)** — quick wins, no deep dependencies.
+2. **Clean the DB (2.0.8)** before generalizing anything schema-level — don't
    build new features on the legacy `Provider*` tables.
-3. **Multithreading (2.0.8)** — heavy multi-library downloads need the API to
+3. **Multithreading (2.0.9)** — heavy multi-library downloads need the API to
    stay responsive.
 4. **Apple Music provider (2.1.0)** — harden the provider abstraction with a
    real second provider *before* reworking the library system, so library types
@@ -50,14 +50,26 @@ permanent `--dolby-atmos allow`, job-scoped download workspaces (ENOENT race),
 ghost-queue-item fix, background grain/GPU (backdrop-filter) fixes, clean tiddl
 config/args split, and a stale-`/search` CI test removal.
 
-## 2.0.7 — Database alignment (clean canonical schema)
+## 2.0.7 — Artist/image/search + UI polish ✅
+Shipped: immediate artist artwork/info hydration on hot-load/search-add; one
+shared album-art resolver (canonical→provider fallback, no duplicate paths);
+track/video search artwork resolves to real URLs; first-order collaborators get
+a deep canonical+provider scan while staying unmonitored/uncurated; per-artist
+filter persistence; local+MB-only search (no provider live-search); tracklist
+(clickable artists, Duration+Quality columns, single-volume row hidden, play/stop
+controls); Plex-style low-res+blur UltraBlur with decoded cross-fade; slimmer
+Docker runtime image.
+
+## 2.0.8 — Database alignment (clean canonical schema)
 - **Retire legacy `Provider*` tables** ⬜ — full 5-phase migration to a single
   canonical graph + `ProviderItems`. See docs/LIDARR_DB_ALIGNMENT_PLAN.md.
+  Phase 0 (inventory) + Phase 1 dry-run done; target model clarified (Recordings
+  = canonical track/work info + standalone videos; Tracks = release↔recording map).
 - **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
   fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider `upgrade_queue`→`job_queue`.
   See docs/LIDARR_SCHEMA_AUDIT.md.
 
-## 2.0.8 — Multithreaded job execution
+## 2.0.9 — Multithreaded job execution
 - **Job execution → worker_threads** ⬜ — move the download processor, then the
   command executor, off the main event loop (own SQLite connections + message
   bridge for SSE/cache/progress). Lidarr-style parallelism on the clean schema.

@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.7] - 2026-06-18
+
+### Fixed
+- Artist artwork and basic info now hydrate immediately for hot-loaded or search-added MusicBrainz artists, instead of rendering a blank "needs scan" card.
+- Album, track, and video search results now return resolvable artwork URLs (tracks resolve their album's art, videos resolve a canonical or provider thumbnail) instead of raw provider asset ids that never rendered.
+- Album cards fall back to selected-provider artwork when MusicBrainz/Cover Art Archive has none, through a single shared resolver (no duplicate art-fetch paths, no temporary cross-matching).
+- First-order collaborating artists now get a full canonical + provider-slot scan while staying unmonitored and uncurated (no snowball into their own collaborators).
+- Artist page filter state persists per artist when navigating to an album and back.
+- Detail-page loading skeletons align with the real layout (top spacing/header height).
+
+### Changed
+- Search stays local + MusicBrainz/SkyHook only for artists/albums/tracks/videos — no provider live-search.
+- Tracklist: clickable artist names (linking via the known MusicBrainz id), a Duration column and a Quality column, the volume separator hidden on single-volume releases, and refined play/stop controls.
+- Background UltraBlur is generated small and blurred client-side (Plex-style), cutting the payload ~35x, and new pages now cross-fade in once decoded instead of snapping.
+- Runtime Docker image slimmed via a yarn cache mount and node_modules pruning.
+
 ## [2.0.6] - 2026-06-17
 
 ### Fixed
