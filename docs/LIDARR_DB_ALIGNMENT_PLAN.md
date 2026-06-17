@@ -166,5 +166,24 @@ Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
 **Keystone:** `AlbumRepository` / `MediaRepository` are both the heaviest readers
 and writers — Phases 2 and 3 hinge on giving them canonical-backed
 implementations behind their existing method signatures, so call sites change
-little. **Next:** Phase 1 (TrackFiles canonical-first) — start with the dry-run
-re-link report (§5) before any schema/lookup change.
+little.
+
+## 8. Phase 1 dry-run result (re-link safety check)
+
+Read-only check against a real-data DB (the dev `./config` DB, post-import):
+
+- 18 `TrackFiles`, **all** with both legacy linkage (`media_id`/`album_id`) AND
+  all canonical mbids (`canonical_recording_mbid`, `canonical_track_mbid`,
+  `canonical_release_group_mbid`) populated.
+- **0 orphan-risk rows** (no row has a `media_id` without a
+  `canonical_recording_mbid`).
+- **100% resolve:** every `canonical_recording_mbid` → a real `Recordings` row;
+  every `canonical_release_group_mbid` → a real `Albums` row.
+
+So switching `TrackFiles` lookups/dedup to the canonical columns orphans nothing
+on current data — the AcoustID/MBID embedding work already populates them on
+import/download. **Caveat:** a large/older library may hold pre-canonical rows;
+Phase 1 still needs the gap-fill maintenance pass + re-run this dry-run on real
+libraries before flipping reads. **Next (actual Phase 1):** add the gap-fill
+pass, then switch file lookup/dedup/import-match to canonical columns while
+keeping `media_id`/`album_id` as shadow columns until Phase 5.
