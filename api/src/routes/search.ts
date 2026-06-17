@@ -4,6 +4,7 @@ import { db } from "../database.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
+    chooseCachedProviderArtwork,
     parseJsonObject,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
@@ -201,6 +202,10 @@ router.get("/", async (req, res) => {
                 provider_track.asset_id,
                 json_extract(provider_track.data, '$.cover')
               ) AS album_cover,
+              rg.mbid AS release_group_mbid,
+              rg.data AS rg_data,
+              COALESCE(selected_slot.selected_provider, provider_album.provider, provider_track.provider) AS cover_provider,
+              COALESCE(selected_slot.provider_data, provider_album.data, provider_track.data) AS cover_provider_data,
               CASE WHEN EXISTS (
                 SELECT 1
                 FROM ReleaseGroupSlots monitored_slot
@@ -272,7 +277,16 @@ router.get("/", async (req, res) => {
                     id: row.id,
                     name: row.title,
                     artist_name: row.artist_name,
-                    cover: row.album_cover,
+                    // A track shows its album's art. Resolve it through the same
+                    // canonical→provider path the album results use so the result
+                    // carries a usable URL, not a raw provider asset id.
+                    cover: chooseCachedAlbumArtwork({
+                        albumMbid: row.release_group_mbid,
+                        skyHookData: parseJsonObject(row.rg_data),
+                        providerCandidates: row.album_cover
+                            ? [{ provider: row.cover_provider, imageId: row.album_cover, data: row.cover_provider_data }]
+                            : albumProviderArtworkCandidatesFromRow(row),
+                    }),
                     quality: row.quality,
                     explicit: !!row.explicit,
                     duration: row.duration,
@@ -291,6 +305,9 @@ router.get("/", async (req, res) => {
               artist.name AS artist_name,
               COALESCE(recording.monitored, 0) AS monitored,
               COALESCE(recording.cover_image_id, provider_video.asset_id) AS cover,
+              recording.cover_image_url AS cover_url,
+              provider_video.provider AS cover_provider,
+              provider_video.data AS cover_provider_data,
               COALESCE(recording.release_date, provider_video.release_date) AS release_date,
               COALESCE((
                 SELECT lf.quality
@@ -355,7 +372,14 @@ router.get("/", async (req, res) => {
                     id: row.id,
                     name: row.title,
                     artist_name: row.artist_name,
-                    image_id: row.cover,
+                    // Resolve the video thumbnail to a usable URL: a stored canonical
+                    // URL goes through the proxy; a raw provider asset id is turned
+                    // into a provider thumbnail URL — never pass the bare id through.
+                    image_id: registerMediaCoverProxyUrl(row.cover_url)
+                        || chooseCachedProviderArtwork(
+                            [{ provider: row.cover_provider, imageId: row.cover, data: row.cover_provider_data }],
+                            "video",
+                        ),
                     quality: row.current_quality,
                     release_date: row.release_date,
                     monitored: !!row.monitored,
