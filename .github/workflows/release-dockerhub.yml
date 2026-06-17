@@ -32,7 +32,7 @@ jobs:
           echo "dockerhub_image=${resolved_image}" >> "$GITHUB_OUTPUT"
 
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -40,7 +40,7 @@ jobs:
         run: corepack enable
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: yarn
