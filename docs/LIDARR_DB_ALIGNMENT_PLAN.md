@@ -117,3 +117,36 @@ data-migration guard so existing DBs backfill before the drop.
 
 Large. ~25 files per legacy table, concentrated in mediafiles. Realistically
 3–5 focused sessions (one per phase). Phases 1–3 are the bulk; 4–5 are cleanup.
+
+## 7. Phase 0 inventory (read/write map) — done
+
+Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
+`ProviderAlbumArtists` 8, `ProviderMediaArtists` 3, `ProviderSimilarArtists` 3,
+`ProviderSimilarAlbums` 1.
+
+**Writers (cut over in Phase 3 — write canonical + `ProviderItems` instead):**
+- `repositories/music/AlbumRepository.ts` — INSERT/UPDATE/DELETE `ProviderAlbums` (keystone).
+- `repositories/music/MediaRepository.ts` — INSERT/UPDATE/DELETE `ProviderMedia` (keystone).
+- `services/mediafiles/import-service.ts` — INSERT/UPDATE `ProviderMedia`/`ProviderAlbums`, `ProviderAlbumArtists`.
+- `services/mediafiles/manual-import-service.ts` — INSERT/UPDATE `ProviderMedia`/`ProviderAlbums`/`ProviderAlbumArtists`.
+- `services/mediafiles/organizer.ts` — INSERT/UPDATE `ProviderMedia`.
+- `services/mediafiles/library-scan.ts` — UPDATE `ProviderMedia`/`ProviderAlbums`.
+- `services/mediafiles/audio-tag-service.ts` — UPDATE `ProviderMedia`/`ProviderAlbums` (tag write-back).
+- `services/music/refresh-album-service.ts`, `services/music/refresh-artist-service.ts` — scan upserts.
+- `services/metadata/metadata-identity-service.ts`, `services/metadata/version-grouper.ts`.
+- `services/config/module-fixer.ts` — one-time repair UPDATEs.
+- `services/jobs/runtime-maintenance.ts` (`repairMonitoringGaps`) + `scheduler-maintenance-handlers.ts` — **Phase 4**.
+
+**Readers (cut over in Phase 2 — point at canonical + `ProviderItems`):**
+`lyric-service`, `library-files-query-service`, `library-file-identity`,
+`library-files`, `library-metadata-backfill`, `metadata-files`,
+`rename-track-file-service`, `upgrader`, `import-matcher-service`,
+`provider-release-group-matcher`, `scan-refresh-state`, `refresh-policy`,
+`config/quality`, `jobs/command-history`, `providers/tidal/tidal-provider`,
+`repositories/music/ArtistRepository` (+ read paths of the two keystone repos).
+
+**Keystone:** `AlbumRepository` / `MediaRepository` are both the heaviest readers
+and writers — Phases 2 and 3 hinge on giving them canonical-backed
+implementations behind their existing method signatures, so call sites change
+little. **Next:** Phase 1 (TrackFiles canonical-first) — start with the dry-run
+re-link report (§5) before any schema/lookup change.
