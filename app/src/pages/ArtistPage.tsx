@@ -41,6 +41,7 @@ import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
 import { MediaCard } from "@/components/cards/MediaCard";
+import { useCardStyles } from "@/components/cards/cardStyles";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
@@ -283,25 +284,23 @@ const useStyles = makeStyles({
     paddingBottom: tokens.spacingVerticalS,
     // Scroll snap
     scrollSnapType: "x mandatory",
+    // Mirror the grid's column sizing so a card is the exact same width in both
+    // views — 3-up on mobile, 4-up ≥640px, 6-up ≥900px — with matching gaps.
+    // Cards beyond the visible count overflow into the horizontal scroll.
     "& > *": {
       scrollSnapAlign: "start",
-      width: "calc((100vw - 56px) / 3)",
+      width: `calc((100% - 2 * ${tokens.spacingHorizontalS}) / 3)`,
       flexShrink: 0,
     },
-    "@media (min-width: 480px)": {
+    "@media (min-width: 640px)": {
       gap: tokens.spacingHorizontalM,
       "& > *": {
-        width: "148px",
-      },
-    },
-    "@media (min-width: 768px)": {
-      "& > *": {
-        width: "calc((100% - (5 * 12px)) / 6)",
+        width: `calc((100% - 3 * ${tokens.spacingHorizontalM}) / 4)`,
       },
     },
     "@media (min-width: 900px)": {
       "& > *": {
-        width: "calc((100% - (5 * 12px)) / 6)",
+        width: `calc((100% - 5 * ${tokens.spacingHorizontalM}) / 6)`,
       },
     },
     // Hide scrollbar
@@ -318,119 +317,13 @@ const useStyles = makeStyles({
   sectionAction: {
     flexShrink: 0,
   },
-  card: {
-    minWidth: "0",
-    width: "100%",
-    maxWidth: "100%",
-    height: "100%",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    backdropFilter: "blur(10px)",
-    // Match the shared card surface (cardStyles.ts) so the glassmorphism is
-    // identical across Library / Artist / Album.
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
-    boxShadow: tokens.shadow8,
-    transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    padding: tokens.spacingVerticalNone,
-    "&:hover": {
-      transform: "translateY(-2px)",
-      boxShadow: tokens.shadow28,
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
-    },
-    "&:active": {
-      transform: "translateY(0px)",
-      boxShadow: tokens.shadow8,
-    },
-  },
-  cardPreview: {
-    position: "relative",
-    aspectRatio: "1/1",
-    width: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
-    margin: tokens.spacingVerticalNone,
-    padding: tokens.spacingVerticalNone,
-    overflow: "hidden",
-  },
-  cardImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    display: "block",
-    borderRadius: tokens.borderRadiusNone,
-  },
-  cardContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-  },
-  cardTitle: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
-    lineHeight: tokens.lineHeightBase300,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  cardTitleCenter: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
-    lineHeight: tokens.lineHeightBase300,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    textAlign: "center",
-  },
-  cardSubtitle: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    lineHeight: tokens.lineHeightBase200,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  cardTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-  },
-  explicitBadge: {
-    marginLeft: "auto",
-    flexShrink: 0,
-  },
-  monitoredBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-    zIndex: 2,
-  },
-  qualityBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-    zIndex: 2,
-  },
+  // Shared card surface (card / preview / image / content / title / subtitle /
+  // monitor indicator) now comes from useCardStyles in
+  // components/cards/cardStyles.ts. Only page-specific keys remain below.
   lockedBadge: {
     position: "absolute",
     bottom: tokens.spacingVerticalS,
     left: tokens.spacingHorizontalS,
-    zIndex: 2,
-  },
-  statusBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
     zIndex: 2,
   },
   slotBadgeStack: {
@@ -438,46 +331,6 @@ const useStyles = makeStyles({
     flexDirection: "column",
     alignItems: "flex-start",
     gap: tokens.spacingVerticalXXS,
-  },
-  slotBadgeRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    flexWrap: "wrap",
-    justifyContent: "flex-start",
-    gap: tokens.spacingHorizontalXS,
-    maxWidth: "150px",
-  },
-  monitorIndicator: {
-    position: "absolute",
-    bottom: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-    zIndex: 2,
-    width: "24px",
-    height: "24px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: tokens.borderRadiusCircular,
-    backdropFilter: "blur(20px)",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    border: "none",
-    padding: 0,
-    cursor: "pointer",
-  },
-  monitorIcon: {
-    width: "16px",
-    height: "16px",
-    color: tokens.colorNeutralForeground2,
-  },
-  monitorIconMuted: {
-    width: "16px",
-    height: "16px",
-    color: tokens.colorNeutralForegroundDisabled,
-  },
-  placeholderBg: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
   },
   placeholderInitial: {
     width: "100%",
@@ -495,20 +348,6 @@ const useStyles = makeStyles({
     height: "32px",
     color: tokens.colorNeutralForeground3,
   },
-  videoCard: {
-    minWidth: "0",
-  },
-  videoPreview: {
-    aspectRatio: "3/2",
-  },
-  videoPlaceholder: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
   avatarPlaceholder: {
     backgroundColor: tokens.colorNeutralBackground3,
     display: "flex",
@@ -518,18 +357,6 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightBold,
     color: tokens.colorNeutralForeground3,
   },
-  overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: tokens.colorBackgroundOverlay,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
-  },
 });
 
 const COLLAPSED_TOP_TRACK_COUNT = 5;
@@ -537,6 +364,7 @@ const EXPANDED_TOP_TRACK_COUNT = 50;
 
 const ArtistPage = () => {
   const styles = useStyles();
+  const cardStyles = useCardStyles();
   const { artistId } = useParams<{ artistId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -899,20 +727,20 @@ const ArtistPage = () => {
     return (
       <Card
         key={providerId}
-        className={styles.card}
+        className={cardStyles.card}
         onClick={() => navigate(`/artist/${providerId}`)}
       >
-        <div className={styles.cardPreview}>
+        <div className={cardStyles.cardPreview}>
           {imageUrl ? (
-            <img src={imageUrl} alt={name} className={styles.cardImage} loading="lazy" />
+            <img src={imageUrl} alt={name} className={cardStyles.cardImage} loading="lazy" />
           ) : (
             <div className={styles.placeholderInitial}>
               {name?.charAt(0)?.toUpperCase() || '?'}
             </div>
           )}
         </div>
-        <div className={styles.cardContent}>
-          <div className={styles.cardTitleCenter} title={name}>{name}</div>
+        <div className={cardStyles.cardContent}>
+          <div className={cardStyles.cardTitleCenter} title={name}>{name}</div>
         </div>
       </Card>
     );
@@ -951,14 +779,14 @@ const ArtistPage = () => {
       return (
         <Card
           key={providerId}
-          className={mergeClasses(styles.card, styles.videoCard)}
+          className={cardStyles.card}
           onClick={() => navigate(`/video/${providerId}`)}
         >
-          <div className={mergeClasses(styles.cardPreview, styles.videoPreview)}>
+          <div className={cardStyles.videoPreview}>
             {imageUrl ? (
-              <img src={imageUrl} alt={title} className={styles.cardImage} loading="lazy" />
+              <img src={imageUrl} alt={title} className={cardStyles.cardImage} loading="lazy" />
             ) : (
-              <div className={styles.videoPlaceholder}>
+              <div className={cardStyles.placeholderBg}>
                 <Play24Regular className={styles.playIcon} />
               </div>
             )}
@@ -974,15 +802,15 @@ const ArtistPage = () => {
             )}
             <button
               type="button"
-              className={styles.monitorIndicator}
+              className={cardStyles.monitorIndicator}
               onClick={(e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
               title={isLocked ? 'Monitoring is locked' : (isVideoMonitored ? 'Unmonitor' : 'Monitor')}
               style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
             >
               {isVideoMonitored ? (
-                <EyeOff24Regular className={styles.monitorIcon} />
+                <EyeOff24Regular className={cardStyles.monitorIcon} />
               ) : (
-                <Eye24Regular className={styles.monitorIcon} />
+                <Eye24Regular className={cardStyles.monitorIcon} />
               )}
             </button>
             {(() => {
@@ -999,9 +827,9 @@ const ArtistPage = () => {
               return null;
             })()}
           </div>
-          <div className={styles.cardContent}>
-            <div className={styles.cardTitle} title={title}>{title}</div>
-            <div className={styles.cardSubtitle} title={subtitle}>{subtitle}</div>
+          <div className={cardStyles.cardContent}>
+            <div className={cardStyles.cardTitle} title={title}>{title}</div>
+            <div className={cardStyles.cardSubtitle} title={subtitle}>{subtitle}</div>
           </div>
         </Card>
       );

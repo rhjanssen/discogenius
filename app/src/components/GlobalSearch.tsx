@@ -687,7 +687,17 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 case 'videos':
                 case 'top':
                 default:
-                    return <TrackListSkeleton rows={5} showCover showNumber={false} />;
+                    return (
+                        <TrackListSkeleton
+                            rows={5}
+                            showCover
+                            showNumber={false}
+                            showArtist
+                            showQuality={false}
+                            showHeader={false}
+                            actions={2}
+                        />
+                    );
             }
         };
 

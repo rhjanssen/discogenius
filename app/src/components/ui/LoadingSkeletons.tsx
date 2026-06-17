@@ -24,6 +24,13 @@ interface TrackListSkeletonProps {
   rows?: number;
   showCover?: boolean;
   showNumber?: boolean;
+  showArtist?: boolean;
+  showAlbum?: boolean;
+  showQuality?: boolean;
+  /** Desktop column-header row (album tracklist has one; search results don't). */
+  showHeader?: boolean;
+  /** Number of trailing action affordances per row. */
+  actions?: number;
   className?: string;
 }
 
@@ -67,84 +74,130 @@ interface DetailPageSkeletonProps {
 }
 
 const useStyles = makeStyles({
-  surface: {
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 64%, transparent)`,
-    backdropFilter: "blur(20px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-  },
-  trackList: {
+  // ── Track list (mirrors the Fluent Table in TrackList.tsx) ──────────────
+  // Transparent like the real table: row separators only, no glass surface.
+  tlTable: {
     display: "flex",
     flexDirection: "column",
     width: "100%",
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
   },
-  trackRow: {
+  tlHeaderRow: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "flex",
+      alignItems: "center",
+      gap: tokens.spacingHorizontalS,
+      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+      borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  tlHeaderLabel: {
+    height: "10px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  tlRow: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 52%, transparent)`,
+    gap: tokens.spacingHorizontalXXS,
+    paddingTop: tokens.spacingVerticalS,
+    paddingBottom: tokens.spacingVerticalS,
+    paddingLeft: tokens.spacingHorizontalXXS,
+    paddingRight: tokens.spacingHorizontalXXS,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke3}`,
     "@media (min-width: 768px)": {
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-      gap: tokens.spacingHorizontalM,
+      gap: tokens.spacingHorizontalS,
+      paddingLeft: tokens.spacingHorizontalM,
+      paddingRight: tokens.spacingHorizontalM,
     },
     ":last-child": {
       borderBottom: "none",
     },
   },
-  trackNumber: {
-    width: "28px",
-    height: "14px",
-    borderRadius: tokens.borderRadiusSmall,
-    flexShrink: 0,
-  },
-  trackCover: {
-    width: "44px",
-    height: "44px",
-    borderRadius: tokens.borderRadiusSmall,
-    flexShrink: 0,
-  },
-  trackBody: {
+  tlIndexCell: {
+    flex: "0 0 26px",
     display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    flex: 1,
-    minWidth: 0,
-  },
-  trackTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    minWidth: 0,
-  },
-  trackTitle: {
-    height: "16px",
-    width: "min(280px, 88%)",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  trackBadge: {
-    width: "32px",
-    height: "18px",
-    borderRadius: tokens.borderRadiusCircular,
+    justifyContent: "center",
     flexShrink: 0,
+    "@media (min-width: 768px)": {
+      flex: "0 0 40px",
+    },
   },
-  trackMetaRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    flexWrap: "wrap",
-  },
-  trackMeta: {
+  tlIndexBar: {
+    width: "14px",
     height: "12px",
     borderRadius: tokens.borderRadiusSmall,
   },
-  trackActions: {
+  tlCover: {
+    width: "36px",
+    height: "36px",
+    borderRadius: tokens.borderRadiusSmall,
+    flexShrink: 0,
+  },
+  tlTitleCell: {
+    flex: "1 1 0px",
+    minWidth: 0,
     display: "flex",
+    flexDirection: "column",
+    rowGap: tokens.spacingVerticalXXS,
+  },
+  tlTitleBar: {
+    height: "14px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  // Artist/album stacked under the title on mobile (their own columns on desktop).
+  tlMobileSubBar: {
+    height: "10px",
+    width: "44%",
+    borderRadius: tokens.borderRadiusSmall,
+    "@media (min-width: 768px)": {
+      display: "none",
+    },
+  },
+  tlFlexCell: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "flex",
+      flex: "1 1 0px",
+      minWidth: 0,
+    },
+  },
+  tlFlexBar: {
+    height: "12px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  tlQualityCell: {
+    flex: "0 0 auto",
+    display: "flex",
+    justifyContent: "flex-end",
+    flexShrink: 0,
+    "@media (min-width: 768px)": {
+      flex: "0 0 120px",
+    },
+  },
+  tlQualityPill: {
+    width: "46px",
+    height: "16px",
+    borderRadius: tokens.borderRadiusCircular,
+  },
+  tlTimeCell: {
+    flex: "0 0 auto",
+    display: "flex",
+    justifyContent: "flex-end",
+    flexShrink: 0,
+    "@media (min-width: 768px)": {
+      flex: "0 0 52px",
+    },
+  },
+  tlTimeBar: {
+    width: "32px",
+    height: "12px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  tlActionsCell: {
+    flex: "0 0 auto",
+    display: "flex",
+    justifyContent: "flex-end",
     gap: tokens.spacingHorizontalXS,
-    alignItems: "center",
-    marginLeft: "auto",
     flexShrink: 0,
   },
   actionDot: {
@@ -218,7 +271,8 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    // Matches the real card surface (cardStyles.ts `cardContent`).
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
   },
   mediaCardTitleRow: {
     display: "flex",
@@ -524,14 +578,14 @@ const useStyles = makeStyles({
     width: "100%",
   },
   detailHeader: {
+    // Matches the real ArtistPage/AlbumPage header: a transparent rounded
+    // region sitting over the global UltraBlur background — NOT a bordered
+    // glass card. (No background/border/backdrop here on purpose.)
     position: "relative",
     minHeight: "200px",
     padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL}`,
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-    backdropFilter: "blur(24px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     "@media (min-width: 768px)": {
       minHeight: "300px",
       padding: `${tokens.spacingVerticalXXL} ${tokens.spacingHorizontalXL}`,
@@ -550,23 +604,35 @@ const useStyles = makeStyles({
     },
   },
   detailArt: {
-    width: "140px",
-    height: "140px",
     flexShrink: 0,
+  },
+  // Artist avatar sizing (matches ArtistPage `artistImage`: 120 / 160 / 200).
+  detailArtCircle: {
+    borderRadius: tokens.borderRadiusCircular,
+    width: "120px",
+    height: "120px",
     "@media (min-width: 480px)": {
-      width: "180px",
-      height: "180px",
+      width: "160px",
+      height: "160px",
+    },
+    "@media (min-width: 768px)": {
+      width: "200px",
+      height: "200px",
+    },
+  },
+  // Album cover sizing (matches AlbumPage `coverArt`: 168 / 200 / 220).
+  detailArtRounded: {
+    borderRadius: tokens.borderRadiusLarge,
+    width: "168px",
+    height: "168px",
+    "@media (min-width: 480px)": {
+      width: "200px",
+      height: "200px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
       height: "220px",
     },
-  },
-  detailArtCircle: {
-    borderRadius: tokens.borderRadiusCircular,
-  },
-  detailArtRounded: {
-    borderRadius: tokens.borderRadiusLarge,
   },
   detailInfo: {
     display: "flex",
@@ -625,7 +691,8 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalM,
   },
   detailSectionTitle: {
-    height: "24px",
+    // Matches Title2 (fontSizeHero700 ≈ 28px) used for section headers.
+    height: "28px",
     width: "140px",
     borderRadius: tokens.borderRadiusSmall,
   },
@@ -666,34 +733,85 @@ export function TrackListSkeleton({
   rows = 8,
   showCover = false,
   showNumber = true,
+  showArtist = false,
+  showAlbum = false,
+  showQuality = true,
+  showHeader = true,
+  actions = 1,
   className,
 }: TrackListSkeletonProps) {
   const styles = useStyles();
+  const actionCount = Math.max(actions, 1);
 
   return (
     <Skeleton
       animation="wave"
-      className={mergeClasses(styles.trackList, styles.surface, className)}
+      className={mergeClasses(styles.tlTable, className)}
       aria-busy="true"
       aria-label="Loading tracks"
     >
-      {range(rows).map((row) => (
-        <div key={row} className={styles.trackRow}>
-          {showNumber ? <SkeletonItem className={styles.trackNumber} /> : null}
-          {showCover ? <SkeletonItem className={styles.trackCover} /> : null}
-          <div className={styles.trackBody}>
-            <div className={styles.trackTitleRow}>
-              <SkeletonItem className={styles.trackTitle} />
-              <SkeletonItem className={styles.trackBadge} />
+      {/* Desktop-only header row, mirroring the real table's columns. */}
+      {showHeader ? (
+        <div className={styles.tlHeaderRow}>
+          {showNumber ? (
+            <div className={styles.tlIndexCell}>
+              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "10px" }} />
             </div>
-            <div className={styles.trackMetaRow}>
-              <SkeletonItem className={styles.trackMeta} style={{ width: row % 2 === 0 ? "84px" : "112px" }} />
-              <SkeletonItem className={styles.trackMeta} style={{ width: row % 3 === 0 ? "64px" : "92px" }} />
-              <SkeletonItem className={styles.trackMeta} style={{ width: row % 2 === 0 ? "42px" : "54px" }} />
-            </div>
+          ) : null}
+          {showCover ? <div className={styles.tlCover} style={{ visibility: "hidden" }} /> : null}
+          <div className={styles.tlTitleCell}>
+            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "40px" }} />
           </div>
-          <div className={styles.trackActions}>
-            {range(4).map((action) => (
+          {showArtist ? (
+            <div className={styles.tlFlexCell}>
+              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
+            </div>
+          ) : null}
+          {showAlbum ? (
+            <div className={styles.tlFlexCell}>
+              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
+            </div>
+          ) : null}
+          {showQuality ? <div className={styles.tlQualityCell} /> : null}
+          <div className={styles.tlTimeCell}>
+            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "32px" }} />
+          </div>
+          <div className={styles.tlActionsCell} />
+        </div>
+      ) : null}
+
+      {range(rows).map((row) => (
+        <div key={row} className={styles.tlRow}>
+          {showNumber ? (
+            <div className={styles.tlIndexCell}>
+              <SkeletonItem className={styles.tlIndexBar} />
+            </div>
+          ) : null}
+          {showCover ? <SkeletonItem className={styles.tlCover} /> : null}
+          <div className={styles.tlTitleCell}>
+            <SkeletonItem className={styles.tlTitleBar} style={{ width: row % 2 === 0 ? "72%" : "56%" }} />
+            {showArtist || showAlbum || showCover ? <SkeletonItem className={styles.tlMobileSubBar} /> : null}
+          </div>
+          {showArtist ? (
+            <div className={styles.tlFlexCell}>
+              <SkeletonItem className={styles.tlFlexBar} style={{ width: row % 2 === 0 ? "58%" : "70%" }} />
+            </div>
+          ) : null}
+          {showAlbum ? (
+            <div className={styles.tlFlexCell}>
+              <SkeletonItem className={styles.tlFlexBar} style={{ width: row % 3 === 0 ? "64%" : "50%" }} />
+            </div>
+          ) : null}
+          {showQuality ? (
+            <div className={styles.tlQualityCell}>
+              <SkeletonItem className={styles.tlQualityPill} />
+            </div>
+          ) : null}
+          <div className={styles.tlTimeCell}>
+            <SkeletonItem className={styles.tlTimeBar} />
+          </div>
+          <div className={styles.tlActionsCell}>
+            {range(actionCount).map((action) => (
               <SkeletonItem key={action} className={styles.actionDot} />
             ))}
           </div>
@@ -1024,7 +1142,7 @@ export function DetailPageSkeleton({
         {content === "cards" ? (
           <CardGridSkeleton cards={cards} className={cardsClassName} />
         ) : (
-          <TrackListSkeleton rows={rows} />
+          <TrackListSkeleton rows={rows} showArtist showQuality />
         )}
       </div>
     </div>

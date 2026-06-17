@@ -318,10 +318,6 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     lineHeight: tokens.lineHeightBase200,
   },
-  explicitBadge: {
-    marginLeft: "auto",
-    flexShrink: 0,
-  },
   // Similar Albums Section
   sectionHeader: {
     marginBottom: tokens.spacingVerticalM,
@@ -339,87 +335,16 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
-  albumCard: {
-    minWidth: "0",
-    width: "100%",
-    maxWidth: "100%",
-    height: "100%",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    backdropFilter: "blur(10px)",
-    // Match the shared card surface (cardStyles.ts) so the glassmorphism is
-    // identical across Library / Artist / Album.
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+  // Edition cards in the "Other releases" / "Similar albums" grids use the
+  // shared card surface from useCardStyles (components/cards/cardStyles.ts) via
+  // MediaCard. This page-specific key only highlights the edition currently
+  // being viewed.
+  currentEdition: {
+    outlineWidth: tokens.strokeWidthThick,
+    outlineStyle: "solid",
+    outlineColor: tokens.colorBrandStroke1,
+    outlineOffset: `calc(-1 * ${tokens.strokeWidthThick})`,
     borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
-    boxShadow: tokens.shadow8,
-    transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    padding: tokens.spacingVerticalNone,
-    "&:hover": {
-      transform: "translateY(-2px)",
-      boxShadow: tokens.shadow28,
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
-    },
-    "&:active": {
-      transform: "translateY(0px)",
-      boxShadow: tokens.shadow8,
-    },
-  },
-  albumCardPreview: {
-    position: "relative",
-    aspectRatio: "1/1",
-    width: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
-    margin: tokens.spacingVerticalNone,
-    padding: tokens.spacingVerticalNone,
-    overflow: "hidden",
-  },
-  albumCardImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    display: "block",
-  },
-  albumCardContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-  },
-  albumCardTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-  },
-  albumCardQualityBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-  },
-  albumCardTitle: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  albumCardSubtitle: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  placeholderBg: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
   },
   sectionSpacing: {
     marginTop: tokens.spacingVerticalXXL,
@@ -908,7 +833,7 @@ const AlbumPage = () => {
     return (
       <MediaCard
         key={item.id}
-        className={mergeClasses(styles.albumCard, isCurrent && styles.albumCard)}
+        className={isCurrent ? styles.currentEdition : undefined}
         to={target}
         imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
         fallbackImageUrl={getAlbumCover(item.provider_cover_id, "medium")}
@@ -916,7 +841,6 @@ const AlbumPage = () => {
         title={item.title}
         subtitle={subtitle}
         explicit={item.explicit}
-        mini
         statusBadge={statusBadge}
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}

@@ -19,6 +19,10 @@ export const useCardStyles = makeStyles({
         boxShadow: tokens.shadow8,
         transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
         padding: tokens.spacingVerticalNone,
+        // Drop Fluent Card's default 12px row-gap; cardContent's own (symmetric)
+        // padding owns the image→text spacing, so the gap isn't double-counted
+        // on top.
+        gap: tokens.spacingVerticalNone,
         minWidth: 0,
         width: "100%",
         maxWidth: "100%",
@@ -47,6 +51,7 @@ export const useCardStyles = makeStyles({
         cursor: "pointer",
         transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
         padding: tokens.spacingVerticalNone,
+        gap: tokens.spacingVerticalNone,
         minWidth: 0,
         width: "100%",
         maxWidth: "100%",
@@ -98,12 +103,14 @@ export const useCardStyles = makeStyles({
         inset: 0,
     },
 
-    // Text content below the preview
+    // Text content below the preview. Even vertical padding — the card carries
+    // no row-gap of its own (see `card`/`cardMini`), so this single token sets
+    // both the image→title and info→edge spacing symmetrically.
     cardContent: {
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+        padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
     },
 
     // Title row (title + badges)
