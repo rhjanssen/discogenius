@@ -744,12 +744,14 @@ export class ArtistQueryService {
          LEFT JOIN ReleaseGroupSlots spatial
            ON spatial.release_group_mbid = rg.mbid
           AND spatial.slot = 'spatial'
+         -- OR rg.mbid IN (subquery), instead of OR EXISTS(...), keeps both
+         -- branches index-searchable so SQLite OR-optimizes rather than
+         -- scanning Albums.
          WHERE rg.artist_mbid = ?
-            OR EXISTS (
-              SELECT 1
+            OR rg.mbid IN (
+              SELECT scope.release_group_mbid
               FROM ArtistReleaseGroups scope
-              WHERE scope.release_group_mbid = rg.mbid
-                AND scope.artist_mbid = ?
+              WHERE scope.artist_mbid = ?
             )
          ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
        `).all(artist.mbid, artist.mbid) as any[]
@@ -781,6 +783,21 @@ export class ArtistQueryService {
         }
 
         const topTracks = db.prepare(`
+      -- Drive from the artist's release groups (a small, indexed set) instead of
+      -- scanning all Tracks: the old "WHERE release_group.artist_mbid = ? OR
+      -- EXISTS(...)" forced a full Tracks scan (~750k rows) with per-row
+      -- correlated subqueries — ~58s on a large library. Restricting
+      -- track.release_mbid to the artist's releases uses the release index.
+      WITH artist_rgs(mbid) AS (
+        SELECT mbid FROM Albums WHERE artist_mbid = ?
+        UNION
+        SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = ?
+      ),
+      artist_releases(mbid) AS (
+        SELECT ar.mbid
+        FROM AlbumReleases ar
+        JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
+      )
       SELECT
         track.mbid AS id,
         release_group.mbid AS album_id,
@@ -876,13 +893,7 @@ export class ArtistQueryService {
          ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
          LIMIT 1
        )
-      WHERE release_group.artist_mbid = ?
-         OR EXISTS (
-           SELECT 1
-           FROM ArtistReleaseGroups scope
-           WHERE scope.release_group_mbid = release_group.mbid
-             AND scope.artist_mbid = ?
-         )
+      WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
       GROUP BY track.mbid
       ORDER BY popularity DESC, release_date DESC, track.mbid ASC
       LIMIT 24

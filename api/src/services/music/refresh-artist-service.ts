@@ -1171,90 +1171,89 @@ export class RefreshArtistService {
 
     static getScanLevel(artistId: string): ScanLevel {
         const artist = db.prepare(`
-            SELECT
-                id,
-                name,
-                picture,
-                bio_text,
-                last_scanned,
-                mbid,
-                (
-                    SELECT COUNT(DISTINCT rg.mbid)
-                    FROM Albums rg
-                    LEFT JOIN ArtistReleaseGroups scope
-                      ON scope.release_group_mbid = rg.mbid
-                    WHERE rg.artist_mbid = Artists.mbid
-                       OR scope.artist_mbid = Artists.mbid
-                ) AS release_group_count,
-                (
-                    SELECT COUNT(DISTINCT release.mbid)
-                    FROM AlbumReleases release
-                    JOIN Albums rg ON rg.mbid = release.release_group_mbid
-                    LEFT JOIN ArtistReleaseGroups scope
-                      ON scope.release_group_mbid = rg.mbid
-                    WHERE rg.artist_mbid = Artists.mbid
-                       OR scope.artist_mbid = Artists.mbid
-                ) AS release_count,
-                (
-                    SELECT COUNT(DISTINCT track.mbid)
-                    FROM Tracks track
-                    JOIN AlbumReleases release ON release.mbid = track.release_mbid
-                    JOIN Albums rg ON rg.mbid = release.release_group_mbid
-                    LEFT JOIN ArtistReleaseGroups scope
-                      ON scope.release_group_mbid = rg.mbid
-                    WHERE rg.artist_mbid = Artists.mbid
-                       OR scope.artist_mbid = Artists.mbid
-                ) AS track_count,
-                (
-                    SELECT COUNT(*)
-                    FROM Recordings recording
-                    WHERE recording.is_video = 1
-                      AND recording.artist_mbid = Artists.mbid
-                ) AS video_count,
-                (
-                    SELECT COUNT(*)
-                    FROM ProviderItems item
-                    WHERE item.entity_type IN ('album', 'video')
-                      AND item.match_status IN ('verified', 'probable')
-                      AND (
-                        item.artist_mbid = Artists.mbid
-                        OR EXISTS (
-                            SELECT 1
-                            FROM Albums rg
-                            LEFT JOIN ArtistReleaseGroups scope
-                              ON scope.release_group_mbid = rg.mbid
-                            WHERE rg.mbid = item.release_group_mbid
-                              AND (rg.artist_mbid = Artists.mbid OR scope.artist_mbid = Artists.mbid)
-                        )
-                      )
-                ) AS provider_offer_count
+            SELECT id, name, bio_text, last_scanned, mbid
             FROM Artists
             WHERE id = ?
         `).get(artistId) as {
             id?: string;
             name?: string | null;
             bio_text?: string | null;
-            release_group_count?: number;
-            release_count?: number;
-            track_count?: number;
-            video_count?: number;
-            provider_offer_count?: number;
+            mbid?: string | null;
         } | undefined;
 
         if (!artist) {
             return ScanLevel.NONE;
         }
 
-        const releaseGroupCount = Number(artist.release_group_count || 0);
-        const releaseCount = Number(artist.release_count || 0);
-        const trackCount = Number(artist.track_count || 0);
-        const videoCount = Number(artist.video_count || 0);
-        const providerOfferCount = Number(artist.provider_offer_count || 0);
-        if (
-            (releaseGroupCount > 0 && (releaseCount > 0 || trackCount > 0 || providerOfferCount > 0))
-            || videoCount > 0
-        ) {
-            return ScanLevel.DEEP;
+        // DEEP iff (has a release group AND (a release OR track OR provider offer))
+        // OR has a video. These are presence checks, so we use short-circuiting
+        // EXISTS scoped to the artist's release groups instead of the previous
+        // COUNT(DISTINCT ...) with "WHERE artist_mbid = ? OR scope...", which
+        // full-scanned the ~750k-row Tracks table on every artist-page load
+        // (~80s for prolific artists). The cheap checks (video / release group /
+        // release) resolve DEEP for essentially every real artist; the heavier
+        // track / provider-offer checks only run for the rare artist that has
+        // release groups but no releases imported yet.
+        if (artist.mbid) {
+            const mbid = String(artist.mbid);
+            const cheap = db.prepare(`
+                WITH artist_rgs(mbid) AS (
+                    SELECT mbid FROM Albums WHERE artist_mbid = @mbid
+                    UNION
+                    SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = @mbid
+                )
+                SELECT
+                    EXISTS(
+                        SELECT 1 FROM Recordings r
+                        WHERE r.is_video = 1 AND r.artist_mbid = @mbid
+                    ) AS has_video,
+                    EXISTS(SELECT 1 FROM artist_rgs) AS has_release_group,
+                    EXISTS(
+                        SELECT 1 FROM AlbumReleases ar
+                        WHERE ar.release_group_mbid IN (SELECT mbid FROM artist_rgs)
+                    ) AS has_release
+            `).get({ mbid }) as { has_video: number; has_release_group: number; has_release: number };
+
+            if (cheap.has_video) {
+                return ScanLevel.DEEP;
+            }
+
+            if (cheap.has_release_group) {
+                if (cheap.has_release) {
+                    return ScanLevel.DEEP;
+                }
+
+                const deeper = db.prepare(`
+                    WITH artist_rgs(mbid) AS (
+                        SELECT mbid FROM Albums WHERE artist_mbid = @mbid
+                        UNION
+                        SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = @mbid
+                    ),
+                    artist_releases(mbid) AS (
+                        SELECT ar.mbid
+                        FROM AlbumReleases ar
+                        JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
+                    )
+                    SELECT
+                        EXISTS(
+                            SELECT 1 FROM Tracks t
+                            WHERE t.release_mbid IN (SELECT mbid FROM artist_releases)
+                        ) AS has_track,
+                        EXISTS(
+                            SELECT 1 FROM ProviderItems item
+                            WHERE item.entity_type IN ('album', 'video')
+                              AND item.match_status IN ('verified', 'probable')
+                              AND (
+                                item.artist_mbid = @mbid
+                                OR item.release_group_mbid IN (SELECT mbid FROM artist_rgs)
+                              )
+                        ) AS has_offer
+                `).get({ mbid }) as { has_track: number; has_offer: number };
+
+                if (deeper.has_track || deeper.has_offer) {
+                    return ScanLevel.DEEP;
+                }
+            }
         }
 
         if (artist.bio_text !== null && artist.bio_text !== undefined) {

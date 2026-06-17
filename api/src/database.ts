@@ -725,6 +725,11 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
+  // The download-queue list resolves each item's metadata by provider_id (N+1
+  // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
+  // with `provider` (the provider *name*), so a `WHERE provider_id = ?` lookup
+  // full-scanned the table per queue item — the ~15s GET /api/v1/queue. Index it.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_id ON ProviderItems(provider_id, entity_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_source ON RecordingRelations(source_recording_id, relation_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_target ON RecordingRelations(target_recording_id, relation_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recording_relations_foreign_source ON RecordingRelations(source_foreign_recording_id, relation_type)");
@@ -733,6 +738,18 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_group_release_slot ON ReleaseGroupSlots(release_group_mbid, selected_release_mbid, slot)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_track_type ON TrackFiles(canonical_track_mbid, file_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_recording_type ON TrackFiles(canonical_recording_mbid, file_type)");
+  // Recordings is large on real libraries (one row per MusicBrainz recording —
+  // ~280k on a 2.3k-artist library). Artist-completion, download-stats and the
+  // video counts filter Recordings by artist on every library + dashboard load;
+  // without these the planner full-scans Recordings per artist, which turned
+  // /api/stats into a ~38s synchronous event-loop stall (cascading into
+  // app-wide "request timed out" errors). Indexed, that path drops to ~1s.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_artist_mbid ON Recordings(artist_mbid, is_video)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_artist_metadata ON Recordings(artist_metadata_id, is_video)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_video ON Recordings(is_video) WHERE is_video = 1");
+  // (Tracks.recording_mbid is already indexed by idx_mb_tracks_recording_mbid in
+  // initDatabase — no separate index needed here.)
 }
 
 type MigrationRunSummary = {

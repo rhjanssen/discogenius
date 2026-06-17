@@ -63,16 +63,19 @@ export class LibraryStatsQueryService {
                 downloaded: countDownloadedTracks(),
             },
             videos: {
+                // is_video / monitored are NOT NULL DEFAULT 0, so the bare
+                // equality is equivalent to COALESCE(...) = 1 but lets SQLite
+                // use the partial idx_recordings_video index (full scan → seek).
                 total: (db.prepare(`
                     SELECT COUNT(*) AS count
                     FROM Recordings
-                    WHERE COALESCE(is_video, 0) = 1
+                    WHERE is_video = 1
                 `).get() as { count: number }).count,
                 monitored: (db.prepare(`
                     SELECT COUNT(*) AS count
                     FROM Recordings
-                    WHERE COALESCE(is_video, 0) = 1
-                      AND COALESCE(monitored, 0) = 1
+                    WHERE is_video = 1
+                      AND monitored = 1
                 `).get() as { count: number }).count,
                 downloaded: countDownloadedVideos(),
             },
