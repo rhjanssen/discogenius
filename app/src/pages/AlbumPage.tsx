@@ -293,19 +293,45 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...standardDetailActionButtonStyles,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: tokens.spacingHorizontalXS,
+    "& .fui-Button__content": {
+      fontSize: tokens.fontSizeBase200,
+      lineHeight: tokens.lineHeightBase200,
+      marginLeft: "0 !important",
+      whiteSpace: "nowrap",
+    },
+    "& .fui-Button__icon": {
+      marginRight: 0,
+      flexShrink: 0,
+    },
+    "@media (min-width: 768px)": {
+      ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
+    },
   },
   splitDownload: {
     display: "inline-flex",
     alignItems: "stretch",
     borderRadius: tokens.borderRadiusMedium,
     overflow: "hidden",
+    flex: "1 1 0",
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      flex: "0 0 auto",
+      minWidth: "auto",
+    },
   },
   splitDownloadPrimary: {
     borderTopRightRadius: 0,
     borderBottomRightRadius: 0,
+    flex: "1 1 auto",
+    minWidth: 0,
   },
   splitDownloadMenu: {
     minWidth: "36px",
+    flex: "0 0 36px",
     paddingLeft: tokens.spacingHorizontalXS,
     paddingRight: tokens.spacingHorizontalXS,
     borderTopLeftRadius: 0,
@@ -978,7 +1004,7 @@ const AlbumPage = () => {
                 );
               })()}
 
-              <Overflow minimumVisible={2}>
+              <Overflow minimumVisible={3}>
                 <div className={styles.actions}>
                   {/* Monitor Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="monitor" priority={3}>

@@ -2,7 +2,6 @@ import {
   TabList,
   Tab,
   Button,
-
   Text,
   makeStyles,
   tokens,
@@ -16,7 +15,6 @@ import {
   MenuGroup,
   MenuGroupHeader,
   mergeClasses,
-  SearchBox,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
@@ -36,7 +34,6 @@ import {
   Person24Regular,
   LockClosed24Regular,
   LockOpen24Regular,
-  Add24Regular,
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -77,32 +74,6 @@ import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
-  searchBox: {
-    minWidth: "220px",
-    maxWidth: "320px",
-    flexGrow: 0,
-    flexShrink: 1,
-  },
-  desktopSearchBox: {
-    "@media (max-width: 639px)": {
-      display: "none",
-    },
-  },
-  mobileSearchRow: {
-    display: "block",
-    width: "100%",
-    "@media (min-width: 640px)": {
-      display: "none",
-    },
-  },
-  mobileSearchBox: {
-    // minWidth 0 lets the box shrink to the padded container instead of
-    // pushing its dismiss icon past the viewport edge on narrow screens.
-    minWidth: 0,
-    maxWidth: "100%",
-    width: "100%",
-    boxSizing: "border-box",
-  },
   container: {
     display: "flex",
     flexDirection: "column",
@@ -344,7 +315,6 @@ const Library = () => {
     setAlbumLockFilter,
     setAlbumQualityFilter,
     setSortOptions,
-    setSearchQuery,
     artistsIsPopulated,
     albumsIsPopulated,
     artistsHasRefreshError,
@@ -395,19 +365,6 @@ const Library = () => {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(
     persistedSettings?.sortDirection ?? 'desc'
   );
-  const [localSearchQuery, setLocalSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchQuery(localSearchQuery);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [localSearchQuery]);
-
-  useEffect(() => {
-    setSearchQuery(debouncedSearchQuery);
-  }, [debouncedSearchQuery, setSearchQuery]);
 
   // Persist settings to localStorage whenever they change
   useEffect(() => {
@@ -468,7 +425,6 @@ const Library = () => {
     libraryFilter,
     sort: sortBy,
     dir: sortDirection,
-    search: debouncedSearchQuery,
     enabled: selectedTab === 'tracks',
   });
   const {
@@ -488,7 +444,6 @@ const Library = () => {
     locked: lockedFilter,
     sort: sortBy,
     dir: sortDirection,
-    search: debouncedSearchQuery,
     enabled: selectedTab === 'videos',
   });
   const visibleAlbumIds = useMemo(
@@ -966,16 +921,6 @@ const Library = () => {
   };
 
   const renderEmptyLibraryAction = () => {
-    const addArtistButton = (
-      <Button
-        appearance="primary"
-        icon={<Add24Regular />}
-        onClick={() => navigate("/search")}
-      >
-        Add Artist
-      </Button>
-    );
-
     const importButton = (() => {
       if (importableFollowedProviders.length > 1) {
         return (
@@ -1019,7 +964,6 @@ const Library = () => {
 
     return (
       <>
-        {addArtistButton}
         {importButton}
       </>
     );
@@ -1557,7 +1501,7 @@ const Library = () => {
   const renderNoResultsContent = (mediaLabel: "artists" | "albums" | "tracks" | "videos") => (
     <EmptyState
       title={`No ${mediaLabel} found`}
-      description={`No ${mediaLabel} match your current filters or search.`}
+      description={`No ${mediaLabel} match your current filters.`}
       icon={<Search24Regular />}
       minHeight="220px"
     />
@@ -1939,12 +1883,6 @@ const Library = () => {
           </div>
 
           <div className={styles.desktopControlsRow}>
-            <SearchBox
-              placeholder="Filter..."
-              value={localSearchQuery}
-              onChange={(_, data) => setLocalSearchQuery(data.value || '')}
-              className={mergeClasses(styles.searchBox, styles.desktopSearchBox)}
-            />
             <div className={styles.compactActions}>
               {renderSortMenu()}
 
@@ -1976,15 +1914,6 @@ const Library = () => {
               ) : null}
             </div>
           </div>
-        </div>
-
-        <div className={styles.mobileSearchRow}>
-          <SearchBox
-            placeholder="Filter..."
-            value={localSearchQuery}
-            onChange={(_, data) => setLocalSearchQuery(data.value || '')}
-            className={mergeClasses(styles.searchBox, styles.mobileSearchBox)}
-          />
         </div>
 
         {selectedTab === "artists" && (

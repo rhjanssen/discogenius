@@ -62,6 +62,21 @@ type AlbumTrackRow = {
   recording_mbid?: string | null;
 };
 
+type MatchedAlbumTrackRow = {
+  id: string | number;
+  album_id: string | number | null;
+  artist_id: string | number | null;
+  title: string | null;
+  version: string | null;
+  explicit: number | null;
+  quality: string | null;
+  track_number: number | null;
+  volume_number: number | null;
+  mbid: string | null;
+  canonical_track_mbid: string | null;
+  canonical_recording_mbid: string | null;
+};
+
 type StagedAudioMetadata = {
   title?: string;
   trackNumber?: number;
@@ -276,6 +291,21 @@ export class OrganizerService {
       .replace(/[^a-z0-9]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  private static parseJsonObject(value: unknown): Record<string, any> {
+    if (!value) {
+      return {};
+    }
+    if (typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, any>;
+    }
+    try {
+      const parsed = JSON.parse(String(value));
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
   }
 
   private static buildTrackMatchTitles(track: AlbumTrackRow): string[] {
@@ -583,6 +613,119 @@ export class OrganizerService {
     }
 
     return matches;
+  }
+
+  private static resolveMatchedCanonicalAlbumTrackRow(params: {
+    provider: string;
+    trackId: string;
+    releaseMbid: string;
+    fallbackAlbumId: string;
+    fallbackArtistId: string;
+    fallbackQuality: string | null;
+  }): MatchedAlbumTrackRow | null {
+    const providerTrack = db.prepare(`
+      SELECT
+        pi.provider_id,
+        pi.title,
+        pi.version,
+        pi.explicit,
+        pi.quality,
+        pi.track_mbid,
+        pi.recording_mbid,
+        pi.match_evidence,
+        pm.id AS provider_media_id,
+        pm.album_id AS provider_album_id,
+        pm.artist_id AS provider_artist_id,
+        pm.title AS provider_media_title,
+        pm.version AS provider_media_version,
+        pm.explicit AS provider_media_explicit,
+        pm.quality AS provider_media_quality,
+        pm.track_number AS provider_media_track_number,
+        pm.volume_number AS provider_media_volume_number,
+        pm.mbid AS provider_media_recording_mbid
+      FROM ProviderItems pi
+      LEFT JOIN ProviderMedia pm ON CAST(pm.id AS TEXT) = CAST(pi.provider_id AS TEXT)
+      WHERE pi.provider = ?
+        AND pi.entity_type = 'track'
+        AND pi.provider_id = ?
+        AND pi.release_mbid = ?
+      LIMIT 1
+    `).get(params.provider, params.trackId, params.releaseMbid) as any;
+
+    if (providerTrack) {
+      const evidence = this.parseJsonObject(providerTrack.match_evidence);
+      const mediumPosition = Number(evidence.mediumPosition || providerTrack.provider_media_volume_number || 0);
+      const trackPosition = Number(evidence.trackPosition || providerTrack.provider_media_track_number || 0);
+      const canonicalTrack = db.prepare(`
+        SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
+        FROM Tracks t
+        WHERE t.release_mbid = ?
+          AND (
+            (? IS NOT NULL AND t.mbid = ?)
+            OR (
+              ? IS NULL
+              AND ? > 0
+              AND ? > 0
+              AND t.medium_position = ?
+              AND t.position = ?
+            )
+          )
+        ORDER BY t.medium_position, t.position
+        LIMIT 1
+      `).get(
+        params.releaseMbid,
+        providerTrack.track_mbid || null,
+        providerTrack.track_mbid || null,
+        providerTrack.track_mbid || null,
+        mediumPosition,
+        trackPosition,
+        mediumPosition,
+        trackPosition,
+      ) as any;
+
+      return {
+        id: providerTrack.provider_media_id || providerTrack.provider_id || params.trackId,
+        album_id: providerTrack.provider_album_id || params.fallbackAlbumId,
+        artist_id: providerTrack.provider_artist_id || params.fallbackArtistId,
+        title: providerTrack.provider_media_title || providerTrack.title || canonicalTrack?.title || null,
+        version: providerTrack.provider_media_version || providerTrack.version || null,
+        explicit: providerTrack.provider_media_explicit ?? providerTrack.explicit ?? null,
+        quality: providerTrack.provider_media_quality || providerTrack.quality || params.fallbackQuality,
+        track_number: providerTrack.provider_media_track_number ?? canonicalTrack?.position ?? null,
+        volume_number: providerTrack.provider_media_volume_number ?? canonicalTrack?.medium_position ?? null,
+        mbid: providerTrack.provider_media_recording_mbid || providerTrack.recording_mbid || canonicalTrack?.recording_mbid || null,
+        canonical_track_mbid: canonicalTrack?.mbid || providerTrack.track_mbid || null,
+        canonical_recording_mbid: canonicalTrack?.recording_mbid || providerTrack.recording_mbid || null,
+      };
+    }
+
+    const canonicalTrack = db.prepare(`
+      SELECT
+        CAST(t.id AS TEXT) AS id,
+        ? AS album_id,
+        ? AS artist_id,
+        t.title,
+        NULL AS version,
+        NULL AS explicit,
+        ? AS quality,
+        t.position AS track_number,
+        t.medium_position AS volume_number,
+        t.recording_mbid AS mbid,
+        t.mbid AS canonical_track_mbid,
+        t.recording_mbid AS canonical_recording_mbid
+      FROM Tracks t
+      WHERE t.release_mbid = ?
+        AND CAST(t.id AS TEXT) = ?
+      LIMIT 1
+    `).get(
+      params.fallbackAlbumId,
+      params.fallbackArtistId,
+      params.fallbackQuality,
+      params.releaseMbid,
+      params.trackId,
+    ) as MatchedAlbumTrackRow | undefined;
+
+    return canonicalTrack || null;
   }
 
   /**
@@ -1331,42 +1474,14 @@ export class OrganizerService {
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         const placeholders = albumIds.map(() => '?').join(', ');
         const trackRow = trackId && canonicalContext?.releaseMbid
-          ? (db.prepare(`
-              SELECT
-                COALESCE(pm.id, pi.provider_id, CAST(t.id AS TEXT)) AS id,
-                COALESCE(pm.album_id, ?) AS album_id,
-                COALESCE(pm.artist_id, ?) AS artist_id,
-                COALESCE(pm.title, pi.title, t.title) AS title,
-                COALESCE(pm.version, pi.version) AS version,
-                COALESCE(pm.explicit, pi.explicit) AS explicit,
-                COALESCE(pm.quality, pi.quality, ?) AS quality,
-                COALESCE(pm.track_number, t.position) AS track_number,
-                COALESCE(pm.volume_number, t.medium_position) AS volume_number,
-                COALESCE(pm.mbid, pi.recording_mbid, t.recording_mbid) AS mbid,
-                t.mbid AS canonical_track_mbid,
-                t.recording_mbid AS canonical_recording_mbid
-              FROM Tracks t
-              LEFT JOIN ProviderItems pi
-                ON pi.provider = ?
-               AND pi.entity_type = 'track'
-               AND pi.release_mbid = t.release_mbid
-               AND (pi.provider_id = ? OR pi.track_mbid = t.mbid)
-              LEFT JOIN ProviderMedia pm ON CAST(pm.id AS TEXT) = CAST(pi.provider_id AS TEXT)
-              WHERE t.release_mbid = ?
-                AND (pi.provider_id = ? OR CAST(t.id AS TEXT) = ?)
-              ORDER BY CASE WHEN pi.provider_id = ? THEN 0 ELSE 1 END
-              LIMIT 1
-            `).get(
-              albumIds[0],
-              artistId,
-              canonicalContext.quality || album.quality || null,
-              canonicalContext.provider,
+          ? this.resolveMatchedCanonicalAlbumTrackRow({
+              provider: canonicalContext.provider,
               trackId,
-              canonicalContext.releaseMbid,
-              trackId,
-              trackId,
-              trackId,
-            ) as any)
+              releaseMbid: canonicalContext.releaseMbid,
+              fallbackAlbumId: albumIds[0],
+              fallbackArtistId: artistId,
+              fallbackQuality: canonicalContext.quality || album.quality || null,
+            })
           : trackId
             ? (db.prepare(`SELECT * FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any)
             : null;

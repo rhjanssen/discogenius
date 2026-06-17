@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  Badge,
   Button,
   Title3,
   makeStyles,
@@ -17,7 +18,6 @@ import { useQueueStatus } from "@/hooks/useQueueStatus";
 import GlobalSearch from "./GlobalSearch";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
-import { MobileBottomTabs } from "./MobileBottomTabs";
 import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
@@ -82,10 +82,7 @@ const useStyles = makeStyles({
     paddingTop: "env(safe-area-inset-top)",
     paddingLeft: "env(safe-area-inset-left)",
     paddingRight: "env(safe-area-inset-right)",
-    display: "none",
-    "@media (min-width: 640px)": {
-      display: "block",
-    },
+    display: "block",
   },
   navDark: {
     backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 70%, transparent)`,
@@ -101,13 +98,12 @@ const useStyles = makeStyles({
     marginRight: "auto",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
     boxSizing: "border-box",
     width: "100%",
     "@media (min-width: 640px)": {
-      flexDirection: "row",
-      alignItems: "center",
       gap: tokens.spacingHorizontalM,
       padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     },
@@ -115,11 +111,8 @@ const useStyles = makeStyles({
   headerRow: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
-    width: "100%",
-    "@media (min-width: 640px)": {
-      width: "auto",
-    },
+    flex: "0 0 auto",
+    minWidth: 0,
   },
   logoSection: {
     display: "flex",
@@ -133,9 +126,10 @@ const useStyles = makeStyles({
   logoButton: {
     backgroundColor: tokens.colorTransparentBackground,
     border: "none",
-    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXXS}`,
+    padding: tokens.spacingVerticalNone,
     cursor: "pointer",
     minHeight: "36px",
+    minWidth: "34px",
     color: tokens.colorNeutralForeground1,
     maxWidth: "100%",
     "@media (min-width: 640px)": {
@@ -145,8 +139,8 @@ const useStyles = makeStyles({
   },
   logo: {
     display: "block",
-    height: "24px",
-    width: "24px",
+    height: "30px",
+    width: "30px",
     objectFit: "contain",
     flexShrink: 0,
     "@media (min-width: 640px)": {
@@ -155,43 +149,39 @@ const useStyles = makeStyles({
     },
   },
   logoTitle: {
+    display: "none",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     fontSize: tokens.fontSizeBase300,
     lineHeight: tokens.lineHeightBase300,
     "@media (min-width: 640px)": {
+      display: "block",
       fontSize: tokens.fontSizeBase500,
       lineHeight: tokens.lineHeightBase500,
     },
   },
   searchSection: {
-    display: "none",
-    "@media (min-width: 640px)": {
-      display: "flex",
-      flex: 1,
-      justifyContent: "center",
-      width: "100%",
-    },
+    display: "flex",
+    flex: "1 1 auto",
+    minWidth: 0,
+    justifyContent: "center",
   },
   searchContainer: {
     width: "100%",
     maxWidth: "500px",
-  },
-  desktopActions: {
-    display: "none",
-    "@media (min-width: 640px)": {
-      display: "flex",
-      alignItems: "center",
-      gap: tokens.spacingHorizontalS,
+    minWidth: 0,
+    "@media (max-width: 639px)": {
+      maxWidth: "none",
     },
   },
-  mobileActions: {
+  desktopActions: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalS,
+    gap: tokens.spacingHorizontalXXS,
+    flex: "0 0 auto",
     "@media (min-width: 640px)": {
-      display: "none",
+      gap: tokens.spacingHorizontalS,
     },
   },
   statusIndicator: {
@@ -212,14 +202,16 @@ const useStyles = makeStyles({
     minWidth: "36px",
     minHeight: "36px",
     "@media (max-width: 639px)": {
-      minWidth: "40px",
-      minHeight: "40px",
+      minWidth: "32px",
+      minHeight: "32px",
+      paddingLeft: tokens.spacingHorizontalXS,
+      paddingRight: tokens.spacingHorizontalXS,
     },
   },
   queueBadge: {
     position: "absolute",
-    top: `calc(-1 * ${tokens.spacingVerticalXS})`,
-    right: `calc(-1 * ${tokens.spacingHorizontalXS})`,
+    top: "1px",
+    right: "1px",
   },
   main: {
     maxWidth: "1320px",
@@ -231,9 +223,8 @@ const useStyles = makeStyles({
     // Safe area insets for PWA - left/right for notch devices, bottom for home indicator
     paddingLeft: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-left))`,
     paddingRight: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-right))`,
-    // Extra bottom padding on mobile for bottom tab bar (56px tab bar + safe area)
-    paddingBottom: `max(calc(64px + env(safe-area-inset-bottom)), ${tokens.spacingVerticalM})`,
-    paddingTop: `max(${tokens.spacingVerticalM}, env(safe-area-inset-top))`,
+    paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
+    paddingTop: tokens.spacingVerticalM,
     boxSizing: "border-box",
     width: "100%",
     overflowX: "hidden",
@@ -286,7 +277,8 @@ const Layout = () => {
   const { isDarkMode } = useTheme();
   const { stats } = useQueueStatus();
   const isAuthRoute = location.pathname === "/auth";
-  const showNavSearch = !isAuthRoute && location.pathname !== "/search";
+  const showNavSearch = !isAuthRoute;
+  const queueCount = stats.downloading + stats.pending;
 
   useEffect(() => {
     if (!isStandaloneDisplayMode()) return;
@@ -319,24 +311,6 @@ const Layout = () => {
                   <img src={logo} alt="Discogenius" className={styles.logo} />
                   <Title3 className={styles.logoTitle}>Discogenius</Title3>
                 </button>
-
-                <div className={styles.mobileActions}>
-                  <Button
-                    appearance="subtle"
-                    icon={<DataUsage24Regular />}
-                    onClick={() => navigate("/dashboard")}
-                    title="Dashboard"
-                    className={styles.navIconButton}
-                  />
-
-                  <Button
-                    appearance="subtle"
-                    icon={<Settings24Regular />}
-                    onClick={() => navigate("/settings")}
-                    title="Settings"
-                    className={styles.navIconButton}
-                  />
-                </div>
               </div>
 
               <div className={styles.searchSection}>
@@ -351,13 +325,28 @@ const Layout = () => {
                   icon={<DataUsage24Regular />}
                   onClick={() => navigate("/dashboard")}
                   title="Dashboard"
-                  className={styles.navIconButton}
-                />
+                  aria-label="Dashboard"
+                  className={mergeClasses(styles.navIconButton, styles.queueButton)}
+                >
+                  {queueCount > 0 ? (
+                    <Badge
+                      aria-hidden="true"
+                      className={styles.queueBadge}
+                      appearance="filled"
+                      color="brand"
+                      size="small"
+                      shape="circular"
+                    >
+                      {queueCount}
+                    </Badge>
+                  ) : null}
+                </Button>
                 <Button
                   appearance="subtle"
                   icon={<Library24Regular />}
                   onClick={() => navigate("/")}
                   title="Library"
+                  aria-label="Library"
                   className={styles.navIconButton}
                 />
                 <Button
@@ -365,6 +354,7 @@ const Layout = () => {
                   icon={<Settings24Regular />}
                   onClick={() => navigate("/settings")}
                   title="Settings"
+                  aria-label="Settings"
                   className={styles.navIconButton}
                 />
               </div>
@@ -374,10 +364,6 @@ const Layout = () => {
         <main className={mergeClasses(styles.main, isAuthRoute && styles.authMain)}>
           <Outlet />
         </main>
-
-        {!isAuthRoute ? (
-          <MobileBottomTabs isDark={isDarkMode} queueCount={stats.downloading + stats.pending} />
-        ) : null}
       </div>
     </>
   );

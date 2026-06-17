@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.4] - 2026-06-17
+
+### Fixed
+- Album imports now resolve exact provider track IDs to their linked MusicBrainz tracks instead of allowing one provider row to join every track on the release. This fixes single-file and partial album downloads being named/tagged as track 01 while containing a later album track, across stereo and Atmos imports.
+- Added a regression test for the exact provider-ID canonical import path.
+
+### Changed
+- The library page now relies on the persistent nav search and no longer has a duplicate local search box or add-artist action.
+- Mobile navigation now uses the same button order as desktop, keeps search in the top row, hides the wordmark, enlarges the app icon, and keeps the queue badge inside the dashboard button.
+- Search results use a clearer primary add/monitor action so adding artists from the global search surface is easier on mobile.
+
 ## [2.0.3] - 2026-06-17
 
 ### Changed

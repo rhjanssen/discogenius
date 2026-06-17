@@ -17,7 +17,7 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-    Eye24Regular,
+    Add24Regular,
     EyeOff24Regular,
     ArrowDownload24Regular,
 } from "@fluentui/react-icons";
@@ -208,9 +208,13 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
-        gap: tokens.spacingHorizontalXS,
+        gap: tokens.spacingVerticalS,
         marginTop: tokens.spacingVerticalXS,
         width: "100%",
+    },
+    artistMonitorButton: {
+        alignSelf: "center",
+        minWidth: "120px",
     },
     // List Items
     listContainer: {
@@ -307,11 +311,16 @@ const useStyles = makeStyles({
     rowActionsContainer: {
         display: "flex",
         alignItems: "center",
-        gap: tokens.spacingHorizontalXS,
+        gap: tokens.spacingHorizontalS,
         justifySelf: "end",
+        paddingLeft: tokens.spacingHorizontalS,
+        borderLeft: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     rowExtraInfo: {
         color: tokens.colorNeutralForeground2,
+    },
+    monitorButton: {
+        minWidth: "32px",
     },
     sectionTitle: {
         marginBottom: tokens.spacingVerticalS,
@@ -410,12 +419,16 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
             );
             const maxHeight = Math.max(160, Math.floor(viewportBottom - top - viewportPadding));
             const maxWidth = Math.max(180, Math.floor(viewportWidth - viewportPadding * 2));
-            const width = Math.max(180, Math.min(Math.ceil(rect.width), maxWidth));
+            const width = viewportWidth < 640
+                ? maxWidth
+                : Math.max(180, Math.min(Math.ceil(rect.width), maxWidth));
             const unclampedLeft = Math.floor(rect.left);
-            const left = Math.min(
-                Math.max(viewportLeft + viewportPadding, unclampedLeft),
-                Math.max(viewportLeft + viewportPadding, viewportRight - viewportPadding - width)
-            );
+            const left = viewportWidth < 640
+                ? viewportLeft + viewportPadding
+                : Math.min(
+                    Math.max(viewportLeft + viewportPadding, unclampedLeft),
+                    Math.max(viewportLeft + viewportPadding, viewportRight - viewportPadding - width)
+                );
 
             setResultsLayout(prev => {
                 if (
@@ -541,8 +554,35 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         </div>
     );
 
-    const renderGridItem = (item: SearchResultItem, type: 'artist' | 'album') => {
+    const renderMonitorButton = (
+        item: SearchResultItem,
+        options: { size?: "small" | "medium"; showLabel?: boolean } = {},
+    ) => {
         const isProcessing = processingItems.has(item.providerId);
+        const isMonitored = Boolean(item.monitored);
+        const label = isMonitored ? "Unmonitor" : item.type === "artist" ? "Add" : "Monitor";
+
+        return (
+            <Button
+                appearance={isMonitored ? "secondary" : "primary"}
+                size={options.size}
+                icon={isProcessing
+                    ? <Spinner size="tiny" />
+                    : isMonitored
+                        ? <EyeOff24Regular className={styles.monitorIcon} />
+                        : <Add24Regular />}
+                onClick={(e) => handleToggleItem(item, e)}
+                disabled={isProcessing}
+                title={label}
+                aria-label={`${label} ${item.name}`}
+                className={mergeClasses(styles.monitorButton, options.showLabel ? styles.artistMonitorButton : undefined)}
+            >
+                {options.showLabel ? (isProcessing ? "Updating..." : label) : null}
+            </Button>
+        );
+    };
+
+    const renderGridItem = (item: SearchResultItem, type: 'artist' | 'album') => {
         const subtitle = item.subtitle?.split('·').slice(1).join(' · ').trim() || item.subtitle;
 
         if (type === "album") {
@@ -582,21 +622,13 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                             </Caption1>
                         )}
                     </div>
-                    <Button
-                        appearance="subtle"
-                        size="small"
-                        icon={isProcessing ? <Spinner size="tiny" /> : (item.monitored ? <EyeOff24Regular className={styles.monitorIcon} /> : <Eye24Regular className={styles.monitorIcon} />)}
-                        onClick={(e) => handleToggleItem(item, e)}
-                        disabled={isProcessing}
-                        title={item.monitored ? "Unmonitor" : "Monitor"}
-                    />
+                    {renderMonitorButton(item, { size: "small", showLabel: true })}
                 </div>
             </Card>
         );
     };
 
     const renderDetailedRow = (item: SearchResultItem) => {
-        const isProcessing = processingItems.has(item.providerId);
         const isDownloading = downloadingItems.has(item.providerId);
         const isVideo = item.type === 'video';
         const canDownload = item.type === 'track' || item.type === 'album' || item.type === 'video';
@@ -605,7 +637,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         // Parse subtitle for parts: "Type · Artist · Info" -> ["Type", "Artist", "Info"]
         const parts = item.subtitle?.split('·').map(s => s.trim()) || [];
         const artistName = parts[1] || "";
-        const extraInfo = parts[2] || ""; // Duration or Year
+        const extraInfo = item.type === "artist" ? "" : parts[2] || ""; // Duration or Year
 
         return (
             <div
@@ -662,13 +694,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                             title="Download"
                         />
                     )}
-                    <Button
-                        appearance="subtle"
-                        icon={isProcessing ? <Spinner size="tiny" /> : (item.monitored ? <EyeOff24Regular className={styles.monitorIcon} /> : <Eye24Regular className={styles.monitorIcon} />)}
-                        onClick={(e) => handleToggleItem(item, e)}
-                        disabled={isProcessing}
-                        title={item.monitored ? "Unmonitor" : "Monitor"}
-                    />
+                    {renderMonitorButton(item)}
                 </div>
             </div>
         );
@@ -780,6 +806,13 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         );
     };
 
+    const getTopResult = () => (
+        searchResults.artists[0]
+        || searchResults.albums[0]
+        || searchResults.tracks[0]
+        || searchResults.videos[0]
+    );
+
     return (
         <div ref={searchRef} className={styles.container}>
             <SearchBox
@@ -791,8 +824,13 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                         if (!searchQuery.trim()) return;
-                        setIsOpen(false);
-                        navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+                        const topResult = getTopResult();
+                        if (topResult) {
+                            void handleItemClick(topResult);
+                            return;
+                        }
+                        search(searchQuery.trim());
+                        setIsOpen(true);
                     }
                 }}
                 onFocus={() => {

@@ -19,8 +19,6 @@ const Library = lazy(() => import("@/pages/Library"));
 const ArtistPage = lazy(() => import("@/pages/ArtistPage"));
 const AlbumPage = lazy(() => import("@/pages/AlbumPage"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
-
-const SearchPage = lazy(() => import("@/pages/SearchPage"));
 const VideoPage = lazy(() => import("@/pages/VideoPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
@@ -125,14 +123,6 @@ const App = () => {
                           }
                         />
 
-                        <Route
-                          path="/search"
-                          element={
-                            <SuspendedPage pageName="Search">
-                              <SearchPage />
-                            </SuspendedPage>
-                          }
-                        />
                         <Route
                           path="/dashboard"
                           element={

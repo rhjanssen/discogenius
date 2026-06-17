@@ -99,8 +99,7 @@ export const useSearch = () => {
 
         setIsSearching(true);
         try {
-            // Search the local Discogenius library. New artist lookup is handled
-            // by the explicit Add Artist flow.
+            // Search local Discogenius content plus remote MusicBrainz artist/album results.
             const data: SearchResponseContract = await api.search(
                 query,
                 ['artists', 'albums', 'tracks', 'videos'],

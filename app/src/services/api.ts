@@ -607,10 +607,10 @@ class ApiClient {
   }
 
 
-  async addArtist(providerId: string) {
+  async addArtist(providerId: string, name?: string) {
     return this.request(`/v1/artist`, {
       method: 'POST',
-      body: JSON.stringify({ id: providerId }),
+      body: JSON.stringify(name ? { id: providerId, name } : { id: providerId }),
     });
   }
 
