@@ -1375,7 +1375,12 @@ export class OrganizerService {
         path: artistContext.artistPath || null,
       });
 
-      const isSpatial = canonicalContext?.slot === "spatial" || isSpatialAudioQuality(canonicalContext?.quality || album.quality);
+      let isSpatial = false;
+      if (canonicalContext?.slot) {
+        isSpatial = canonicalContext.slot === "spatial";
+      } else {
+        isSpatial = isSpatialAudioQuality(canonicalContext?.quality || album.quality);
+      }
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
         canonicalReleaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id,

@@ -13,7 +13,6 @@ import {
   Overflow,
   OverflowItem,
   mergeClasses,
-  Text,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
@@ -21,6 +20,7 @@ import {
   EyeOff24Regular,
   ArrowDownload24Regular,
   LockClosed24Regular,
+  LockOpen24Regular,
   Grid24Regular,
   AppsListDetail24Regular,
   Play24Regular,
@@ -64,7 +64,6 @@ import type { DataGridColumn } from "@/components/DataGrid";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
-import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import {
   ACTIVITY_REFRESH_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
