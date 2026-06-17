@@ -94,6 +94,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
             <Badge
                 shape="circular"
                 appearance="tint"
+                size={size}
                 className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
                 style={{ backgroundColor: palette.SpatialBackground, borderColor }}
                 aria-label="Dolby Atmos"
@@ -138,6 +139,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
         <Badge
             shape="circular"
             appearance="tint"
+            size={size}
             className={mergeClasses(styles.base, styles.label, sizeClass, className)}
             style={{ backgroundColor, color, borderColor }}
         >

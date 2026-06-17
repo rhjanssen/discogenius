@@ -918,21 +918,6 @@ export class DownloadProcessor {
         this.currentDownloadPath = undefined;
         let payload = job.payload as DownloadOrImportJobPayload;
 
-        const isImportingThisProvider = Array.from(this.activeImports.values()).some(
-            importJob => importJob.providerId === providerId
-        );
-
-        if (isImportingThisProvider) {
-            // Delay downloading if the same provider is currently being imported,
-            // to prevent wiping the workspace before the import has finished renaming files.
-            this.processing = false;
-            this.currentJobId = undefined;
-            this.currentProviderId = undefined;
-            this.currentType = undefined;
-            setTimeout(() => this.scheduleNext(), 2000);
-            return;
-        }
-
         console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${providerId})`);
 
         if (!TaskQueueService.markProcessing(job.id)) {
@@ -1143,7 +1128,8 @@ export class DownloadProcessor {
         type: DownloadJobType,
         payload: DownloadJobPayload
     ): Promise<void> {
-        const downloadPath = getDownloadWorkspacePath(type, id);
+        const baseDownloadPath = getDownloadWorkspacePath(type, id);
+        const downloadPath = path.join(baseDownloadPath, `job_${jobId}`);
         this.currentDownloadPath = downloadPath;
 
         const providerId = (payload as any).streamingSource || getDefaultStreamingSource();
