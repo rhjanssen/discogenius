@@ -208,7 +208,7 @@ const useStyles = makeStyles({
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
         paddingBottom: tokens.spacingVerticalXS,
-        borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     detailLabel: {
         minWidth: "100px",

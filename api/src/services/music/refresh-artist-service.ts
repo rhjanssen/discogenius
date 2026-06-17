@@ -186,22 +186,19 @@ export class RefreshArtistService {
                         libraryOrigin?: string | null;
                     } | undefined;
 
-                    // Basic intake stamps last_scanned, so "never scanned" is the
-                    // only trigger — credit stubs are hydrated once, not on every
-                    // parent refresh.
+                    // Deep metadata intake stamps last_scanned, so "never scanned"
+                    // is the only trigger. First-order collaborators get their own
+                    // canonical discography and provider slot matching, but remain
+                    // unmonitored and are not curated/downloaded unless the user
+                    // monitors them.
                     const requiresHydration = !collaborator?.lastScanned;
                     if (requiresHydration) {
-                        // Credit-only collaborators get canonical metadata only.
-                        // Full provider catalog/video hydration would fan out to
-                        // dozens of artists (and hundreds of API calls) per added
-                        // artist; it runs when the user actually monitors them.
                         queueArtistIntake({
                             artistId: String(collaborator?.id || collaboratorMbid),
                             artistName: String(collaborator?.name || collaboratorMbid),
                             monitored: false,
                             forceUpdate: true,
                             expandCreditedArtists: false,
-                            scanDepth: "basic",
                             priority: -1,
                         });
                     }

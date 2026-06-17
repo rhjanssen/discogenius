@@ -19,7 +19,7 @@ const useStyles = makeStyles({
     position: "absolute",
     inset: 0,
     borderRadius: "100%",
-    border: `2px solid ${tokens.colorBrandForeground1}`,
+    border: `${tokens.strokeWidthThick} solid ${tokens.colorBrandForeground1}`,
     animationName: {
       "0%": {
         opacity: 1,

@@ -62,7 +62,7 @@ function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'vid
     if (type === 'artist') {
         result.imageId = item.picture || null;
     } else if (type === 'video') {
-        // Videos use image_id (snake_case) from Tidal API
+        // Videos use the stored canonical/provider thumbnail id when present.
         result.imageId = item.image_id || item.imageId || item.image || null;
     } else {
         result.imageId = item.cover_id || item.cover || item.image || item.imageId || null;
@@ -195,7 +195,12 @@ router.get("/", async (req, res) => {
               COALESCE(provider_track.explicit, 0) AS explicit,
               COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
               COALESCE(release.date, rg.first_release_date) AS release_date,
-              provider_album.asset_id AS album_cover,
+              COALESCE(
+                json_extract(selected_slot.provider_data, '$.cover'),
+                provider_album.asset_id,
+                provider_track.asset_id,
+                json_extract(provider_track.data, '$.cover')
+              ) AS album_cover,
               CASE WHEN EXISTS (
                 SELECT 1
                 FROM ReleaseGroupSlots monitored_slot

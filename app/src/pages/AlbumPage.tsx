@@ -90,9 +90,10 @@ const useStyles = makeStyles({
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
     "@media (min-width: 768px)": {
-      // Let the 220px cover + padding define the height instead of forcing a tall
-      // 300px box that left dead space below the action buttons.
-      minHeight: "240px",
+      // Common desktop detail header height. With vertical padding this lands
+      // at the same rendered height as artist pages and prevents shorter
+      // metadata stacks from collapsing above the following content.
+      minHeight: "276px",
       padding: tokens.spacingHorizontalXL,
       paddingTop: tokens.spacingVerticalXL,
       paddingBottom: tokens.spacingVerticalL,
@@ -474,7 +475,7 @@ const useStyles = makeStyles({
   },
   coverInfoIcon: {
     color: "white",
-    fontSize: "32px",
+    fontSize: tokens.fontSizeHero800,
   },
 });
 
@@ -883,7 +884,7 @@ const AlbumPage = () => {
         backgroundColor: tokens.colorPaletteGreenBackground3,
         color: tokens.colorPaletteGreenForeground3,
         borderRadius: tokens.borderRadiusCircular,
-        padding: "2px",
+        padding: tokens.spacingHorizontalXXS,
         boxShadow: tokens.shadow4,
       }}>
         <CheckmarkCircle16Filled style={{ width: "12px", height: "12px" }} />

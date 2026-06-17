@@ -3,9 +3,19 @@ import { api } from "@/services/api";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { LIBRARY_UPDATED_EVENT } from "@/utils/appEvents";
 
+const ARTIST_PAGE_GLOBAL_EVENTS = [
+    "artist.scanned",
+    "album.scanned",
+    "rescan.completed",
+    "file.added",
+    "file.deleted",
+    "file.upgraded",
+] as const;
+
 export function useArtistPage(artistId: string | undefined) {
     useDebouncedQueryInvalidation({
         queryKeys: [["artistPage", artistId]],
+        globalEvents: [...ARTIST_PAGE_GLOBAL_EVENTS],
         windowEvents: [LIBRARY_UPDATED_EVENT],
         enabled: Boolean(artistId),
         debounceMs: 400,

@@ -31,7 +31,8 @@ COPY api/package.json ./api/
 COPY app/package.json ./app/
 
 # Install all workspace dependencies from root lockfile
-RUN yarn install --frozen-lockfile
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn/v6,sharing=locked \
+    yarn install --frozen-lockfile
 
 # Copy source code
 COPY api ./api
@@ -63,8 +64,11 @@ RUN mkdir -p /config /downloads /library/stereo-music /library/spatial-music /li
 COPY --chown=node:node package.json yarn.lock ./
 COPY --chown=node:node api/package.json ./api/
 COPY --chown=node:node app/package.json ./app/
-RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.workspaces=['api'];fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
-    && yarn install --frozen-lockfile --production
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn/v6,sharing=locked \
+    node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.workspaces=['api'];fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
+    && yarn install --frozen-lockfile --production --ignore-optional \
+    && find ./node_modules -type f \( -name '*.d.ts' -o -name '*.md' -o -name '*.map' -o -name 'README*' -o -name 'LICENSE*' -o -name 'CHANGELOG*' \) -delete \
+    && find ./node_modules -type d \( -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'docs' -o -name 'examples' -o -name '.github' \) -exec rm -rf {} + 2>/dev/null || true
 
 # Copy built files from builder
 COPY --from=builder --chown=node:node /app/api/dist ./api/dist

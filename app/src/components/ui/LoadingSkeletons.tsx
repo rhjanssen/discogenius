@@ -1,7 +1,6 @@
 import {
   Skeleton,
   SkeletonItem,
-  Text,
   makeStyles,
   mergeClasses,
   tokens,
@@ -168,7 +167,7 @@ const useStyles = makeStyles({
   tlQualityCell: {
     flex: "0 0 auto",
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
     flexShrink: 0,
     "@media (min-width: 768px)": {
       flex: "0 0 120px",
@@ -185,7 +184,7 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     flexShrink: 0,
     "@media (min-width: 768px)": {
-      flex: "0 0 52px",
+      flex: "0 0 56px",
     },
   },
   tlTimeBar: {
@@ -199,6 +198,9 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     gap: tokens.spacingHorizontalXS,
     flexShrink: 0,
+    "@media (min-width: 768px)": {
+      flex: "0 0 36px",
+    },
   },
   actionDot: {
     width: "28px",
@@ -587,8 +589,16 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusXLarge,
     overflow: "hidden",
     "@media (min-width: 768px)": {
-      minHeight: "300px",
-      padding: `${tokens.spacingVerticalXXL} ${tokens.spacingHorizontalXL}`,
+      minHeight: "276px",
+      padding: `${tokens.spacingVerticalXL} ${tokens.spacingHorizontalXL} ${tokens.spacingVerticalL}`,
+    },
+  },
+  detailHeaderRounded: {
+    paddingBottom: tokens.spacingVerticalXL,
+    "@media (min-width: 768px)": {
+      minHeight: "276px",
+      paddingTop: tokens.spacingVerticalXL,
+      paddingBottom: tokens.spacingVerticalL,
     },
   },
   detailHeaderContent: {
@@ -696,9 +706,6 @@ const useStyles = makeStyles({
     width: "140px",
     borderRadius: tokens.borderRadiusSmall,
   },
-  detailLoadingLabel: {
-    color: tokens.colorNeutralForeground3,
-  },
 });
 
 function range(count: number) {
@@ -772,9 +779,13 @@ export function TrackListSkeleton({
               <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
             </div>
           ) : null}
-          {showQuality ? <div className={styles.tlQualityCell} /> : null}
+          {showQuality ? (
+            <div className={styles.tlQualityCell}>
+              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "42px" }} />
+            </div>
+          ) : null}
           <div className={styles.tlTimeCell}>
-            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "32px" }} />
+            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
           </div>
           <div className={styles.tlActionsCell} />
         </div>
@@ -1105,11 +1116,11 @@ export function DetailPageSkeleton({
       aria-live="polite"
       aria-label={label}
     >
-      <Text size={300} className={styles.detailLoadingLabel}>
-        {label}
-      </Text>
       <Skeleton animation="wave">
-        <div className={styles.detailHeader}>
+        <div className={mergeClasses(
+          styles.detailHeader,
+          artShape === "rounded" ? styles.detailHeaderRounded : undefined,
+        )}>
           <div className={styles.detailHeaderContent}>
             <SkeletonItem
               className={mergeClasses(

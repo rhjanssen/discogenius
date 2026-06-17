@@ -15,6 +15,8 @@ import { ArtistQueryService } from "../../services/music/artist-query-service.js
 import { FollowedArtistsImportService } from "../../services/providers/followed-artists-import.js";
 import { skyHookProxy, type LidarrArtist } from "../../services/metadata/skyhook-proxy.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
+import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
+import { ScanLevel } from "../../services/music/scan-types.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -28,6 +30,7 @@ const router = Router();
 
 const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
+const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function loadArtistByMusicBrainzId(mbid: string): { id: string | number; monitor: number | null; picture?: string | null; cover_image_url?: string | null } | undefined {
   return db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as
@@ -345,7 +348,7 @@ router.get("/:artistId/page-db", async (req, res) => {
     let page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
     
     // Auto-fetch collaborating artists on click
-    if (!page && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.artistId)) {
+    if (!page && MUSICBRAINZ_MBID_RE.test(req.params.artistId)) {
       try {
         const queued = await queueArtistRefreshScan(req.params.artistId, { forceUpdate: true });
         if (queued) {
@@ -359,6 +362,23 @@ router.get("/:artistId/page-db", async (req, res) => {
     if (!page) {
       return res.status(404).json({ detail: "Artist not found" });
     }
+
+    if (
+      page.needs_scan &&
+      MUSICBRAINZ_MBID_RE.test(String(page.artist?.mbid || req.params.artistId)) &&
+      RefreshArtistService.getScanLevel(String(page.artist?.id || req.params.artistId)) < ScanLevel.DEEP
+    ) {
+      const artistId = String(page.artist?.id || req.params.artistId);
+      const artistName = String(page.artist?.name || artistId).trim();
+      queueArtistWorkflow({
+        artistId,
+        artistName,
+        workflow: "metadata-refresh",
+        expandCreditedArtists: false,
+        priority: -1,
+      });
+    }
+
     return res.json(page);
   } catch (error: any) {
     console.error('Error fetching artist page from DB:', error);

@@ -38,6 +38,7 @@ test("unmonitored artist intake reuses metadata refresh without collaborator sno
     assert.equal(queued.payload?.hydrateCatalog, true);
     assert.equal(queued.payload?.scanLibrary, false);
     assert.equal(queued.payload?.expandCreditedArtists, false);
+    assert.equal(queued.payload?.scanDepth, "deep");
   } finally {
     TaskQueueService.addJob = originalAddJob;
   }

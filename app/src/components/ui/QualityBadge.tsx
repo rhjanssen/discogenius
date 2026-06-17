@@ -19,7 +19,8 @@ interface QualityBadgeProps {
 // logo renders at a fixed height per size and the badge widens to fit it, so the
 // Atmos badge lines up in height with the text badges — it's just longer.
 const ATMOS_ASPECT = 110.7599945 / 15.6427517;
-const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 13, large: 15 };
+const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 12, large: 14 };
+const ATMOS_LOGO_OFFSET_Y: Record<BadgeSize, number> = { small: 0.75, medium: 1, large: 1 };
 
 const useStyles = makeStyles({
     base: {
@@ -49,16 +50,19 @@ const useStyles = makeStyles({
     // (and any other Fluent Badge) of the same size in a shared row. We only tune
     // the horizontal padding and font size here.
     small: {
-        fontSize: tokens.fontSizeBase200,
-        ...shorthands.padding(0, tokens.spacingHorizontalSNudge),
+        fontSize: tokens.fontSizeBase100,
+        paddingLeft: tokens.spacingHorizontalSNudge,
+        paddingRight: tokens.spacingHorizontalSNudge,
     },
     medium: {
         fontSize: tokens.fontSizeBase200,
-        ...shorthands.padding(0, tokens.spacingHorizontalS),
+        paddingLeft: tokens.spacingHorizontalS,
+        paddingRight: tokens.spacingHorizontalS,
     },
     large: {
         fontSize: tokens.fontSizeBase300,
-        ...shorthands.padding(0, tokens.spacingHorizontalM),
+        paddingLeft: tokens.spacingHorizontalM,
+        paddingRight: tokens.spacingHorizontalM,
     },
     atmos: {
         lineHeight: 0,
@@ -106,6 +110,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                         height: `${logoHeight}px`,
                         width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
                         backgroundColor: palette.SpatialText,
+                        transform: `translateY(${ATMOS_LOGO_OFFSET_Y[size]}px)`,
                     }}
                 />
             </Badge>

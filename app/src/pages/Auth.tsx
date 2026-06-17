@@ -309,7 +309,7 @@ const useStyles = makeStyles({
   tidalButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
     color: tokens.colorNeutralForeground1,
-    border: `1px solid rgba(255, 255, 255, 0.12)`,
+    border: `${tokens.strokeWidthThin} solid rgba(255, 255, 255, 0.12)`,
     boxShadow: 'none',
     '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)', color: tokens.colorNeutralForeground1 },
   },
@@ -335,7 +335,7 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
   },
   panelFooter: {
-    borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+    borderTop: `${tokens.strokeWidthThin} solid rgba(255, 255, 255, 0.12)`,
     paddingTop: tokens.spacingVerticalM,
     display: 'flex',
     justifyContent: 'center',

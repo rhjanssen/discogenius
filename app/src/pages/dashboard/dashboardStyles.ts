@@ -196,10 +196,10 @@ export const useDashboardStyles = makeStyles({
         opacity: 0.58,
     },
     downloadItemDropBefore: {
-        boxShadow: `inset 0 2px 0 ${tokens.colorBrandStroke1}`,
+        boxShadow: `inset 0 ${tokens.strokeWidthThick} 0 ${tokens.colorBrandStroke1}`,
     },
     downloadItemDropAfter: {
-        boxShadow: `inset 0 -2px 0 ${tokens.colorBrandStroke1}`,
+        boxShadow: `inset 0 calc(-1 * ${tokens.strokeWidthThick}) 0 ${tokens.colorBrandStroke1}`,
     },
     downloadSubItem: {
         display: "flex",

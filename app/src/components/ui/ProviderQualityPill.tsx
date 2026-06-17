@@ -38,8 +38,8 @@ interface ProviderQualityRowProps {
 // token lines up with the badges beside it.
 // Diameters match the quality-badge heights (the pill is border-box) so the
 // round source token renders at the exact same height as the badges beside it.
-const PILL_DIAMETER: Record<BadgeSize, number> = { small: 18, medium: 24, large: 28 };
-const GLYPH_SIZE: Record<BadgeSize, number> = { small: 11, medium: 14, large: 16 };
+const PILL_DIAMETER: Record<BadgeSize, number> = { small: 20, medium: 24, large: 32 };
+const GLYPH_SIZE: Record<BadgeSize, number> = { small: 12, medium: 14, large: 18 };
 
 const useStyles = makeStyles({
     row: {

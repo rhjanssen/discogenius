@@ -68,7 +68,7 @@ const useStyles = makeStyles({
   actionRow: {
     display: "flex",
     alignItems: "center",
-    gap: "2px",
+    gap: tokens.spacingHorizontalXXS,
     flexShrink: 0,
     "@media (min-width: 600px)": {
       gap: tokens.spacingHorizontalXS,

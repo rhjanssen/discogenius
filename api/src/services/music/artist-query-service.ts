@@ -146,6 +146,66 @@ function hasArtistIdentityGap(artist: ArtistMonitorRow): boolean {
     return !artistName || artistName === "Unknown Artist" || artist.artist_types == null;
 }
 
+function artistMusicBrainzId(artist: ArtistMonitorRow | undefined, fallbackArtistId: string): string | null {
+    const mbid = String(artist?.mbid || "").trim();
+    if (MUSICBRAINZ_MBID_RE.test(mbid)) {
+        return mbid;
+    }
+
+    return MUSICBRAINZ_MBID_RE.test(fallbackArtistId) ? fallbackArtistId : null;
+}
+
+const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function hasArtistArtworkGap(artist: ArtistMonitorRow): boolean {
+    return !proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
+}
+
+function shouldHydrateArtistDisplayMetadata(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
+    if (!artist || !artistMusicBrainzId(artist, artistId)) {
+        return false;
+    }
+
+    if (hasArtistIdentityGap(artist)) {
+        return true;
+    }
+
+    if (!hasArtistArtworkGap(artist)) {
+        return false;
+    }
+
+    return shouldRefreshArtist({
+        artistId,
+        lastScanned: typeof artist.musicbrainz_last_checked === "string"
+            ? artist.musicbrainz_last_checked
+            : null,
+    });
+}
+
+async function hydrateArtistDisplayMetadataIfNeeded(
+    artistId: string,
+    artist: ArtistMonitorRow | undefined,
+): Promise<ArtistMonitorRow | undefined> {
+    if (!shouldHydrateArtistDisplayMetadata(artist, artistId)) {
+        return artist;
+    }
+
+    const mbid = artistMusicBrainzId(artist, artistId);
+    if (!mbid) {
+        return artist;
+    }
+
+    try {
+        await RefreshArtistService.upsertMusicBrainzArtist(mbid, {
+            monitorArtist: Boolean(artist?.effective_monitor),
+        });
+        return loadArtistWithEffectiveMonitor(artistId) || loadArtistWithEffectiveMonitor(mbid) || artist;
+    } catch (error) {
+        console.warn(`[ArtistQueryService] Failed to hydrate display metadata for ${artistId}:`, error);
+        return artist;
+    }
+}
+
 function shouldHydrateArtistShallow(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
     if (!artist) {
         return true;
@@ -220,6 +280,71 @@ function releaseGroupBucket(row: any): keyof typeof RELEASE_GROUP_BUCKETS {
     if (primaryType === "BROADCAST") return "BROADCAST";
     if (primaryType === "OTHER") return "OTHER";
     return "ALBUM";
+}
+
+function parseSelectedProviderData(row: Record<string, any>): { cover?: string | null; explicit?: boolean | number | null } | null {
+    const raw = row.stereo_provider_data || row.spatial_provider_data;
+    if (!raw) return null;
+    try {
+        return (typeof raw === "string" ? JSON.parse(raw) : raw) as { cover?: string | null; explicit?: boolean | number | null };
+    } catch {
+        return null;
+    }
+}
+
+function mapReleaseGroupCard(row: Record<string, any>, options: {
+    artistId: string;
+    artistName: string;
+    includeSpatial: boolean;
+    downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
+}): any {
+    const bucketKey = releaseGroupBucket(row);
+    const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
+    const selectedProviderData = parseSelectedProviderData(row);
+    const providerCandidates = albumProviderArtworkCandidatesFromRow(row);
+    const providerCover = chooseCachedProviderArtwork(providerCandidates, "album")
+        || selectedProviderData?.cover
+        || null;
+    const coverUrl = chooseCachedAlbumArtwork({
+        albumMbid: row.mbid,
+        skyHookData: parseJsonObject(row.data),
+        providerCandidates,
+    });
+
+    return {
+        id: String(row.mbid),
+        title: row.title,
+        cover: coverUrl,
+        cover_id: coverUrl,
+        cover_art_url: coverUrl,
+        provider_cover_id: providerCover,
+        artist_id: options.artistId,
+        artist_name: options.artistName,
+        mb_release_group_id: String(row.mbid),
+        release_date: row.first_release_date || null,
+        type: primaryType,
+        album_type: primaryType,
+        group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
+        explicit: Boolean(selectedProviderData?.explicit),
+        quality: row.selected_quality || null,
+        selected_provider_id: row.selected_provider_id || null,
+        stereo_provider_id: row.stereo_provider_id || null,
+        stereo_release_mbid: row.stereo_release_mbid || null,
+        stereo_quality: row.stereo_quality || null,
+        stereo_match_status: row.stereo_match_status || null,
+        stereo_match_method: row.stereo_match_method || null,
+        spatial_provider_id: options.includeSpatial ? row.spatial_provider_id || null : null,
+        spatial_release_mbid: options.includeSpatial ? row.spatial_release_mbid || null : null,
+        spatial_quality: options.includeSpatial ? row.spatial_quality || null : null,
+        spatial_match_status: options.includeSpatial ? row.spatial_match_status || null : null,
+        spatial_match_method: options.includeSpatial ? row.spatial_match_method || null : null,
+        is_monitored: Boolean(row.wanted),
+        downloaded: options.downloadStats?.downloadedPercent ?? 0,
+        is_downloaded: options.downloadStats?.isDownloaded ?? false,
+        monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
+        module: bucketKey,
+        source: "musicbrainz",
+    };
 }
 
 const RELEASE_GROUP_BUCKETS = {
@@ -362,6 +487,10 @@ export class ArtistQueryService {
         if (!artist) {
             return null;
         }
+        artist = await hydrateArtistDisplayMetadataIfNeeded(artistId, artist);
+        if (!artist) {
+            return null;
+        }
 
         const artistDownloadStats = getArtistDownloadStats(artistId);
         const biography = artist.bio_text == null
@@ -436,51 +565,13 @@ export class ArtistQueryService {
 
         const downloadStats = getReleaseGroupDownloadStatsMap(rows.map((row) => row.mbid));
 
-        return rows.map((row) => {
-            const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
-            const selectedProviderData = (() => {
-                const raw = row.stereo_provider_data || row.spatial_provider_data;
-                if (!raw) return null;
-                try {
-                    return typeof raw === "string" ? JSON.parse(raw) : raw;
-                } catch {
-                    return null;
-                }
-            })() as { explicit?: boolean | number | null } | null;
-            const coverUrl = chooseCachedAlbumArtwork({
-                albumMbid: row.mbid,
-                skyHookData: parseJsonObject(row.data),
-                providerCandidates: albumProviderArtworkCandidatesFromRow(row),
-            });
-            const stats = downloadStats.get(String(row.mbid));
-
-            return {
-                id: String(row.mbid),
-                title: row.title,
-                artist_id: String(artist.id),
-                artist_name: String(artist.name || "Unknown Artist"),
-                mb_release_group_id: String(row.mbid),
-                release_date: row.first_release_date || null,
-                type: primaryType,
-                album_type: primaryType,
-                group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
-                explicit: Boolean(selectedProviderData?.explicit),
-                cover: coverUrl,
-                cover_id: coverUrl,
-                cover_art_url: coverUrl,
-                quality: row.selected_quality || null,
-                stereo_provider_id: row.stereo_provider_id || null,
-                stereo_release_mbid: row.stereo_release_mbid || null,
-                spatial_provider_id: row.spatial_provider_id || null,
-                spatial_release_mbid: row.spatial_release_mbid || null,
-                is_monitored: Boolean(row.wanted),
-                monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
-                downloaded: stats?.downloadedPercent ?? 0,
-                is_downloaded: stats?.isDownloaded ?? false,
-                module: releaseGroupBucket(row),
-                source: "musicbrainz",
-            };
-        });
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        return rows.map((row) => mapReleaseGroupCard(row, {
+            artistId: String(artist.id),
+            artistName: String(artist.name || "Unknown Artist"),
+            includeSpatial,
+            downloadStats: downloadStats.get(String(row.mbid)),
+        }));
     }
 
     static getArtistActivity(artistId: string): ArtistActivitySnapshot {
@@ -641,6 +732,10 @@ export class ArtistQueryService {
             } catch { /* TIDAL lookup failed */ }
         }
 
+        if (!artist) {
+            return null;
+        }
+        artist = await hydrateArtistDisplayMetadataIfNeeded(artistId, artist);
         if (!artist) {
             return null;
         }
@@ -920,66 +1015,13 @@ export class ArtistQueryService {
 
         // Exclude raw provider albums from modules to restrict discography entirely to MusicBrainz release groups.
 
-        const releaseGroupCards = musicBrainzReleaseGroups.map((row) => {
-            const bucketKey = releaseGroupBucket(row);
-            const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
-            const monitored = Boolean(row.wanted);
-            const includeSpatial = getConfigSection("filtering").include_spatial === true;
-            const downloadStats = releaseGroupDownloadStats.get(String(row.mbid));
-            
-            const selectedProviderData = (() => {
-                const raw = row.stereo_provider_data || row.spatial_provider_data;
-                if (!raw) return null;
-                try {
-                    return typeof raw === "string" ? JSON.parse(raw) : raw;
-                } catch {
-                    return null;
-                }
-            })() as { cover?: string | null; explicit?: boolean | number | null } | null;
-            const providerCover = chooseCachedProviderArtwork(albumProviderArtworkCandidatesFromRow(row), "album")
-                || selectedProviderData?.cover
-                || null;
-            const coverUrl = chooseCachedAlbumArtwork({
-                albumMbid: row.mbid,
-                skyHookData: parseJsonObject(row.data),
-                providerCandidates: albumProviderArtworkCandidatesFromRow(row),
-            });
-
-            return {
-                id: String(row.mbid),
-                title: row.title,
-                cover: coverUrl,
-                cover_id: coverUrl,
-                cover_art_url: coverUrl,
-                provider_cover_id: providerCover,
-                release_date: row.first_release_date || null,
-                type: primaryType,
-                album_type: primaryType,
-                explicit: Boolean(selectedProviderData?.explicit),
-                quality: row.selected_quality || null,
-                selected_provider_id: row.selected_provider_id || null,
-                stereo_provider_id: row.stereo_provider_id || null,
-                stereo_release_mbid: row.stereo_release_mbid || null,
-                stereo_quality: row.stereo_quality || null,
-                stereo_match_status: row.stereo_match_status || null,
-                stereo_match_method: row.stereo_match_method || null,
-                spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
-                spatial_release_mbid: includeSpatial ? row.spatial_release_mbid || null : null,
-                spatial_quality: includeSpatial ? row.spatial_quality || null : null,
-                spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
-                spatial_match_method: includeSpatial ? row.spatial_match_method || null : null,
-                artist_id: String(artist.id),
-                artist_name: String(artist.name || "Unknown Artist"),
-                mb_release_group_id: String(row.mbid),
-                is_monitored: monitored,
-                downloaded: downloadStats?.downloadedPercent ?? 0,
-                is_downloaded: downloadStats?.isDownloaded ?? false,
-                monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
-                module: bucketKey,
-                group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
-                source: "musicbrainz",
-            };
-        });
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        const releaseGroupCards = musicBrainzReleaseGroups.map((row) => mapReleaseGroupCard(row, {
+            artistId: String(artist.id),
+            artistName: String(artist.name || "Unknown Artist"),
+            includeSpatial,
+            downloadStats: releaseGroupDownloadStats.get(String(row.mbid)),
+        }));
 
         for (const releaseGroup of releaseGroupCards) {
             const bucket = RELEASE_GROUP_BUCKETS[releaseGroup.module as keyof typeof RELEASE_GROUP_BUCKETS] || "ARTIST_ALBUMS";

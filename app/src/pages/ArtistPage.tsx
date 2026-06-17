@@ -99,10 +99,12 @@ const useStyles = makeStyles({
     overflow: "hidden",
     gap: tokens.spacingHorizontalL,
     "@media (min-width: 768px)": {
-      minHeight: "300px",
+      // Match AlbumPage's desktop header height so detail pages transition
+      // without the artist view leaving extra dead space below the actions.
+      minHeight: "276px",
       padding: tokens.spacingHorizontalXL,
-      paddingTop: tokens.spacingVerticalXXL,
-      paddingBottom: tokens.spacingVerticalS,
+      paddingTop: tokens.spacingVerticalXL,
+      paddingBottom: tokens.spacingVerticalL,
       gap: tokens.spacingHorizontalXXL,
     },
   },
@@ -367,6 +369,39 @@ const useStyles = makeStyles({
 
 const COLLAPSED_TOP_TRACK_COUNT = 5;
 const EXPANDED_TOP_TRACK_COUNT = 50;
+const ARTIST_FILTER_STORAGE_PREFIX = "discogenius_artist_filters:";
+
+type ArtistPageFilterPrefs = {
+  libraryFilter: 'all' | 'stereo' | 'spatial' | 'video';
+  statusFilters: StatusFilters;
+};
+
+function artistFilterStorageKey(artistId: string) {
+  return `${ARTIST_FILTER_STORAGE_PREFIX}${artistId}`;
+}
+
+function readArtistFilterPrefs(artistId: string | undefined): ArtistPageFilterPrefs | null {
+  if (!artistId) return null;
+  try {
+    const raw = localStorage.getItem(artistFilterStorageKey(artistId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ArtistPageFilterPrefs>;
+    const libraryFilter = parsed.libraryFilter;
+    if (libraryFilter !== "all" && libraryFilter !== "stereo" && libraryFilter !== "spatial" && libraryFilter !== "video") {
+      return null;
+    }
+
+    return {
+      libraryFilter,
+      statusFilters: {
+        ...defaultStatusFilters,
+        ...(parsed.statusFilters || {}),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
 
 const ArtistPage = () => {
   const styles = useStyles();
@@ -425,11 +460,34 @@ const ArtistPage = () => {
   }, [artistId]);
 
   // Filters - start with onlyMonitored, but will be updated based on data
-  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>('all');
-  const [statusFilters, setStatusFilters] = useState<StatusFilters>({ ...defaultStatusFilters, onlyMonitored: true });
-  const [filterInitialized, setFilterInitialized] = useState(false);
+  const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>(() => (
+    readArtistFilterPrefs(artistId)?.libraryFilter ?? 'all'
+  ));
+  const [statusFilters, setStatusFilters] = useState<StatusFilters>(() => (
+    readArtistFilterPrefs(artistId)?.statusFilters ?? { ...defaultStatusFilters, onlyMonitored: true }
+  ));
+  const [filterInitialized, setFilterInitialized] = useState(() => Boolean(readArtistFilterPrefs(artistId)));
   const [topTracksExpanded, setTopTracksExpanded] = useState(false);
   const [artistInfoOpen, setArtistInfoOpen] = useState(false);
+
+  useEffect(() => {
+    const prefs = readArtistFilterPrefs(artistId);
+    setLibraryFilter(prefs?.libraryFilter ?? 'all');
+    setStatusFilters(prefs?.statusFilters ?? { ...defaultStatusFilters, onlyMonitored: true });
+    setFilterInitialized(Boolean(prefs));
+  }, [artistId]);
+
+  useEffect(() => {
+    if (!artistId || !filterInitialized) return;
+    try {
+      localStorage.setItem(artistFilterStorageKey(artistId), JSON.stringify({
+        libraryFilter,
+        statusFilters,
+      }));
+    } catch {
+      // Filter persistence is a convenience only; ignore storage failures.
+    }
+  }, [artistId, filterInitialized, libraryFilter, statusFilters]);
 
   // Unified Artist Info - prefer pageData.artist since that's the canonical DB-backed artist payload
   const artistInfo = pageData?.artist;
@@ -601,7 +659,7 @@ const ArtistPage = () => {
   };
 
 
-  const toggleAlbumMonitored = async (e: React.MouseEvent, albumId: string, nextMonitored: boolean) => {
+  const toggleAlbumMonitored = useCallback(async (e: React.MouseEvent, albumId: string, nextMonitored: boolean) => {
     e.stopPropagation();
     try {
       await api.updateAlbum(albumId, { monitored: nextMonitored });
@@ -611,7 +669,7 @@ const ArtistPage = () => {
     } catch (error) {
       console.error("Error toggling album monitoring:", error);
     }
-  };
+  }, [refetchPage]);
 
   const toggleVideoMonitored = async (e: React.MouseEvent, videoId: string, nextMonitored: boolean) => {
     e.stopPropagation();

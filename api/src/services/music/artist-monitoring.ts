@@ -112,22 +112,38 @@ export function queueArtistMonitoringIntake(options: {
     });
 }
 
-function ensurePendingMusicBrainzArtist(artistId: string, artistName?: string): string | null {
+async function ensurePendingMusicBrainzArtist(artistId: string, artistName?: string): Promise<string | null> {
     if (!isMusicBrainzMbid(artistId)) {
         return null;
     }
 
-    const existing = db.prepare("SELECT id FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
-        .get(artistId, artistId) as { id: string | number } | undefined;
-    if (existing?.id != null) {
+    const existing = db.prepare("SELECT id, name, picture, cover_image_url FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
+        .get(artistId, artistId) as { id: string | number; name?: string | null; picture?: string | null; cover_image_url?: string | null } | undefined;
+    if (existing?.id != null && (existing.picture || existing.cover_image_url)) {
         return String(existing.id);
     }
 
     const cachedMetadata = db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
         .get(artistId) as { name?: string | null } | undefined;
-    const resolvedName = String(artistName || cachedMetadata?.name || "").trim();
+    const resolvedName = String(artistName || existing?.name || cachedMetadata?.name || "").trim();
     if (!resolvedName) {
         return null;
+    }
+
+    try {
+        const localArtistId = await RefreshArtistService.upsertMusicBrainzArtist(artistId, { monitorArtist: false });
+        db.prepare(`
+            UPDATE Artists
+            SET user_date_added = COALESCE(user_date_added, CURRENT_TIMESTAMP)
+            WHERE id = ?
+        `).run(localArtistId);
+        return localArtistId;
+    } catch (error) {
+        console.warn(`[Artists] Failed to hydrate MusicBrainz artist ${artistId} before monitoring:`, error);
+    }
+
+    if (existing?.id != null) {
+        return String(existing.id);
     }
 
     db.prepare(`
@@ -152,7 +168,7 @@ export async function monitorArtistAndQueueIntake(options: {
         : undefined;
     let artistId = existingByMbid?.id != null ? String(existingByMbid.id) : options.artistId;
 
-    const pendingArtistId = ensurePendingMusicBrainzArtist(artistId, options.artistName);
+    const pendingArtistId = await ensurePendingMusicBrainzArtist(artistId, options.artistName);
     if (pendingArtistId) {
         artistId = pendingArtistId;
     } else {

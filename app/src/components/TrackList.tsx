@@ -1,5 +1,6 @@
 import { useState, type MouseEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "@/services/api";
 import {
   Link,
   Table,
@@ -13,7 +14,7 @@ import {
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
-import { Play24Regular, Stop24Filled } from "@fluentui/react-icons";
+import { Play24Filled, Stop24Regular } from "@fluentui/react-icons";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -69,6 +70,16 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontWeight: tokens.fontWeightSemibold,
   },
+  headerLabelRight: {
+    display: "block",
+    width: "100%",
+    textAlign: "right",
+  },
+  headerLabelCenter: {
+    display: "block",
+    width: "100%",
+    textAlign: "center",
+  },
 
   // A full-width separator row that introduces each disc/volume.
   volumeRow: {
@@ -89,6 +100,18 @@ const useStyles = makeStyles({
 
   // Body row: on hover the index number fades out and the play affordance fades in.
   row: {
+    transitionProperty: "background-color, backdrop-filter, transform, box-shadow",
+    transitionDuration: tokens.durationFast,
+    transitionTimingFunction: tokens.curveEasyEase,
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackgroundAlpha,
+      backdropFilter: "blur(14px) saturate(140%)",
+      WebkitBackdropFilter: "blur(14px) saturate(140%)",
+      boxShadow: tokens.shadow8,
+      transform: "translateY(-1px)",
+      position: "relative",
+      zIndex: 1,
+    },
     "&:hover [data-row-number]": {
       opacity: 0,
     },
@@ -100,14 +123,19 @@ const useStyles = makeStyles({
   rowClickable: {
     cursor: "pointer",
   },
+  rowPlaying: {
+    borderBottom: "none",
+  },
 
   // Columns — fixed widths on the rails, equal flex on title + artist/album.
   indexCell: {
     flex: "0 0 26px",
     justifyContent: "center",
+    paddingLeft: tokens.spacingHorizontalS,
+    paddingRight: 0,
     position: "relative",
     "@media (min-width: 768px)": {
-      flex: "0 0 40px",
+      flex: "0 0 36px",
     },
   },
   indexPlayable: {
@@ -121,16 +149,23 @@ const useStyles = makeStyles({
   },
   playReveal: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: "28px",
+    height: "28px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     opacity: 0,
     pointerEvents: "none",
-    transition: `opacity ${tokens.durationFaster} ${tokens.curveEasyEase}`,
+    transition: `opacity ${tokens.durationFaster} ${tokens.curveEasyEase}, background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
+    borderRadius: tokens.borderRadiusMedium,
+    "&:hover": {
+      backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1Hover} 80%, transparent)`,
+      backdropFilter: "blur(10px)",
+      WebkitBackdropFilter: "blur(10px)",
+    },
   },
   playRevealActive: {
     opacity: 1,
@@ -157,7 +192,7 @@ const useStyles = makeStyles({
     flexDirection: "column",
     minWidth: 0,
     width: "100%",
-    rowGap: "2px",
+    rowGap: tokens.spacingVerticalXXS,
   },
   titleLine: {
     display: "flex",
@@ -169,8 +204,8 @@ const useStyles = makeStyles({
     minWidth: 0,
     fontWeight: tokens.fontWeightSemibold,
     // Smaller on mobile where the artist stacks underneath; full size on desktop.
-    fontSize: "13px",
-    lineHeight: "18px",
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
     "@media (min-width: 768px)": {
       fontSize: tokens.fontSizeBase300,
       lineHeight: tokens.lineHeightBase300,
@@ -182,7 +217,7 @@ const useStyles = makeStyles({
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    fontSize: "11px",
+    fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
     "@media (min-width: 768px)": {
       display: "none",
@@ -196,6 +231,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     "@media (min-width: 768px)": {
       display: "flex",
+      paddingRight: tokens.spacingHorizontalM,
     },
   },
   truncate: {
@@ -205,33 +241,58 @@ const useStyles = makeStyles({
     whiteSpace: "nowrap",
   },
 
-  qualityCell: {
+  qualityCellSingle: {
     flex: "0 0 auto",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
+    alignItems: "center",
     columnGap: tokens.spacingHorizontalXXS,
     "@media (min-width: 768px)": {
-      flex: "0 0 120px",
+      flex: "0 0 80px",
+      paddingRight: tokens.spacingHorizontalM,
+    },
+  },
+  qualityCellMultiple: {
+    flex: "0 0 auto",
+    justifyContent: "flex-start",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalXXS,
+    "@media (min-width: 768px)": {
+      flex: "0 0 140px",
+      paddingRight: tokens.spacingHorizontalM,
     },
   },
   timeCell: {
     flex: "0 0 auto",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
+    alignItems: "center",
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
     fontVariantNumeric: "tabular-nums",
     "@media (min-width: 768px)": {
-      flex: "0 0 52px",
+      flex: "0 0 56px",
     },
   },
   actionsCell: {
     flex: "0 0 auto",
     justifyContent: "flex-end",
+    alignItems: "center",
+    "@media (min-width: 768px)": {
+      flex: "0 0 36px",
+    },
   },
 
+  playerRow: {
+    width: "100%",
+    ":hover": {
+      backgroundColor: "transparent",
+    },
+  },
   playerCell: {
     flex: "1 1 0px",
     paddingTop: tokens.spacingVerticalXXS,
     paddingBottom: tokens.spacingVerticalS,
+    paddingLeft: 0,
+    paddingRight: 0,
   },
 
   artistContainer: {
@@ -242,10 +303,20 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontSize: "inherit",
   },
-  artistLink: {
+  artistCreditButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: 0,
+    border: 0,
+    backgroundColor: "transparent",
+    color: "inherit",
+    font: "inherit",
     fontSize: "inherit",
     lineHeight: "inherit",
-    color: "inherit",
+    cursor: "pointer",
+    "&:hover": {
+      opacity: 0.8,
+    },
   },
   artistJoinPhrase: {
     color: tokens.colorNeutralForeground3,
@@ -337,11 +408,27 @@ const TrackList = <T extends TrackListItem>({
     + (showArtist ? 1 : 0)
     + (showAlbum ? 1 : 0)
     + (showQuality ? 1 : 0);
+  const hasMultipleVolumes = tracks.some((track) => (track.volume_number || 1) !== (tracks[0]?.volume_number || 1));
+  const hasMultipleQuality = tracks.some((track) => getQualityTags(track).length > 1);
+  const qualityCellClass = hasMultipleQuality ? styles.qualityCellMultiple : styles.qualityCellSingle;
 
   const renderArtistCredits = (track: T) => {
-    const handleArtistClick = (artistId: string, event: MouseEvent) => {
+    const handleArtistClick = async (artistId: string | undefined, artistName: string, event: MouseEvent) => {
       event.stopPropagation();
-      navigate(`/artist/${artistId}`);
+      if (artistId) {
+        navigate(`/artist/${artistId}`);
+      } else if (artistName) {
+        try {
+          const res = await api.search(artistName, ['artists'], 1);
+          if (res.success && res.results?.artists && res.results.artists.length > 0) {
+            navigate(`/artist/${res.results.artists[0].id}`);
+          } else {
+            navigate(`/search?q=${encodeURIComponent(artistName)}`);
+          }
+        } catch {
+          navigate(`/search?q=${encodeURIComponent(artistName)}`);
+        }
+      }
     };
 
     if (track.artist_credits && track.artist_credits.length > 0) {
@@ -349,13 +436,13 @@ const TrackList = <T extends TrackListItem>({
         <span className={styles.artistContainer}>
           {track.artist_credits.map((credit, idx) => (
             <span key={`${credit.id}-${idx}`}>
-              {credit.id ? (
-                <Link inline className={styles.artistLink} onClick={(e) => handleArtistClick(credit.id, e)}>
-                  {credit.name}
-                </Link>
-              ) : (
-                <span>{credit.name}</span>
-              )}
+              <button
+                type="button"
+                className={styles.artistCreditButton}
+                onClick={(e) => handleArtistClick(credit.id, credit.name, e)}
+              >
+                {credit.name}
+              </button>
               {credit.join_phrase ? (
                 <span className={styles.artistJoinPhrase}>{credit.join_phrase}</span>
               ) : null}
@@ -366,12 +453,14 @@ const TrackList = <T extends TrackListItem>({
     }
 
     if (track.artist_name) {
-      return track.artist_id ? (
-        <Link inline className={styles.artistLink} onClick={(e) => handleArtistClick(track.artist_id!, e)}>
+      return (
+        <button
+          type="button"
+          className={styles.artistCreditButton}
+          onClick={(e) => handleArtistClick(track.artist_id, track.artist_name!, e)}
+        >
           {track.artist_name}
-        </Link>
-      ) : (
-        <span>{track.artist_name}</span>
+        </button>
       );
     }
 
@@ -384,7 +473,7 @@ const TrackList = <T extends TrackListItem>({
         <TableHeader>
           <TableRow className={styles.headerRow}>
             <TableHeaderCell className={styles.indexCell}>
-              <span className={styles.headerLabel}>#</span>
+              <span className={mergeClasses(styles.headerLabel, styles.headerLabelCenter)}>#</span>
             </TableHeaderCell>
             <TableHeaderCell>
               <span className={styles.headerLabel}>Title</span>
@@ -399,9 +488,13 @@ const TrackList = <T extends TrackListItem>({
                 <span className={styles.headerLabel}>Album</span>
               </TableHeaderCell>
             ) : null}
-            {showQuality ? <TableHeaderCell className={styles.qualityCell} /> : null}
+            {showQuality ? (
+              <TableHeaderCell className={qualityCellClass}>
+                <span className={styles.headerLabel}>Quality</span>
+              </TableHeaderCell>
+            ) : null}
             <TableHeaderCell className={styles.timeCell}>
-              <span className={styles.headerLabel}>Time</span>
+              <span className={styles.headerLabel}>Duration</span>
             </TableHeaderCell>
             <TableHeaderCell className={styles.actionsCell} />
           </TableRow>
@@ -426,7 +519,7 @@ const TrackList = <T extends TrackListItem>({
             const isDownloading = Boolean(isTrackDownloading?.(track));
             const currentVolume = track.volume_number || 1;
             const previousVolume = index > 0 ? (tracks[index - 1]?.volume_number || 1) : currentVolume;
-            const showVolumeHeader = showVolumeHeaders && (index === 0 || currentVolume !== previousVolume);
+            const showVolumeHeader = showVolumeHeaders && hasMultipleVolumes && (index === 0 || currentVolume !== previousVolume);
             const artistCredits = showArtist ? renderArtistCredits(track) : null;
 
             return (
@@ -440,7 +533,11 @@ const TrackList = <T extends TrackListItem>({
                 ) : null}
 
                 <TableRow
-                  className={mergeClasses(styles.row, onTrackClick ? styles.rowClickable : undefined)}
+                  className={mergeClasses(
+                    styles.row,
+                    onTrackClick ? styles.rowClickable : undefined,
+                    isPlaying ? styles.rowPlaying : undefined
+                  )}
                   data-album-track-id={track.id}
                   onClick={onTrackClick ? () => onTrackClick(track) : undefined}
                 >
@@ -462,8 +559,8 @@ const TrackList = <T extends TrackListItem>({
                         data-row-play
                       >
                         {isPlaying
-                          ? <Stop24Filled className={styles.playIcon} />
-                          : <Play24Regular className={styles.playIcon} />}
+                          ? <Stop24Regular className={styles.playIcon} />
+                          : <Play24Filled className={styles.playIcon} />}
                       </span>
                     ) : null}
                   </TableCell>
@@ -496,7 +593,7 @@ const TrackList = <T extends TrackListItem>({
                   ) : null}
 
                   {showQuality ? (
-                    <TableCell className={styles.qualityCell}>
+                    <TableCell className={qualityCellClass}>
                       {qualityTags.map((quality) => (
                         <QualityBadge key={quality} quality={quality} size="small" />
                       ))}
@@ -528,7 +625,7 @@ const TrackList = <T extends TrackListItem>({
                 </TableRow>
 
                 {isPlaying ? (
-                  <TableRow className={styles.volumeRow}>
+                  <TableRow className={styles.playerRow}>
                     <TableCell className={styles.playerCell} style={{ flex: `1 1 ${columnSpan * 100}%` }}>
                       <AudioPlayer
                         src={getPlaybackSrc(track)}

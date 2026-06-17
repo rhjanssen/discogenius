@@ -313,7 +313,7 @@ export function albumProviderArtworkCandidatesFromRow(row: Record<string, any>):
     {
       provider: selectedProvider,
       entityId: textOrNull(row.selected_provider_id, row.provider_id),
-      imageId: extractProviderArtworkId(row.provider_data, "album"),
+      imageId: textOrNull(row.provider_asset_id, extractProviderArtworkId(row.provider_data, "album")),
       data: row.provider_data,
     },
   ];

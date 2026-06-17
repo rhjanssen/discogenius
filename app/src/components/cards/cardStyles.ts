@@ -233,7 +233,7 @@ export const useCardStyles = makeStyles({
         justifyContent: "center",
     },
     placeholderInitial: {
-        fontSize: "48px",
+        fontSize: tokens.fontSizeHero900,
         fontWeight: tokens.fontWeightBold,
         color: tokens.colorNeutralForeground4,
         userSelect: "none",

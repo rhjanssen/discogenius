@@ -10,11 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let monitoringModule: typeof import("./artist-monitoring.js");
+let refreshArtistModule: typeof import("./refresh-artist-service.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   monitoringModule = await import("./artist-monitoring.js");
+  refreshArtistModule = await import("./refresh-artist-service.js");
 });
 
 beforeEach(() => {
@@ -35,23 +37,59 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("monitoring a named MusicBrainz search result queues hydration without inline metadata fetch", async () => {
+test("monitoring a named MusicBrainz search result hydrates display metadata before queuing intake", async () => {
   const artistMbid = "b53cab0a-f355-41eb-9bce-bf619b6d760e";
-  const result = await monitoringModule.monitorArtistAndQueueIntake({
-    artistId: artistMbid,
-    artistName: "Bastille",
-    priority: 1,
-    trigger: 1,
-  });
+  const originalUpsert = refreshArtistModule.RefreshArtistService.upsertMusicBrainzArtist;
+  refreshArtistModule.RefreshArtistService.upsertMusicBrainzArtist = (async (mbid: string, options = {}) => {
+    assert.equal(mbid, artistMbid);
+    assert.equal(options.monitorArtist, false);
+
+    dbModule.db.prepare(`
+      INSERT INTO ArtistMetadata (mbid, name, images)
+      VALUES (?, ?, ?)
+    `).run(
+      artistMbid,
+      "Bastille",
+      JSON.stringify([{ coverType: "Poster", url: "https://example.invalid/bastille.jpg" }]),
+    );
+    dbModule.db.prepare(`
+      INSERT INTO Artists (
+        id, name, mbid, picture, cover_image_url, musicbrainz_status,
+        musicbrainz_match_method, monitored
+      )
+      VALUES (?, ?, ?, ?, ?, 'verified', 'musicbrainz-metadata', 0)
+    `).run(
+      artistMbid,
+      "Bastille",
+      artistMbid,
+      "https://example.invalid/bastille.jpg",
+      "https://example.invalid/bastille-fanart.jpg",
+    );
+    return artistMbid;
+  }) as typeof refreshArtistModule.RefreshArtistService.upsertMusicBrainzArtist;
+
+  let result: Awaited<ReturnType<typeof monitoringModule.monitorArtistAndQueueIntake>>;
+  try {
+    result = await monitoringModule.monitorArtistAndQueueIntake({
+      artistId: artistMbid,
+      artistName: "Bastille",
+      priority: 1,
+      trigger: 1,
+    });
+  } finally {
+    refreshArtistModule.RefreshArtistService.upsertMusicBrainzArtist = originalUpsert;
+  }
 
   const artist = dbModule.db.prepare(`
-    SELECT id, name, mbid, monitored AS monitor, musicbrainz_status
+    SELECT id, name, mbid, picture, cover_image_url, monitored AS monitor, musicbrainz_status
     FROM Artists
     WHERE id = ?
   `).get(artistMbid) as {
     id: string;
     name: string;
     mbid: string;
+    picture: string;
+    cover_image_url: string;
     monitor: number;
     musicbrainz_status: string;
   };
@@ -64,8 +102,10 @@ test("monitoring a named MusicBrainz search result queues hydration without inli
   assert.equal(artist.id, artistMbid);
   assert.equal(artist.name, "Bastille");
   assert.equal(artist.mbid, artistMbid);
+  assert.equal(artist.picture, "https://example.invalid/bastille.jpg");
+  assert.equal(artist.cover_image_url, "https://example.invalid/bastille-fanart.jpg");
   assert.equal(artist.monitor, 1);
-  assert.equal(artist.musicbrainz_status, "pending");
+  assert.equal(artist.musicbrainz_status, "verified");
   assert.equal(job.type, "RefreshArtist");
   assert.equal(job.ref_id, artistMbid);
   assert.equal(job.status, "pending");

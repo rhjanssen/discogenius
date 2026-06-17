@@ -444,27 +444,35 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     };
 }
 
-function parseRecordingArtistCredits(recordingDataStr: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
-    if (!recordingDataStr) return null;
-    try {
-        const parsed = JSON.parse(recordingDataStr);
-        const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
-        if (Array.isArray(credits) && credits.length > 0) {
-            return credits.map((c: any) => {
-                const artistId = c.artist?.id || c.artistId || "";
-                const name = c.name || c.artist?.name || "";
-                const joinPhrase = c.joinphrase || c.join_phrase || "";
-                return {
-                    id: artistId,
-                    name: name,
-                    join_phrase: joinPhrase,
-                };
-            }).filter(c => c.name);
+function parseRecordingArtistCredits(recordingDataStr: string | null | undefined, trackDataStr?: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
+    const tryParse = (str: string | null | undefined) => {
+        if (!str) return null;
+        try {
+            const parsed = JSON.parse(str);
+            const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+            if (Array.isArray(credits) && credits.length > 0) {
+                return credits.map((c: any) => {
+                    const artistId = c.artist?.id || c.artistId || "";
+                    const name = c.name || c.artist?.name || "";
+                    const joinPhrase = c.joinphrase || c.join_phrase || "";
+                    return {
+                        id: artistId,
+                        name: name,
+                        join_phrase: joinPhrase,
+                    };
+                }).filter(c => c.name);
+            }
+        } catch {
+            // Ignore
         }
-    } catch {
-        // Ignore
+        return null;
+    };
+
+    const trackCredits = tryParse(trackDataStr);
+    if (trackCredits) {
+        return trackCredits;
     }
-    return null;
+    return tryParse(recordingDataStr);
 }
 
 function getReleaseTrackContracts(
@@ -472,6 +480,7 @@ function getReleaseTrackContracts(
     releaseGroupMbid: string,
     albumTitle: string,
     artistName: string,
+    artistMbid: string,
     isMonitored: boolean,
 ): AlbumTrackContract[] {
     const rows = db.prepare(`
@@ -484,7 +493,8 @@ function getReleaseTrackContracts(
         t.position,
         t.medium_position,
         t.length_ms,
-        r.data AS recording_data
+        r.data AS recording_data,
+        t.data AS track_data
       FROM Tracks t
       LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
       WHERE t.release_mbid = ?
@@ -492,10 +502,10 @@ function getReleaseTrackContracts(
     `).all(releaseMbid) as any[];
 
     return rows.map((track) => {
-        const parsedCredits = parseRecordingArtistCredits(track.recording_data);
+        const parsedCredits = parseRecordingArtistCredits(track.recording_data, track.track_data);
         const artist_credits = parsedCredits && parsedCredits.length > 0
             ? parsedCredits
-            : [{ id: "", name: artistName, join_phrase: "" }];
+            : [{ id: artistMbid, name: artistName, join_phrase: "" }];
 
         return {
             id: String(track.mbid),
@@ -903,6 +913,7 @@ async function buildReleaseGroupTrackContracts(
         releaseGroup.mbid,
         album.title,
         album.artist_name,
+        album.artist_id,
         Boolean(releaseGroup.wanted),
     );
     const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks);

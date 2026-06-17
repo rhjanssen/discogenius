@@ -72,11 +72,11 @@ function seedCanonicalArtistPage() {
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
       artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid, quality, monitored_lock
+      selected_provider, selected_provider_id, selected_release_mbid, quality, monitored_lock, provider_data
     )
     VALUES (
       'artist-mbid-1', 'release-group-mbid-1', 'stereo', 1,
-      'tidal', 'provider-album-1', 'release-mbid-1', 'LOSSLESS', 1
+      'tidal', 'provider-album-1', 'release-mbid-1', 'LOSSLESS', 1, '{"cover":"13bb32e2-e326-4ee5-be74-f3320ad3379c"}'
     )
   `).run();
 
@@ -111,7 +111,7 @@ function seedCanonicalArtistPage() {
     )
     VALUES (
       'tidal', 'track', 'provider-track-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 'LOSSLESS', 'provider-album-cover',
+      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 'LOSSLESS', '13bb32e2-e326-4ee5-be74-f3320ad3379c',
       180, 'stereo', 201, 401, 301, 'verified', 0.99
     )
   `).run();
@@ -120,12 +120,12 @@ function seedCanonicalArtistPage() {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
       release_mbid, title, quality, asset_id, library_slot, album_release_id,
-      match_status, match_confidence
+      match_status, match_confidence, data
     )
     VALUES (
       'tidal', 'album', 'provider-album-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'Canonical Album', 'LOSSLESS', 'provider-album-cover', 'stereo', 201,
-      'verified', 0.99
+      'release-mbid-1', 'Canonical Album', 'LOSSLESS', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 'stereo', 201,
+      'verified', 0.99, '{"cover":"13bb32e2-e326-4ee5-be74-f3320ad3379c","trackCount":1,"volumeCount":1}'
     )
   `).run();
 
@@ -198,6 +198,8 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(albums[0].source, "musicbrainz");
   assert.equal(albums[0].monitored_lock, true);
   assert.equal(albums[0].selected_provider_id, "provider-album-1");
+  assert.match(albums[0].cover_art_url, /^\/MediaCoverProxy\//);
+  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 
   assert.equal(topTracks.length, 1);
@@ -233,6 +235,7 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums[0].id, "release-group-mbid-1");
   assert.equal(albums[0].title, "Canonical Album");
   assert.equal(albums[0].source, "musicbrainz");
+  assert.match(albums[0].cover_art_url, /^\/MediaCoverProxy\//);
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 

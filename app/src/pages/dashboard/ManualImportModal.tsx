@@ -61,7 +61,7 @@ const useStyles = makeStyles({
         paddingBottom: tokens.spacingVerticalL,
     },
     dialogActions: {
-        borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         paddingTop: tokens.spacingVerticalM,
         '@media (max-width: 639px)': {
             display: 'grid',
@@ -135,7 +135,7 @@ const useStyles = makeStyles({
         flex: 1,
         overflowY: 'auto',
         overflowX: 'auto',
-        border: `1px solid ${tokens.colorNeutralStroke2}`,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         borderRadius: tokens.borderRadiusMedium,
         backgroundColor: tokens.colorNeutralBackground1,
         boxShadow: tokens.shadow4,
@@ -153,7 +153,7 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px',
+        padding: tokens.spacingVerticalXXXL,
         color: tokens.colorNeutralForeground3,
         textAlign: 'center',
         gap: tokens.spacingVerticalM,
