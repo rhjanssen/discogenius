@@ -56,18 +56,25 @@ export class TiddlBackend implements DownloadBackend {
         span: { completed: number; total: number },
     ): Promise<void> {
         const url = `https://tidal.com/browse/${request.entityType}/${providerId}`;
-        const args: string[] = ["download", "--path", request.downloadPath];
+        // Per-job CLI args (these override the global config.toml). Scan path is
+        // pinned to this job's own workspace so skip_existing only matches files
+        // from THIS job — never another concurrent job's downloads.
+        const args: string[] = [
+            "download",
+            "--path", request.downloadPath,
+            "--scan-path", request.downloadPath,
+        ];
 
         if (request.entityType === "video") {
             args.push("--videos", "only");
         } else {
             const isSpatial = isSpatialAudioQuality(request.quality);
             args.push("-q", capTiddlTrackQuality(mapAudioQualityToTiddl(request.quality), isSpatial));
-            if (isSpatial) {
-                args.push("--dolby-atmos", "only");
-            } else {
-                args.push("--dolby-atmos", "allow");
-            }
+            // Spatial slot: Atmos only. Stereo slot: allow Atmos so an Atmos-only
+            // release can still fill the stereo slot when no stereo release exists.
+            args.push("--dolby-atmos", isSpatial ? "only" : "allow");
+            // Audio jobs never pull music videos bundled with the album/artist.
+            args.push("--videos", "none");
         }
 
         args.push("url", url);

@@ -209,35 +209,44 @@ function tomlString(value: string): string {
 /**
  * Write tiddl's config.toml from Discogenius settings.
  *
- * Downloads land in per-job workspaces (passed per invocation via --path), so the
- * template only needs to be collision-free inside one workspace; the organizer
- * applies the user's naming config when importing into the library.
+ * tiddl is designed so every download CLI option *defaults to the matching
+ * config value* (e.g. `-q` defaults to `[download].track_quality`). So config is
+ * the base and CLI args are per-invocation overrides. We lean on that split:
+ *
+ *   - config.toml (here)       → GLOBAL settings that are identical for every
+ *                                download (video quality, threads, skip, singles,
+ *                                metadata embedding, templates, cache, m3u).
+ *   - CLI args (tiddl-backend) → PER-JOB values that genuinely differ between
+ *                                jobs: --path / --scan-path (per-job workspace),
+ *                                -q (quality cap per offer/slot), --dolby-atmos
+ *                                (stereo=allow, spatial=only), --videos
+ *                                (album/track=none, video=only).
+ *
+ * We deliberately do NOT also write the per-job keys here — keeping a single
+ * source of truth per setting instead of the old config/args duplication.
+ * Downloads land in per-job workspaces; the organizer applies the user's naming
+ * config when importing, so the tiddl template only needs to be collision-free
+ * within one workspace.
  */
-export function syncTiddlSettings(downloadPath: string = Config.getDownloadPath()): void {
+export function syncTiddlSettings(): void {
     ensureTiddlConfigDir();
 
     const quality = Config.getQualityConfig();
-    const trackQuality = nativeTiddlTrackQuality(quality?.audio_quality) ?? "high";
     const videoQuality = mapVideoQualityToTiddl(quality?.video_quality);
     const embedCover = quality?.embed_cover !== false;
     const embedLyrics = quality?.embed_lyrics !== false;
 
     const lines = [
         "# Managed by Discogenius. Manual edits are overwritten on settings sync.",
+        "# Global tiddl settings only — per-download values are passed as CLI args.",
         "enable_cache = true",
         "debug = false",
         "",
         "[download]",
-        `track_quality = ${tomlString(trackQuality)}`,
         `video_quality = ${tomlString(videoQuality)}`,
-        // Workspaces are wiped before each job; skip_existing only matters for retries.
         "skip_existing = true",
         "threads_count = 4",
-        `download_path = ${tomlString(downloadPath.replace(/\\/g, "/"))}`,
-        `scan_path = ${tomlString(downloadPath.replace(/\\/g, "/"))}`,
         "singles_filter = \"include\"",
-        "videos_filter = \"none\"",
-        "atmos_filter = \"allow\"",
         "",
         "[metadata]",
         "enable = true",

@@ -219,7 +219,11 @@ function renderUltraBlurImage(colors: UltraBlurColors, width: number, height: nu
       const wBL = Math.exp(-falloff * (dx0 + dy1));
       const wBR = Math.exp(-falloff * (dx1 + dy1));
       const sum = wTL + wTR + wBL + wBR || 1;
-      const noise = (rand() - 0.5) * 0.035;
+      // Faint ordered dither to break up gradient banding. Kept small (was 0.035,
+      // which read as visible grain once the 1280×720 PNG is upscaled to cover the
+      // viewport — most noticeable in the dark regions because the noise is added
+      // in linear light and the sRGB curve is steep near black).
+      const noise = (rand() - 0.5) * 0.006;
       const rLin = clamp01(((tlLin.r * wTL + trLin.r * wTR + blLin.r * wBL + brLin.r * wBR) / sum) * 0.84 + noise);
       const gLin = clamp01(((tlLin.g * wTL + trLin.g * wTR + blLin.g * wBL + brLin.g * wBR) / sum) * 0.84 + noise);
       const bLin = clamp01(((tlLin.b * wTL + trLin.b * wTR + blLin.b * wBL + brLin.b * wBR) / sum) * 0.84 + noise);

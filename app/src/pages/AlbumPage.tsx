@@ -311,13 +311,29 @@ const useStyles = makeStyles({
       ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
     },
   },
+  // The split download is two adjacent Buttons sharing one rounded frame. We do
+  // NOT clip with overflow:hidden — that swallowed the hover shadow and lift and
+  // chopped the top edge. Instead the wrapper owns the hover shadow + lift so the
+  // whole unit moves together like the other action buttons, and each half keeps
+  // its own rounded outer corners (inner corners squared) so the seam stays clean.
   splitDownload: {
     display: "inline-flex",
     alignItems: "stretch",
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
+    position: "relative",
+    borderRadius: tokens.borderRadiusXLarge,
     flex: "1 1 0",
     minWidth: 0,
+    transitionProperty: "box-shadow, transform",
+    transitionDuration: tokens.durationFast,
+    transitionTimingFunction: tokens.curveEasyEase,
+    "&:hover": {
+      boxShadow: tokens.shadow8,
+      transform: "translateY(-1px)",
+    },
+    "&:active": {
+      boxShadow: tokens.shadow2,
+      transform: "translateY(0)",
+    },
     "@media (min-width: 768px)": {
       flex: "0 0 auto",
       minWidth: "auto",
@@ -328,6 +344,16 @@ const useStyles = makeStyles({
     borderBottomRightRadius: 0,
     flex: "1 1 auto",
     minWidth: 0,
+    // The wrapper handles the lift/shadow; suppress the per-half transform so the
+    // two halves don't slide independently and tear the seam.
+    "&:hover": {
+      boxShadow: "none",
+      transform: "none",
+    },
+    "&:active": {
+      boxShadow: "none",
+      transform: "none",
+    },
   },
   splitDownloadMenu: {
     minWidth: "36px",
@@ -337,6 +363,14 @@ const useStyles = makeStyles({
     borderTopLeftRadius: 0,
     borderBottomLeftRadius: 0,
     borderLeftColor: tokens.colorNeutralStroke2,
+    "&:hover": {
+      boxShadow: "none",
+      transform: "none",
+    },
+    "&:active": {
+      boxShadow: "none",
+      transform: "none",
+    },
   },
   metaAttribution: {
     marginTop: tokens.spacingVerticalXS,

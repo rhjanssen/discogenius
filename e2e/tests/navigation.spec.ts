@@ -106,7 +106,8 @@ test.describe('App shell & navigation', () => {
       { path: '/library', text: /Artists|Albums|Tracks|Videos|Your library is empty/i },
       { path: '/dashboard', text: 'Dashboard' },
       { path: '/settings', text: 'Settings' },
-      { path: '/search', text: 'Search' },
+      // NOTE: the dedicated /search route was removed in 2.0.4 — search now lives
+      // in the persistent nav bar, so there is no standalone /search page to test.
     ];
 
     for (const route of routes) {

@@ -92,6 +92,44 @@ function slotDisplayName(slot: SlotName): string {
     return slot === "spatial" ? "Spatial" : "Stereo";
 }
 
+/** One release entry, after merging offers that point at the same provider release. */
+interface MergedOffer extends ProviderQualityOffer {
+    /** Every library slot this single release fills (e.g. ["stereo", "spatial"]). */
+    slots: SlotName[];
+}
+
+/** Human label for the set of slots a release fills, e.g. "Stereo + Spatial". */
+function slotsDisplayName(slots: SlotName[]): string {
+    return slots.map(slotDisplayName).join(" + ");
+}
+
+/**
+ * Collapse offers that are the *same* provider release filling more than one
+ * slot into a single entry. This is the Atmos-fallback case: when no separate
+ * stereo release exists, the one Atmos release fills BOTH the stereo and spatial
+ * slots — so we show one badge (hover explains it covers both libraries) instead
+ * of two identical pills. Offers with different releases (or no selection) stay
+ * separate, so a genuine stereo + Atmos split still shows two badges.
+ */
+function mergeOffersByRelease(offers: ProviderQualityOffer[]): MergedOffer[] {
+    const merged: MergedOffer[] = [];
+    const indexByKey = new Map<string, number>();
+    for (const offer of offers) {
+        const albumId = String(offer.providerAlbumId || "").trim();
+        const quality = String(offer.quality || "").trim().toUpperCase();
+        // Only merge when both slots reference the SAME concrete release.
+        const key = albumId ? `${providerKey(offer.provider)}|${albumId}|${quality}` : "";
+        const existing = key ? indexByKey.get(key) : undefined;
+        if (existing != null) {
+            merged[existing].slots.push(offer.slot);
+        } else {
+            if (key) indexByKey.set(key, merged.length);
+            merged.push({ ...offer, slots: [offer.slot] });
+        }
+    }
+    return merged;
+}
+
 function statusLabel(offer: ProviderQualityOffer): string {
     const hasSelection = Boolean(String(offer.providerAlbumId || "").trim());
     if (!hasSelection) return "no provider release selected";
@@ -105,7 +143,7 @@ function statusLabel(offer: ProviderQualityOffer): string {
 interface ProviderGroup {
     provider?: string | null;
     key: string;
-    offers: ProviderQualityOffer[];
+    offers: MergedOffer[];
 }
 
 /**
@@ -130,10 +168,12 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
         borderColor: badgeStrokeColor(isDarkMode),
     };
 
-    const visible = (offers || []).filter((offer) => offer && offer.quality);
-    if (visible.length === 0) {
+    const visibleRaw = (offers || []).filter((offer) => offer && offer.quality);
+    if (visibleRaw.length === 0) {
         return null;
     }
+    // Collapse the same release filling multiple slots into one badge.
+    const visible = mergeOffersByRelease(visibleRaw);
 
     // Group contiguous offers that share a provider.
     const groups: ProviderGroup[] = [];
@@ -158,7 +198,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
 
         const tooltipLines = [
             providerName,
-            ...group.offers.map((offer) => `${slotDisplayName(offer.slot)} · ${statusLabel(offer)}`),
+            ...group.offers.map((offer) => `${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`),
         ];
 
         return (
@@ -187,10 +227,14 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
         );
     };
 
-    const renderQualityBadge = (offer: ProviderQualityOffer, groupIndex: number, offerIndex: number) => {
+    const renderQualityBadge = (offer: MergedOffer, groupIndex: number, offerIndex: number) => {
         const providerName = providerDisplayName(offer.provider);
+        const fillsBothLibraries = offer.slots.length > 1;
         const tooltipLines = [
-            `${providerName} · ${slotDisplayName(offer.slot)} · ${statusLabel(offer)}`,
+            `${providerName} · ${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`,
+            fillsBothLibraries
+                ? "Same release fills both libraries (no separate stereo release available)"
+                : null,
             offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
         ].filter(Boolean) as string[];
 

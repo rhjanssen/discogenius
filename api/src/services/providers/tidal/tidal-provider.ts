@@ -477,8 +477,10 @@ export class TidalProvider implements StreamingProvider {
     });
   }
 
-  async syncSettings(downloadPath?: string): Promise<void> {
-    syncTiddlSettings(downloadPath);
+  async syncSettings(_downloadPath?: string): Promise<void> {
+    // Per-job paths are passed as CLI args now; the config file only holds global
+    // settings, so the download path is no longer baked into config.toml.
+    syncTiddlSettings();
   }
 
   async syncCredentials(): Promise<void> {

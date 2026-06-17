@@ -44,20 +44,19 @@ const useStyles = makeStyles({
         textTransform: "uppercase",
         letterSpacing: "0.02em",
     },
-    // Consistent heights for ALL variants (text and Atmos) so a row of badges
-    // lines up. Slightly larger than before for legibility.
+    // Heights are intentionally NOT overridden — we let Fluent's `size` prop set
+    // the badge height so a QualityBadge lines up exactly with a MediaTypeBadge
+    // (and any other Fluent Badge) of the same size in a shared row. We only tune
+    // the horizontal padding and font size here.
     small: {
-        height: "20px",
         fontSize: tokens.fontSizeBase200,
         ...shorthands.padding(0, tokens.spacingHorizontalSNudge),
     },
     medium: {
-        height: "24px",
         fontSize: tokens.fontSizeBase200,
         ...shorthands.padding(0, tokens.spacingHorizontalS),
     },
     large: {
-        height: "28px",
         fontSize: tokens.fontSizeBase300,
         ...shorthands.padding(0, tokens.spacingHorizontalM),
     },

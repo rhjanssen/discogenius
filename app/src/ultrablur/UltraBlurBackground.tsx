@@ -21,19 +21,24 @@ const useStyles = makeStyles({
     backgroundPosition: "center",
     backgroundRepeat: "no-repeat",
     transform: "scale(1.02)",
-    willChange: "opacity, filter",
+    // Only opacity animates (the cross-fade). The colour-tuning `filter` is set
+    // inline and is static, so it does NOT belong in will-change.
+    willChange: "opacity",
   },
+  // NOTE: the colour tuning (saturate/brightness/contrast) used to live here as a
+  // full-viewport `backdrop-filter`, which forced the GPU to re-sample and
+  // re-filter the entire backdrop on every repaint (the app repaints constantly
+  // from queue SSE updates) — a constant GPU-load sink. The gradient image is
+  // static, so the same tuning is now applied as a plain `filter` on the image
+  // layer (rasterised once, GPU-cached). These overlays now only paint their
+  // vignette gradients.
   overlayDark: {
     backgroundImage:
       `radial-gradient(circle at 50% 35%, transparent 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 32%, transparent) 70%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 55%, transparent) 100%), linear-gradient(180deg, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 16%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 42%, transparent) 100%)`,
-    backdropFilter: "saturate(0.9) brightness(0.8) contrast(1.06)",
-    WebkitBackdropFilter: "saturate(0.9) brightness(0.8) contrast(1.06)",
   },
   overlayLight: {
     backgroundImage:
       `radial-gradient(circle at 50% 35%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 28%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 70%, transparent) 70%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 90%, transparent) 100%), linear-gradient(180deg, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 70%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 88%, transparent) 100%)`,
-    backdropFilter: "saturate(0.75) brightness(1.05) contrast(0.98)",
-    WebkitBackdropFilter: "saturate(0.75) brightness(1.05) contrast(0.98)",
   },
   overlay: {
     position: "absolute",
@@ -80,6 +85,11 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
 
   const { colors } = props;
   const transitionMs = props.transitionDuration ?? 500;
+  // Colour tuning applied directly to the static gradient image (replaces the old
+  // full-viewport backdrop-filter). Same values as before, just rasterised once.
+  const layerFilter = props.isDarkMode
+    ? "saturate(0.9) brightness(0.8) contrast(1.06)"
+    : "saturate(0.75) brightness(1.05) contrast(0.98)";
   const key = useMemo(() => {
     return `${colors.topLeft}|${colors.topRight}|${colors.bottomLeft}|${colors.bottomRight}`;
   }, [colors]);
@@ -152,6 +162,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
           style={{
             backgroundImage: `url("${backUrl}")`,
             opacity: 1,
+            filter: layerFilter,
           }}
         />
       )}
@@ -162,6 +173,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
           style={{
             backgroundImage: `url("${frontUrl}")`,
             opacity: frontVisible ? 1 : 0,
+            filter: layerFilter,
             transition: skipTransition
               ? "none"
               : `opacity ${transitionMs}ms ease-in-out`,
