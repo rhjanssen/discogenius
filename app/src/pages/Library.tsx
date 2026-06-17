@@ -37,6 +37,7 @@ import {
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -1276,9 +1277,45 @@ const Library = () => {
     {
       key: "quality",
       header: "Quality",
-      width: "90px",
-      align: "center",
-      render: (album: any) => album.quality ? <QualityBadge quality={album.quality} /> : null,
+      width: "120px",
+      align: "left",
+      render: (album: any) => {
+        const hasStereoOffer = Boolean(album.stereo_provider_id);
+        const hasSpatialOffer = Boolean(album.spatial_provider_id);
+        const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
+
+        if (hasAnyProviderOffer) {
+          return (
+            <ProviderQualityRow
+              size="small"
+              offers={[
+                ...(hasStereoOffer
+                  ? [{
+                      slot: "stereo",
+                      quality: album.stereo_quality || album.quality,
+                      provider: album.stereo_provider || album.selected_provider,
+                      matchStatus: album.stereo_match_status,
+                      providerAlbumId: album.stereo_provider_id,
+                      selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+                    }]
+                  : []),
+                ...(hasSpatialOffer
+                  ? [{
+                      slot: "spatial",
+                      quality: album.spatial_quality || "DOLBY_ATMOS",
+                      provider: album.spatial_provider || album.selected_provider,
+                      matchStatus: album.spatial_match_status,
+                      providerAlbumId: album.spatial_provider_id,
+                      selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+                    }]
+                  : []),
+              ] as any}
+            />
+          );
+        }
+
+        return album.quality ? <QualityBadge quality={album.quality} /> : null;
+      },
     },
     {
       key: "actions",

@@ -1375,7 +1375,7 @@ const QueueTab = () => {
                                                             (isDownloading || isImportPending) ? styles.downloadBadgeRowInline : '',
                                                         )}>
                                                             <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
-                                                            {group.quality ? <QualityBadge quality={group.quality} size="medium" /> : null}
+                                                            {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
                                                         </div>
                                                     </div>
                                                 </div>

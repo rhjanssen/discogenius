@@ -342,7 +342,20 @@ router.get("/:artistId/albums", (req, res) => {
 // Keep this route DB-first so page navigation stays responsive even while queue workers are busy.
 router.get("/:artistId/page-db", async (req, res) => {
   try {
-    const page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
+    let page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
+    
+    // Auto-fetch collaborating artists on click
+    if (!page && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.artistId)) {
+      try {
+        const queued = await queueArtistRefreshScan(req.params.artistId, { forceUpdate: true });
+        if (queued) {
+          page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
+        }
+      } catch (err: any) {
+        console.warn(`[artists] Failed to auto-fetch missing MBID ${req.params.artistId}:`, err.message);
+      }
+    }
+
     if (!page) {
       return res.status(404).json({ detail: "Artist not found" });
     }

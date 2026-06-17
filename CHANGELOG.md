@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.5] - 2026-06-17
+
+### Added
+- Added List view mode for the global library and artist discography pages, using DataGrids for dense layout.
+- Added "Fetch-on-click" functionality for collaborating artists; clicking an unknown collaborating artist now automatically fetches their basic info from MusicBrainz and queues a full discography scan instead of landing on a 404 page.
+
+### Fixed
+- Fixed an inconsistency in the download queue UI where the media type pill was smaller than the quality pill. Both are now consistently sized as small pills.
+
 ## [2.0.4] - 2026-06-17
 
 ### Fixed

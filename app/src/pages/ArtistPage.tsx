@@ -13,6 +13,7 @@ import {
   Overflow,
   OverflowItem,
   mergeClasses,
+  Text,
 } from "@fluentui/react-components";
 import {
   ArrowSync24Regular,
@@ -58,6 +59,12 @@ import {
   detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
+import type { DataGridColumn } from "@/components/DataGrid";
+import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
+import { QualityBadge } from "@/components/ui/QualityBadge";
+import { LibraryRowActions } from "@/components/library/LibraryRowActions";
+import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import {
   ACTIVITY_REFRESH_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
@@ -405,9 +412,9 @@ const ArtistPage = () => {
   // Combined busy states: local action flags OR server-side activity
   const isScanBusy = syncing || Boolean(activity?.scanning);
   const isCurateBusy = curating || Boolean(activity?.curating);
-  const [viewMode, setViewMode] = useState<'carousel' | 'grid'>(() => {
-    const saved = localStorage.getItem('discogenius_artist_view_mode');
-    return (saved === 'grid' || saved === 'carousel') ? saved : 'carousel';
+  const [viewMode, setViewMode] = useState<'carousel' | 'grid' | 'list'>(() => {
+    const saved = localStorage.getItem('discogenius_artist_view_mode') as 'carousel' | 'grid' | 'list' | null;
+    return (saved === 'grid' || saved === 'carousel' || saved === 'list') ? saved : 'carousel';
   });
 
   useEffect(() => {
@@ -618,6 +625,154 @@ const ArtistPage = () => {
       console.error("Error toggling video monitoring:", error);
     }
   };
+
+  const dgCell = useDataGridCellStyles();
+  const handleToggleAlbumLock = useCallback(async (e: React.MouseEvent, albumId: string, isLocked: boolean) => {
+    e.stopPropagation();
+    try {
+      await api.updateAlbum(albumId, { monitored_lock: !isLocked });
+      dispatchLibraryUpdated();
+      refetchPage();
+    } catch (error) {
+      console.error('Failed to toggle album lock:', error);
+    }
+  }, [refetchPage]);
+
+  const handleDownloadAlbumRow = useCallback(async (e: React.MouseEvent, album: any) => {
+    e.stopPropagation();
+    await api.addAlbum(String(album.id));
+  }, []);
+
+  const albumColumns = useMemo<DataGridColumn[]>(() => [
+    {
+      key: "thumb",
+      header: "",
+      width: "40px",
+      render: (album: any) => {
+        const fallbackSrc = getAlbumCover(album.provider_cover_id, 'small');
+        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || fallbackSrc;
+        return src ? (
+          <img
+            src={src}
+            alt={album.title}
+            className={dgCell.thumbnailSquare}
+            onError={(event) => {
+              if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
+                event.currentTarget.src = fallbackSrc;
+              }
+            }}
+          />
+        ) : (
+          <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>
+        );
+      },
+    },
+    {
+      key: "title",
+      header: "Title",
+      width: "1fr",
+      render: (album: any) => (
+        <div className={dgCell.nameStack}>
+          <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
+        </div>
+      ),
+    },
+    {
+      key: "year",
+      header: "Year",
+      width: "65px",
+      align: "center",
+      className: dgCell.hideOnMobile,
+      render: (album: any) => {
+        const year = album.release_date ? album.release_date.split('-')[0] : '';
+        return <>{year || '—'}</>;
+      },
+    },
+    {
+      key: "tracks",
+      header: "Tracks",
+      width: "60px",
+      align: "center",
+      render: (album: any) => <>{album.num_tracks ?? album.track_count ?? 0}</>,
+    },
+    {
+      key: "quality",
+      header: "Quality",
+      width: "120px",
+      align: "left",
+      render: (album: any) => {
+        const hasStereoOffer = Boolean(album.stereo_provider_id);
+        const hasSpatialOffer = Boolean(album.spatial_provider_id);
+        const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
+
+        if (hasAnyProviderOffer) {
+          return (
+            <ProviderQualityRow
+              size="small"
+              offers={[
+                ...(hasStereoOffer
+                  ? [{
+                      slot: "stereo",
+                      quality: album.stereo_quality || album.quality,
+                      provider: album.stereo_provider || album.selected_provider,
+                      matchStatus: album.stereo_match_status,
+                      providerAlbumId: album.stereo_provider_id,
+                      selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+                    }]
+                  : []),
+                ...(hasSpatialOffer
+                  ? [{
+                      slot: "spatial",
+                      quality: album.spatial_quality || "DOLBY_ATMOS",
+                      provider: album.spatial_provider || album.selected_provider,
+                      matchStatus: album.spatial_match_status,
+                      providerAlbumId: album.spatial_provider_id,
+                      selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+                    }]
+                  : []),
+              ] as any}
+            />
+          );
+        }
+
+        return album.quality ? <QualityBadge quality={album.quality} /> : null;
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      width: "120px",
+      align: "right",
+      render: (album: any) => {
+        const isLocked = Boolean(album.monitored_lock);
+        return (
+          <LibraryRowActions
+            actions={[
+              {
+                key: "download",
+                label: "Download album",
+                icon: <ArrowDownload24Regular />,
+                onClick: (event) => handleDownloadAlbumRow(event, album),
+              },
+              {
+                key: "monitor",
+                label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
+                icon: album.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),
+                disabled: isLocked,
+              },
+              {
+                key: "lock",
+                label: isLocked ? "Unlock" : "Lock",
+                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                onClick: (event) => handleToggleAlbumLock(event, String(album.id), isLocked),
+              },
+            ]}
+          />
+        );
+      },
+    },
+  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumLock, toggleAlbumMonitored]);
 
   // Rendering Helpers
   const renderAlbumCard = (item: any) => {
@@ -887,9 +1042,9 @@ const ArtistPage = () => {
       />
       <Button
         appearance="subtle"
-        icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
-        onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
-        title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
+        icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : viewMode === 'list' ? <Grid24Regular /> : <Grid24Regular />}
+        onClick={() => setViewMode(prev => prev === 'carousel' ? 'grid' : prev === 'grid' ? 'list' : 'carousel')}
+        title={`Switch to ${viewMode === 'carousel' ? 'grid' : viewMode === 'grid' ? 'list' : 'carousel'} view`}
         className={mergeClasses(styles.actionButton, styles.transparentButton)}
       >
         View
@@ -976,6 +1131,7 @@ const ArtistPage = () => {
 
     // Determine the appropriate renderer based on module type
     const isArtistModule = module.type === 'ARTIST_LIST';
+    const isVideoModule = module.type === 'VIDEO_LIST';
     const renderer = isArtistModule ? renderArtistCard : renderAlbumCard;
     if (libraryFilter === 'video') return null;
 
@@ -984,15 +1140,53 @@ const ArtistPage = () => {
 
     const isFirst = claimFirstVisible();
 
+    const renderGridOrCarousel = () => (
+      <div className={viewMode === 'grid' ? styles.grid : styles.carousel}>
+        {rendered}
+      </div>
+    );
+
+    const renderListView = () => (
+      <DataGrid
+        items={items.filter((item: any) => {
+           // Same filter logic as renderAlbumCard
+           const isAlbumMonitored = Boolean(item.is_monitored);
+           const isLocked = Boolean(item.monitored_lock);
+           const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;
+           if (hasMonitoringFilter) {
+             const matchesMonitored = statusFilters.onlyMonitored && isAlbumMonitored;
+             const matchesUnmonitored = statusFilters.onlyUnmonitored && !isAlbumMonitored;
+             if (!matchesMonitored && !matchesUnmonitored) return false;
+           }
+           const hasLockFilter = statusFilters.onlyLocked || statusFilters.onlyUnlocked;
+           if (hasLockFilter) {
+             const matchesLocked = statusFilters.onlyLocked && isLocked;
+             const matchesUnlocked = statusFilters.onlyUnlocked && !isLocked;
+             if (!matchesLocked && !matchesUnlocked) return false;
+           }
+           const redundantOf = item.redundant_of ?? item.redundant;
+           const isRedundant = Boolean(redundantOf);
+           const isPrimary = !isRedundant;
+           const hasRedundancyFilter = statusFilters.onlyPrimary || statusFilters.onlyRedundant;
+           if (hasRedundancyFilter) {
+             const matchesPrimary = statusFilters.onlyPrimary && isPrimary;
+             const matchesRedundant = statusFilters.onlyRedundant && isRedundant;
+             if (!matchesPrimary && !matchesRedundant) return false;
+           }
+           return true;
+        })}
+        columns={albumColumns}
+        onRowClick={(album) => navigate(`/album/${album.id}`)}
+      />
+    );
+
     return (
       <div key={`${module.type}-${module.title}`} className={styles.section}>
         <div className={styles.sectionHeader}>
           <Title2>{module.title}</Title2>
           {isFirst && renderMobileFilterView()}
         </div>
-        <div className={viewMode === 'grid' ? styles.grid : styles.carousel}>
-          {rendered}
-        </div>
+        {viewMode === 'list' && !isArtistModule && !isVideoModule ? renderListView() : renderGridOrCarousel()}
       </div>
     );
   };
