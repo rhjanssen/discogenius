@@ -41,8 +41,26 @@ housekeeping (`runtime-maintenance.repairMonitoringGaps` still writes
 
 ## 2. Target model (after migration)
 
-- Canonical identity: `ArtistMetadata` / `Artists` → `Albums` (RG) →
-  `AlbumReleases` → `Tracks` → `Recordings`. (Already in place.)
+**`Recordings` vs `Tracks` (clarified — the intended canonical shape):** stay
+close to Lidarr, where one table (`Track`) carries the recording-level info. We
+split it into two on purpose, to support **music videos that belong to no
+album/release**:
+
+- **`Recordings` = the canonical recording/work entity, holding ALL the
+  recording-level info** (title, artist credit, duration, ISRC, AcoustID/MBID,
+  whether it's audio or a video, …). This is the table that plays Lidarr's
+  `Track` role. A standalone music video lives here with **no** `Tracks`/release
+  row. **All track information that isn't release-specific belongs on
+  `Recordings`.**
+- **`Tracks` = a release↔recording mapping table.** A recording can appear on
+  many releases, so `Tracks` stores only the **release-specific** facts:
+  `release` association, volume number, track number/position, and any other
+  per-release detail. It carries no recording properties of its own.
+
+So the canonical chain is `ArtistMetadata`/`Artists` → `Albums` (RG) →
+`AlbumReleases` → `Tracks` (release↔recording map) → `Recordings` (the work).
+Provider availability is `ProviderItems` (keyed to canonical mbids), never the
+legacy `Provider*` tables.
 - Provider availability/offers: `ProviderItems` only.
 - Slot selection (stereo/spatial/video): `ReleaseGroupSlots`. (Keep — this is the
   spatial + video feature that justifies deviating from Lidarr.)
