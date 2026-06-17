@@ -791,9 +791,9 @@ router.get("/image", (req, res) => {
     bottomLeft: parseHexQuery(req.query.bottomLeft, "#083A3C"),
     bottomRight: parseHexQuery(req.query.bottomRight, "#6A3B1F"),
   };
-  // Cap at QHD: the client requests its own screen resolution, and the gradient
-  // is smooth enough that a QHD image upscaled to a 4K display is imperceptible —
-  // while keeping the per-pixel generation off the event loop for too long.
+  // The UltraBlur client deliberately requests a tiny image (≈320×180) and blurs
+  // it Plex-style, so normal traffic is well under this clamp; the QHD ceiling is
+  // just abuse protection against an arbitrarily huge ?width/?height.
   const width = Math.max(320, Math.min(2560, Number(req.query.width || 1280) || 1280));
   const height = Math.max(180, Math.min(1440, Number(req.query.height || 720) || 720));
 

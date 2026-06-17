@@ -19,10 +19,12 @@ const useStyles = makeStyles({
     inset: 0,
     backgroundSize: "cover",
     backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-    transform: "scale(1.02)",
-    // Only opacity animates (the cross-fade). The colour-tuning `filter` is set
-    // inline and is static, so it does NOT belong in will-change.
+    // Scaled up so the CSS blur (set inline) can't pull the viewport edges in and
+    // reveal a soft transparent border — the container clips the overflow.
+    transform: "scale(1.12)",
+    // Only opacity animates (the cross-fade). The colour-tuning + blur `filter` is
+    // set inline and is static (rasterised once, just composited at varying alpha
+    // during the fade), so it does NOT belong in will-change.
     willChange: "opacity",
   },
   // NOTE: the colour tuning (saturate/brightness/contrast) used to live here as a
@@ -54,22 +56,12 @@ interface UltraBlurBackgroundProps {
   transitionDuration?: number;
 }
 
-// Generate the gradient at (roughly) the client's physical screen resolution
-// instead of a fixed 1280×720 that the browser then upscales. The image is a
-// smooth gradient so it compresses tiny and is cached immutable per colour set;
-// we use the *screen* size (stable across window resizes, so no refetch) and a
-// QHD ceiling so the server-side per-pixel generation stays cheap. Anything
-// above the cap is a sub-pixel-smooth upscale of a gradient — imperceptible.
-const ULTRABLUR_MAX = { width: 2560, height: 1440 };
-function computeUltraBlurSize(): { width: number; height: number } {
-  if (typeof window === "undefined" || !window.screen) {
-    return { width: 1920, height: 1080 };
-  }
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const width = Math.min(ULTRABLUR_MAX.width, Math.max(640, Math.round(window.screen.width * dpr)));
-  const height = Math.min(ULTRABLUR_MAX.height, Math.max(360, Math.round(window.screen.height * dpr)));
-  return { width, height };
-}
+// Plex-style UltraBlur: request a TINY gradient and blur it client-side rather
+// than shipping a screen-sized image. A 4-corner gradient carries no high-
+// frequency detail, so a 320×180 PNG (a few KB, cached immutable per colour set)
+// upscaled with `background-size: cover` + a CSS `blur()` looks identical to a
+// 4K render — at a fraction of the payload and zero heavy server-side rendering.
+const ULTRABLUR_SIZE = { width: 320, height: 180 };
 
 export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const styles = useStyles();
@@ -102,11 +94,12 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
 
   const { colors } = props;
   const transitionMs = props.transitionDuration ?? 500;
-  // Colour tuning applied directly to the static gradient image (replaces the old
-  // full-viewport backdrop-filter). Same values as before, just rasterised once.
+  // Colour tuning + the Plex-style blur, applied directly to the static gradient
+  // image (a plain `filter`, rasterised once — NOT a backdrop-filter). The blur
+  // smooths the upscaled low-res gradient into a soft wash.
   const layerFilter = props.isDarkMode
-    ? "saturate(0.9) brightness(0.8) contrast(1.06)"
-    : "saturate(0.75) brightness(1.05) contrast(0.98)";
+    ? "blur(24px) saturate(0.9) brightness(0.8) contrast(1.06)"
+    : "blur(24px) saturate(0.75) brightness(1.05) contrast(0.98)";
   const key = useMemo(() => {
     return `${colors.topLeft}|${colors.topRight}|${colors.bottomLeft}|${colors.bottomRight}`;
   }, [colors]);
@@ -114,58 +107,74 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   useEffect(() => {
     let cancelled = false;
 
-    function run() {
-      const { width, height } = computeUltraBlurSize();
-      const params = new URLSearchParams({
-        topLeft: colors.topLeft,
-        topRight: colors.topRight,
-        bottomLeft: colors.bottomLeft,
-        bottomRight: colors.bottomRight,
-        width: String(width),
-        height: String(height),
-      });
-      const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
-      if (cancelled) {
-        return;
-      }
+    const params = new URLSearchParams({
+      topLeft: colors.topLeft,
+      topRight: colors.topRight,
+      bottomLeft: colors.bottomLeft,
+      bottomRight: colors.bottomRight,
+      width: String(ULTRABLUR_SIZE.width),
+      height: String(ULTRABLUR_SIZE.height),
+    });
+    const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
 
-      const prevBack = backRef.current;
-      if (prevBack) {
-        backRef.current = null;
-        setBackUrl(null);
-      }
+    // The image the user is currently seeing — kept on screen as the back layer
+    // until the new one is decoded, so an uncached page never flashes blank.
+    const previousFront = frontRef.current;
 
-      const previousFront = frontRef.current;
-      if (previousFront) {
+    // Begin the cross-fade ONLY once the new image is actually decoded (whether
+    // it came from cache or a fresh download). Fading before the bytes arrive is
+    // what made new pages "snap": the opacity tween finished over an empty div
+    // and the image then popped in at full opacity.
+    function startCrossfade() {
+      if (cancelled) return;
+
+      if (previousFront && previousFront !== url) {
         setBackUrl(previousFront);
       }
 
-      // Instantly snap front to opacity 0 (no CSS transition) and set new image
+      // Place the (now-decoded) image at opacity 0 with no transition…
       setSkipTransition(true);
       setFrontVisible(false);
       setFrontUrl(url);
 
-      // Wait two frames so the browser commits the opacity-0 state, then
-      // re-enable the CSS transition and fade front in.
+      // …then fade it in after two frames so the opacity-0 state commits first.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (!cancelled) {
-            setSkipTransition(false);
-            setFrontVisible(true);
-          }
+          if (cancelled) return;
+          setSkipTransition(false);
+          setFrontVisible(true);
         });
       });
 
+      // Drop the old back layer once the fade has finished.
       if (cleanupTimerRef.current) {
         window.clearTimeout(cleanupTimerRef.current);
       }
       cleanupTimerRef.current = window.setTimeout(() => {
-        backRef.current = null;
-        setBackUrl(null);
+        if (!cancelled) setBackUrl(null);
       }, transitionMs + 50);
     }
 
-    run();
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+
+    if (typeof img.decode === "function") {
+      img.decode().then(startCrossfade).catch(() => {
+        // decode() can reject (some browsers / odd content) even when the image
+        // is usable — fall back to load state.
+        if (img.complete) startCrossfade();
+        else {
+          img.onload = startCrossfade;
+          img.onerror = startCrossfade; // fade in anyway rather than hang
+        }
+      });
+    } else if (img.complete) {
+      startCrossfade();
+    } else {
+      img.onload = startCrossfade;
+      img.onerror = startCrossfade;
+    }
 
     return () => {
       cancelled = true;
