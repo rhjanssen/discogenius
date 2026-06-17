@@ -2,7 +2,6 @@ import { useState, type MouseEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/services/api";
 import {
-  Link,
   Table,
   TableBody,
   TableCell,
@@ -413,7 +412,7 @@ const TrackList = <T extends TrackListItem>({
   const qualityCellClass = hasMultipleQuality ? styles.qualityCellMultiple : styles.qualityCellSingle;
 
   const renderArtistCredits = (track: T) => {
-    const handleArtistClick = async (artistId: string | undefined, artistName: string, event: MouseEvent) => {
+    const handleArtistClick = async (artistId: string | null | undefined, artistName: string, event: MouseEvent) => {
       event.stopPropagation();
       if (artistId) {
         navigate(`/artist/${artistId}`);
