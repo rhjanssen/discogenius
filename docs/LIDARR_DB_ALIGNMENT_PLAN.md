@@ -201,11 +201,15 @@ not by mbid-join and not through `ProviderItems`:
 - `canonical_*_mbid` columns stay as denormalized convenience (and the dedupe key);
   legacy `media_id`/`album_id` are dropped once readers/writers are off them.
 
-**Foundation shipped (additive, green):** v23 migration + base schema add the four
-FK columns and backfill them (from canonical mbids; videos from the video
-`ProviderItems` offer); `runtime-maintenance.backfillTrackFileForeignKeys` keeps
-them current. **Remaining for the pivot:** (1) populate the FKs at write time in
-`upsertLibraryFile`/import finalize (immediate, not just housekeeping); (2) convert
+**Foundation COMPLETE + validated (2026-06-18):** v23 migration + base schema add
+the four FK columns; backfill from canonical mbids (videos from the video
+`ProviderItems` offer) via the v23 migration + `runtime-maintenance.backfillTrackFileForeignKeys`;
+and a **v25 populate-on-write trigger** (`trg_trackfiles_canonical_fks_ai/_au`)
+derives the FKs from the mbids on every INSERT/UPDATE so new imports link to the
+canonical graph immediately. Validated on a fresh Bastille+Bakermat rebuild:
+monitoring cycle queued 139 downloads, and post-restart imports show 100% FK
+coverage (recording_id + track_id + release_group_id). **Remaining for the pivot:**
+(1) ~~populate at write time~~ DONE (trigger); (2) convert
 the readers from mbid-joins to FK-joins (`library-files`, `library-files-query`,
 `metadata-files`, `library-metadata-backfill`, `rename`, `lyric`, `audio-tag`,
 `organizer`, query-services); (3) subtract legacy writes; (4) numbered migration
