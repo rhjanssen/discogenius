@@ -1,6 +1,7 @@
 # Lidarr DB Alignment — Legacy Provider Table Retirement Plan
 
-**Status:** Proposal for review. No code changes yet.
+**Status:** Active implementation for 2.0.8. Phase 1 is partially shipped;
+Phase 2 read-path cutover has started.
 **Goal:** Collapse the legacy provider-shaped tables into the canonical
 MusicBrainz/Lidarr-aligned graph + `ProviderItems`, so the database has a single
 identity model. Deviate from Lidarr only where a distinguishing feature requires
@@ -200,21 +201,32 @@ libraries before flipping reads.
   rows, 0 orphan-risk, 100% of canonical ids resolve to real `Recordings`/`Albums`.
   New downloads/imports populate the canonical columns on write, so the gap-fill
   is a safe no-op on healthy data (its value is legacy/older libraries).
-- ⬜ **Remaining (the lookup/dedup canonical-switch).** Deliberately deferred —
-  it is entangled with the import write-path (Phase 3) and a schema change, so it
-  is NOT independently low-risk:
-  - `runtime-maintenance.dedupeLibraryFiles` groups duplicates by
-    `(media_id, file_type)`. The canonical key MUST be
-    `(canonical_recording_mbid, file_type, **library_slot**)` — the same recording
-    legitimately exists as separate stereo *and* spatial files, so a slot-blind
-    canonical key would wrongly merge them (today this is masked because spatial
-    uses a different provider `media_id`). Needs a slot-aware key + test.
+- ✅ **Lookup/dedup canonical-switch started.** `runtime-maintenance.dedupeLibraryFiles`
+  now runs a canonical duplicate pass keyed by
+  `(canonical_recording_mbid, file_type, library_slot)` alongside the legacy
+  `(media_id, file_type)` pass. This catches duplicate files for the same
+  recording inside one slot without merging legitimate stereo/spatial copies.
+- ⬜ **Remaining schema/import identity switch.** Deliberately deferred — it is
+  entangled with the import write-path (Phase 3) and a schema change, so it is
+  NOT independently low-risk:
   - The UNIQUE index `idx_track_files_media_identity (media_id, file_type)` and the
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Read-path lookups (`library-files-query`, `lyric`, `audio-tag`, organizer,
-    metadata-backfill) still join `TrackFiles.media_id → ProviderMedia →
+  - Remaining read-path lookups (`lyric`, `audio-tag`, organizer,
+    metadata-backfill, rename) still join `TrackFiles.media_id → ProviderMedia →
     ProviderAlbums`; these move in Phase 2.
 
 Keep `media_id`/`album_id` as shadow columns until Phase 5.
+
+### Phase 2 progress (2026-06-18)
+
+- ✅ **`library-files-query-service` read-path cutover started** — library-file
+  listings now carry canonical/provider identity from `TrackFiles`, derive video
+  status from `Recordings`/`library_slot`, and read source/album quality from
+  `ProviderItems` scalar lookups instead of joining `ProviderMedia` and
+  `ProviderAlbums`. Legacy `album_id`/`media_id` response fields remain for API
+  compatibility while callers migrate. Regression:
+  `library-files-query-service.test.ts` proves a canonical-only file with no
+  legacy provider rows still receives its provider source quality and avoids an
+  impossible upgrade above provider availability.

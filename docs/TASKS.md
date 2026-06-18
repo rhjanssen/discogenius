@@ -76,11 +76,14 @@ Docker runtime image.
   (b) canonical-aware library-file dedupe (slot-aware `(canonical_recording_mbid,
   file_type, library_slot)` pass alongside the legacy media-id pass). Both tested
   (`runtime-maintenance-backfill.test.ts`); real-DB dry-run = 0 orphan-risk, 100%
-  canonical resolution. **Remaining:** read-path lookups still join
-  `TrackFiles.media_id→ProviderMedia→ProviderAlbums` (Phase 2); the unique-index +
+  canonical resolution. **Phase 2 started:** `library-files-query-service` now
+  decorates library-file listings from canonical `TrackFiles` identity +
+  `Recordings`/`ProviderItems`, not `ProviderMedia`/`ProviderAlbums`. **Remaining:**
+  other read paths still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
+  (lyrics, audio-tag, organizer, metadata-backfill, rename); the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
-  with Phase 3; then Phases 4–5. Precise next steps in the plan doc's "Phase 1
-  progress" section.
+  with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
+  progress sections.
 - **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
   fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider `upgrade_queue`→`job_queue`.
   See docs/LIDARR_SCHEMA_AUDIT.md.

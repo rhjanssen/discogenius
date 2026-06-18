@@ -27,6 +27,56 @@ type LibraryFileRow = {
   album_quality?: string | null;
 };
 
+const canonicalSourceQualitySql = `
+  COALESCE(
+    (
+      SELECT exact.quality
+      FROM ProviderItems exact
+      WHERE exact.provider = lf.provider
+        AND exact.entity_type = lf.provider_entity_type
+        AND exact.provider_id = lf.provider_id
+      LIMIT 1
+    ),
+    (
+      SELECT item.quality
+      FROM ProviderItems item
+      WHERE item.entity_type IN ('track', 'video')
+        AND item.quality IS NOT NULL
+        AND (lf.provider IS NULL OR item.provider = lf.provider)
+        AND (lf.library_slot IS NULL OR item.library_slot = lf.library_slot)
+        AND (
+          (lf.canonical_track_mbid IS NOT NULL AND item.track_mbid = lf.canonical_track_mbid)
+          OR (lf.canonical_recording_mbid IS NOT NULL AND item.recording_mbid = lf.canonical_recording_mbid)
+        )
+      ORDER BY
+        CASE WHEN item.track_mbid IS NOT NULL THEN 0 ELSE 1 END,
+        CASE WHEN item.recording_mbid IS NOT NULL THEN 0 ELSE 1 END,
+        item.updated_at DESC
+      LIMIT 1
+    )
+  )
+`;
+
+const canonicalAlbumQualitySql = `
+  (
+    SELECT item.quality
+    FROM ProviderItems item
+    WHERE item.entity_type = 'album'
+      AND item.quality IS NOT NULL
+      AND (lf.provider IS NULL OR item.provider = lf.provider)
+      AND (lf.library_slot IS NULL OR item.library_slot = lf.library_slot)
+      AND (
+        (lf.canonical_release_mbid IS NOT NULL AND item.release_mbid = lf.canonical_release_mbid)
+        OR (lf.canonical_release_group_mbid IS NOT NULL AND item.release_group_mbid = lf.canonical_release_group_mbid)
+      )
+    ORDER BY
+      CASE WHEN item.release_mbid IS NOT NULL THEN 0 ELSE 1 END,
+      CASE WHEN item.release_group_mbid IS NOT NULL THEN 0 ELSE 1 END,
+      item.updated_at DESC
+    LIMIT 1
+  )
+`;
+
 type TextLibraryFileRow = {
   id: number;
   file_type: string;
@@ -216,35 +266,57 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
   const sql = `
     SELECT
       lf.*,
-      m.type AS media_type,
-      m.quality AS source_quality,
-      a.quality AS album_quality
+      CASE
+        WHEN lf.file_type = 'video'
+          OR lf.library_slot = 'video'
+          OR lf.provider_entity_type = 'video'
+          OR recording.is_video = 1
+        THEN 'Music Video'
+        ELSE NULL
+      END AS media_type,
+      ${canonicalSourceQualitySql} AS source_quality,
+      ${canonicalAlbumQualitySql} AS album_quality
     FROM (
       SELECT
         id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, filename, extension,
-        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration, created_at
+        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration,
+        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+        canonical_track_mbid, canonical_recording_mbid,
+        provider, provider_entity_type, provider_id, library_slot,
+        created_at
       FROM TrackFiles
 
       UNION ALL
 
       SELECT id + 10000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid,
+        NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+        provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
+        Added AS created_at
       FROM MetadataFiles
 
       UNION ALL
 
       SELECT id + 20000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid,
+        NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+        provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
+        Added AS created_at
       FROM ExtraFiles
 
       UNION ALL
 
       SELECT id + 30000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, NULL AS filename, extension AS extension,
-        quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration, Added AS created_at
+        quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+        canonical_track_mbid, canonical_recording_mbid,
+        provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
+        Added AS created_at
       FROM LyricFiles
     ) lf
-    LEFT JOIN ProviderMedia m ON m.id = lf.media_id
-    LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
+    LEFT JOIN Recordings recording ON recording.mbid = lf.canonical_recording_mbid
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY lf.created_at DESC
     LIMIT ? OFFSET ?
