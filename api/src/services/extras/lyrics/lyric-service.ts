@@ -122,23 +122,46 @@ function lyricFileToResolved(
 }
 
 function loadProviderMedia(providerMediaId: string | number): ProviderMediaLyricsRow | null {
-  const row = db.prepare(`
+  let row = db.prepare(`
     SELECT
-      CAST(id AS TEXT) AS id,
-      CAST(artist_id AS TEXT) AS artist_id,
-      CAST(album_id AS TEXT) AS album_id,
-      title,
-      track_number,
-      volume_number,
-      duration,
-      quality,
-      mbid,
-      type
-    FROM ProviderMedia
-    WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
-      AND type != 'Music Video'
+      CAST(pi.provider_id AS TEXT) AS id,
+      CAST(a.artist_mbid AS TEXT) AS artist_id,
+      CAST(pi.album_id AS TEXT) AS album_id,
+      COALESCE(t.title, r.title, pi.title) AS title,
+      t.position AS track_number,
+      t.medium_position AS volume_number,
+      r.length_ms AS duration,
+      pi.quality,
+      r.mbid,
+      pi.entity_type AS type
+    FROM ProviderItems pi
+    LEFT JOIN Tracks t ON t.id = pi.track_id
+    LEFT JOIN Recordings r ON r.id = pi.recording_id
+    LEFT JOIN Albums a ON a.id = pi.album_id
+    WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+      AND pi.entity_type = 'track'
     LIMIT 1
   `).get(String(providerMediaId)) as ProviderMediaLyricsRow | undefined;
+
+  if (!row) {
+    row = db.prepare(`
+      SELECT
+        CAST(id AS TEXT) AS id,
+        CAST(artist_id AS TEXT) AS artist_id,
+        CAST(album_id AS TEXT) AS album_id,
+        title,
+        track_number,
+        volume_number,
+        duration,
+        quality,
+        mbid,
+        type
+      FROM ProviderMedia
+      WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        AND type = 'TRACK'
+      LIMIT 1
+    `).get(String(providerMediaId)) as ProviderMediaLyricsRow | undefined;
+  }
 
   return row ?? null;
 }
@@ -164,9 +187,9 @@ function getRecordingIdForMedia(provider: string, media: ProviderMediaLyricsRow)
       FROM Recordings
       WHERE foreign_recording_id = ? OR mbid = ?
       LIMIT 1
-    `).get(foreignRecordingId, foreignRecordingId) as { Id?: number | null } | undefined;
-    if (row?.Id != null) {
-      return Number(row.Id);
+    `).get(foreignRecordingId, foreignRecordingId) as { id?: number | null } | undefined;
+    if (row?.id != null) {
+      return Number(row.id);
     }
   }
 
@@ -225,18 +248,18 @@ function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow
 
   const rows = db.prepare(`
     SELECT
-      CAST(candidate.id AS TEXT) AS id,
-      CAST(candidate.artist_id AS TEXT) AS artist_id,
+      CAST(candidate.provider_id AS TEXT) AS id,
+      CAST(candidate_album.artist_mbid AS TEXT) AS artist_id,
       CAST(candidate.album_id AS TEXT) AS album_id,
-      candidate.title,
-      candidate.track_number,
-      candidate.volume_number,
-      candidate.duration,
+      COALESCE(t.title, r.title, candidate.title) AS title,
+      t.position AS track_number,
+      t.medium_position AS volume_number,
+      r.length_ms AS duration,
       candidate.quality,
-      candidate.mbid,
-      candidate.type,
-      source_album.mb_release_group_id AS source_release_group_mbid,
-      candidate_album.mb_release_group_id AS candidate_release_group_mbid,
+      r.mbid,
+      candidate.entity_type AS type,
+      source_album.mbid AS source_release_group_mbid,
+      candidate_album.mbid AS candidate_release_group_mbid,
       lf.id AS lyric_file_id,
       lf.file_path AS lyric_file_path,
       lf.relative_path AS lyric_relative_path,
@@ -245,16 +268,54 @@ function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow
       lf.provider AS lyric_provider,
       lf.provider_id AS lyric_provider_id,
       lf.canonical_recording_mbid AS lyric_recording_mbid
-    FROM ProviderMedia candidate
+    FROM ProviderItems candidate
+    LEFT JOIN Tracks t ON t.id = candidate.track_id
+    LEFT JOIN Recordings r ON r.id = candidate.recording_id
     JOIN LyricFiles lf
-      ON CAST(lf.media_id AS TEXT) = CAST(candidate.id AS TEXT)
-    LEFT JOIN ProviderAlbums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
-    LEFT JOIN ProviderAlbums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
-    WHERE CAST(candidate.artist_id AS TEXT) = CAST(? AS TEXT)
-      AND CAST(candidate.id AS TEXT) != CAST(? AS TEXT)
-      AND candidate.type != 'Music Video'
-      AND candidate.title IS NOT NULL
+      ON (CAST(lf.provider_id AS TEXT) = CAST(candidate.provider_id AS TEXT) OR CAST(lf.media_id AS TEXT) = CAST(candidate.provider_id AS TEXT))
+    LEFT JOIN Albums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
+    LEFT JOIN Albums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
+    WHERE CAST(candidate_album.artist_mbid AS TEXT) = CAST(? AS TEXT)
+      AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
+      AND candidate.entity_type = 'track'
+      AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
   `).all(media.album_id, media.artist_id, media.id) as LyricCandidateRow[];
+  if (rows.length === 0) {
+    const legacyRows = db.prepare(`
+      SELECT
+        CAST(candidate.id AS TEXT) AS id,
+        CAST(candidate.artist_id AS TEXT) AS artist_id,
+        CAST(candidate.album_id AS TEXT) AS album_id,
+        candidate.title AS title,
+        candidate.track_number AS track_number,
+        candidate.volume_number AS volume_number,
+        candidate.duration AS duration,
+        candidate.quality,
+        candidate.mbid,
+        candidate.type AS type,
+        CAST(source_album.mb_release_group_id AS TEXT) AS source_release_group_mbid,
+        CAST(candidate_album.mb_release_group_id AS TEXT) AS candidate_release_group_mbid,
+        lf.id AS lyric_file_id,
+        lf.file_path AS lyric_file_path,
+        lf.relative_path AS lyric_relative_path,
+        lf.library_root AS lyric_library_root,
+        lf.extension AS lyric_extension,
+        lf.provider AS lyric_provider,
+        lf.provider_id AS lyric_provider_id,
+        lf.canonical_recording_mbid AS lyric_recording_mbid
+      FROM ProviderMedia candidate
+      JOIN LyricFiles lf
+        ON (CAST(lf.provider_id AS TEXT) = CAST(candidate.id AS TEXT) OR CAST(lf.media_id AS TEXT) = CAST(candidate.id AS TEXT))
+      LEFT JOIN ProviderAlbums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
+      LEFT JOIN ProviderAlbums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
+      WHERE CAST(candidate.artist_id AS TEXT) = CAST(? AS TEXT)
+        AND CAST(candidate.id AS TEXT) != CAST(? AS TEXT)
+        AND candidate.type = 'TRACK'
+        AND candidate.title IS NOT NULL
+    `).all(media.album_id, media.artist_id, media.id) as LyricCandidateRow[];
+    rows.push(...legacyRows);
+  }
+
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))
@@ -269,25 +330,27 @@ function findSourceCandidates(media: ProviderMediaLyricsRow): CandidateRow[] {
 
   const rows = db.prepare(`
     SELECT
-      CAST(candidate.id AS TEXT) AS id,
-      CAST(candidate.artist_id AS TEXT) AS artist_id,
+      CAST(candidate.provider_id AS TEXT) AS id,
+      CAST(candidate_album.artist_mbid AS TEXT) AS artist_id,
       CAST(candidate.album_id AS TEXT) AS album_id,
-      candidate.title,
-      candidate.track_number,
-      candidate.volume_number,
-      candidate.duration,
+      COALESCE(t.title, r.title, candidate.title) AS title,
+      t.position AS track_number,
+      t.medium_position AS volume_number,
+      r.length_ms AS duration,
       candidate.quality,
-      candidate.mbid,
-      candidate.type,
-      source_album.mb_release_group_id AS source_release_group_mbid,
-      candidate_album.mb_release_group_id AS candidate_release_group_mbid
-    FROM ProviderMedia candidate
-    LEFT JOIN ProviderAlbums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
-    LEFT JOIN ProviderAlbums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
-    WHERE CAST(candidate.artist_id AS TEXT) = CAST(? AS TEXT)
-      AND CAST(candidate.id AS TEXT) != CAST(? AS TEXT)
-      AND candidate.type != 'Music Video'
-      AND candidate.title IS NOT NULL
+      r.mbid,
+      candidate.entity_type AS type,
+      source_album.mbid AS source_release_group_mbid,
+      candidate_album.mbid AS candidate_release_group_mbid
+    FROM ProviderItems candidate
+    LEFT JOIN Tracks t ON t.id = candidate.track_id
+    LEFT JOIN Recordings r ON r.id = candidate.recording_id
+    LEFT JOIN Albums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
+    LEFT JOIN Albums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
+    WHERE CAST(candidate_album.artist_mbid AS TEXT) = CAST(? AS TEXT)
+      AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
+      AND candidate.entity_type = 'track'
+      AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
   `).all(media.album_id, media.artist_id, media.id) as CandidateRow[];
 
   return rows
