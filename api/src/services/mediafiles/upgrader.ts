@@ -15,6 +15,25 @@ export type UpgradeResult = {
     details: { mediaId: string; type: string; reason: string }[];
 };
 
+type UpgradeCandidateRow = {
+    file_id: number;
+    media_id: string | null;
+    media_type: string;
+    album_id: string | null;
+    legacy_media_id: string | null;
+    legacy_album_id: string | null;
+    source_quality: string | null;
+    current_quality: string | null;
+    current_codec: string | null;
+    current_extension: string | null;
+    current_bit_depth: number | null;
+    current_bitrate: number | null;
+    current_sample_rate: number | null;
+    album_quality: string | null;
+    upgrade_status: string | null;
+    upgrade_target: string | null;
+};
+
 export class UpgraderService {
     private static readonly UPGRADE_YIELD_EVERY = readIntEnv("DISCOGENIUS_UPGRADER_YIELD_EVERY", 100, 10);
 
@@ -43,35 +62,117 @@ export class UpgraderService {
             console.log("⏭️ [UPGRADER] Upgrade existing files is disabled in settings. Skipping.");
             return { tracks: 0, videos: 0, albums: 0, details: [] };
         }
-        const qualityProfile = UpgradableSpecification.buildEffectiveProfile(qualityConfig);
+        const qualityProfile = UpgradableSpecification.buildEffectiveProfile(
+            force ? { ...qualityConfig, upgrade_existing_files: true } : qualityConfig
+        );
 
-        // Apply quality settings to actual downloaded library media.
-        // Several UI download actions queue items directly, so relying on `monitor = 1`
-        // misses legitimate library content such as videos added from search/download buttons.
+        // Apply quality settings to actual downloaded library files. Resolve the
+        // provider resource to re-download from TrackFiles canonical identity +
+        // ProviderItems; ProviderMedia/ProviderAlbums are compatibility shadows.
         const query = db.prepare(`
         SELECT
-            m.id            as media_id,
-            m.type          as media_type,
-            m.album_id      as album_id,
-            m.quality       as source_quality,
-            lf.quality      as current_quality,
-            lf.codec        as current_codec,
-            lf.extension    as current_extension,
-            lf.bit_depth    as current_bit_depth,
-            lf.bitrate      as current_bitrate,
-            lf.sample_rate  as current_sample_rate,
-            a.quality       as album_quality,
-            uq.status       as upgrade_status,
-            uq.target_quality as upgrade_target
-        FROM ProviderMedia m
-        JOIN TrackFiles lf ON lf.media_id = m.id
-        LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-        LEFT JOIN upgrade_queue uq ON uq.media_id = m.id
-                WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
-          ${artistId ? "AND m.artist_id = ?" : ""}
+            lf.id AS file_id,
+            COALESCE(
+                media_item.provider_id,
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END,
+                lf.media_id
+            ) AS media_id,
+            CASE WHEN lf.file_type = 'video' THEN 'Music Video' ELSE 'track' END AS media_type,
+            COALESCE(
+                CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END,
+                lf.album_id,
+                json_extract(media_item.match_evidence, '$.albumProviderId'),
+                json_extract(media_item.data, '$.albumProviderId'),
+                album_item.provider_id
+            ) AS album_id,
+            lf.media_id AS legacy_media_id,
+            lf.album_id AS legacy_album_id,
+            COALESCE(
+                media_item.quality,
+                json_extract(media_item.data, '$.quality'),
+                json_extract(media_item.data, '$.audioQuality')
+            ) AS source_quality,
+            lf.quality      AS current_quality,
+            lf.codec        AS current_codec,
+            lf.extension    AS current_extension,
+            lf.bit_depth    AS current_bit_depth,
+            lf.bitrate      AS current_bitrate,
+            lf.sample_rate  AS current_sample_rate,
+            COALESCE(
+                album_item.quality,
+                json_extract(album_item.data, '$.quality'),
+                json_extract(album_item.data, '$.audioQuality')
+            ) AS album_quality,
+            uq.status       AS upgrade_status,
+            uq.target_quality AS upgrade_target
+        FROM TrackFiles lf
+        LEFT JOIN ProviderItems media_item
+          ON media_item.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
+         AND (lf.provider IS NULL OR media_item.provider = lf.provider)
+         AND (
+                (lf.provider_entity_type IN ('track', 'video') AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
+                OR (lf.media_id IS NOT NULL AND CAST(media_item.provider_id AS TEXT) = CAST(lf.media_id AS TEXT))
+                OR (lf.track_id IS NOT NULL AND media_item.track_id = lf.track_id)
+                OR (lf.recording_id IS NOT NULL AND media_item.recording_id = lf.recording_id)
+                OR (lf.canonical_track_mbid IS NOT NULL AND media_item.track_mbid = lf.canonical_track_mbid)
+                OR (lf.canonical_recording_mbid IS NOT NULL AND media_item.recording_mbid = lf.canonical_recording_mbid)
+             )
+        LEFT JOIN ProviderItems album_item
+          ON album_item.entity_type = 'album'
+         AND (COALESCE(lf.provider, media_item.provider) IS NULL OR album_item.provider = COALESCE(lf.provider, media_item.provider))
+         AND (
+                (lf.provider_entity_type = 'album' AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
+                OR (lf.album_id IS NOT NULL AND CAST(album_item.provider_id AS TEXT) = CAST(lf.album_id AS TEXT))
+                OR (json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
+                    AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT))
+                OR (json_extract(media_item.data, '$.albumProviderId') IS NOT NULL
+                    AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.data, '$.albumProviderId') AS TEXT))
+                OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
+                OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
+             )
+        LEFT JOIN upgrade_queue uq ON lf.media_id IS NOT NULL AND uq.media_id = lf.media_id
+        WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
+          AND COALESCE(
+                media_item.provider_id,
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END,
+                lf.media_id
+              ) IS NOT NULL
+          ${artistId ? "AND lf.artist_id = ?" : ""}
+        ORDER BY
+          lf.id ASC,
+          CASE
+            WHEN lf.provider_entity_type IN ('track', 'video')
+             AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
+            WHEN lf.media_id IS NOT NULL
+             AND CAST(media_item.provider_id AS TEXT) = CAST(lf.media_id AS TEXT) THEN 1
+            ELSE 2
+          END,
+          CASE
+            WHEN lf.provider_entity_type = 'album'
+             AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
+            WHEN lf.album_id IS NOT NULL
+             AND CAST(album_item.provider_id AS TEXT) = CAST(lf.album_id AS TEXT) THEN 1
+            WHEN json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
+             AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT) THEN 2
+            WHEN json_extract(media_item.data, '$.albumProviderId') IS NOT NULL
+             AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.data, '$.albumProviderId') AS TEXT) THEN 3
+            ELSE 4
+          END,
+          CASE album_item.library_slot WHEN COALESCE(lf.library_slot, 'stereo') THEN 0 ELSE 1 END,
+          media_item.updated_at DESC,
+          album_item.updated_at DESC,
+          media_item.provider_id ASC,
+          album_item.provider_id ASC
     `);
 
-        const rows = (artistId ? query.all(artistId) : query.all()) as any[];
+        const rawRows = (artistId ? query.all(artistId) : query.all()) as UpgradeCandidateRow[];
+        const rows: UpgradeCandidateRow[] = [];
+        const seenFileIds = new Set<number>();
+        for (const row of rawRows) {
+            if (seenFileIds.has(row.file_id)) continue;
+            seenFileIds.add(row.file_id);
+            rows.push(row);
+        }
 
         const result: UpgradeResult = { tracks: 0, videos: 0, albums: 0, details: [] };
         const albumsNeedingUpgrade = new Set<string>();
@@ -119,22 +220,27 @@ export class UpgraderService {
 
                 result.details.push({ mediaId: String(row.media_id), type: row.media_type, reason: evaluation.reason });
 
-                // Register intent in the upgrade queue table
-                db.prepare(`
-                INSERT INTO upgrade_queue (media_id, album_id, current_quality, target_quality, reason, status)
-                VALUES (?, ?, ?, ?, ?, 'pending')
-                ON CONFLICT DO UPDATE SET 
-                    status = 'pending',
-                    target_quality = excluded.target_quality,
-                    reason = excluded.reason,
-                    current_quality = excluded.current_quality
-            `).run(
-                    row.media_id,
-                    row.album_id || null,
-                    normalizedCurrentQuality || row.current_quality || 'UNKNOWN',
-                    expectedTarget,
-                    evaluation.reason
-                );
+                // Transitional compatibility: upgrade_queue is still keyed to
+                // legacy ProviderMedia ids. Canonical-only files still queue
+                // jobs below; the Phase 5 schema migration will re-key this
+                // ledger to canonical/provider item identity.
+                if (row.legacy_media_id) {
+                    db.prepare(`
+                    INSERT INTO upgrade_queue (media_id, album_id, current_quality, target_quality, reason, status)
+                    VALUES (?, ?, ?, ?, ?, 'pending')
+                    ON CONFLICT DO UPDATE SET 
+                        status = 'pending',
+                        target_quality = excluded.target_quality,
+                        reason = excluded.reason,
+                        current_quality = excluded.current_quality
+                `).run(
+                        row.legacy_media_id,
+                        row.legacy_album_id || null,
+                        normalizedCurrentQuality || row.current_quality || 'UNKNOWN',
+                        expectedTarget,
+                        evaluation.reason
+                    );
+                }
 
                 if (row.media_type === 'Music Video') {
                     result.videos++;

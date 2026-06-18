@@ -251,8 +251,8 @@ copyright/popularity, NFO review fallback from `Albums.review_text`, and audio
 tags from canonical review/copyright with zero legacy provider rows.
 
 Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
-`ProviderItems`-only), the **upgrade subsystem** (`upgrade_queue` stores legacy
-`media_id`/`album_id`; re-key to `recording_id`/canonical), and active
+`ProviderItems`-only), the **upgrade subsystem ledger** (`upgrade_queue` stores
+legacy `media_id`/`album_id`; re-key to `recording_id`/canonical), and active
 import/scan/tag write paths. Runtime monitor-gap repair has been repointed to
 canonical `ReleaseGroupSlots`/`Recordings`, while `TrackFiles.media_id`/
 `album_id` compatibility backfill/indexing remains until Phase 5. Dead
@@ -344,13 +344,13 @@ covers stereo-to-spatial lyric sharing with zero legacy provider rows.
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
-   writer — video INSERT/UPDATE), `upgrader.ts` (entangled with
-   `upgrade_queue`'s legacy `media_id`/`album_id` FKs; the dead
-   `QualityService` provider-table helpers in `quality.ts` have been removed).
-   `library-file-identity.ts`
+   writer — video INSERT/UPDATE). `library-file-identity.ts`
    still has the final legacy fallback to remove right before the Phase 5 drop.
    `audio-tag-service.ts` retag context is now canonical/provider-item first,
    but its compatibility fallbacks and MB/AcoustID write-backs remain legacy.
+   `upgrader.ts` now scans canonical `TrackFiles` + `ProviderItems`; its
+   remaining legacy coupling is the `upgrade_queue` ledger re-key, not provider
+   catalog reads.
 2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
    original plan called "keystones" were dead code (zero imports) and have been
    deleted; the active write SQL is inline in the services. Cut over
@@ -410,10 +410,12 @@ libraries before flipping reads.
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Remaining read/write lookups (organizer, upgrader, the audio-tag
-    MB/AcoustID write-back + compatibility fallbacks, and the final
-    file-identity fallback) still touch legacy provider tables; these move in
-    Phase 2/3 or the final pre-Phase-5 cleanup.
+  - Remaining read/write lookups (organizer, the audio-tag MB/AcoustID
+    write-back + compatibility fallbacks, and the final file-identity fallback)
+    still touch legacy provider tables; these move in Phase 2/3 or the final
+    pre-Phase-5 cleanup. `upgrader.ts` now scans canonical `TrackFiles` +
+    `ProviderItems`; its remaining schema work is re-keying `upgrade_queue`
+    away from legacy `media_id`/`album_id`.
 
 Keep `media_id`/`album_id` as shadow columns until Phase 5.
 
@@ -501,3 +503,13 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   organizer album fallback, single-track import, video import, and write paths
   remain on the legacy list. Regression: `organizer-canonical.test.ts` covers
   exact provider track resolution with zero legacy media rows.
+- ✅ **`upgrader` scan cutover** — `CheckUpgrades` now scans installed
+  `TrackFiles` through canonical/provider identity and `ProviderItems` instead
+  of joining `ProviderMedia`/`ProviderAlbums`. Canonical-only audio tracks queue
+  album-level upgrade downloads where possible, canonical-only videos queue
+  video upgrades, and forced/manual runs now enable the effective redownload
+  profile even when the persisted `upgrade_existing_files` setting is false.
+  The only remaining upgrader legacy coupling is the transitional
+  `upgrade_queue` ledger, which is still keyed to legacy `media_id`/`album_id`
+  until the schema re-key. Regression: `upgrader-canonical.test.ts` covers
+  audio and video upgrade queuing with zero legacy provider rows.

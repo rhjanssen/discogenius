@@ -109,10 +109,13 @@ Docker runtime image.
   production imports, and `DownloadMissingForce` no longer carries an obsolete
   provider skip-flag reset. Runtime monitor-gap repair now writes canonical
   `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
-  **Remaining:** other read/write paths
-  still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (organizer, upgrader, audio-tag MB/AcoustID write-back and legacy
-  tag fallbacks, plus file-identity fallback);
+  `CheckUpgrades` now scans `TrackFiles` canonical/provider identity +
+  `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
+  canonical-only audio/video upgrade downloads; only the transitional
+  `upgrade_queue` ledger is still legacy-keyed. **Remaining:** other read/write
+  paths still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
+  (organizer, audio-tag MB/AcoustID write-back and legacy tag fallbacks, plus
+  file-identity fallback);
   the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
   with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
