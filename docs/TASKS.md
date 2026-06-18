@@ -84,7 +84,9 @@ Docker runtime image.
   now uses `ProviderItems.updated_at` for track/video scan freshness instead of
   `ProviderMedia.last_scanned`; `refresh-policy` now reads canonical
   `Albums.first_release_date` and `ProviderItems.updated_at` instead of legacy
-  provider release/scan columns. **Remaining:** other read paths still join
+  provider release/scan columns; `providers/tidal/tidal-provider` now falls back
+  to canonical `ProviderItems` for album download-progress track lists instead
+  of `ProviderMedia`. **Remaining:** other read paths still join
   `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (lyrics, audio-tag, organizer, metadata-backfill, rename); the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled

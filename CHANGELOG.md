@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 - **Activity/download history descriptions now resolve from canonical provider items:** `command-history` no longer reads `ProviderAlbums`/`ProviderMedia` to label queued or completed download jobs. It resolves provider ids through `ProviderItems` and the canonical MusicBrainz graph, so canonical-only album/track/video jobs display useful activity text without legacy rows.
 - **Track/video scan freshness checks now use canonical provider items:** `scan-refresh-state` no longer reads `ProviderMedia.last_scanned`; it evaluates track and video refresh due-ness from `ProviderItems.updated_at` joined through canonical release and artist identity.
 - **Refresh policy now uses canonical release/provider state:** `refresh-policy` reads artist release freshness from canonical `Albums.first_release_date`, and its track/video freshness helpers read `ProviderItems.updated_at` instead of legacy provider scan columns.
+- **TIDAL album download progress now falls back to canonical provider items:** when a provider album has no selected canonical release yet, the TIDAL download-progress track list is built from `ProviderItems` instead of `ProviderMedia`, so provider-only fallback progress works without legacy media rows.
 
 ### Fixed
 - **Monitored, curated artists now download promptly instead of sitting idle for up to a full scan interval (24h).** Two issues compounded into "active monitoring on, three artists curated, but nothing downloaded overnight":

@@ -251,3 +251,9 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   Regression: `refresh-policy.test.ts` covers recent/inactive artists plus
   fresh/stale canonical-only track/video provider items with zero legacy provider
   rows.
+- ✅ **`providers/tidal/tidal-provider` read fallback cutover** — TIDAL album
+  download-progress track info still prefers selected canonical `Tracks`, but
+  when no canonical release is selected yet it now falls back to album/track
+  `ProviderItems` instead of `ProviderMedia`. Regression:
+  `tidal-provider-canonical.test.ts` covers provider-only album/track items with
+  zero legacy provider rows.
