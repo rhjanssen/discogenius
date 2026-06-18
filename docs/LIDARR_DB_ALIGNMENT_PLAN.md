@@ -113,6 +113,20 @@ data-migration guard so existing DBs backfill before the drop.
 
 ## 4. Distinguishing features to PRESERVE (do not "align away")
 
+> **Video canonical-identity wrinkle (verified on real data, 2026-06-18).**
+> Provider-only music videos (e.g. TIDAL videos not matched in MusicBrainz) get a
+> canonical `Recordings` row (`is_video = 1`) **with no `recording_mbid`** — they
+> are linked from `ProviderItems.recording_id` (numeric FK), not by mbid. So
+> `TrackFiles.canonical_recording_mbid` is *structurally NULL* for these (the
+> Phase 1 gap-fill correctly leaves it NULL — there is no mbid to fill). The
+> correct canonical read path for videos is therefore
+> `TrackFiles.provider_id + provider_entity_type='video' → ProviderItems →
+> recording_id → Recordings`, **never** legacy `ProviderMedia`.
+> `TrackFiles.provider_id` is a canonical-era column (distinct from the legacy
+> `media_id`/`album_id` being dropped), so this path survives Phase 5. The
+> committed `library-files-query-service` cutover already resolves videos this
+> way; remaining readers (lyrics/audio-tag/etc.) and the write path must too.
+
 - `ReleaseGroupSlots` (stereo/spatial/video slot model) — core to multi-library
   + Atmos support; Lidarr has no equivalent.
 - `ProviderItems` as availability-only, keyed to canonical mbids — the
