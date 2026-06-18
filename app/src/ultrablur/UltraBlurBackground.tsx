@@ -19,21 +19,17 @@ const useStyles = makeStyles({
     inset: 0,
     backgroundSize: "cover",
     backgroundPosition: "center",
-    // Scaled up so the CSS blur (set inline) can't pull the viewport edges in and
-    // reveal a soft transparent border — the container clips the overflow.
+    // Scaled up so the inline CSS blur can't pull the viewport edges in and reveal
+    // a soft transparent border — the container clips the overflow.
     transform: "scale(1.12)",
-    // Only opacity animates (the cross-fade). The colour-tuning + blur `filter` is
-    // set inline and is static (rasterised once, just composited at varying alpha
-    // during the fade), so it does NOT belong in will-change.
+    // Only opacity animates (the cross-fade); the colour-tuning + blur `filter` is
+    // static, so it stays out of will-change.
     willChange: "opacity",
   },
-  // NOTE: the colour tuning (saturate/brightness/contrast) used to live here as a
-  // full-viewport `backdrop-filter`, which forced the GPU to re-sample and
-  // re-filter the entire backdrop on every repaint (the app repaints constantly
-  // from queue SSE updates) — a constant GPU-load sink. The gradient image is
-  // static, so the same tuning is now applied as a plain `filter` on the image
-  // layer (rasterised once, GPU-cached). These overlays now only paint their
-  // vignette gradients.
+  // Colour tuning lives as a plain `filter` on the static image layer (see
+  // layerFilter), not as a `backdrop-filter` here — a full-viewport backdrop
+  // filter re-samples on every repaint and is a constant GPU-load sink. These
+  // overlays only paint the vignette gradient.
   overlayDark: {
     backgroundImage:
       `radial-gradient(circle at 50% 35%, transparent 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 32%, transparent) 70%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 55%, transparent) 100%), linear-gradient(180deg, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 16%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 42%, transparent) 100%)`,
@@ -117,14 +113,13 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     });
     const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
 
-    // The image the user is currently seeing — kept on screen as the back layer
-    // until the new one is decoded, so an uncached page never flashes blank.
+    // Keep the current image on screen as the back layer until the new one is
+    // decoded, so an uncached page never flashes blank.
     const previousFront = frontRef.current;
 
-    // Begin the cross-fade ONLY once the new image is actually decoded (whether
-    // it came from cache or a fresh download). Fading before the bytes arrive is
-    // what made new pages "snap": the opacity tween finished over an empty div
-    // and the image then popped in at full opacity.
+    // Cross-fade only once the new image is decoded (cached or freshly fetched).
+    // Fading before the bytes arrive lets the opacity tween finish over an empty
+    // layer, so the image would pop in at full opacity instead of fading.
     function startCrossfade() {
       if (cancelled) return;
 

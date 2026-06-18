@@ -1,6 +1,6 @@
 # UltraBlur Background System
 
-Last updated: 2026-03-13
+Last updated: 2026-06-18
 
 ## Scope and Ownership
 
@@ -11,16 +11,18 @@ This document covers the current UltraBlur implementation used across the Discog
 
 ## Current Architecture
 
-UltraBlur is a two-stage pipeline:
+UltraBlur is a server-rendered pipeline:
 
-1. Backend extracts four representative colors from an artwork URL.
-2. Frontend renders the blurred background image from those colors.
+1. The backend extracts four representative colors from an artwork URL.
+2. The backend renders a small four-corner gradient image from those colors.
+3. The frontend displays that image, blurred and cross-faded, behind the UI.
 
-The backend endpoint is:
+Backend endpoints:
 
-- GET /services/ultrablur/colors?url=<http(s) image url>
+- GET /services/ultrablur/colors?url=<http(s) image url> — four corner colors.
+- GET /services/ultrablur/image?topLeft=…&topRight=…&bottomLeft=…&bottomRight=…&width=…&height=… — a cacheable gradient PNG built from those colors.
 
-Reason for server extraction:
+Reason for server-side work:
 
 - TIDAL artwork URLs do not reliably allow browser-side pixel reads due to CORS.
 
@@ -28,36 +30,22 @@ Reason for server extraction:
 
 api/src/routes/ultrablur.ts:
 
-- Accepts only http/https URLs.
-- Fetches image with timeout and size cap.
-- Decodes PNG/JPEG.
-- Samples, filters, and clusters pixels in perceptual color space.
-- Returns four corner colors:
-  - topLeft
-  - topRight
-  - bottomLeft
-  - bottomRight
-- Uses API response caching (6 hours) to reduce repeated extraction work.
+- Accepts only http/https URLs (colors endpoint).
+- Fetches the image with a timeout and size cap, decodes PNG/JPEG, then samples,
+  filters, and clusters pixels in a perceptual color space to pick four corners.
+- Renders the gradient PNG (immutable cache headers) from the four colors.
 
 ## Frontend Behavior
 
 Core files:
 
-- app/src/ultrablur/useUltraBlur.ts
-  - Calls /services/ultrablur/colors
-  - Maintains in-memory color cache
-  - Falls back to defaults on extraction failure
-
-- app/src/providers/UltraBlurProvider.tsx
-  - Holds current artwork URL and published UltraBlur context
-  - Uses extracted colors when artwork exists
-  - Uses default colors when artwork is cleared
-
-- app/src/ultrablur/renderUltraBlur.ts
-  - Renders four-corner gradient + optional blob/noise/vignette layers
-
-- app/src/ultrablur/UltraBlurBackground.tsx
-  - Draws the generated background behind app content
+- app/src/ultrablur/useUltraBlur.ts — calls the colors endpoint, caches colors
+  in memory, falls back to defaults on failure.
+- app/src/providers/UltraBlurProvider.tsx — holds the current artwork URL and
+  publishes the UltraBlur context (extracted colors, or defaults when cleared).
+- app/src/ultrablur/UltraBlurBackground.tsx — requests a small gradient image for
+  the current colors, blurs it (CSS `filter: blur`) and scales it to cover, and
+  cross-fades between the previous and the next image once the new one decodes.
 
 ## Default Colors (No Artwork)
 

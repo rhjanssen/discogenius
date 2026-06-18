@@ -314,11 +314,10 @@ const useStyles = makeStyles({
       ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
     },
   },
-  // The split download is two adjacent Buttons sharing one rounded frame. We do
-  // NOT clip with overflow:hidden — that swallowed the hover shadow and lift and
-  // chopped the top edge. Instead the wrapper owns the hover shadow + lift so the
-  // whole unit moves together like the other action buttons, and each half keeps
-  // its own rounded outer corners (inner corners squared) so the seam stays clean.
+  // Two adjacent Buttons sharing one rounded frame. The wrapper (not the halves)
+  // owns the hover shadow + lift so the unit moves as one, and we avoid
+  // overflow:hidden so the shadow/lift aren't clipped. Each half keeps its outer
+  // corners rounded and inner corners squared so the seam stays clean.
   splitDownload: {
     display: "inline-flex",
     alignItems: "stretch",

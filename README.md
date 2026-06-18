@@ -174,7 +174,7 @@ docker compose up -d --build
 
 - [Architecture Guide](docs/ARCHITECTURE.md) — System design and service responsibilities
 - [Curation & Deduplication](docs/CURATION_DEDUPLICATION.md) — How discography curation works
-- [Roadmap](docs/ROADMAP.md) — Planned features and direction
+- [Task Backlog & Roadmap](docs/TASKS.md) — Versioned plan and outstanding work
 
 ### Issues & Feedback
 

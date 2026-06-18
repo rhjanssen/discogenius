@@ -276,6 +276,7 @@ Operationally important semantics:
 
 - docs/ARCHITECTURE.md: current architecture and stable boundaries (this file)
 - docs/CURATION_DEDUPLICATION.md: curation flow deep-dive
-- docs/ROADMAP.md: forward-looking product priorities only
-- docs/RELEASE_PLAN.md: evidence-based plans for the next two releases (2.0.2, 2.1.0)
+- docs/TASKS.md: versioned task backlog + roadmap (the source of truth for what ships next)
+- docs/LIDARR_DB_ALIGNMENT_PLAN.md / docs/LIDARR_SCHEMA_AUDIT.md: the database-alignment migration plan
+- docs/JOB_EXECUTION_THREADING_PLAN.md: worker-thread job-execution plan
 - AGENTS.md (repo root): coding-agent expectations and validation checklist
