@@ -4,6 +4,7 @@ import { invalidateAllDownloadState } from "../download/download-state.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
+import { resolveLibraryFileIdentity } from "../mediafiles/library-file-identity.js";
 
 interface LibraryFileRow {
   id: number;
@@ -32,6 +33,8 @@ export interface RuntimeMaintenanceSummary {
   trackedAssetIdentityIndexesEnsured: boolean;
   /** Finished job_queue rows pruned (Lidarr-aligned: completed > 1 day) */
   historyJobsPruned: number;
+  /** TrackFiles rows whose canonical_*_mbid columns were back-filled from legacy ids (Phase 1 DB-alignment) */
+  canonicalTrackFilesBackfilled: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -154,6 +157,116 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
   flushBucket();
 }
 
+interface CanonicalBackfillRow {
+  id: number;
+  artist_id: number | null;
+  album_id: number | null;
+  media_id: number | null;
+  file_type: string;
+  quality: string | null;
+  library_root: string | null;
+  library_slot: string | null;
+  provider: string | null;
+  provider_entity_type: string | null;
+  provider_id: string | null;
+  canonical_artist_mbid: string | null;
+  canonical_release_group_mbid: string | null;
+  canonical_release_mbid: string | null;
+  canonical_track_mbid: string | null;
+  canonical_recording_mbid: string | null;
+}
+
+/**
+ * Phase 1 (Lidarr DB alignment): make TrackFiles canonical-first by back-filling
+ * the canonical_*_mbid columns for rows that still rely on the legacy
+ * media_id/album_id provider linkage. New downloads/imports already populate
+ * these on write; this pass closes gaps on older rows (and rows imported before
+ * the canonical columns existed) so file lookups/dedup can switch to the
+ * canonical ids without orphaning anything.
+ *
+ * Only NULL columns are filled — existing canonical ids are passed through as
+ * inputs and never overwritten. media_id/album_id are kept as shadow columns
+ * (dropped in Phase 5).
+ */
+export function backfillCanonicalTrackFiles(summary: RuntimeMaintenanceSummary) {
+  // Candidate rows: have a legacy provider id to resolve from, and are missing
+  // at least one canonical id relevant to their kind.
+  const rows = db.prepare(`
+    SELECT
+      id, artist_id, album_id, media_id, file_type, quality, library_root, library_slot,
+      provider, provider_entity_type, provider_id,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid
+    FROM TrackFiles
+    WHERE (media_id IS NOT NULL OR album_id IS NOT NULL)
+      AND (
+        canonical_release_group_mbid IS NULL
+        OR (
+          file_type IN ('track', 'video', 'lyrics', 'video_thumbnail')
+          AND media_id IS NOT NULL
+          AND canonical_recording_mbid IS NULL
+        )
+      )
+  `).all() as CanonicalBackfillRow[];
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  // COALESCE keeps any value already present; the resolver also receives the
+  // existing values as inputs, so it's stable/idempotent.
+  const update = db.prepare(`
+    UPDATE TrackFiles SET
+      canonical_artist_mbid = COALESCE(canonical_artist_mbid, ?),
+      canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?),
+      canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
+      canonical_track_mbid = COALESCE(canonical_track_mbid, ?),
+      canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?)
+    WHERE id = ?
+  `);
+
+  for (const row of rows) {
+    const identity = resolveLibraryFileIdentity({
+      artistId: row.artist_id,
+      albumId: row.album_id,
+      mediaId: row.media_id,
+      fileType: row.file_type,
+      quality: row.quality,
+      libraryRoot: row.library_root,
+      librarySlot: row.library_slot,
+      provider: row.provider,
+      providerEntityType: row.provider_entity_type,
+      providerId: row.provider_id,
+      canonicalArtistMbid: row.canonical_artist_mbid,
+      canonicalReleaseGroupMbid: row.canonical_release_group_mbid,
+      canonicalReleaseMbid: row.canonical_release_mbid,
+      canonicalTrackMbid: row.canonical_track_mbid,
+      canonicalRecordingMbid: row.canonical_recording_mbid,
+    });
+
+    // Skip rows the resolver couldn't advance (nothing new to fill).
+    const fillsSomething =
+      (row.canonical_artist_mbid === null && identity.canonicalArtistMbid !== null) ||
+      (row.canonical_release_group_mbid === null && identity.canonicalReleaseGroupMbid !== null) ||
+      (row.canonical_release_mbid === null && identity.canonicalReleaseMbid !== null) ||
+      (row.canonical_track_mbid === null && identity.canonicalTrackMbid !== null) ||
+      (row.canonical_recording_mbid === null && identity.canonicalRecordingMbid !== null);
+    if (!fillsSomething) {
+      continue;
+    }
+
+    const result = update.run(
+      identity.canonicalArtistMbid,
+      identity.canonicalReleaseGroupMbid,
+      identity.canonicalReleaseMbid,
+      identity.canonicalTrackMbid,
+      identity.canonicalRecordingMbid,
+      row.id,
+    );
+    summary.canonicalTrackFilesBackfilled += Number(result.changes || 0);
+  }
+}
+
 function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
   summary.mediaMonitorRepairs += Number(db.prepare(`
     UPDATE ProviderMedia AS media
@@ -212,12 +325,14 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     mediaIdentityIndexEnsured: false,
     trackedAssetIdentityIndexesEnsured: false,
     historyJobsPruned: 0,
+    canonicalTrackFilesBackfilled: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
   summary.duplicateTrackedAssetsRemoved = LibraryFilesService.pruneDuplicateTrackedAssets().removed;
 
   db.transaction(() => {
+    backfillCanonicalTrackFiles(summary);
     dedupeLibraryFiles(summary);
     repairMonitoringGaps(summary);
 
@@ -274,12 +389,14 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     summary.duplicateLibraryFilesRemoved > 0 ||
     summary.mediaMonitorRepairs > 0 ||
     summary.albumMonitorRepairs > 0 ||
-    summary.artistMonitorRepairs > 0
+    summary.artistMonitorRepairs > 0 ||
+    summary.canonicalTrackFilesBackfilled > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
       `${summary.duplicateTrackedAssetsRemoved} duplicate tracked asset(s), ` +
       `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
+      `back-filled ${summary.canonicalTrackFilesBackfilled} canonical track-file id(s), ` +
       `repaired ${summary.mediaMonitorRepairs} media, ${summary.albumMonitorRepairs} albums, ` +
       `${summary.artistMonitorRepairs} artists, refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,

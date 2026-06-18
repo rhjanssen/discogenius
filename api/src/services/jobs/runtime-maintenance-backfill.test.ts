@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import { afterEach, beforeEach, test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rt-maintenance-backfill-"));
+process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
+process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+
+const dbModule = await import("../../database.js");
+dbModule.initDatabase();
+const { db } = dbModule;
+const { backfillCanonicalTrackFiles } = await import("./runtime-maintenance.js");
+
+function resetRows() {
+  for (const table of [
+    "TrackFiles", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings",
+    "AlbumReleases", "Albums", "ArtistMetadata", "Artists", "ProviderMedia", "ProviderAlbums",
+  ]) {
+    db.prepare(`DELETE FROM ${table}`).run();
+  }
+}
+
+beforeEach(resetRows);
+afterEach(resetRows);
+
+// Seed the canonical graph plus the LEGACY provider linkage (ProviderMedia /
+// ProviderAlbums) — but NO ProviderItems — so the backfill must resolve the
+// canonical ids the legacy way (the pre-canonical-columns world Phase 1 targets).
+function seedLegacyGraph() {
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
+    .run("artist-local", "Legacy Artist", "artist-mbid", 1);
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Legacy Artist");
+
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)`).run("release-group-1", "artist-mbid", "Legacy Album", "album", "2024-01-01");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?)`).run("release-1", "release-group-1", "artist-mbid", "Legacy Album", 1, 1);
+  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)`)
+    .run("recording-1", "Track One", "artist-mbid", 0);
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)`).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
+
+  // Legacy provider rows: album.mbid -> AlbumReleases.mbid, media.mbid -> Tracks.mbid.
+  db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, mbid, mb_release_group_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run("provider-album-1", "artist-local", "Legacy Album", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 200, "release-1", "release-group-1");
+  db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality, mbid, track_number, volume_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run("provider-track-1", "artist-local", "provider-album-1", "Track One", "track", 0, "LOSSLESS", "track-1", 1, 1);
+}
+
+function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {}) {
+  const row = {
+    artist_id: "artist-local",
+    album_id: "provider-album-1",
+    media_id: "provider-track-1",
+    canonical_artist_mbid: null,
+    canonical_release_group_mbid: null,
+    canonical_release_mbid: null,
+    canonical_track_mbid: null,
+    canonical_recording_mbid: null,
+    library_slot: "stereo",
+    file_path: "C:/Music/track-one.flac",
+    relative_path: "track-one.flac",
+    library_root: "C:/Music",
+    filename: "track-one.flac",
+    extension: "flac",
+    file_type: "track",
+    ...overrides,
+  };
+  const info = db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, album_id, media_id, canonical_artist_mbid, canonical_release_group_mbid,
+      canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (
+      @artist_id, @album_id, @media_id, @canonical_artist_mbid, @canonical_release_group_mbid,
+      @canonical_release_mbid, @canonical_track_mbid, @canonical_recording_mbid,
+      @library_slot, @file_path, @relative_path, @library_root, @filename, @extension, @file_type
+    )
+  `).run(row);
+  return Number(info.lastInsertRowid);
+}
+
+function freshSummary() {
+  return {
+    duplicateLibraryFilesRemoved: 0,
+    duplicateTrackedAssetsRemoved: 0,
+    staleTrackedAssetsRemoved: 0,
+    mediaMonitorRepairs: 0,
+    albumMonitorRepairs: 0,
+    artistMonitorRepairs: 0,
+    albumStatesRefreshed: 0,
+    artistStatesRefreshed: 0,
+    databaseOptimized: false,
+    mediaIdentityIndexEnsured: false,
+    trackedAssetIdentityIndexesEnsured: false,
+    historyJobsPruned: 0,
+    canonicalTrackFilesBackfilled: 0,
+  };
+}
+
+function getCanonical(id: number) {
+  return db.prepare(`
+    SELECT canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+           canonical_track_mbid, canonical_recording_mbid
+    FROM TrackFiles WHERE id = ?
+  `).get(id) as Record<string, string | null>;
+}
+
+test("back-fills canonical ids for a legacy track file from media_id/album_id", () => {
+  seedLegacyGraph();
+  const id = insertLegacyTrackFile();
+
+  const summary = freshSummary();
+  backfillCanonicalTrackFiles(summary);
+
+  assert.equal(summary.canonicalTrackFilesBackfilled, 1);
+  const row = getCanonical(id);
+  assert.equal(row.canonical_artist_mbid, "artist-mbid");
+  assert.equal(row.canonical_release_group_mbid, "release-group-1");
+  assert.equal(row.canonical_release_mbid, "release-1");
+  assert.equal(row.canonical_track_mbid, "track-1");
+  assert.equal(row.canonical_recording_mbid, "recording-1");
+});
+
+test("never overwrites canonical ids already present and is idempotent", () => {
+  seedLegacyGraph();
+  const id = insertLegacyTrackFile({
+    canonical_recording_mbid: "manually-pinned-recording",
+  });
+
+  const first = freshSummary();
+  backfillCanonicalTrackFiles(first);
+  assert.equal(first.canonicalTrackFilesBackfilled, 1); // filled the other NULL columns
+
+  const row = getCanonical(id);
+  // Existing value preserved, not clobbered by the resolver's recording-1.
+  assert.equal(row.canonical_recording_mbid, "manually-pinned-recording");
+  assert.equal(row.canonical_release_group_mbid, "release-group-1");
+
+  // Second run finds nothing to fill (release_group already set, recording set).
+  const second = freshSummary();
+  backfillCanonicalTrackFiles(second);
+  assert.equal(second.canonicalTrackFilesBackfilled, 0);
+});
+
+test("skips rows with no legacy linkage to resolve from", () => {
+  seedLegacyGraph();
+  // A row with neither media_id nor album_id is not a candidate.
+  const id = insertLegacyTrackFile({ media_id: null, album_id: null });
+
+  const summary = freshSummary();
+  backfillCanonicalTrackFiles(summary);
+  assert.equal(summary.canonicalTrackFilesBackfilled, 0);
+  assert.equal(getCanonical(id).canonical_release_group_mbid, null);
+});
+
+test("leaves a fully-populated row untouched", () => {
+  seedLegacyGraph();
+  insertLegacyTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+  });
+
+  const summary = freshSummary();
+  backfillCanonicalTrackFiles(summary);
+  assert.equal(summary.canonicalTrackFilesBackfilled, 0);
+});

@@ -184,6 +184,37 @@ So switching `TrackFiles` lookups/dedup to the canonical columns orphans nothing
 on current data — the AcoustID/MBID embedding work already populates them on
 import/download. **Caveat:** a large/older library may hold pre-canonical rows;
 Phase 1 still needs the gap-fill maintenance pass + re-run this dry-run on real
-libraries before flipping reads. **Next (actual Phase 1):** add the gap-fill
-pass, then switch file lookup/dedup/import-match to canonical columns while
-keeping `media_id`/`album_id` as shadow columns until Phase 5.
+libraries before flipping reads.
+
+### Phase 1 progress (2026-06-18)
+
+- ✅ **Gap-fill maintenance pass shipped** — `backfillCanonicalTrackFiles()` in
+  `runtime-maintenance.ts` runs inside the housekeeping transaction. For any
+  `TrackFiles` row that still relies on legacy `media_id`/`album_id` and is
+  missing a canonical id, it resolves via the shared `resolveLibraryFileIdentity`
+  and COALESCE-fills the `canonical_*_mbid` columns (NULL-only, never overwrites;
+  idempotent). Reports `canonicalTrackFilesBackfilled` in the maintenance summary.
+  Tests: `runtime-maintenance-backfill.test.ts` (fill, no-overwrite/idempotent,
+  skip-no-linkage, no-op-when-full).
+- ✅ **Dry-run re-validated on real post-download DB** — 94 `TrackFiles`, 0 gap
+  rows, 0 orphan-risk, 100% of canonical ids resolve to real `Recordings`/`Albums`.
+  New downloads/imports populate the canonical columns on write, so the gap-fill
+  is a safe no-op on healthy data (its value is legacy/older libraries).
+- ⬜ **Remaining (the lookup/dedup canonical-switch).** Deliberately deferred —
+  it is entangled with the import write-path (Phase 3) and a schema change, so it
+  is NOT independently low-risk:
+  - `runtime-maintenance.dedupeLibraryFiles` groups duplicates by
+    `(media_id, file_type)`. The canonical key MUST be
+    `(canonical_recording_mbid, file_type, **library_slot**)` — the same recording
+    legitimately exists as separate stereo *and* spatial files, so a slot-blind
+    canonical key would wrongly merge them (today this is masked because spatial
+    uses a different provider `media_id`). Needs a slot-aware key + test.
+  - The UNIQUE index `idx_track_files_media_identity (media_id, file_type)` and the
+    import upsert's ON CONFLICT target are media-id-based; switching them to a
+    canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
+    numbered schema migration that belongs with the Phase 3 write-path cutover.
+  - Read-path lookups (`library-files-query`, `lyric`, `audio-tag`, organizer,
+    metadata-backfill) still join `TrackFiles.media_id → ProviderMedia →
+    ProviderAlbums`; these move in Phase 2.
+
+Keep `media_id`/`album_id` as shadow columns until Phase 5.

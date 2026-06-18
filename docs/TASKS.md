@@ -68,10 +68,15 @@ Docker runtime image.
   `hasActiveArtistWorkflowJobs()`, and monitored intake/curation drain queues a
   `DownloadMissing` immediately (`scheduler.queueNextMonitoringPass`). Validated live:
   a curated 3-artist DB that had queued 0 now queues 293 (148 albums + 145 videos).
-- **Retire legacy `Provider*` tables** ⬜ — full 5-phase migration to a single
+- **Retire legacy `Provider*` tables** 🟡 — full 5-phase migration to a single
   canonical graph + `ProviderItems`. See docs/LIDARR_DB_ALIGNMENT_PLAN.md.
   Phase 0 (inventory) + Phase 1 dry-run done; target model clarified (Recordings
   = canonical track/work info + standalone videos; Tracks = release↔recording map).
+  **Phase 1 gap-fill shipped** (`backfillCanonicalTrackFiles` in housekeeping +
+  tests; real-DB dry-run = 0 orphan-risk). **Remaining:** Phase 1 lookup/dedup
+  canonical-switch (slot-aware dedupe key + unique-index migration, entangled
+  with Phase 3), then Phases 2–5. Precise next steps in the plan doc's
+  "Phase 1 progress" section.
 - **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
   fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider `upgrade_queue`→`job_queue`.
   See docs/LIDARR_SCHEMA_AUDIT.md.

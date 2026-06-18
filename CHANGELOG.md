@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [2.0.8] - Unreleased
 
+### Changed
+- **DB alignment Phase 1 (TrackFiles canonical-first), foundational step:** housekeeping now runs a `backfillCanonicalTrackFiles` pass that resolves and COALESCE-fills the `canonical_*_mbid` columns for any `TrackFiles` row still relying on the legacy `media_id`/`album_id` provider linkage (NULL-only, never overwrites, idempotent). This closes canonical gaps on older/pre-canonical-column rows so file lookups/dedup can later switch off the legacy ids without orphaning files. New downloads/imports already populate these on write; a real-DB dry-run confirmed 0 orphan-risk and 100% canonical resolution. See `docs/LIDARR_DB_ALIGNMENT_PLAN.md`.
+
 ### Fixed
 - **Monitored, curated artists now download promptly instead of sitting idle for up to a full scan interval (24h).** Two issues compounded into "active monitoring on, three artists curated, but nothing downloaded overnight":
   - The scheduled cycle's terminal `DownloadMissing` was gated only on monitoring-cycle-tagged jobs and ignored in-flight per-artist intake work (`RefreshArtist`/`RescanFolders`/`CurateArtist`). On a fresh setup it fired the moment the (no-op, nothing-due) metadata refresh finished — *before* artist intake had curated any release-group slots — so it queued 0 downloads, then nothing retried until the next 24h boundary. The pre-download gate now also waits for all artist-workflow and library-rescan jobs to drain.
