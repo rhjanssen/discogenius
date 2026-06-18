@@ -2200,6 +2200,72 @@ export class LibraryFilesService {
     return { removed: totalRemoved };
   }
 
+  /**
+   * Canonical delete-candidate selection for {@link pruneUnmonitoredFiles}.
+   *
+   * A file is kept (monitored) when the canonical entity behind it is monitored
+   * or user-locked:
+   *  - audio (any file carrying a `canonical_release_group_mbid`): its
+   *    `ReleaseGroupSlots` row for that release group + `library_slot`;
+   *  - video / recording-scoped files: their `Recordings` row, matched by
+   *    `canonical_recording_mbid` or — for mbid-less provider videos — via
+   *    `ProviderItems.recording_id` keyed on `provider_id`+`provider_entity_type`.
+   *
+   * A file is a prune candidate only when it has at least one canonical anchor
+   * (release group, recording, or a resolvable provider video) AND none of those
+   * anchors are monitored/locked. Files with no canonical anchor at all are left
+   * untouched (unclassifiable — never auto-deleted). Replaces the old
+   * `ProviderMedia.monitored`/`ProviderAlbums.monitored` linkage.
+   */
+  static selectUnmonitoredFileRows(artistId: string): Array<{
+    id: number;
+    artist_id: number;
+    file_type: string;
+    quality: string | null;
+    file_path: string;
+    library_root: string;
+    album_id: number | null;
+    media_id: number | null;
+  }> {
+    return db.prepare(`
+      SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
+      FROM TrackFiles lf
+      JOIN Artists art ON art.id = lf.artist_id
+      LEFT JOIN ReleaseGroupSlots rgs
+        ON rgs.artist_mbid = art.mbid
+       AND rgs.release_group_mbid = lf.canonical_release_group_mbid
+       AND rgs.slot = lf.library_slot
+      LEFT JOIN Recordings rec
+        ON rec.mbid = lf.canonical_recording_mbid
+      LEFT JOIN ProviderItems pi
+        ON lf.canonical_recording_mbid IS NULL
+       AND lf.provider_entity_type IS NOT NULL
+       AND pi.entity_type = lf.provider_entity_type
+       AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+      LEFT JOIN Recordings vrec ON vrec.id = pi.recording_id
+      WHERE lf.artist_id = ?
+        -- must have at least one canonical anchor to be classifiable
+        AND (
+          lf.canonical_release_group_mbid IS NOT NULL
+          OR lf.canonical_recording_mbid IS NOT NULL
+          OR vrec.id IS NOT NULL
+        )
+        -- and none of the anchors may be monitored or user-locked
+        AND COALESCE(rgs.monitored, 0) = 0 AND COALESCE(rgs.monitored_lock, 0) = 0
+        AND COALESCE(rec.monitored, 0) = 0 AND COALESCE(rec.monitored_lock, 0) = 0
+        AND COALESCE(vrec.monitored, 0) = 0 AND COALESCE(vrec.monitored_lock, 0) = 0
+    `).all(artistId) as Array<{
+      id: number;
+      artist_id: number;
+      file_type: string;
+      quality: string | null;
+      file_path: string;
+      library_root: string;
+      album_id: number | null;
+      media_id: number | null;
+    }>;
+  }
+
   static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
     const artist = db.prepare(`SELECT monitored FROM Artists WHERE id = ?`).get(artistId) as any;
     const artistMonitored = Boolean(artist?.monitored);
@@ -2210,40 +2276,7 @@ export class LibraryFilesService {
       return { deleted: 0, missing: 0, errors: 0 };
     }
 
-    const rows = [
-      ...db.prepare(`
-        SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
-        FROM TrackFiles lf
-        LEFT JOIN ProviderMedia m ON m.id = lf.media_id
-        WHERE lf.artist_id = ?
-          AND lf.media_id IS NOT NULL
-          AND (m.monitored = 0 OR m.monitored IS NULL)
-          AND (m.monitored_lock = 0 OR m.monitored_lock IS NULL)
-      `).all(artistId),
-      ...db.prepare(`
-        SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
-        FROM TrackFiles lf
-        LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
-        WHERE lf.artist_id = ?
-          AND lf.media_id IS NULL
-          AND lf.album_id IS NOT NULL
-          AND (a.monitored = 0 OR a.monitored IS NULL)
-          AND (a.monitored_lock = 0 OR a.monitored_lock IS NULL)
-          AND NOT EXISTS (
-            SELECT 1 FROM ProviderMedia m2
-            WHERE m2.album_id = a.id AND m2.monitored = 1
-          )
-      `).all(artistId),
-    ] as Array<{
-      id: number;
-      artist_id: number;
-      file_type: string;
-      quality: string | null;
-      file_path: string;
-      library_root: string;
-      album_id: number | null;
-      media_id: number | null;
-    }>;
+    const rows = LibraryFilesService.selectUnmonitoredFileRows(artistId);
 
     if (rows.length === 0) {
       return { deleted: 0, missing: 0, errors: 0 };
