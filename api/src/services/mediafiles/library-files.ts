@@ -65,19 +65,6 @@ type ExistingLibraryFileIdentity = {
   quality: string | null;
 };
 
-type VideoMediaLookupRow = {
-  type: string;
-  mbid: string | null;
-};
-
-type AudioMediaLookupRow = {
-  id: number;
-  artist_id: number;
-  album_id: number | null;
-  track_quality: string | null;
-  album_quality: string | null;
-};
-
 type CanonicalVideoLookupRow = {
   mbid: string | null;
   title: string | null;
@@ -365,13 +352,6 @@ export function removeEmptyParents(startDir: string, stopDir: string) {
   }
 }
 
-function getAudioRoot(quality: string | null | undefined): "music" | "spatial" {
-  if (quality && isSpatialAudioQuality(quality)) {
-    return "spatial";
-  }
-  return "music";
-}
-
 function normalizeInlineVideoTitle(value: string | null | undefined): string {
   return String(value || "")
     .toLowerCase()
@@ -501,9 +481,22 @@ function resolveExpectedLibraryRootKey(row: LibraryFileRow): library_root | null
     return "music";
   }
 
-  if (row.media_id) {
-    const media = db.prepare("SELECT type FROM ProviderMedia WHERE id = ?").get(row.media_id) as { type?: string | null } | undefined;
-    if (media?.type === "Music Video") {
+  if (row.file_type === "video" || row.file_type === "video_thumbnail" || row.library_slot === "video") {
+    return "videos";
+  }
+
+  const videoProviderId = String(row.provider_id || row.media_id || "").trim();
+  if (videoProviderId) {
+    const isVideo = db.prepare(`
+      SELECT 1
+      FROM ProviderItems pi
+      JOIN Recordings r ON r.id = pi.recording_id
+      WHERE pi.entity_type = 'video'
+        AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND r.is_video = 1
+      LIMIT 1
+    `).get(videoProviderId);
+    if (isVideo) {
       return "videos";
     }
   }
@@ -737,9 +730,11 @@ export class LibraryFilesService {
     const canonicalVideo = getCanonicalVideoMetadataForRow(row, canonicalIdentity.canonicalRecordingMbid);
 
     if (videoFolderLayout === "inline" && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
-      const mediaRow = db.prepare("SELECT type, mbid FROM ProviderMedia WHERE id = ?").get(row.media_id) as VideoMediaLookupRow | undefined;
-      if ((mediaRow && mediaRow.type === "Music Video") || canonicalVideo) {
-        const recordingMbid = canonicalIdentity.canonicalRecordingMbid || mediaRow?.mbid || null;
+      if (canonicalVideo) {
+        const recordingMbid = canonicalIdentity.canonicalRecordingMbid || null;
+        // The audio counterpart of this video lives in the canonical TrackFiles
+        // graph, matched by recording mbid; if there isn't an imported audio file
+        // we fall back to the canonical title-based resolver below.
         const audioTrack = recordingMbid
           ? db.prepare(`
             SELECT id, artist_id, album_id, media_id,
@@ -751,80 +746,11 @@ export class LibraryFilesService {
           `).get(recordingMbid) as LibraryFileRow | undefined
           : undefined;
 
-        let mediaAudioTrack = recordingMbid
-          ? db.prepare(`
-              SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
-              FROM ProviderMedia m
-              LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-              WHERE m.mbid = ? AND m.type = 'Track' AND m.monitored = 1
-              LIMIT 1
-            `).get(recordingMbid) as AudioMediaLookupRow | undefined
-          : undefined;
+        const inlineVideoTitle = normalizeInlineVideoTitle(canonicalVideo.title);
 
-        if (!mediaAudioTrack && recordingMbid) {
-          mediaAudioTrack = db.prepare(`
-                SELECT m.id, m.artist_id, m.album_id, m.quality as track_quality, a.quality as album_quality
-                FROM ProviderMedia m
-                JOIN Tracks t ON t.mbid = m.mbid
-                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                WHERE t.recording_mbid = ? AND m.type = 'Track' AND m.monitored = 1
-                LIMIT 1
-              `).get(recordingMbid) as AudioMediaLookupRow | undefined;
-        }
-
-        let inlineVideoTitle = "";
-        if (!mediaAudioTrack) {
-          const video = db.prepare("SELECT album_id, artist_id, title FROM ProviderMedia WHERE id = ? AND type = 'Music Video'")
-            .get(row.media_id) as { album_id?: number | null; artist_id?: number | null; title?: string | null } | undefined;
-          const videoTitle = normalizeInlineVideoTitle(canonicalVideo?.title || video?.title);
-          inlineVideoTitle = videoTitle;
-          const albumTracks = video?.album_id
-            ? db.prepare(`
-                SELECT m.id, m.artist_id, m.album_id, m.title, m.quality as track_quality, a.quality as album_quality
-                FROM ProviderMedia m
-                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                WHERE m.album_id = ? AND m.type = 'Track'
-              `).all(video.album_id) as Array<AudioMediaLookupRow & { title?: string | null }>
-            : [];
-          mediaAudioTrack = albumTracks.find((track) =>
-            Boolean(videoTitle) && normalizeInlineVideoTitle(track.title) === videoTitle
-          );
-
-          if (!mediaAudioTrack && video?.artist_id && videoTitle) {
-            const artistTracks = db.prepare(`
-              SELECT m.id, m.artist_id, m.album_id, m.title, m.quality as track_quality, a.quality as album_quality
-              FROM ProviderMedia m
-              JOIN ProviderAlbums a ON a.id = m.album_id
-              WHERE m.artist_id = ? AND m.type = 'Track'
-              ORDER BY m.monitored DESC,
-                       a.monitored DESC,
-                       CASE a.type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
-                       a.release_date ASC,
-                       a.id ASC,
-                       m.id ASC
-            `).all(video.artist_id) as Array<AudioMediaLookupRow & { title?: string | null }>;
-            mediaAudioTrack = artistTracks.find((track) => normalizeInlineVideoTitle(track.title) === videoTitle);
-          }
-        }
-
-        let audioExpectedPath: string | null = null;
-        if (audioTrack) {
-          audioExpectedPath = LibraryFilesService.computeExpectedPath(audioTrack).expectedPath;
-        } else if (mediaAudioTrack) {
-          const trackQuality = mediaAudioTrack.track_quality || mediaAudioTrack.album_quality || null;
-          audioExpectedPath = LibraryFilesService.computeExpectedPath({
-            id: -1,
-            artist_id: mediaAudioTrack.artist_id,
-            album_id: mediaAudioTrack.album_id,
-            media_id: mediaAudioTrack.id,
-            file_path: "",
-            relative_path: null,
-            library_root: getAudioRoot(trackQuality),
-            file_type: "track",
-            extension: "flac",
-            quality: trackQuality,
-          }).expectedPath;
-        }
+        let audioExpectedPath: string | null = audioTrack
+          ? LibraryFilesService.computeExpectedPath(audioTrack).expectedPath
+          : null;
         audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
 
         if (audioExpectedPath) {
@@ -857,10 +783,7 @@ export class LibraryFilesService {
             return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
           }
 
-          const providerVideoTitle = row.media_id
-            ? (db.prepare("SELECT title FROM ProviderMedia WHERE id = ?").get(row.media_id) as { title?: string | null } | undefined)?.title ?? null
-            : null;
-          const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || providerVideoTitle);
+          const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
           const baseExpectedPath = path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`);
           const conflict = row.file_type === "video"
             ? db.prepare("SELECT id FROM TrackFiles WHERE file_type = 'video' AND file_path = ? AND id != ? LIMIT 1")
@@ -899,21 +822,20 @@ export class LibraryFilesService {
       artistMbId,
     };
 
-    // Videos (do not use album folder)
+    // Videos (do not use album folder). Resolved from the canonical Recordings
+    // entity (via getCanonicalVideoMetadataForRow, which falls back to
+    // ProviderItems.recording_id for mbid-less provider videos), not ProviderMedia.
     if (row.file_type === "video") {
-      const video = row.media_id
-        ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
-        : null;
-      if (!video && !canonicalVideo) {
+      if (!canonicalVideo) {
         return { expectedPath: null, reason: "video_not_found" };
       }
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
       const context: NamingContext = {
         ...contextBase,
-        videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
-        trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
-        videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
-        explicit: video?.explicit === 1,
+        videoTitle: canonicalVideo.title || "Unknown Video",
+        trackId: row.media_id != null ? String(row.media_id) : null,
+        videoId: row.media_id != null ? String(row.media_id) : null,
+        explicit: false,
         quality: row.quality || null,
         codec: row.codec || null,
         bitrate: row.bitrate || null,
@@ -923,7 +845,7 @@ export class LibraryFilesService {
       };
 
       const fileStem = renderFileStem(naming.video_file, context);
-      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
       const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
       const fileName = `${fileStem}${suffixToAppend}.${ext}`;
 
@@ -933,19 +855,16 @@ export class LibraryFilesService {
     }
 
     if (row.file_type === "video_thumbnail") {
-      const video = row.media_id
-        ? (db.prepare("SELECT id, title, explicit FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(row.media_id) as any)
-        : null;
-      if (!video && !canonicalVideo) {
+      if (!canonicalVideo) {
         return { expectedPath: null, reason: "video_not_found" };
       }
       const ext = row.extension || "jpg";
       const context: NamingContext = {
         ...contextBase,
-        videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
-        trackId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
-        videoId: video?.id != null ? String(video.id) : row.media_id != null ? String(row.media_id) : null,
-        explicit: video?.explicit === 1,
+        videoTitle: canonicalVideo.title || "Unknown Video",
+        trackId: row.media_id != null ? String(row.media_id) : null,
+        videoId: row.media_id != null ? String(row.media_id) : null,
+        explicit: false,
         quality: row.quality || null,
         codec: row.codec || null,
         bitrate: row.bitrate || null,
@@ -957,7 +876,7 @@ export class LibraryFilesService {
       // Sidecars must share the video file's stem (including the Plex extras
       // suffix) so Plex/Kodi pair them with the video.
       const fileStem = renderFileStem(naming.video_file, context);
-      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
       const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
       const fileName = `${fileStem}${suffixToAppend}.${ext}`;
 
@@ -967,14 +886,13 @@ export class LibraryFilesService {
     }
 
     if (row.file_type === "nfo" && row.media_id) {
-      const video = db.prepare("SELECT id, title, explicit, type FROM ProviderMedia WHERE id = ?").get(row.media_id) as any;
-      if (video?.type === "Music Video" || canonicalVideo) {
+      if (canonicalVideo) {
         const context: NamingContext = {
           ...contextBase,
-          videoTitle: canonicalVideo?.title || video?.title || "Unknown Video",
-          trackId: video?.id != null ? String(video.id) : String(row.media_id),
-          videoId: video?.id != null ? String(video.id) : String(row.media_id),
-          explicit: video?.explicit === 1,
+          videoTitle: canonicalVideo.title || "Unknown Video",
+          trackId: String(row.media_id),
+          videoId: String(row.media_id),
+          explicit: false,
           quality: row.quality || null,
           codec: row.codec || null,
           bitrate: row.bitrate || null,
@@ -983,7 +901,7 @@ export class LibraryFilesService {
           channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
-        const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo?.title || video?.title);
+        const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
         const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
         return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}${suffixToAppend}.nfo`) };
       }

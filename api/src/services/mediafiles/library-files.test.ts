@@ -1016,15 +1016,31 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   `).run("release-mbid-pompeii", "rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO Recordings (mbid, title)
-    VALUES (?, ?)
-  `).run("recording-mbid-pompeii", "Pompeii");
+    INSERT INTO Recordings (mbid, title, artist_mbid)
+    VALUES (?, ?, ?)
+  `).run("recording-mbid-pompeii", "Pompeii", "artist-mbid-bastille");
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-pompeii", "release-mbid-pompeii", "recording-mbid-pompeii", 1, 1, "1", "Pompeii");
+
+  // The music video is its own canonical recording (is_video=1) surfaced via a
+  // video ProviderItem; naming + inline matching resolve from these, not ProviderMedia.
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-rec-pompeii", "Pompeii Video", "artist-mbid-bastille");
+  const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-rec-pompeii") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
+    VALUES ('tidal', 'video', 'video-inline-test', 'artist-mbid-bastille', 'video-rec-pompeii', ?, 'Pompeii Video', 'video')
+  `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', 'track-inline-test', 'artist-mbid-bastille', 'rg-mbid-pompeii', 'release-mbid-pompeii', 'track-mbid-pompeii', 'recording-mbid-pompeii', 'album-inline-test', 'Pompeii', 'LOSSLESS', 'stereo')
+  `).run();
 
   const config = configModule.readConfig();
   config.path.video_folder_layout = "separated";
@@ -1133,6 +1149,13 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
       explicit, type, quality, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("video-inline-duplicate", "artist-inline-test", "album-inline-test", "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
+    .run("video-rec-dup", "Pompeii (Official Video)", "artist-mbid-bastille");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
+    VALUES ('tidal', 'video', 'video-inline-duplicate', 'artist-mbid-bastille', 'video-rec-dup',
+      (SELECT id FROM Recordings WHERE mbid = 'video-rec-dup'), 'Pompeii (Official Video)', 'video')
+  `).run();
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -1162,6 +1185,13 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
       explicit, type, quality, duration, monitored
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("video-inline-unlinked", "artist-inline-test", null, "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
+    .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
+    VALUES ('tidal', 'video', 'video-inline-unlinked', 'artist-mbid-bastille', 'video-rec-unlinked',
+      (SELECT id FROM Recordings WHERE mbid = 'video-rec-unlinked'), 'Pompeii (Official Video)', 'video')
+  `).run();
 
   const expectedUnlinkedDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
