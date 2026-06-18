@@ -219,6 +219,33 @@ test seeds and validate via a from-scratch rebuild (Bastille + Bakermat).
 Similar-artists feature already removed (provider-exclusive, no MB equivalent — see
 §3b); that retires `ProviderSimilarArtists`/`ProviderSimilarAlbums` from the drop set.
 
+### Critical ordering for the finish (learned the hard way, 2026-06-18)
+
+Converting a reader/resolver/writer to canonical-only **breaks every test that
+seeds the legacy `ProviderMedia`/`ProviderAlbums` tables and expects resolution
+from them** (≈100 tests). A trial conversion of `library-file-identity` alone
+broke 6 tests across 3 files and undercut the Phase-1 `backfillCanonicalTrackFiles`
+(whose premise is "resolve canonical FROM legacy `media_id`"). So the safe finish
+order is **test-seeds first**:
+1. Migrate the shared test seed helpers (`seedLegacyGraph` etc.) to seed
+   `ProviderItems` + canonical (instead of/alongside legacy `Provider*`).
+2. THEN convert production readers/resolver to `ProviderItems`-only
+   (`library-file-identity`, `organizer`, `metadata-identity`, `audio-tag`).
+3. THEN the keystone: `refresh-album-service` — its legacy catalog block
+   (`ProviderAlbums`/`ProviderMedia` INSERT/UPDATE at ~470/763/1016) is now
+   *vestigial* (data homed canonically via v24; monitored state in
+   `ReleaseGroupSlots`; availability in `ProviderItems`) BUT the scan reads its own
+   writes (`existing.monitored`/`last_scanned` at 462/707/1010) — rewire those to
+   `ReleaseGroupSlots`/`ProviderItems.updated_at` before deleting the block.
+4. Re-point/remove the Phase-1 legacy-id backfill (old-DB-only; deferred).
+5. Numbered migration dropping the legacy `Provider*` tables + `TrackFiles.media_id`
+   /legacy `album_id`; final from-scratch rebuild validation (Bastille + Bakermat).
+
+This is a focused multi-hour pass; it touches the core scan→curate→download path,
+so it must NOT be rushed (that is where the parallel agents repeatedly broke
+things). The integer-FK foundation + monitoring + supplement homing are DONE and
+validated, so the app is fully functional in the meantime.
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
