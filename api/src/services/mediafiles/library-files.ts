@@ -231,6 +231,7 @@ export type LibraryFileUpsertParams = {
   artistId: string;
   albumId?: string | null;
   mediaId?: string | null;
+  trackFileId?: number | null;
   filePath: string;
   libraryRoot: string;
   fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "nfo" | "lyrics" | string;
@@ -1230,6 +1231,7 @@ export class LibraryFilesService {
       artistId: params.artistId,
       albumId: params.albumId || null,
       mediaId: params.mediaId || null,
+      trackFileId: params.trackFileId || null,
       filePath: params.filePath,
       libraryRoot: params.libraryRoot,
       fileType: params.fileType,

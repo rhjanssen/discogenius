@@ -21,7 +21,7 @@ Discogenius currently stores library identity **twice**:
 | Recording / video | `Recordings` | `ProviderMedia` (type=video) |
 | Album↔artist credit | `AlbumArtists` | `ProviderAlbumArtists` |
 | Track↔artist credit | (via `Recordings.artist_credit`) | `ProviderMediaArtists` |
-| Similar artists/albums | (provider `data` / future) | `ProviderSimilarArtists`, `ProviderSimilarAlbums` |
+| Similar artists/albums | Drop unless MusicBrainz/SkyHook-backed | `ProviderSimilarArtists`, `ProviderSimilarAlbums` |
 | Provider availability/offers | `ProviderItems` (keyed to mbids) | embedded in `ProviderAlbums`/`ProviderMedia` rows |
 | Local files | `TrackFiles` (`canonical_*_mbid` cols) + `media_id`/`album_id` → legacy ids | — |
 | Spatial/stereo/video selection | `ReleaseGroupSlots` (**distinguishing feature, keep**) | — |
@@ -100,9 +100,10 @@ instead of `ProviderAlbums`/`ProviderMedia`. Update `repositories/music/*`
 **Phase 4 — Housekeeping & monitoring repair.**
 Rewrite `runtime-maintenance.repairMonitoringGaps` to operate on
 `ReleaseGroupSlots`/`Recordings` (canonical monitored state) instead of
-`ProviderMedia`/`ProviderAlbums`. Move similar-artist/album storage off
-`ProviderSimilar*` (either drop, or fold into `ProviderItems.data`/a small
-canonical relation).
+`ProviderMedia`/`ProviderAlbums`. Remove provider-only discovery sections such as
+similar artists/albums unless they can be driven from MusicBrainz/SkyHook data.
+Do not migrate `ProviderSimilar*` into another provider-catalog table just to
+preserve a non-core UI section.
 
 **Phase 5 — Drop legacy tables.**
 Once nothing reads or writes them: drop `ProviderAlbums`, `ProviderMedia`,
@@ -133,6 +134,12 @@ data-migration guard so existing DBs backfill before the drop.
   "providers never create canonical entities" rule from AGENTS.md.
 - Curation/dedup (`ArtistReleaseGroupCuration`) — Discogenius's discography
   dedup on top of Lidarr's release-type filtering.
+- Provider data may supplement holes in canonical rows where MusicBrainz/SkyHook
+  lacks a field needed for a library-manager workflow (e.g. artwork asset ids,
+  video copyright, provider URLs, download availability), but the core app should
+  remain MusicBrainz/SkyHook-primary. Provider-exclusive, non-essential discovery
+  features such as similar artists/albums or top tracks should be removed rather
+  than preserved through new provider catalog tables.
 
 ## 5. Risks & verification
 
@@ -204,10 +211,20 @@ import-finalize / inline-video) were migrated to seed the canonical graph +
 `ProviderItems` (legacy provider rows kept only for the transitional
 `TrackFiles` FK until Phase 5). Full suite green.
 
+**Progress (2026-06-18, continued):** `library-metadata-backfill.ts` no longer
+reads `ProviderAlbums`/`ProviderMedia`. Album sidecars are discovered from
+canonical `TrackFiles.canonical_release_group_mbid` + `ReleaseGroupSlots` +
+album `ProviderItems`; lyrics/video sidecars use `TrackFiles.provider_id` and
+`ProviderItems`; video tag backfill uses canonical `Recordings` plus
+provider-supplemental data from `ProviderItems.data`. Sidecar upserts now carry
+provider/canonical identity and can link directly to the owning `TrackFiles` row.
+Regression: `library-metadata-backfill.test.ts` covers canonical-only album/video
+sidecar discovery with zero legacy provider rows. Full suite green.
+
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
-   writer — video INSERT/UPDATE), `metadata-files.ts`, `library-metadata-backfill.ts`,
+   writer — video INSERT/UPDATE), `metadata-files.ts`,
    `audio-tag-service.ts` (also a writer), `quality.ts`/`upgrader.ts` (entangled
    with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `lyric-service.ts` and
    `library-file-identity.ts` use legacy only as a FALLBACK after `ProviderItems`
@@ -219,8 +236,9 @@ Remaining order:
    `organizer`, `audio-tag-service`, `library-scan`, `metadata-identity-service`,
    `version-grouper`, `module-fixer` to write canonical + `ProviderItems`.
 3. **Phase 4 — housekeeping.** Repoint/retire `repairMonitoringGaps` +
-   `scheduler-maintenance-handlers` to canonical monitored/skip state; move
-   `ProviderSimilar*` off (drop or fold into `ProviderItems.data`).
+   `scheduler-maintenance-handlers` to canonical monitored/skip state; remove
+   provider-only similar/top-track discovery code unless a MusicBrainz/SkyHook
+   source can drive it.
 4. **Phase 5 — numbered schema migration** dropping the six `Provider*` tables +
    `TrackFiles.media_id`/`album_id`, with a one-time backfill guard.
 
@@ -317,3 +335,10 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   `TrackFiles` MBIDs plus album/track `ProviderItems` instead of joining
   `ProviderMedia`. Regression: `import-matcher-service.test.ts` covers a
   canonical-only fingerprint match with zero legacy provider rows.
+- ✅ **`library-metadata-backfill` cutover** — missing sidecar discovery no
+  longer joins `TrackFiles` to `ProviderMedia`/`ProviderAlbums`. Album sidecars
+  are keyed by canonical release group + slot + album `ProviderItems`; lyrics,
+  video thumbnails/NFOs, and video tag candidates use `TrackFiles.provider_id`
+  plus `ProviderItems`, with provider/canonical identity written into sidecar
+  rows. Regression: `library-metadata-backfill.test.ts` covers canonical-only
+  album/video sidecar discovery with zero legacy provider rows.

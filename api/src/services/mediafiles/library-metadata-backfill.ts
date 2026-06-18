@@ -18,6 +18,22 @@ import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 
+function parseProviderData(raw: string | null | undefined): Record<string, any> {
+    try {
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+    } catch {
+        return {};
+    }
+}
+
+function firstProviderIdFromSlot(value: string | null | undefined): string | null {
+    return String(value || "")
+        .split(";")
+        .map((id) => id.trim())
+        .find(Boolean) || null;
+}
+
 export interface MetadataFillResult {
     downloaded: number;
     failed: number;
@@ -158,15 +174,14 @@ class LibraryMetadataBackfillService {
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
     ) {
+        // Canonical-first: the set of album slots to backfill is the distinct
+        // (release group, library slot) pairs of this artist's tracked audio files.
         const albums = db.prepare(`
-      SELECT DISTINCT
-        a.id, a.title, a.version, a.release_date, a.num_volumes, a.video_cover, a.quality,
-        lf.canonical_release_group_mbid, lf.library_slot
+      SELECT DISTINCT lf.canonical_release_group_mbid AS canonical_release_group_mbid, lf.library_slot
       FROM TrackFiles lf
-      JOIN ProviderMedia media ON media.id = lf.media_id
-      JOIN ProviderAlbums a ON a.id = media.album_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
+        AND lf.canonical_release_group_mbid IS NOT NULL
     `).all(artistId) as any[];
         const processedAlbumSlots = new Set<string>();
 
@@ -181,42 +196,82 @@ class LibraryMetadataBackfillService {
 
             const selectedSlot = canonicalReleaseGroupMbid
                 ? db.prepare(`
-                    SELECT selected_provider_id
+                    SELECT selected_provider, selected_provider_id, selected_release_mbid
                     FROM ReleaseGroupSlots
                     WHERE release_group_mbid = ?
                       AND slot = ?
                       AND selected_provider_id IS NOT NULL
                     LIMIT 1
-                `).get(canonicalReleaseGroupMbid, librarySlot) as { selected_provider_id?: string | null } | undefined
+                `).get(canonicalReleaseGroupMbid, librarySlot) as {
+                    selected_provider?: string | null;
+                    selected_provider_id?: string | null;
+                    selected_release_mbid?: string | null;
+                } | undefined
                 : undefined;
-            const representativeAlbumId = String(selectedSlot?.selected_provider_id || sourceAlbum.id)
-                .split(";")
-                .map((id) => id.trim())
-                .find(Boolean) || String(sourceAlbum.id);
-            const album = db.prepare(`
-                SELECT id, title, version, release_date, num_volumes, video_cover, quality, mbid, mb_release_group_id
-                FROM ProviderAlbums
-                WHERE id = ?
-                LIMIT 1
-            `).get(representativeAlbumId) as any || sourceAlbum;
+            const selectedProviderAlbumId = firstProviderIdFromSlot(selectedSlot?.selected_provider_id);
+            // Album metadata for sidecar generation comes from the canonical graph
+            // plus the album's ProviderItems offer (provider asset ids/quality live
+            // in ProviderItems.data), not ProviderAlbums.
+            const albumProviderItem = selectedProviderAlbumId
+                ? db.prepare(`
+                    SELECT provider, provider_id, release_mbid, quality, data
+                    FROM ProviderItems
+                    WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                `).get(selectedProviderAlbumId) as {
+                    provider?: string | null;
+                    provider_id?: string | null;
+                    release_mbid?: string | null;
+                    quality?: string | null;
+                    data?: string | null;
+                } | undefined
+                : db.prepare(`
+                    SELECT provider, provider_id, release_mbid, quality, data
+                    FROM ProviderItems
+                    WHERE entity_type = 'album'
+                      AND release_group_mbid = ?
+                      AND library_slot = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                `).get(canonicalReleaseGroupMbid, librarySlot) as {
+                    provider?: string | null;
+                    provider_id?: string | null;
+                    release_mbid?: string | null;
+                    quality?: string | null;
+                    data?: string | null;
+                } | undefined;
+            const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
+            const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || albumProviderItem?.release_mbid || null;
+            const canonicalAlbum = getCanonicalAlbumMetadata({
+                canonicalReleaseGroupMbid,
+                canonicalReleaseMbid,
+            });
+            const albumData = parseProviderData(albumProviderItem?.data);
+            const album = {
+                id: representativeAlbumId,
+                title: canonicalAlbum?.title || albumData.title || null,
+                version: albumData.version || null,
+                release_date: canonicalAlbum?.releaseDate || albumData.release_date || null,
+                num_volumes: canonicalAlbum?.volumeCount || albumData.num_volumes || 1,
+                video_cover: albumData.video_cover || null,
+                quality: albumProviderItem?.quality || albumData.quality || null,
+                mbid: canonicalAlbum?.albumMbid || null,
+                mb_release_group_id: canonicalReleaseGroupMbid,
+                provider: albumProviderItem?.provider || selectedSlot?.selected_provider || "tidal",
+            };
+            if (!album.id) {
+                continue;
+            }
             const libraryRoots = (db.prepare(`
       SELECT DISTINCT lf.library_root
       FROM TrackFiles lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
-        AND (
-          (? != '' AND lf.canonical_release_group_mbid = ?)
-          OR (? = '' AND lf.album_id = ?)
-        )
+        AND lf.canonical_release_group_mbid = ?
       ORDER BY lf.library_root ASC
-    `).all(
-                    artistId,
-                    canonicalReleaseGroupMbid,
-                    canonicalReleaseGroupMbid,
-                    canonicalReleaseGroupMbid,
-                    album.id,
-                ) as Array<{ library_root: string | null }>)
+    `).all(artistId, canonicalReleaseGroupMbid) as Array<{ library_root: string | null }>)
                 .map((row) => String(row.library_root || "").trim())
                 .filter(Boolean);
 
@@ -224,7 +279,7 @@ class LibraryMetadataBackfillService {
                 const expectedAlbumNfoPath = LibraryFilesService.computeExpectedPath({
                     id: -1,
                     artist_id: artistId as unknown as number,
-                    album_id: album.id,
+                    album_id: album.id as unknown as number,
                     media_id: null,
                     file_path: "",
                     relative_path: null,
@@ -255,6 +310,12 @@ class LibraryMetadataBackfillService {
                                     libraryRoot,
                                     fileType: "cover",
                                     expectedPath: coverPath,
+                                    provider: album.provider,
+                                    providerEntityType: "album",
+                                    providerId: String(album.id),
+                                    canonicalReleaseGroupMbid,
+                                    canonicalReleaseMbid,
+                                    librarySlot,
                                 });
                                 result.downloaded++;
                             } else {
@@ -285,6 +346,12 @@ class LibraryMetadataBackfillService {
                                         libraryRoot,
                                         fileType: "video_cover",
                                         expectedPath: videoCoverPath,
+                                        provider: album.provider,
+                                        providerEntityType: "album",
+                                        providerId: String(album.id),
+                                        canonicalReleaseGroupMbid,
+                                        canonicalReleaseMbid,
+                                        librarySlot,
                                     });
                                     result.downloaded++;
                                 } else {
@@ -310,6 +377,12 @@ class LibraryMetadataBackfillService {
                             libraryRoot,
                             fileType: "nfo",
                             expectedPath: nfoPath,
+                            provider: album.provider,
+                            providerEntityType: "album",
+                            providerId: String(album.id),
+                            canonicalReleaseGroupMbid,
+                            canonicalReleaseMbid,
+                            librarySlot,
                         });
                         result.downloaded++;
                     } catch {
@@ -328,17 +401,73 @@ class LibraryMetadataBackfillService {
         if (!metadataConfig.save_lyrics) return;
 
         const tracks = db.prepare(`
-      SELECT lf.file_path, lf.media_id, lf.library_root, lf.library_slot
-      FROM TrackFiles lf
-      WHERE lf.artist_id = ?
-        AND lf.file_type = 'track'
-        AND lf.media_id IS NOT NULL
+      WITH track_candidates AS (
+        SELECT
+          lf.id AS track_file_id,
+          lf.file_path,
+          lf.media_id,
+          lf.library_root,
+          lf.library_slot,
+          lf.canonical_artist_mbid,
+          lf.canonical_release_group_mbid,
+          lf.canonical_release_mbid,
+          lf.canonical_track_mbid,
+          lf.canonical_recording_mbid,
+          COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
+          'track' AS provider_entity_type,
+          COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+          pi.album_id AS album_id
+        FROM TrackFiles lf
+        LEFT JOIN ProviderItems pi
+          ON pi.entity_type = 'track'
+         AND (
+            (
+              COALESCE(lf.provider_id, lf.media_id) IS NOT NULL
+              AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+            )
+            OR (
+              COALESCE(lf.provider_id, lf.media_id) IS NULL
+              AND (
+                (lf.canonical_track_mbid IS NOT NULL AND pi.track_mbid = lf.canonical_track_mbid)
+                OR (lf.canonical_recording_mbid IS NOT NULL AND pi.recording_mbid = lf.canonical_recording_mbid)
+              )
+            )
+         )
+        WHERE lf.artist_id = ?
+          AND lf.file_type = 'track'
+      )
+      SELECT *
+      FROM track_candidates track
+      WHERE track.provider_id IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM LyricFiles lyric
-          WHERE CAST(lyric.media_id AS TEXT) = CAST(lf.media_id AS TEXT)
-            AND lyric.library_slot IS lf.library_slot
+          WHERE lyric.library_slot IS track.library_slot
+            AND (
+              (lyric.provider_entity_type = 'track' AND CAST(lyric.provider_id AS TEXT) = CAST(track.provider_id AS TEXT))
+              OR CAST(lyric.media_id AS TEXT) = CAST(track.provider_id AS TEXT)
+              OR (
+                track.canonical_recording_mbid IS NOT NULL
+                AND lyric.canonical_recording_mbid = track.canonical_recording_mbid
+              )
+            )
         )
-    `).all(artistId) as Array<{ file_path: string; media_id: number; library_root: string | null; library_slot: string | null }>;
+      GROUP BY track.track_file_id
+    `).all(artistId) as Array<{
+            track_file_id: number;
+            file_path: string;
+            media_id: string | null;
+            library_root: string | null;
+            library_slot: string | null;
+            canonical_artist_mbid: string | null;
+            canonical_release_group_mbid: string | null;
+            canonical_release_mbid: string | null;
+            canonical_track_mbid: string | null;
+            canonical_recording_mbid: string | null;
+            provider: string | null;
+            provider_entity_type: string | null;
+            provider_id: string;
+            album_id: string | null;
+        }>;
 
         for (const track of tracks) {
             const ext = path.extname(track.file_path);
@@ -349,18 +478,26 @@ class LibraryMetadataBackfillService {
             }
 
             try {
-                await saveLyricsFile(String(track.media_id), lrcPath);
+                await saveLyricsFile(String(track.provider_id), lrcPath);
                 if (fs.existsSync(lrcPath)) {
-                    const media = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(track.media_id) as any;
                     this.upsertLibraryFile({
                         artistId,
-                        albumId: media?.album_id ? String(media.album_id) : null,
-                        mediaId: String(track.media_id),
+                        albumId: track.album_id ? String(track.album_id) : null,
+                        mediaId: String(track.provider_id),
                         filePath: lrcPath,
                         libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                         fileType: "lyrics",
                         expectedPath: lrcPath,
                         librarySlot: track.library_slot,
+                        trackFileId: track.track_file_id,
+                        provider: track.provider,
+                        providerEntityType: "track",
+                        providerId: String(track.provider_id),
+                        canonicalArtistMbid: track.canonical_artist_mbid,
+                        canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
+                        canonicalReleaseMbid: track.canonical_release_mbid,
+                        canonicalTrackMbid: track.canonical_track_mbid,
+                        canonicalRecordingMbid: track.canonical_recording_mbid,
                     });
                     result.downloaded++;
                 } else {
@@ -384,18 +521,46 @@ class LibraryMetadataBackfillService {
             const resolution = metadataConfig.video_thumbnail_resolution || "1080x720";
 
             const thumbnailVideos = db.prepare(`
-      SELECT lf.file_path, lf.media_id, m.cover
+      SELECT
+        lf.id AS track_file_id,
+        lf.file_path,
+        lf.media_id,
+        lf.library_root,
+        lf.library_slot,
+        lf.canonical_artist_mbid,
+        lf.canonical_recording_mbid,
+        COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
+        COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+        pi.album_id AS album_id,
+        r.cover_image_id AS cover
       FROM TrackFiles lf
-      JOIN ProviderMedia m ON m.id = lf.media_id
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+      JOIN Recordings r ON r.id = pi.recording_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
-        AND m.cover IS NOT NULL
+        AND r.cover_image_id IS NOT NULL
+        AND COALESCE(lf.provider_id, lf.media_id, pi.provider_id) IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM MetadataFiles mf
-          WHERE CAST(mf.media_id AS TEXT) = CAST(lf.media_id AS TEXT)
+          WHERE (
+              (mf.provider_entity_type = 'video' AND CAST(mf.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS TEXT))
+              OR CAST(mf.media_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS TEXT)
+            )
             AND mf.file_type = 'video_thumbnail'
         )
-    `).all(artistId) as Array<{ file_path: string; media_id: number; cover: string }>;
+    `).all(artistId) as Array<{
+                track_file_id: number;
+                file_path: string;
+                media_id: string | null;
+                library_root: string | null;
+                library_slot: string | null;
+                canonical_artist_mbid: string | null;
+                canonical_recording_mbid: string | null;
+                provider: string | null;
+                provider_id: string;
+                album_id: string | null;
+                cover: string;
+            }>;
 
             for (const video of thumbnailVideos) {
                 const videoDir = path.dirname(video.file_path);
@@ -410,15 +575,21 @@ class LibraryMetadataBackfillService {
                 try {
                     await downloadVideoThumbnail(video.cover, resolution as any, thumbPath);
                     if (fs.existsSync(thumbPath)) {
-                        const media = db.prepare("SELECT album_id FROM ProviderMedia WHERE id = ?").get(video.media_id) as any;
                         this.upsertLibraryFile({
                             artistId,
-                            albumId: media?.album_id ? String(media.album_id) : null,
-                            mediaId: String(video.media_id),
+                            albumId: video.album_id ? String(video.album_id) : null,
+                            mediaId: String(video.provider_id),
                             filePath: thumbPath,
-                            libraryRoot: videoRoot,
+                            libraryRoot: String(video.library_root || "").trim() || videoRoot,
                             fileType: "video_thumbnail",
                             expectedPath: thumbPath,
+                            librarySlot: video.library_slot,
+                            trackFileId: video.track_file_id,
+                            provider: video.provider,
+                            providerEntityType: "video",
+                            providerId: String(video.provider_id),
+                            canonicalArtistMbid: video.canonical_artist_mbid,
+                            canonicalRecordingMbid: video.canonical_recording_mbid,
                         });
                         if (metadataConfig.embed_video_thumbnail !== false) {
                             await embedVideoThumbnail(video.file_path, thumbPath);
@@ -435,25 +606,54 @@ class LibraryMetadataBackfillService {
 
         if (metadataConfig.save_nfo) {
             const videos = db.prepare(`
-      SELECT lf.file_path, lf.media_id, m.album_id
+      SELECT
+        lf.id AS track_file_id,
+        lf.file_path,
+        lf.media_id,
+        lf.library_root,
+        lf.library_slot,
+        lf.canonical_artist_mbid,
+        lf.canonical_recording_mbid,
+        COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
+        COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+        pi.album_id AS album_id
       FROM TrackFiles lf
-      JOIN ProviderMedia m ON m.id = lf.media_id
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
-    `).all(artistId) as Array<{ file_path: string; media_id: number; album_id: number | null }>;
+        AND COALESCE(lf.provider_id, lf.media_id, pi.provider_id) IS NOT NULL
+    `).all(artistId) as Array<{
+                track_file_id: number;
+                file_path: string;
+                media_id: string | null;
+                library_root: string | null;
+                library_slot: string | null;
+                canonical_artist_mbid: string | null;
+                canonical_recording_mbid: string | null;
+                provider: string | null;
+                provider_id: string;
+                album_id: string | null;
+            }>;
 
             for (const video of videos) {
                 const nfoPath = path.join(path.dirname(video.file_path), `${path.parse(video.file_path).name}.nfo`);
                 try {
-                    await saveVideoNfoFile(String(video.media_id), nfoPath);
+                    await saveVideoNfoFile(String(video.provider_id), nfoPath);
                     this.upsertLibraryFile({
                         artistId,
                         albumId: video.album_id ? String(video.album_id) : null,
-                        mediaId: String(video.media_id),
+                        mediaId: String(video.provider_id),
                         filePath: nfoPath,
-                        libraryRoot: videoRoot,
+                        libraryRoot: String(video.library_root || "").trim() || videoRoot,
                         fileType: "nfo",
                         expectedPath: nfoPath,
+                        librarySlot: video.library_slot,
+                        trackFileId: video.track_file_id,
+                        provider: video.provider,
+                        providerEntityType: "video",
+                        providerId: String(video.provider_id),
+                        canonicalArtistMbid: video.canonical_artist_mbid,
+                        canonicalRecordingMbid: video.canonical_recording_mbid,
                     });
                     result.downloaded++;
                 } catch {
@@ -465,30 +665,30 @@ class LibraryMetadataBackfillService {
         // ---- Video tag backfill ----
         if (metadataConfig.write_audio_metadata) {
             const tagVideos = db.prepare(`
-      SELECT lf.file_path, lf.media_id,
-             m.title AS media_title,
-             m.version AS media_version,
-             m.release_date AS media_release_date,
-             m.copyright AS media_copyright,
+      SELECT lf.file_path,
+             COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS media_id,
+             r.title AS media_title,
+             pi.version AS media_version,
+             r.release_date AS media_release_date,
+             pi.data AS provider_data,
              ar.name AS artist_name,
-             al.title AS album_title,
-             al.copyright AS album_copyright
+             album.title AS album_title
       FROM TrackFiles lf
-      JOIN ProviderMedia m ON m.id = lf.media_id
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+      JOIN Recordings r ON r.id = pi.recording_id
       JOIN Artists ar ON ar.id = lf.artist_id
-      LEFT JOIN ProviderAlbums al ON al.id = m.album_id
+      LEFT JOIN Albums album ON album.mbid = pi.release_group_mbid
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
     `).all(artistId) as Array<{
                 file_path: string;
-                media_id: number;
+                media_id: string;
                 media_title: string;
                 media_version: string | null;
                 media_release_date: string | null;
-                media_copyright: string | null;
+                provider_data: string | null;
                 artist_name: string;
                 album_title: string | null;
-                album_copyright: string | null;
             }>;
 
             for (const video of tagVideos) {
@@ -502,7 +702,8 @@ class LibraryMetadataBackfillService {
                 const videoTitle = video.media_version
                     ? `${video.media_title} (${video.media_version})`
                     : video.media_title;
-                const copyright = video.media_copyright || video.album_copyright || undefined;
+                const providerData = parseProviderData(video.provider_data);
+                const copyright = String(providerData.copyright || "").trim() || undefined;
 
                 let providerVideoUrl: string | undefined;
                 try {
@@ -604,12 +805,21 @@ class LibraryMetadataBackfillService {
         artistId: string;
         albumId?: string | null;
         mediaId?: string | null;
+        trackFileId?: number | null;
         filePath: string;
         libraryRoot: string;
         fileType: string;
         quality?: string | null;
         expectedPath?: string | null;
         librarySlot?: string | null;
+        provider?: string | null;
+        providerEntityType?: string | null;
+        providerId?: string | null;
+        canonicalArtistMbid?: string | null;
+        canonicalReleaseGroupMbid?: string | null;
+        canonicalReleaseMbid?: string | null;
+        canonicalTrackMbid?: string | null;
+        canonicalRecordingMbid?: string | null;
     }) {
         LibraryFilesService.upsertLibraryFile({
             ...params,

@@ -12,6 +12,7 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 - Adds discography deduplication on top of release-type filtering.
 - Manages stereo, spatial (Atmos), and music-video libraries — by default in three separate library roots.
 - **Key decisions**: Keep the TypeScript stack (Express+better-sqlite3 api/, React+Vite+Fluent UI v9 app/). Frontend must stay pure Fluent UI. MusicBrainz is canonical identity; providers are availability/download resources only.
+- Core app views should be MusicBrainz/SkyHook-primary. Provider data may supplement canonical holes where useful (artwork asset ids, copyright, provider URLs, availability/downloads), but do not preserve provider-only catalog/discovery features such as similar artists/albums or top tracks unless they can be driven from MusicBrainz/SkyHook. Drop non-essential provider-only sections/code instead of migrating them into new provider catalog tables.
 
 ## Layout
 - `api/` — Express + TypeScript + better-sqlite3 (synchronous DB access only)
