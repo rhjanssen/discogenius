@@ -25,6 +25,7 @@ let monitoringProgress: MonitoringProgress = {
 };
 
 let pendingArtistJobsStmt: any | null = null;
+let activeArtistWorkflowStmt: any | null = null;
 let warnedJobQueueMissing = false;
 let activeLibraryRescanStmt: any | null = null;
 let activeHousekeepingStmt: any | null = null;
@@ -139,6 +140,35 @@ export function hasActiveTask(taskName: string): boolean {
 
 export function hasActiveHousekeepingTask(): boolean {
     return Boolean(getActiveHousekeepingStmt().get());
+}
+
+function getActiveArtistWorkflowStmt() {
+    if (!activeArtistWorkflowStmt) {
+        activeArtistWorkflowStmt = db.prepare(`
+            SELECT 1
+            FROM job_queue
+            WHERE type IN (${ARTIST_WORKFLOW_JOB_TYPES.map(() => "?").join(", ")})
+              AND status IN ('pending', 'processing')
+            LIMIT 1
+        `);
+    }
+
+    return activeArtistWorkflowStmt;
+}
+
+/**
+ * True while any per-artist intake/refresh/curation work (RefreshArtist,
+ * RescanFolders, CurateArtist — including the library-wide rescan, which is a
+ * RescanFolders) is pending or processing.
+ *
+ * The terminal DownloadMissing pass queues from the monitored slots that this
+ * work produces, so it must wait for the pipeline to drain. Unlike
+ * hasActiveMonitoringCycleWorkflow(), this is NOT gated on the monitoringCycle
+ * tag — artist *intake* (adding + monitoring an artist) runs the same job types
+ * without that tag, and the terminal pass used to race it and queue nothing.
+ */
+export function hasActiveArtistWorkflowJobs(): boolean {
+    return Boolean(getActiveArtistWorkflowStmt().get(...ARTIST_WORKFLOW_JOB_TYPES));
 }
 
 export function hasActiveMonitoringCycleWorkflow(): boolean {

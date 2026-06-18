@@ -12,12 +12,14 @@ let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("./queue.js");
 let taskSchedulerModule: typeof import("./scheduler.js");
 let taskStateModule: typeof import("./task-state.js");
+let workflowModule: typeof import("../music/artist-workflow.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
     queueModule = await import("./queue.js");
     taskSchedulerModule = await import("./scheduler.js");
     taskStateModule = await import("./task-state.js");
+    workflowModule = await import("../music/artist-workflow.js");
 
     dbModule.initDatabase();
 });
@@ -89,6 +91,103 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     assert.ok(finalSnapshot);
     assert.notEqual(finalSnapshot.lastQueuedAt, null);
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
+});
+
+function completeAndAdvance(jobId: number) {
+    const job = queueModule.TaskQueueService.getById(jobId);
+    assert.ok(job);
+    queueModule.TaskQueueService.complete(jobId);
+    taskSchedulerModule.queueNextMonitoringPass(job);
+    return job;
+}
+
+function pendingDownloadMissing() {
+    return queueModule.TaskQueueService.getTopPendingJobsByTypes(
+        [queueModule.JobTypes.DownloadMissing],
+        10,
+    );
+}
+
+test("monitored artist intake queues a DownloadMissing once its pipeline drains", () => {
+    const curateId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.CurateArtist,
+        { artistId: "2001", artistName: "Intake Artist", workflow: "monitoring-intake" },
+        "2001",
+    );
+    assert.ok(curateId > 0);
+
+    // No other artist-workflow jobs pending → draining this one triggers downloads.
+    completeAndAdvance(curateId);
+
+    const downloads = pendingDownloadMissing();
+    assert.equal(downloads.length, 1);
+    // Intake-triggered pass is untagged (not part of a scheduled cycle).
+    assert.equal((downloads[0].payload as Record<string, unknown>).monitoringCycle, undefined);
+});
+
+test("artist intake does not queue downloads while sibling artist work is still pending", () => {
+    // A sibling artist is still being refreshed (pending) — pipeline not drained.
+    const siblingRefreshId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.RefreshArtist,
+        workflowModule.buildRefreshArtistJobPayload({ artistId: "3002", artistName: "Sibling", workflow: "monitoring-intake" }),
+        "3002",
+    );
+    assert.ok(siblingRefreshId > 0);
+
+    const curateId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.CurateArtist,
+        { artistId: "3001", artistName: "First Artist", workflow: "monitoring-intake" },
+        "3001",
+    );
+    completeAndAdvance(curateId);
+
+    assert.equal(pendingDownloadMissing().length, 0);
+
+    // Once the sibling drains, the next completion triggers the single pass.
+    completeAndAdvance(siblingRefreshId);
+    assert.equal(pendingDownloadMissing().length, 0); // RefreshArtist is not a curation terminal
+
+    const curate2Id = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.CurateArtist,
+        { artistId: "3002", artistName: "Sibling", workflow: "monitoring-intake" },
+        "3002",
+    );
+    completeAndAdvance(curate2Id);
+    assert.equal(pendingDownloadMissing().length, 1);
+});
+
+test("manual (non-monitoring) curation does not trigger downloads", () => {
+    const curateId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.CurateArtist,
+        { artistId: "4001", artistName: "Manual", workflow: "curation" },
+        "4001",
+    );
+    completeAndAdvance(curateId);
+    assert.equal(pendingDownloadMissing().length, 0);
+});
+
+test("scheduled cycle defers its terminal DownloadMissing while artist intake is active", () => {
+    // An intake RefreshArtist is in flight (pending), with no monitoringCycle tag.
+    const intakeRefreshId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.RefreshArtist,
+        workflowModule.buildRefreshArtistJobPayload({ artistId: "5002", artistName: "Intake", workflow: "monitoring-intake" }),
+        "5002",
+    );
+    assert.ok(intakeRefreshId > 0);
+
+    // The scheduled cycle's library rescan (full-cycle) completes.
+    const rootScanId = taskSchedulerModule.queueRescanFoldersPass({
+        trigger: 2,
+        fullProcessing: true,
+        trackUnmappedFiles: false,
+        monitoringCycle: "full-cycle",
+        addNewArtists: false,
+    });
+    assert.ok(rootScanId > 0);
+    completeAndAdvance(rootScanId);
+
+    // DownloadMissing must NOT be queued yet — intake is still running.
+    assert.equal(pendingDownloadMissing().length, 0);
 });
 
 test("only monitoring-tagged child jobs keep the monitoring cycle active", () => {

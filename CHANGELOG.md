@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.8] - Unreleased
+
+### Fixed
+- **Monitored, curated artists now download promptly instead of sitting idle for up to a full scan interval (24h).** Two issues compounded into "active monitoring on, three artists curated, but nothing downloaded overnight":
+  - The scheduled cycle's terminal `DownloadMissing` was gated only on monitoring-cycle-tagged jobs and ignored in-flight per-artist intake work (`RefreshArtist`/`RescanFolders`/`CurateArtist`). On a fresh setup it fired the moment the (no-op, nothing-due) metadata refresh finished — *before* artist intake had curated any release-group slots — so it queued 0 downloads, then nothing retried until the next 24h boundary. The pre-download gate now also waits for all artist-workflow and library-rescan jobs to drain.
+  - Adding + monitoring an artist curates its slots but, by design, curation never queues downloads ("DownloadMissing remains the dedicated queueing path") — so the only automatic download trigger was the 24h cycle. Curation/intake completion for monitored workflows (`monitoring-intake`/`full-monitoring`) now queues a `DownloadMissing` the moment the artist-workflow pipeline drains, so freshly monitored items start downloading immediately.
+
 ## [2.0.7] - 2026-06-18
 
 ### Fixed
