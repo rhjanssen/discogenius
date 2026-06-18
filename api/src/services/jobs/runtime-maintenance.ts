@@ -363,32 +363,72 @@ function hasTrackFileForeignKeys(): boolean {
     .some((column) => (column as { name: string }).name === "recording_id");
 }
 
-function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
-  summary.mediaMonitorRepairs += Number(db.prepare(`
-    UPDATE ProviderMedia AS media
+export function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
+  const installedAudioSlots = `
+    SELECT DISTINCT
+      COALESCE(NULLIF(lf.canonical_artist_mbid, ''), NULLIF(artist.mbid, ''), NULLIF(rg.artist_mbid, '')) AS artist_mbid,
+      lf.canonical_release_group_mbid AS release_group_mbid,
+      COALESCE(NULLIF(lf.library_slot, ''), 'stereo') AS slot
+    FROM TrackFiles lf
+    JOIN Albums rg ON rg.mbid = lf.canonical_release_group_mbid
+    LEFT JOIN Artists artist ON CAST(artist.id AS TEXT) = CAST(lf.artist_id AS TEXT)
+    JOIN ArtistMetadata metadata
+      ON metadata.mbid = COALESCE(NULLIF(lf.canonical_artist_mbid, ''), NULLIF(artist.mbid, ''), NULLIF(rg.artist_mbid, ''))
+    WHERE lf.file_type = 'track'
+      AND lf.canonical_release_group_mbid IS NOT NULL
+  `;
+
+  summary.albumMonitorRepairs += Number(db.prepare(`
+    UPDATE ReleaseGroupSlots
     SET monitored = 1,
-        monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-    WHERE monitored = 0
-      AND monitored_at IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM TrackFiles lf
-        WHERE lf.media_id = media.id
-          AND lf.file_type IN ('track', 'video')
+        updated_at = CURRENT_TIMESTAMP
+    WHERE COALESCE(monitored, 0) = 0
+      AND COALESCE(monitored_lock, 0) = 0
+      AND id IN (
+        SELECT slot_row.id
+        FROM ReleaseGroupSlots slot_row
+        JOIN (${installedAudioSlots}) installed
+          ON installed.release_group_mbid = slot_row.release_group_mbid
+         AND installed.slot = slot_row.slot
       )
   `).run().changes || 0);
 
   summary.albumMonitorRepairs += Number(db.prepare(`
-    UPDATE ProviderAlbums AS albums
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, updated_at
+    )
+    SELECT installed.artist_mbid, installed.release_group_mbid, installed.slot, 1, CURRENT_TIMESTAMP
+    FROM (${installedAudioSlots}) installed
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM ReleaseGroupSlots slot_row
+      WHERE slot_row.release_group_mbid = installed.release_group_mbid
+        AND slot_row.slot = installed.slot
+    )
+  `).run().changes || 0);
+
+  summary.mediaMonitorRepairs += Number(db.prepare(`
+    UPDATE Recordings
     SET monitored = 1,
-        monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-    WHERE monitored = 0
+        monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE is_video = 1
+      AND COALESCE(monitored, 0) = 0
+      AND COALESCE(monitored_lock, 0) = 0
       AND EXISTS (
         SELECT 1
-        FROM ProviderMedia m
-        WHERE m.album_id = albums.id
-          AND m.type != 'Music Video'
-          AND m.monitored = 1
+        FROM TrackFiles lf
+        LEFT JOIN ProviderItems pi
+          ON lf.provider_entity_type = 'video'
+         AND pi.entity_type = 'video'
+         AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+         AND (lf.provider IS NULL OR pi.provider = lf.provider)
+        WHERE lf.file_type = 'video'
+          AND (
+            lf.recording_id = Recordings.id
+            OR (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = Recordings.mbid)
+            OR pi.recording_id = Recordings.id
+          )
       )
   `).run().changes || 0);
 
@@ -398,7 +438,7 @@ function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
 
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
   summary.albumStatesRefreshed = Number(
-    (db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number } | undefined)?.count || 0,
+    (db.prepare("SELECT COUNT(*) AS count FROM Albums").get() as { count: number } | undefined)?.count || 0,
   );
   summary.artistStatesRefreshed = Number(
     (db.prepare("SELECT COUNT(*) AS count FROM Artists").get() as { count: number } | undefined)?.count || 0,

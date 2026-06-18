@@ -107,7 +107,9 @@ Docker runtime image.
   canonical values first. Dead legacy provider module/version repair helpers
   (`module-fixer`, `version-grouper`) were removed after verifying zero
   production imports, and `DownloadMissingForce` no longer carries an obsolete
-  provider skip-flag reset. **Remaining:** other read/write paths
+  provider skip-flag reset. Runtime monitor-gap repair now writes canonical
+  `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
+  **Remaining:** other read/write paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (organizer, quality/upgrader, audio-tag MB/AcoustID write-back and legacy
   tag fallbacks, plus file-identity fallback);

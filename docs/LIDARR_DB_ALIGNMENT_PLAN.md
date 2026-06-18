@@ -37,8 +37,10 @@ Scope of entanglement (non-test files referencing each, today):
 `ProviderMediaArtists` ~2, `ProviderSimilarArtists` ~2, `ProviderSimilarAlbums` 0.
 Heaviest in `services/mediafiles/*` (import, scan, organizer, upgrader, rename,
 manual-import), the `repositories/music/*` repos, lyrics, audio-tag, and
-housekeeping (`runtime-maintenance.repairMonitoringGaps` still writes
-`ProviderMedia`/`ProviderAlbums`).
+housekeeping. `runtime-maintenance.repairMonitoringGaps` now writes canonical
+`ReleaseGroupSlots`/`Recordings`; remaining runtime-maintenance provider-id work
+is compatibility backfill/indexing for `TrackFiles.media_id`/`album_id` until
+Phase 5.
 
 ## 2. Target model (after migration)
 
@@ -98,12 +100,13 @@ instead of `ProviderAlbums`/`ProviderMedia`. Update `repositories/music/*`
 (`AlbumRepository`, `MediaRepository`, `ArtistRepository`).
 
 **Phase 4 — Housekeeping & monitoring repair.**
-Rewrite `runtime-maintenance.repairMonitoringGaps` to operate on
-`ReleaseGroupSlots`/`Recordings` (canonical monitored state) instead of
-`ProviderMedia`/`ProviderAlbums`. Remove provider-only discovery sections such as
-similar artists/albums unless they can be driven from MusicBrainz/SkyHook data.
-Do not migrate `ProviderSimilar*` into another provider-catalog table just to
-preserve a non-core UI section.
+Rewrite housekeeping monitor/skip repairs to operate on canonical monitored
+state. `runtime-maintenance.repairMonitoringGaps` now repairs installed audio
+into `ReleaseGroupSlots` and installed videos into `Recordings`; the
+`DownloadMissingForce` legacy skip reset is retired. Remove provider-only
+discovery sections such as similar artists/albums unless they can be driven from
+MusicBrainz/SkyHook data. Do not migrate `ProviderSimilar*` into another
+provider-catalog table just to preserve a non-core UI section.
 
 **Phase 5 — Drop legacy tables.**
 Once nothing reads or writes them: drop `ProviderAlbums`, `ProviderMedia`,
@@ -249,9 +252,11 @@ tags from canonical review/copyright with zero legacy provider rows.
 
 Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
 `ProviderItems`-only), the **upgrade subsystem** (`upgrade_queue` stores legacy
-`media_id`/`album_id`; re-key to `recording_id`/canonical), and
-`runtime-maintenance.repairMonitoringGaps` (→ Phase 4, `ReleaseGroupSlots`/
-`Recordings` monitored state). Dead provider-catalog-only repair helpers
+`media_id`/`album_id`; re-key to `recording_id`/canonical), and active
+import/scan/tag write paths. Runtime monitor-gap repair has been repointed to
+canonical `ReleaseGroupSlots`/`Recordings`, while `TrackFiles.media_id`/
+`album_id` compatibility backfill/indexing remains until Phase 5. Dead
+provider-catalog-only repair helpers
 (`version-grouper`, `module-fixer`) have been removed after verifying zero
 production imports.
 
@@ -274,7 +279,7 @@ Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
 - `services/mediafiles/audio-tag-service.ts` — UPDATE `ProviderMedia`/`ProviderAlbums` (tag write-back).
 - `services/music/refresh-album-service.ts`, `services/music/refresh-artist-service.ts` — scan upserts.
 - `services/metadata/metadata-identity-service.ts`.
-- `services/jobs/runtime-maintenance.ts` (`repairMonitoringGaps`) + `scheduler-maintenance-handlers.ts` — **Phase 4**.
+- `services/jobs/runtime-maintenance.ts` — legacy `TrackFiles.media_id`/`album_id` compatibility backfill/indexing remains until Phase 5; monitor-gap repair is canonical.
 
 **Readers (cut over in Phase 2 — point at canonical + `ProviderItems`):**
 `lyric-service`, `library-files-query-service`, `library-file-identity`,
@@ -351,10 +356,11 @@ Remaining order:
    writes still present), `import-service`, `manual-import-service`,
    `organizer`, `audio-tag-service`, `library-scan`, and
    `metadata-identity-service` to write canonical + `ProviderItems`.
-3. **Phase 4 — housekeeping.** Repoint/retire `repairMonitoringGaps` +
-   `scheduler-maintenance-handlers` to canonical monitored/skip state; remove
-   provider-only similar/top-track discovery code unless a MusicBrainz/SkyHook
-   source can drive it.
+3. **Phase 4 — housekeeping.** Monitor-gap repair and the
+   `DownloadMissingForce` skip reset are canonical/retired. Remaining
+   housekeeping work is Phase-5 compatibility cleanup for legacy `TrackFiles`
+   provider ids plus any provider-only discovery code that cannot be driven from
+   MusicBrainz/SkyHook.
 4. **Phase 5 — numbered schema migration** dropping the six `Provider*` tables +
    `TrackFiles.media_id`/`album_id`, with a one-time backfill guard.
 

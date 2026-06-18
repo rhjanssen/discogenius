@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { backfillCanonicalTrackFiles, backfillTrackFileForeignKeys, dedupeLibraryFiles } = await import("./runtime-maintenance.js");
+const { backfillCanonicalTrackFiles, backfillTrackFileForeignKeys, dedupeLibraryFiles, repairMonitoringGaps } = await import("./runtime-maintenance.js");
 
 function resetRows() {
   for (const table of [
@@ -49,6 +49,16 @@ function seedLegacyGraph() {
   db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality, mbid, track_number, volume_number)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run("provider-track-1", "artist-local", "provider-album-1", "Track One", "track", 0, "LOSSLESS", "track-1", 1, 1);
+}
+
+function seedCanonicalMonitoringGraph() {
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)`).run("release-group-1", "artist-mbid", "Canonical Album", "album", "2024-01-01");
+  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
+    VALUES (?, ?, ?, ?, ?)`).run("video-recording-1", "Canonical Video", "artist-mbid", 1, 0);
 }
 
 function ensureProviderMedia(mediaId: unknown, albumId: unknown) {
@@ -313,4 +323,111 @@ test("backfills recording_id for mbid-less provider videos via the video Provide
   assert.equal(summary.trackFileForeignKeysBackfilled, 1);
   const row = db.prepare("SELECT recording_id FROM TrackFiles WHERE id = ?").get(id) as { recording_id: number | null };
   assert.equal(row.recording_id, videoRecordingId);
+});
+
+test("monitoring gap repair promotes installed audio slots canonically without provider rows", () => {
+  seedCanonicalMonitoringGraph();
+  insertLegacyTrackFile({
+    album_id: null,
+    media_id: null,
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    file_path: "C:/Music/canonical-audio.flac",
+    filename: "canonical-audio.flac",
+  });
+
+  const summary = freshSummary();
+  repairMonitoringGaps(summary);
+
+  assert.equal(summary.albumMonitorRepairs, 1);
+  assert.equal(summary.mediaMonitorRepairs, 0);
+  const slot = db.prepare(`
+    SELECT monitored, monitored_lock
+    FROM ReleaseGroupSlots
+    WHERE artist_mbid = ? AND release_group_mbid = ? AND slot = ?
+  `).get("artist-mbid", "release-group-1", "stereo") as { monitored: number; monitored_lock: number };
+  assert.equal(slot.monitored, 1);
+  assert.equal(slot.monitored_lock, 0);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+});
+
+test("monitoring gap repair respects locked canonical audio slots", () => {
+  seedCanonicalMonitoringGraph();
+  db.prepare(`INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, monitored_lock)
+    VALUES (?, ?, ?, ?, ?)`).run("artist-mbid", "release-group-1", "stereo", 0, 1);
+  insertLegacyTrackFile({
+    album_id: null,
+    media_id: null,
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    file_path: "C:/Music/locked-audio.flac",
+    filename: "locked-audio.flac",
+  });
+
+  const summary = freshSummary();
+  repairMonitoringGaps(summary);
+
+  assert.equal(summary.albumMonitorRepairs, 0);
+  const slot = db.prepare(`
+    SELECT monitored, monitored_lock
+    FROM ReleaseGroupSlots
+    WHERE artist_mbid = ? AND release_group_mbid = ? AND slot = ?
+  `).get("artist-mbid", "release-group-1", "stereo") as { monitored: number; monitored_lock: number };
+  assert.equal(slot.monitored, 0);
+  assert.equal(slot.monitored_lock, 1);
+});
+
+test("monitoring gap repair promotes installed canonical videos without provider rows", () => {
+  seedCanonicalMonitoringGraph();
+  insertLegacyTrackFile({
+    album_id: null,
+    media_id: null,
+    file_type: "video",
+    library_slot: "video",
+    canonical_artist_mbid: "artist-mbid",
+    canonical_recording_mbid: "video-recording-1",
+    file_path: "C:/Videos/canonical-video.mp4",
+    filename: "canonical-video.mp4",
+    extension: "mp4",
+  });
+
+  const summary = freshSummary();
+  repairMonitoringGaps(summary);
+
+  assert.equal(summary.mediaMonitorRepairs, 1);
+  const recording = db.prepare("SELECT monitored, monitored_at FROM Recordings WHERE mbid = ?")
+    .get("video-recording-1") as { monitored: number; monitored_at: string | null };
+  assert.equal(recording.monitored, 1);
+  assert.ok(recording.monitored_at);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+});
+
+test("monitoring gap repair resolves mbid-less provider video files through ProviderItems", () => {
+  seedCanonicalMonitoringGraph();
+  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
+    VALUES (?, ?, ?, ?, ?)`).run(null, "Provider Video", "artist-mbid", 1, 0);
+  const recordingId = (db.prepare("SELECT id FROM Recordings WHERE title = ?").get("Provider Video") as { id: number }).id;
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, recording_id, title, library_slot)
+    VALUES (?, ?, ?, ?, ?, ?)`).run("tidal", "video", "provider-video-1", recordingId, "Provider Video", "video");
+  insertLegacyTrackFile({
+    album_id: null,
+    media_id: null,
+    file_type: "video",
+    library_slot: "video",
+    provider: "tidal",
+    provider_entity_type: "video",
+    provider_id: "provider-video-1",
+    file_path: "C:/Videos/provider-video.mp4",
+    filename: "provider-video.mp4",
+    extension: "mp4",
+  });
+
+  const summary = freshSummary();
+  repairMonitoringGaps(summary);
+
+  assert.equal(summary.mediaMonitorRepairs, 1);
+  const providerRecording = db.prepare("SELECT monitored FROM Recordings WHERE id = ?")
+    .get(recordingId) as { monitored: number };
+  assert.equal(providerRecording.monitored, 1);
 });
