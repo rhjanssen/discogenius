@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { backfillCanonicalTrackFiles, dedupeLibraryFiles } = await import("./runtime-maintenance.js");
+const { backfillCanonicalTrackFiles, backfillTrackFileForeignKeys, dedupeLibraryFiles } = await import("./runtime-maintenance.js");
 
 function resetRows() {
   for (const table of [
@@ -69,6 +69,9 @@ function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {})
     canonical_release_mbid: null,
     canonical_track_mbid: null,
     canonical_recording_mbid: null,
+    provider: null,
+    provider_entity_type: null,
+    provider_id: null,
     library_slot: "stereo",
     file_path: "C:/Music/track-one.flac",
     relative_path: "track-one.flac",
@@ -83,10 +86,12 @@ function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {})
     INSERT INTO TrackFiles (
       artist_id, album_id, media_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type
     ) VALUES (
       @artist_id, @album_id, @media_id, @canonical_artist_mbid, @canonical_release_group_mbid,
       @canonical_release_mbid, @canonical_track_mbid, @canonical_recording_mbid,
+      @provider, @provider_entity_type, @provider_id,
       @library_slot, @file_path, @relative_path, @library_root, @filename, @extension, @file_type
     )
   `).run(row);
@@ -108,6 +113,7 @@ function freshSummary() {
     trackedAssetIdentityIndexesEnsured: false,
     historyJobsPruned: 0,
     canonicalTrackFilesBackfilled: 0,
+    trackFileForeignKeysBackfilled: 0,
   };
 }
 
@@ -224,4 +230,60 @@ test("dedupe still collapses legacy rows sharing media_id with no canonical reco
 
   assert.equal(summary.duplicateLibraryFilesRemoved, 1);
   assert.equal(countTrackFiles(), 1);
+});
+
+function idByMbid(table: string, mbid: string): number {
+  return (db.prepare(`SELECT id FROM ${table} WHERE mbid = ?`).get(mbid) as { id: number }).id;
+}
+
+test("backfills canonical integer FKs from the canonical mbids", () => {
+  seedLegacyGraph();
+  const id = insertLegacyTrackFile({
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+  });
+
+  const summary = freshSummary();
+  backfillTrackFileForeignKeys(summary);
+
+  assert.equal(summary.trackFileForeignKeysBackfilled, 1);
+  const row = db.prepare(`
+    SELECT release_group_id, album_release_id, track_id, recording_id FROM TrackFiles WHERE id = ?
+  `).get(id) as Record<string, number | null>;
+  assert.equal(row.release_group_id, idByMbid("Albums", "release-group-1"));
+  assert.equal(row.album_release_id, idByMbid("AlbumReleases", "release-1"));
+  assert.equal(row.track_id, idByMbid("Tracks", "track-1"));
+  assert.equal(row.recording_id, idByMbid("Recordings", "recording-1"));
+
+  // Idempotent: a second run fills nothing.
+  const second = freshSummary();
+  backfillTrackFileForeignKeys(second);
+  assert.equal(second.trackFileForeignKeysBackfilled, 0);
+});
+
+test("backfills recording_id for mbid-less provider videos via the video ProviderItems offer", () => {
+  seedLegacyGraph();
+  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)`)
+    .run(null, "Some Video", "artist-mbid", 1);
+  const videoRecordingId = (db.prepare(
+    "SELECT id FROM Recordings WHERE title = 'Some Video' AND is_video = 1",
+  ).get() as { id: number }).id;
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, recording_id, title, library_slot)
+    VALUES (?, ?, ?, ?, ?, ?)`).run("tidal", "video", "vid-999", videoRecordingId, "Some Video", "video");
+
+  const id = insertLegacyTrackFile({
+    media_id: null, album_id: null,
+    file_type: "video", library_slot: "video",
+    provider: "tidal", provider_entity_type: "video", provider_id: "vid-999",
+    file_path: "C:/Videos/some-video.mp4", filename: "some-video.mp4", extension: "mp4",
+  });
+
+  const summary = freshSummary();
+  backfillTrackFileForeignKeys(summary);
+
+  assert.equal(summary.trackFileForeignKeysBackfilled, 1);
+  const row = db.prepare("SELECT recording_id FROM TrackFiles WHERE id = ?").get(id) as { recording_id: number | null };
+  assert.equal(row.recording_id, videoRecordingId);
 });

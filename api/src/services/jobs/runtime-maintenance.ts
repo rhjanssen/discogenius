@@ -37,6 +37,8 @@ export interface RuntimeMaintenanceSummary {
   historyJobsPruned: number;
   /** TrackFiles rows whose canonical_*_mbid columns were back-filled from legacy ids (Phase 1 DB-alignment) */
   canonicalTrackFilesBackfilled: number;
+  /** TrackFiles rows whose canonical integer FK columns were back-filled from mbids/ProviderItems */
+  trackFileForeignKeysBackfilled: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -304,6 +306,48 @@ export function backfillCanonicalTrackFiles(summary: RuntimeMaintenanceSummary) 
   }
 }
 
+/**
+ * Phase: integer-FK linkage. Keep the canonical integer FK columns
+ * (release_group_id/album_release_id/track_id/recording_id) populated from the
+ * canonical mbids, and recording_id for mbid-less provider videos from the video
+ * ProviderItems offer. NULL-guarded + idempotent; the v23 migration does the
+ * initial fill, this keeps new/changed rows current between scans.
+ */
+export function backfillTrackFileForeignKeys(summary: RuntimeMaintenanceSummary) {
+  if (!hasTrackFileForeignKeys()) {
+    return;
+  }
+  const byMbid = db.prepare(`
+    UPDATE TrackFiles SET
+      release_group_id = COALESCE(release_group_id, (SELECT id FROM Albums WHERE mbid = TrackFiles.canonical_release_group_mbid)),
+      album_release_id = COALESCE(album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = TrackFiles.canonical_release_mbid)),
+      track_id = COALESCE(track_id, (SELECT id FROM Tracks WHERE mbid = TrackFiles.canonical_track_mbid)),
+      recording_id = COALESCE(recording_id, (SELECT id FROM Recordings WHERE mbid = TrackFiles.canonical_recording_mbid))
+    WHERE (release_group_id IS NULL AND canonical_release_group_mbid IS NOT NULL)
+       OR (album_release_id IS NULL AND canonical_release_mbid IS NOT NULL)
+       OR (track_id IS NULL AND canonical_track_mbid IS NOT NULL)
+       OR (recording_id IS NULL AND canonical_recording_mbid IS NOT NULL)
+  `).run();
+  summary.trackFileForeignKeysBackfilled += Number(byMbid.changes || 0);
+
+  const byVideoOffer = db.prepare(`
+    UPDATE TrackFiles SET recording_id = (
+      SELECT pi.recording_id FROM ProviderItems pi
+      WHERE pi.entity_type = 'video'
+        AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+        AND pi.recording_id IS NOT NULL
+      LIMIT 1
+    )
+    WHERE file_type = 'video' AND recording_id IS NULL AND provider_id IS NOT NULL
+  `).run();
+  summary.trackFileForeignKeysBackfilled += Number(byVideoOffer.changes || 0);
+}
+
+function hasTrackFileForeignKeys(): boolean {
+  return db.prepare("PRAGMA table_info(TrackFiles)").all()
+    .some((column) => (column as { name: string }).name === "recording_id");
+}
+
 function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
   summary.mediaMonitorRepairs += Number(db.prepare(`
     UPDATE ProviderMedia AS media
@@ -363,6 +407,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     trackedAssetIdentityIndexesEnsured: false,
     historyJobsPruned: 0,
     canonicalTrackFilesBackfilled: 0,
+    trackFileForeignKeysBackfilled: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -370,6 +415,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   db.transaction(() => {
     backfillCanonicalTrackFiles(summary);
+    backfillTrackFileForeignKeys(summary);
     dedupeLibraryFiles(summary);
     repairMonitoringGaps(summary);
 
