@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { backfillCanonicalTrackFiles } = await import("./runtime-maintenance.js");
+const { backfillCanonicalTrackFiles, dedupeLibraryFiles } = await import("./runtime-maintenance.js");
 
 function resetRows() {
   for (const table of [
@@ -51,6 +51,14 @@ function seedLegacyGraph() {
     .run("provider-track-1", "artist-local", "provider-album-1", "Track One", "track", 0, "LOSSLESS", "track-1", 1, 1);
 }
 
+function ensureProviderMedia(mediaId: unknown, albumId: unknown) {
+  if (mediaId === null || mediaId === undefined) return;
+  db.prepare(`
+    INSERT OR IGNORE INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(String(mediaId), "artist-local", albumId === null || albumId === undefined ? null : String(albumId), "Track", "track", 0, "LOSSLESS");
+}
+
 function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {}) {
   const row = {
     artist_id: "artist-local",
@@ -70,6 +78,7 @@ function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {})
     file_type: "track",
     ...overrides,
   };
+  ensureProviderMedia(row.media_id, row.album_id);
   const info = db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, album_id, media_id, canonical_artist_mbid, canonical_release_group_mbid,
@@ -171,4 +180,48 @@ test("leaves a fully-populated row untouched", () => {
   const summary = freshSummary();
   backfillCanonicalTrackFiles(summary);
   assert.equal(summary.canonicalTrackFilesBackfilled, 0);
+});
+
+function countTrackFiles() {
+  return (db.prepare("SELECT COUNT(*) c FROM TrackFiles").get() as { c: number }).c;
+}
+
+test("canonical dedupe removes same-recording/same-slot dupes with different media_ids", () => {
+  seedLegacyGraph();
+  // Same recording + slot, but two different legacy media_ids — the media-id key
+  // alone would keep both; the canonical key collapses them to one.
+  insertLegacyTrackFile({ media_id: "media-a", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/a.flac", filename: "a.flac" });
+  insertLegacyTrackFile({ media_id: "media-b", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/b.flac", filename: "b.flac" });
+  assert.equal(countTrackFiles(), 2);
+
+  const summary = freshSummary();
+  dedupeLibraryFiles(summary);
+
+  assert.equal(summary.duplicateLibraryFilesRemoved, 1);
+  assert.equal(countTrackFiles(), 1);
+});
+
+test("canonical dedupe keeps the same recording across different library slots", () => {
+  seedLegacyGraph();
+  // Stereo and spatial copies of the same recording are NOT duplicates.
+  insertLegacyTrackFile({ media_id: "media-stereo", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/s.flac", filename: "s.flac" });
+  insertLegacyTrackFile({ media_id: "media-spatial", canonical_recording_mbid: "rec-1", library_slot: "spatial", file_path: "C:/Atmos/s.m4a", filename: "s.m4a", extension: "m4a" });
+
+  const summary = freshSummary();
+  dedupeLibraryFiles(summary);
+
+  assert.equal(summary.duplicateLibraryFilesRemoved, 0);
+  assert.equal(countTrackFiles(), 2);
+});
+
+test("dedupe still collapses legacy rows sharing media_id with no canonical recording", () => {
+  seedLegacyGraph();
+  insertLegacyTrackFile({ media_id: "media-x", canonical_recording_mbid: null, library_slot: "stereo", file_path: "C:/Music/x1.flac", filename: "x1.flac" });
+  insertLegacyTrackFile({ media_id: "media-x", canonical_recording_mbid: null, library_slot: "stereo", file_path: "C:/Music/x2.flac", filename: "x2.flac" });
+
+  const summary = freshSummary();
+  dedupeLibraryFiles(summary);
+
+  assert.equal(summary.duplicateLibraryFilesRemoved, 1);
+  assert.equal(countTrackFiles(), 1);
 });

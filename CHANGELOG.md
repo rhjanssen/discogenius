@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - **DB alignment Phase 1 (TrackFiles canonical-first), foundational step:** housekeeping now runs a `backfillCanonicalTrackFiles` pass that resolves and COALESCE-fills the `canonical_*_mbid` columns for any `TrackFiles` row still relying on the legacy `media_id`/`album_id` provider linkage (NULL-only, never overwrites, idempotent). This closes canonical gaps on older/pre-canonical-column rows so file lookups/dedup can later switch off the legacy ids without orphaning files. New downloads/imports already populate these on write; a real-DB dry-run confirmed 0 orphan-risk and 100% canonical resolution. See `docs/LIDARR_DB_ALIGNMENT_PLAN.md`.
+- **Library-file dedupe is now canonical-aware:** the housekeeping dedupe runs a canonical pass keyed on `(canonical_recording_mbid, file_type, library_slot)` in addition to the legacy `(media_id, file_type)` pass — catching duplicate files of the same recording within a slot even when they carry different provider `media_id`s, while never merging a recording's stereo and spatial copies (library_slot is part of the key).
 
 ### Fixed
 - **Monitored, curated artists now download promptly instead of sitting idle for up to a full scan interval (24h).** Two issues compounded into "active monitoring on, three artists curated, but nothing downloaded overnight":

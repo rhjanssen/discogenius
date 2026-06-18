@@ -8,7 +8,9 @@ import { resolveLibraryFileIdentity } from "../mediafiles/library-file-identity.
 
 interface LibraryFileRow {
   id: number;
-  media_id: number;
+  media_id: number | null;
+  canonical_recording_mbid: string | null;
+  library_slot: string | null;
   file_type: string;
   file_path: string;
   library_root: string | null;
@@ -102,11 +104,43 @@ function compareLibraryFiles(left: LibraryFileRow, right: LibraryFileRow): numbe
   return compareLibraryFileScores(leftScore, rightScore);
 }
 
-function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
+// Legacy provider-id dedupe identity. Kept because the unique index created
+// later in the maintenance transaction is still (media_id, file_type) until the
+// Phase 5 schema migration — this pass guarantees that invariant before the
+// index is (re)created.
+function mediaIdentityKey(row: LibraryFileRow): string {
+  if (row.media_id === null || row.media_id === undefined) {
+    return "";
+  }
+  return `media:${row.media_id}:${row.file_type}`;
+}
+
+/**
+ * Canonical-first dedupe identity (Phase 1). A recording legitimately exists as
+ * separate stereo *and* spatial files, so library_slot is part of the key —
+ * otherwise a slot-blind canonical key would merge a track's stereo and Atmos
+ * copies. Catches same-recording duplicates within a slot even when they carry
+ * *different* legacy media_ids (e.g. two provider releases of the same track),
+ * which the media-id key alone misses.
+ */
+function canonicalIdentityKey(row: LibraryFileRow): string {
+  const recording = String(row.canonical_recording_mbid ?? "").trim();
+  if (!recording) {
+    return "";
+  }
+  return `rec:${recording}:${row.file_type}:${String(row.library_slot ?? "").trim().toLowerCase()}`;
+}
+
+function dedupeLibraryFilesByKey(
+  keyFn: (row: LibraryFileRow) => string,
+  summary: RuntimeMaintenanceSummary,
+) {
   const rows = db.prepare(`
     SELECT
       id,
       media_id,
+      canonical_recording_mbid,
+      library_slot,
       file_type,
       file_path,
       library_root,
@@ -116,19 +150,29 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
       modified_at,
       created_at
     FROM TrackFiles
-    WHERE media_id IS NOT NULL
+    WHERE (media_id IS NOT NULL OR canonical_recording_mbid IS NOT NULL)
       AND file_type IN ('track', 'video')
-    ORDER BY media_id ASC, file_type ASC, id ASC
+    ORDER BY id ASC
   `).all() as LibraryFileRow[];
 
   const deleteRow = db.prepare("DELETE FROM TrackFiles WHERE id = ?");
-  let currentKey = "";
-  let bucket: LibraryFileRow[] = [];
+  const buckets = new Map<string, LibraryFileRow[]>();
+  for (const row of rows) {
+    const key = keyFn(row);
+    if (!key) {
+      continue;
+    }
+    const bucket = buckets.get(key);
+    if (bucket) {
+      bucket.push(row);
+    } else {
+      buckets.set(key, [row]);
+    }
+  }
 
-  const flushBucket = () => {
+  for (const bucket of buckets.values()) {
     if (bucket.length <= 1) {
-      bucket = [];
-      return;
+      continue;
     }
 
     libraryFileScoreCache = new Map<number, LibraryFileScore>();
@@ -140,21 +184,14 @@ function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
       deleteRow.run(row.id);
       summary.duplicateLibraryFilesRemoved++;
     }
-
-    bucket = [];
-  };
-
-  for (const row of rows) {
-    const key = `${row.media_id}:${row.file_type}`;
-    if (currentKey && key !== currentKey) {
-      flushBucket();
-    }
-
-    currentKey = key;
-    bucket.push(row);
   }
+}
 
-  flushBucket();
+export function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
+  // Media-id pass first to preserve the (media_id, file_type) unique-index
+  // invariant, then the canonical pass to catch cross-media same-recording dupes.
+  dedupeLibraryFilesByKey(mediaIdentityKey, summary);
+  dedupeLibraryFilesByKey(canonicalIdentityKey, summary);
 }
 
 interface CanonicalBackfillRow {
