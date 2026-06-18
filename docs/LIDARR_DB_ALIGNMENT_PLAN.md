@@ -239,3 +239,8 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   `activity.test.ts` covers canonical-only album/track/video download jobs with
   zero legacy provider rows; browser smoke verified `/api/v1/history/activity`
   returns the canonical descriptions from a temp runtime DB.
+- ✅ **`scan-refresh-state` cutover** — provider catalog track/video freshness now
+  uses `ProviderItems.updated_at` joined by canonical album release/release-group
+  and artist MBID identity, rather than `ProviderMedia.last_scanned`.
+  Regression: `scan-refresh-state.test.ts` covers fresh, missing, and stale
+  canonical-only track/video provider items with zero legacy provider rows.

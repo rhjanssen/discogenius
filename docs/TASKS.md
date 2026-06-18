@@ -80,8 +80,10 @@ Docker runtime image.
   decorates library-file listings from canonical `TrackFiles` identity +
   `Recordings`/`ProviderItems`, not `ProviderMedia`/`ProviderAlbums`;
   `command-history` now resolves download activity descriptions from
-  `ProviderItems` + canonical artist/release/recording data. **Remaining:** other
-  read paths still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
+  `ProviderItems` + canonical artist/release/recording data; `scan-refresh-state`
+  now uses `ProviderItems.updated_at` for track/video scan freshness instead of
+  `ProviderMedia.last_scanned`. **Remaining:** other read paths still join
+  `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (lyrics, audio-tag, organizer, metadata-backfill, rename); the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
   with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
