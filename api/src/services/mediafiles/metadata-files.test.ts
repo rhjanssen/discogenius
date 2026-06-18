@@ -183,36 +183,88 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     `).run("100", "The Example Artist", "artist-mbid-100");
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums(
-            id, artist_id, title, release_date, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("200", "100", "Example Album", "2024-02-03", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, "release-group-mbid-200");
+        INSERT INTO ArtistMetadata(mbid, name)
+        VALUES(?, ?)
+    `).run("artist-mbid-100", "The Example Artist");
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums(
-            id, artist_id, title, release_date, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("201", "100", "Example Album", "2024-02-03", "ALBUM", 0, "DOLBY_ATMOS", 1, 1, 0, 180, "release-group-mbid-200");
+        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type)
+        VALUES(?, ?, ?, ?, ?)
+    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album");
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderMedia(
-            id, artist_id, album_id, title, release_date, type, explicit,
-            quality, track_number, volume_number, duration, mbid
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("stereo-track", "100", "200", "Example Track", "2024-02-03", "TRACK", 0, "LOSSLESS", 1, 1, 180, "recording-stereo");
+        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("album-mbid-stereo", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", 1, 1);
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderMedia(
-            id, artist_id, album_id, title, release_date, type, explicit,
-            quality, track_number, volume_number, duration, mbid
+        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("album-mbid-spatial", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", 1, 1);
+
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, artist_mbid, title, length_ms)
+        VALUES(?, ?, ?, ?)
+    `).run("recording-stereo", "artist-mbid-100", "Example Track", 180000);
+
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, artist_mbid, title, length_ms)
+        VALUES(?, ?, ?, ?)
+    `).run("recording-atmos", "artist-mbid-100", "Example Track", 181000);
+
+    dbModule.db.prepare(`
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("track-stereo", "album-mbid-stereo", "recording-stereo", 1, 1, "Example Track", 180000);
+
+    dbModule.db.prepare(`
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("track-spatial", "album-mbid-spatial", "recording-atmos", 1, 1, "Example Track", 181000);
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            track_mbid, recording_mbid, album_id, title, quality, duration, library_slot
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("spatial-track", "100", "201", "Example Track", "2024-02-03", "TRACK", 0, "DOLBY_ATMOS", 1, 1, 181, "recording-atmos");
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "track",
+        "stereo-track",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-stereo",
+        "track-stereo",
+        "recording-stereo",
+        "200",
+        "Example Track",
+        "LOSSLESS",
+        180,
+        "stereo",
+    );
+
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            track_mbid, recording_mbid, album_id, title, quality, duration, library_slot
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "track",
+        "spatial-track",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-spatial",
+        "track-spatial",
+        "recording-atmos",
+        "201",
+        "Example Track",
+        "DOLBY_ATMOS",
+        181,
+        "spatial",
+    );
 
     const stereoLyricsPath = path.join(tempDir, "stereo-track.lrc");
     fs.writeFileSync(stereoLyricsPath, "[00:01.00]plain lyric", "utf-8");
@@ -244,6 +296,9 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
         "LOSSLESS",
         stereoLyricsPath,
     );
+
+    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
+    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
 
     const lyrics = await metadataFilesModule.getTrackLyrics("spatial-track");
     assert.equal(lyrics?.subtitles, "[00:01.00]plain lyric");

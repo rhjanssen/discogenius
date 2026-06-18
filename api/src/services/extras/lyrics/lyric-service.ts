@@ -16,7 +16,8 @@ export type ResolvedLyrics = {
   sourceFileId?: number | null;
 };
 
-type ProviderMediaLyricsRow = {
+type ProviderTrackLyricsRow = {
+  provider: string;
   id: string;
   artist_id: string | null;
   album_id: string | null;
@@ -27,9 +28,14 @@ type ProviderMediaLyricsRow = {
   quality: string | null;
   mbid: string | null;
   type: string | null;
+  release_group_mbid: string | null;
+  release_mbid: string | null;
+  track_mbid: string | null;
+  recording_mbid: string | null;
+  recording_id: number | null;
 };
 
-type CandidateRow = ProviderMediaLyricsRow & {
+type CandidateRow = ProviderTrackLyricsRow & {
   source_release_group_mbid: string | null;
   candidate_release_group_mbid: string | null;
 };
@@ -121,47 +127,42 @@ function lyricFileToResolved(
   };
 }
 
-function loadProviderMedia(providerMediaId: string | number): ProviderMediaLyricsRow | null {
-  let row = db.prepare(`
+function loadProviderTrack(provider: string, providerMediaId: string | number): ProviderTrackLyricsRow | null {
+  const row = db.prepare(`
     SELECT
+      pi.provider,
       CAST(pi.provider_id AS TEXT) AS id,
-      CAST(a.artist_mbid AS TEXT) AS artist_id,
+      CAST(pi.artist_mbid AS TEXT) AS artist_id,
       CAST(pi.album_id AS TEXT) AS album_id,
       COALESCE(t.title, r.title, pi.title) AS title,
       t.position AS track_number,
       t.medium_position AS volume_number,
-      r.length_ms AS duration,
+      COALESCE(pi.duration, ROUND(r.length_ms / 1000.0)) AS duration,
       pi.quality,
-      r.mbid,
-      pi.entity_type AS type
+      COALESCE(r.mbid, pi.recording_mbid) AS mbid,
+      pi.entity_type AS type,
+      pi.release_group_mbid,
+      pi.release_mbid,
+      pi.track_mbid,
+      pi.recording_mbid,
+      pi.recording_id
     FROM ProviderItems pi
-    LEFT JOIN Tracks t ON t.id = pi.track_id
-    LEFT JOIN Recordings r ON r.id = pi.recording_id
-    LEFT JOIN Albums a ON a.id = pi.album_id
-    WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+    LEFT JOIN Tracks t
+      ON (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
+      OR (pi.track_mbid IS NULL
+          AND pi.release_mbid IS NOT NULL
+          AND pi.recording_mbid IS NOT NULL
+          AND t.release_mbid = pi.release_mbid
+          AND t.recording_mbid = pi.recording_mbid)
+    LEFT JOIN Recordings r
+      ON (pi.recording_id IS NOT NULL AND r.id = pi.recording_id)
+      OR (pi.recording_mbid IS NOT NULL AND r.mbid = pi.recording_mbid)
+    WHERE pi.provider = ?
+      AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
       AND pi.entity_type = 'track'
+    ORDER BY pi.updated_at DESC
     LIMIT 1
-  `).get(String(providerMediaId)) as ProviderMediaLyricsRow | undefined;
-
-  if (!row) {
-    row = db.prepare(`
-      SELECT
-        CAST(id AS TEXT) AS id,
-        CAST(artist_id AS TEXT) AS artist_id,
-        CAST(album_id AS TEXT) AS album_id,
-        title,
-        track_number,
-        volume_number,
-        duration,
-        quality,
-        mbid,
-        type
-      FROM ProviderMedia
-      WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
-        AND type = 'TRACK'
-      LIMIT 1
-    `).get(String(providerMediaId)) as ProviderMediaLyricsRow | undefined;
-  }
+  `).get(provider, String(providerMediaId)) as ProviderTrackLyricsRow | undefined;
 
   return row ?? null;
 }
@@ -179,7 +180,11 @@ function getProviderItemRecordingId(provider: string, providerMediaId: string): 
   return row?.recording_id == null ? null : Number(row.recording_id);
 }
 
-function getRecordingIdForMedia(provider: string, media: ProviderMediaLyricsRow): number | null {
+function getRecordingIdForMedia(provider: string, media: ProviderTrackLyricsRow): number | null {
+  if (media.recording_id != null) {
+    return Number(media.recording_id);
+  }
+
   const foreignRecordingId = nullableText(media.mbid);
   if (foreignRecordingId) {
     const row = db.prepare(`
@@ -196,7 +201,7 @@ function getRecordingIdForMedia(provider: string, media: ProviderMediaLyricsRow)
   return getProviderItemRecordingId(provider, media.id);
 }
 
-function loadLyricFileForMedia(provider: string, media: ProviderMediaLyricsRow): LyricFileRow | null {
+function loadLyricFileForMedia(provider: string, media: ProviderTrackLyricsRow): LyricFileRow | null {
   return LyricFileService.findByProviderTrack(provider, media.id);
 }
 
@@ -208,7 +213,7 @@ function loadLyricFileForForeignRecording(foreignRecordingId: string | null): Ly
   return LyricFileService.findByForeignRecording(foreignRecordingId);
 }
 
-function candidateScore(media: ProviderMediaLyricsRow, candidate: CandidateRow): number {
+function candidateScore(media: ProviderTrackLyricsRow, candidate: CandidateRow): number {
   let score = 0;
   if (candidate.source_release_group_mbid && candidate.candidate_release_group_mbid === candidate.source_release_group_mbid) {
     score -= 40;
@@ -226,7 +231,7 @@ function candidateScore(media: ProviderMediaLyricsRow, candidate: CandidateRow):
   return score;
 }
 
-function sameRecordingCandidate(media: ProviderMediaLyricsRow, candidate: CandidateRow): boolean {
+function sameRecordingCandidate(media: ProviderTrackLyricsRow, candidate: CandidateRow): boolean {
   const sameTrackNumber = media.track_number == null
     || candidate.track_number == null
     || Number(media.track_number) === Number(candidate.track_number);
@@ -240,7 +245,7 @@ function sameRecordingCandidate(media: ProviderMediaLyricsRow, candidate: Candid
     && durationDelta(media.duration, candidate.duration) <= 12;
 }
 
-function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow | null {
+function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow | null {
   const normalized = normalizeTitle(media.title);
   if (!normalized || !media.artist_id) {
     return null;
@@ -248,18 +253,24 @@ function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow
 
   const rows = db.prepare(`
     SELECT
+      candidate.provider,
       CAST(candidate.provider_id AS TEXT) AS id,
-      CAST(candidate_album.artist_mbid AS TEXT) AS artist_id,
+      CAST(candidate.artist_mbid AS TEXT) AS artist_id,
       CAST(candidate.album_id AS TEXT) AS album_id,
       COALESCE(t.title, r.title, candidate.title) AS title,
       t.position AS track_number,
       t.medium_position AS volume_number,
-      r.length_ms AS duration,
+      COALESCE(candidate.duration, ROUND(r.length_ms / 1000.0)) AS duration,
       candidate.quality,
-      r.mbid,
+      COALESCE(r.mbid, candidate.recording_mbid) AS mbid,
       candidate.entity_type AS type,
-      source_album.mbid AS source_release_group_mbid,
-      candidate_album.mbid AS candidate_release_group_mbid,
+      ? AS source_release_group_mbid,
+      candidate.release_group_mbid AS candidate_release_group_mbid,
+      candidate.release_group_mbid,
+      candidate.release_mbid,
+      candidate.track_mbid,
+      candidate.recording_mbid,
+      candidate.recording_id,
       lf.id AS lyric_file_id,
       lf.file_path AS lyric_file_path,
       lf.relative_path AS lyric_relative_path,
@@ -269,60 +280,38 @@ function findCachedCounterpart(media: ProviderMediaLyricsRow): LyricCandidateRow
       lf.provider_id AS lyric_provider_id,
       lf.canonical_recording_mbid AS lyric_recording_mbid
     FROM ProviderItems candidate
-    LEFT JOIN Tracks t ON t.id = candidate.track_id
-    LEFT JOIN Recordings r ON r.id = candidate.recording_id
+    LEFT JOIN Tracks t
+      ON (candidate.track_mbid IS NOT NULL AND t.mbid = candidate.track_mbid)
+      OR (candidate.track_mbid IS NULL
+          AND candidate.release_mbid IS NOT NULL
+          AND candidate.recording_mbid IS NOT NULL
+          AND t.release_mbid = candidate.release_mbid
+          AND t.recording_mbid = candidate.recording_mbid)
+    LEFT JOIN Recordings r
+      ON (candidate.recording_id IS NOT NULL AND r.id = candidate.recording_id)
+      OR (candidate.recording_mbid IS NOT NULL AND r.mbid = candidate.recording_mbid)
     JOIN LyricFiles lf
-      ON (CAST(lf.provider_id AS TEXT) = CAST(candidate.provider_id AS TEXT) OR CAST(lf.media_id AS TEXT) = CAST(candidate.provider_id AS TEXT))
-    LEFT JOIN Albums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
-    LEFT JOIN Albums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
-    WHERE CAST(candidate_album.artist_mbid AS TEXT) = CAST(? AS TEXT)
+      ON (
+        (lf.provider = candidate.provider
+          AND lf.provider_entity_type = 'track'
+          AND CAST(lf.provider_id AS TEXT) = CAST(candidate.provider_id AS TEXT))
+        OR CAST(lf.media_id AS TEXT) = CAST(candidate.provider_id AS TEXT)
+        OR (candidate.track_mbid IS NOT NULL AND lf.canonical_track_mbid = candidate.track_mbid)
+        OR (candidate.recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate.recording_mbid)
+      )
+    WHERE candidate.provider = ?
+      AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
       AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
       AND candidate.entity_type = 'track'
       AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
-  `).all(media.album_id, media.artist_id, media.id) as LyricCandidateRow[];
-  if (rows.length === 0) {
-    const legacyRows = db.prepare(`
-      SELECT
-        CAST(candidate.id AS TEXT) AS id,
-        CAST(candidate.artist_id AS TEXT) AS artist_id,
-        CAST(candidate.album_id AS TEXT) AS album_id,
-        candidate.title AS title,
-        candidate.track_number AS track_number,
-        candidate.volume_number AS volume_number,
-        candidate.duration AS duration,
-        candidate.quality,
-        candidate.mbid,
-        candidate.type AS type,
-        CAST(source_album.mb_release_group_id AS TEXT) AS source_release_group_mbid,
-        CAST(candidate_album.mb_release_group_id AS TEXT) AS candidate_release_group_mbid,
-        lf.id AS lyric_file_id,
-        lf.file_path AS lyric_file_path,
-        lf.relative_path AS lyric_relative_path,
-        lf.library_root AS lyric_library_root,
-        lf.extension AS lyric_extension,
-        lf.provider AS lyric_provider,
-        lf.provider_id AS lyric_provider_id,
-        lf.canonical_recording_mbid AS lyric_recording_mbid
-      FROM ProviderMedia candidate
-      JOIN LyricFiles lf
-        ON (CAST(lf.provider_id AS TEXT) = CAST(candidate.id AS TEXT) OR CAST(lf.media_id AS TEXT) = CAST(candidate.id AS TEXT))
-      LEFT JOIN ProviderAlbums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
-      LEFT JOIN ProviderAlbums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
-      WHERE CAST(candidate.artist_id AS TEXT) = CAST(? AS TEXT)
-        AND CAST(candidate.id AS TEXT) != CAST(? AS TEXT)
-        AND candidate.type = 'TRACK'
-        AND candidate.title IS NOT NULL
-    `).all(media.album_id, media.artist_id, media.id) as LyricCandidateRow[];
-    rows.push(...legacyRows);
-  }
-
+  `).all(media.release_group_mbid, media.provider, media.artist_id, media.id) as LyricCandidateRow[];
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))
     .sort((left, right) => candidateScore(media, left) - candidateScore(media, right))[0] ?? null;
 }
 
-function findSourceCandidates(media: ProviderMediaLyricsRow): CandidateRow[] {
+function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
   const normalized = normalizeTitle(media.title);
   if (!normalized || !media.artist_id) {
     return [];
@@ -330,28 +319,41 @@ function findSourceCandidates(media: ProviderMediaLyricsRow): CandidateRow[] {
 
   const rows = db.prepare(`
     SELECT
+      candidate.provider,
       CAST(candidate.provider_id AS TEXT) AS id,
-      CAST(candidate_album.artist_mbid AS TEXT) AS artist_id,
+      CAST(candidate.artist_mbid AS TEXT) AS artist_id,
       CAST(candidate.album_id AS TEXT) AS album_id,
       COALESCE(t.title, r.title, candidate.title) AS title,
       t.position AS track_number,
       t.medium_position AS volume_number,
-      r.length_ms AS duration,
+      COALESCE(candidate.duration, ROUND(r.length_ms / 1000.0)) AS duration,
       candidate.quality,
-      r.mbid,
+      COALESCE(r.mbid, candidate.recording_mbid) AS mbid,
       candidate.entity_type AS type,
-      source_album.mbid AS source_release_group_mbid,
-      candidate_album.mbid AS candidate_release_group_mbid
+      ? AS source_release_group_mbid,
+      candidate.release_group_mbid AS candidate_release_group_mbid,
+      candidate.release_group_mbid,
+      candidate.release_mbid,
+      candidate.track_mbid,
+      candidate.recording_mbid,
+      candidate.recording_id
     FROM ProviderItems candidate
-    LEFT JOIN Tracks t ON t.id = candidate.track_id
-    LEFT JOIN Recordings r ON r.id = candidate.recording_id
-    LEFT JOIN Albums source_album ON CAST(source_album.id AS TEXT) = CAST(? AS TEXT)
-    LEFT JOIN Albums candidate_album ON CAST(candidate_album.id AS TEXT) = CAST(candidate.album_id AS TEXT)
-    WHERE CAST(candidate_album.artist_mbid AS TEXT) = CAST(? AS TEXT)
+    LEFT JOIN Tracks t
+      ON (candidate.track_mbid IS NOT NULL AND t.mbid = candidate.track_mbid)
+      OR (candidate.track_mbid IS NULL
+          AND candidate.release_mbid IS NOT NULL
+          AND candidate.recording_mbid IS NOT NULL
+          AND t.release_mbid = candidate.release_mbid
+          AND t.recording_mbid = candidate.recording_mbid)
+    LEFT JOIN Recordings r
+      ON (candidate.recording_id IS NOT NULL AND r.id = candidate.recording_id)
+      OR (candidate.recording_mbid IS NOT NULL AND r.mbid = candidate.recording_mbid)
+    WHERE candidate.provider = ?
+      AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
       AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
       AND candidate.entity_type = 'track'
       AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
-  `).all(media.album_id, media.artist_id, media.id) as CandidateRow[];
+  `).all(media.release_group_mbid, media.provider, media.artist_id, media.id) as CandidateRow[];
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))
@@ -392,7 +394,7 @@ async function fetchProviderLyrics(providerMediaId: string): Promise<ProviderLyr
   }
 }
 
-function recordSharedLyricsRelation(provider: string, media: ProviderMediaLyricsRow, sourceMedia: ProviderMediaLyricsRow): void {
+function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyricsRow, sourceMedia: ProviderTrackLyricsRow): void {
   if (media.id === sourceMedia.id) {
     return;
   }
@@ -424,12 +426,12 @@ function recordSharedLyricsRelation(provider: string, media: ProviderMediaLyrics
 }
 
 export async function getLyricsForProviderMedia(providerMediaId: string | number): Promise<ResolvedLyrics | null> {
-  const media = loadProviderMedia(providerMediaId);
+  const provider = streamingProviderManager.getDefaultStreamingProvider().id;
+  const media = loadProviderTrack(provider, providerMediaId);
   if (!media) {
     return null;
   }
 
-  const provider = streamingProviderManager.getDefaultStreamingProvider().id;
   const exactFile = loadLyricFileForMedia(provider, media)
     ?? loadLyricFileForForeignRecording(nullableText(media.mbid));
   const exactResolved = exactFile ? lyricFileToResolved(provider, exactFile, "exact", media.id) : null;

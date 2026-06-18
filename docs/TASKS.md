@@ -93,10 +93,11 @@ Docker runtime image.
   discovers album/lyrics/video sidecars from canonical `ProviderItems` and carries
   provider/canonical identity into sidecar rows; `metadata-files` now uses
   canonical/provider-item metadata for local NFO/artwork fallbacks;
+  `lyric-service` now shares cached lyrics via canonical `ProviderItems`/MBIDs;
   `rename-track-file-service` now replicates separated-root sidecars by canonical
   release-group/track/recording identity plus `ProviderItems`. **Remaining:** other read paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (audio-tag, organizer, quality/upgrader plus lyric/file-identity fallbacks);
+  (audio-tag, organizer, quality/upgrader plus file-identity fallback);
   the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
   with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2

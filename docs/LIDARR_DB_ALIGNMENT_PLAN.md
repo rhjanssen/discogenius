@@ -195,8 +195,9 @@ little.
 State after this session: **Phase 1 complete** (gap-fill + canonical dedupe).
 **Phase 2 partially complete** (Codex cut over `library-files-query-service`,
 `command-history`, `scan-refresh-state`, `refresh-policy`, `tidal-provider`
-progress fallback, `import-matcher-service`; lyric-service has a legacy
-`ProviderMedia` fallback that should later become a `ProviderItems` path).
+progress fallback, `import-matcher-service`; later passes also cut over
+`library-files`, metadata backfill, metadata sidecars, rename sidecar
+replication, and lyric sharing).
 Branch is green. A broken Phase 3 attempt (test-only `INSTEAD OF` trigger shim +
 half-done writes) was discarded to `git stash@{0}`; **do not resurrect that
 approach** — write canonical rows + `ProviderItems` directly.
@@ -225,19 +226,24 @@ sidecar discovery with zero legacy provider rows. Full suite green.
 `ProviderAlbums`/`ProviderMedia` reads. Local NFO/artwork fallbacks now resolve
 album metadata, selected releases, reviews, track lists, video metadata, and
 artist/album MBIDs from `ProviderItems` + canonical `Albums`/`AlbumReleases`/
-`Tracks`/`Recordings`. The lyric helper still delegates to `lyric-service.ts`,
-whose legacy fallback remains isolated for the later lyric cutover. Regression:
+`Tracks`/`Recordings`. Regression:
 `metadata-files.test.ts` now covers album/video NFO fallback with zero legacy
 provider rows.
+
+**Progress (2026-06-18, continued):** `lyric-service.ts` no longer reads
+`ProviderMedia`/`ProviderAlbums`. The remaining metadata lyric helper still
+accepts provider track ids, but resolves them through `ProviderItems` and
+canonical `Tracks`/`Recordings`; cached counterpart lyrics are matched by
+provider id, track MBID, or recording MBID. Regression: `metadata-files.test.ts`
+covers stereo-to-spatial lyric sharing with zero legacy provider rows.
 
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
    writer — video INSERT/UPDATE), `audio-tag-service.ts` (also a writer),
    `quality.ts`/`upgrader.ts` (entangled
-   with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `lyric-service.ts` and
-   `library-file-identity.ts` use legacy only as a FALLBACK after `ProviderItems`
-   — remove those right before the Phase 5 drop.
+   with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `library-file-identity.ts`
+   still has the final legacy fallback to remove right before the Phase 5 drop.
 2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
    original plan called "keystones" were dead code (zero imports) and have been
    deleted; the active write SQL is inline in the services. Cut over
@@ -295,7 +301,7 @@ libraries before flipping reads.
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Remaining read-path lookups (`lyric`, `audio-tag`, organizer, quality,
+  - Remaining read-path lookups (`audio-tag`, organizer, quality,
     upgrader, and the final file-identity fallback) still touch legacy provider
     tables; these move in Phase 2 or the final pre-Phase-5 cleanup.
 
@@ -353,10 +359,14 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   album/video sidecar discovery with zero legacy provider rows.
 - ✅ **`metadata-files` cutover** — local NFO/artwork fallback helpers now read
   canonical album/release/track/video metadata plus `ProviderItems` instead of
-  `ProviderAlbums`/`ProviderMedia`. The existing lyric wrapper still routes
-  through `lyric-service.ts` and is tracked with the lyric fallback cleanup.
+  `ProviderAlbums`/`ProviderMedia`.
   Regression: `metadata-files.test.ts` covers canonical-only album/video NFO
   fallback with zero legacy provider rows.
+- ✅ **`lyric-service` cutover** — cached lyric sharing for provider track ids now
+  resolves from `ProviderItems`, `Tracks`, `Recordings`, and canonical
+  `LyricFiles` fields instead of `ProviderMedia`/`ProviderAlbums`. Regression:
+  `metadata-files.test.ts` covers a stereo cached lyric shared to a spatial
+  provider item with zero legacy provider rows.
 - ✅ **`rename-track-file-service` sidecar replication cutover** — separated-root
   sidecar replication no longer joins through legacy provider album/track titles.
   Album sidecars are matched by canonical release group via album
