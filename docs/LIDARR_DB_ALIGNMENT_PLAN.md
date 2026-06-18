@@ -183,6 +183,40 @@ and writers — Phases 2 and 3 hinge on giving them canonical-backed
 implementations behind their existing method signatures, so call sites change
 little.
 
+## 7b. Remaining-work sequencing (verified 2026-06-18, post multi-agent churn)
+
+State after this session: **Phase 1 complete** (gap-fill + canonical dedupe).
+**Phase 2 partially complete** (Codex cut over `library-files-query-service`,
+`command-history`, `scan-refresh-state`, `refresh-policy`, `tidal-provider`
+progress fallback, `import-matcher-service`; lyric-service has a legacy
+`ProviderMedia` fallback that should later become a `ProviderItems` path).
+Branch is green. A broken Phase 3 attempt (test-only `INSTEAD OF` trigger shim +
+half-done writes) was discarded to `git stash@{0}`; **do not resurrect that
+approach** — write canonical rows + `ProviderItems` directly.
+
+**The keystone blocker** is `services/mediafiles/library-files.ts`: its
+wanted/missing computation still mixes canonical monitored state
+(`rgs.monitored`, `recording.monitored`) with **legacy** `ProviderMedia.monitored`
+/ `ProviderAlbums.monitored` (e.g. the missing-tracks query ~L820-870 and the
+prune/unmonitored query ~L2200-2235). Until that reads canonical-only, the
+Phase 3 writers and `repairMonitoringGaps` (Phase 4) **cannot** stop maintaining
+the legacy `monitored`/`skip_*` flags without breaking "what's missing". So the
+correct order is:
+
+1. **Finish Phase 2 — `library-files.ts` monitored/wanted → canonical-only.** The
+   single highest-risk reader (drives downloads + prune); convert with focused
+   tests on a real-data DB (a wrong flip orphans or over-downloads).
+2. **Phase 3 — write path.** Repositories don't actually exist as separate files
+   (Codex/Antigravity confirmed; SQL is inline in the services); cut over
+   `refresh-album-service`, `import-service`, `manual-import-service`,
+   `organizer`, `audio-tag-service`, `library-scan`, `metadata-identity-service`,
+   `version-grouper`, `module-fixer` to write canonical + `ProviderItems`.
+3. **Phase 4 — housekeeping.** Repoint/retire `repairMonitoringGaps` +
+   `scheduler-maintenance-handlers` to canonical monitored/skip state; move
+   `ProviderSimilar*` off (drop or fold into `ProviderItems.data`).
+4. **Phase 5 — numbered schema migration** dropping the six `Provider*` tables +
+   `TrackFiles.media_id`/`album_id`, with a one-time backfill guard.
+
 ## 8. Phase 1 dry-run result (re-link safety check)
 
 Read-only check against a real-data DB (the dev `./config` DB, post-import):
