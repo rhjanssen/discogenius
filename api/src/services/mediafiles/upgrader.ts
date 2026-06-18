@@ -160,9 +160,12 @@ export class UpgraderService {
             );
 
             // Only queue as album if a significant portion needs upgrading (≥50% or ≥3 tracks)
-            const totalAlbumTracks = (db.prepare(
-                `SELECT COUNT(*) as cnt FROM ProviderMedia WHERE album_id = ? AND type != 'Music Video'`
-            ).get(albumId) as any)?.cnt || 0;
+            const totalAlbumTracks = (db.prepare(`
+                SELECT COUNT(*) as cnt FROM ProviderItems
+                WHERE provider = 'tidal'
+                  AND entity_type = 'track'
+                  AND json_extract(data, '$.albumProviderId') = ?
+            `).get(albumId) as any)?.cnt || 0;
 
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {
                 console.log(`[UPGRADER] Queuing album ${albumId} for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);

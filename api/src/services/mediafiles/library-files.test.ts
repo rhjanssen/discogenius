@@ -706,6 +706,15 @@ test("disk scan relinks Lidarr-style album covers and renamed lyrics to their pr
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("provider-track-1", "artist-local", "provider-album-1", "SAVE MY SOUL", "Track", 0, "LOSSLESS", 1, 1, 237, 1);
 
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("tidal", "album", "provider-album-1", "artist-local", "SAVE MY SOUL", "stereo");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot, quality, data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "track", "provider-track-1", "artist-local", "SAVE MY SOUL", "stereo", "LOSSLESS", JSON.stringify({ albumProviderId: "provider-album-1" }));
+
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
   const audioPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.flac");
