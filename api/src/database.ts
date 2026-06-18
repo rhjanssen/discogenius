@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 24;
+const BASE_SCHEMA_VERSION = 25;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -426,8 +426,59 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       addColumn("Recordings", "popularity", "popularity INT");
       addColumn("Recordings", "credits", "credits TEXT");
     }
+  },
+  {
+    version: 25,
+    description: "TrackFiles canonical-FK populate-on-write triggers (derive integer FKs from mbids / video offer)",
+    up: () => {
+      ensureTrackFileForeignKeyTriggers();
+    }
   }
 ];
+
+/**
+ * Production triggers that keep the TrackFiles canonical integer FKs
+ * (release_group_id/album_release_id/track_id/recording_id) in sync with the
+ * canonical mbids on every write — so newly imported/renamed files link straight
+ * to the canonical graph without waiting for the housekeeping backfill. COALESCE
+ * preserves any explicitly-set FK, and recording_id falls back to the video
+ * ProviderItems offer for mbid-less provider videos. The trigger bodies update
+ * only the FK columns (never the mbid/provider_id columns the AFTER UPDATE trigger
+ * watches), so they cannot recurse even if recursive_triggers is ON.
+ */
+function ensureTrackFileForeignKeyTriggers(): void {
+  if (!hasTable("TrackFiles") || !hasColumn("TrackFiles", "recording_id")) {
+    return;
+  }
+  const body = `
+    UPDATE TrackFiles SET
+      release_group_id = COALESCE(release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.canonical_release_group_mbid)),
+      album_release_id = COALESCE(album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = NEW.canonical_release_mbid)),
+      track_id = COALESCE(track_id, (SELECT id FROM Tracks WHERE mbid = NEW.canonical_track_mbid)),
+      recording_id = COALESCE(
+        recording_id,
+        (SELECT id FROM Recordings WHERE mbid = NEW.canonical_recording_mbid),
+        (SELECT pi.recording_id FROM ProviderItems pi
+           WHERE pi.entity_type = 'video'
+             AND CAST(pi.provider_id AS TEXT) = CAST(NEW.provider_id AS TEXT)
+             AND pi.recording_id IS NOT NULL
+           LIMIT 1)
+      )
+    WHERE id = NEW.id;
+  `;
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_trackfiles_canonical_fks_ai
+    AFTER INSERT ON TrackFiles
+    BEGIN ${body} END;
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_trackfiles_canonical_fks_au
+    AFTER UPDATE OF canonical_release_group_mbid, canonical_release_mbid,
+                    canonical_track_mbid, canonical_recording_mbid, provider_id
+    ON TrackFiles
+    BEGIN ${body} END;
+  `);
+}
 
 function ensureMetadataIdentitySchema(): void {
   db.exec(`
@@ -1178,6 +1229,7 @@ export function initDatabase() {
   ensureMusicBrainzProviderSchema();
   ensureExtraFileSchema();
   ensureMediaCoverProxyCacheSchema();
+  ensureTrackFileForeignKeyTriggers();
 
   // ====================================================================
   // UNMAPPED FILES TABLE (local files not mapped to canonical metadata/provider evidence)

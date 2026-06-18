@@ -281,6 +281,9 @@ test("backfills canonical integer FKs from the canonical mbids", () => {
     canonical_track_mbid: "track-1",
     canonical_recording_mbid: "recording-1",
   });
+  // Simulate a pre-trigger row (FKs not yet populated). Updating FK columns does
+  // NOT fire the populate-on-write trigger (it watches the mbid/provider_id cols).
+  db.prepare("UPDATE TrackFiles SET release_group_id=NULL, album_release_id=NULL, track_id=NULL, recording_id=NULL WHERE id=?").run(id);
 
   const summary = freshSummary();
   backfillTrackFileForeignKeys(summary);
@@ -316,6 +319,8 @@ test("backfills recording_id for mbid-less provider videos via the video Provide
     provider: "tidal", provider_entity_type: "video", provider_id: "vid-999",
     file_path: "C:/Videos/some-video.mp4", filename: "some-video.mp4", extension: "mp4",
   });
+  // Simulate a pre-trigger row.
+  db.prepare("UPDATE TrackFiles SET recording_id=NULL WHERE id=?").run(id);
 
   const summary = freshSummary();
   backfillTrackFileForeignKeys(summary);
@@ -430,4 +435,34 @@ test("monitoring gap repair resolves mbid-less provider video files through Prov
   const providerRecording = db.prepare("SELECT monitored FROM Recordings WHERE id = ?")
     .get(recordingId) as { monitored: number };
   assert.equal(providerRecording.monitored, 1);
+});
+
+test("populate-on-write trigger fills canonical integer FKs on INSERT", () => {
+  seedLegacyGraph();
+  // No backfill call — the production trigger should fill the FKs at insert time.
+  const id = insertLegacyTrackFile({
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+  });
+
+  const row = db.prepare(`
+    SELECT release_group_id, album_release_id, track_id, recording_id FROM TrackFiles WHERE id = ?
+  `).get(id) as Record<string, number | null>;
+  assert.equal(row.release_group_id, idByMbid("Albums", "release-group-1"));
+  assert.equal(row.album_release_id, idByMbid("AlbumReleases", "release-1"));
+  assert.equal(row.track_id, idByMbid("Tracks", "track-1"));
+  assert.equal(row.recording_id, idByMbid("Recordings", "recording-1"));
+});
+
+test("populate-on-write trigger fills recording_id when mbids are set later (UPDATE)", () => {
+  seedLegacyGraph();
+  const id = insertLegacyTrackFile({ canonical_recording_mbid: null });
+  // Initially no recording mbid -> recording_id stays null.
+  assert.equal((db.prepare("SELECT recording_id FROM TrackFiles WHERE id = ?").get(id) as { recording_id: number | null }).recording_id, null);
+
+  // Setting the canonical recording mbid should trigger FK fill.
+  db.prepare("UPDATE TrackFiles SET canonical_recording_mbid = ? WHERE id = ?").run("recording-1", id);
+  assert.equal((db.prepare("SELECT recording_id FROM TrackFiles WHERE id = ?").get(id) as { recording_id: number | null }).recording_id, idByMbid("Recordings", "recording-1"));
 });
