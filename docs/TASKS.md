@@ -62,12 +62,15 @@ Docker runtime image.
 
 ## 2.0.8 — Database alignment (clean canonical schema)
 - **Monitoring download flow** ✅ — fixed "active monitoring on, artists curated,
-  but nothing downloaded overnight." The scheduled cycle's terminal `DownloadMissing`
-  raced in-flight intake (gate ignored `RefreshArtist`/`RescanFolders`/`CurateArtist`)
-  and the only auto-trigger was the 24h cycle. Now: pre-download gate also waits on
-  `hasActiveArtistWorkflowJobs()`, and monitored intake/curation drain queues a
-  `DownloadMissing` immediately (`scheduler.queueNextMonitoringPass`). Validated live:
-  a curated 3-artist DB that had queued 0 now queues 293 (148 albums + 145 videos).
+  but nothing downloaded overnight." The scheduled/manual monitoring cycle's terminal
+  `DownloadMissing` raced in-flight intake (gate ignored
+  `RefreshArtist`/`RescanFolders`/`CurateArtist`) and could run before curation had
+  created any monitored slots. Now: the cycle pre-download gate also waits on
+  `hasActiveArtistWorkflowJobs()`, then queues `DownloadMissing` as the terminal
+  monitoring-cycle pass. Standalone artist add, scan, curation, and collaborator
+  scanning do not auto-download; downloads stay tied to an explicit manual/scheduled
+  monitoring cycle or download command, matching the Lidarr-style order of
+  operations.
 - **Retire legacy `Provider*` tables** 🟡 — full 5-phase migration to a single
   canonical graph + `ProviderItems`. See docs/LIDARR_DB_ALIGNMENT_PLAN.md.
   Phase 0 (inventory) + Phase 1 dry-run done; target model clarified (Recordings

@@ -108,52 +108,21 @@ function pendingDownloadMissing() {
     );
 }
 
-test("monitored artist intake queues a DownloadMissing once its pipeline drains", () => {
-    const curateId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
-        { artistId: "2001", artistName: "Intake Artist", workflow: "monitoring-intake" },
-        "2001",
-    );
-    assert.ok(curateId > 0);
+test("standalone monitored artist workflows do not queue DownloadMissing", () => {
+    const workflows = ["monitoring-intake", "full-monitoring"] as const;
 
-    // No other artist-workflow jobs pending → draining this one triggers downloads.
-    completeAndAdvance(curateId);
+    for (const [index, workflow] of workflows.entries()) {
+        const artistId = String(2001 + index);
+        const curateId = queueModule.TaskQueueService.addJob(
+            queueModule.JobTypes.CurateArtist,
+            { artistId, artistName: `Standalone ${workflow}`, workflow },
+            artistId,
+        );
+        assert.ok(curateId > 0);
 
-    const downloads = pendingDownloadMissing();
-    assert.equal(downloads.length, 1);
-    // Intake-triggered pass is untagged (not part of a scheduled cycle).
-    assert.equal((downloads[0].payload as Record<string, unknown>).monitoringCycle, undefined);
-});
-
-test("artist intake does not queue downloads while sibling artist work is still pending", () => {
-    // A sibling artist is still being refreshed (pending) — pipeline not drained.
-    const siblingRefreshId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.RefreshArtist,
-        workflowModule.buildRefreshArtistJobPayload({ artistId: "3002", artistName: "Sibling", workflow: "monitoring-intake" }),
-        "3002",
-    );
-    assert.ok(siblingRefreshId > 0);
-
-    const curateId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
-        { artistId: "3001", artistName: "First Artist", workflow: "monitoring-intake" },
-        "3001",
-    );
-    completeAndAdvance(curateId);
-
-    assert.equal(pendingDownloadMissing().length, 0);
-
-    // Once the sibling drains, the next completion triggers the single pass.
-    completeAndAdvance(siblingRefreshId);
-    assert.equal(pendingDownloadMissing().length, 0); // RefreshArtist is not a curation terminal
-
-    const curate2Id = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
-        { artistId: "3002", artistName: "Sibling", workflow: "monitoring-intake" },
-        "3002",
-    );
-    completeAndAdvance(curate2Id);
-    assert.equal(pendingDownloadMissing().length, 1);
+        completeAndAdvance(curateId);
+        assert.equal(pendingDownloadMissing().length, 0, `${workflow} should wait for an explicit monitoring cycle`);
+    }
 });
 
 test("manual (non-monitoring) curation does not trigger downloads", () => {

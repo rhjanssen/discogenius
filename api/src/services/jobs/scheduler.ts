@@ -321,56 +321,7 @@ function markMonitoringCycleCompleted() {
     updateConfig("monitoring", { last_check: new Date().toISOString() });
 }
 
-/**
- * Workflows that monitor an artist and therefore should result in their missing
- * items being downloaded once the intake/curation pipeline finishes. Manual
- * "curation"/"library-scan" workflows are intentionally excluded — they don't
- * change monitored state on the user's behalf.
- */
-function workflowShouldQueueDownloads(workflow: unknown): boolean {
-    return workflow === "monitoring-intake" || workflow === "full-monitoring";
-}
-
-/**
- * Event-driven download trigger for monitored *artist intake* (add + monitor)
- * and full-monitoring curation that is NOT part of a scheduled monitoring cycle.
- *
- * Adding + monitoring artists curates their release-group slots but, by design,
- * curation itself never queues downloads ("DownloadMissing remains the dedicated
- * queueing path"). Without this hook the only automatic download trigger is the
- * scheduled cycle, so freshly monitored/curated artists sat idle for up to
- * scan_interval_hours (24h) before anything downloaded. We instead queue a
- * DownloadMissing the moment the artist-workflow pipeline drains.
- */
-function maybeQueueDownloadsAfterArtistIntake(job: Pick<Job, "type" | "payload" | "trigger">) {
-    if (job.type !== JobTypes.CurateArtist) {
-        return;
-    }
-    // Scheduled-cycle curation carries monitoringCycle and is handled by the
-    // cycle's own terminal DownloadMissing below — don't double-queue here.
-    if (resolveMonitoringPassWorkflow(job.payload?.monitoringCycle)) {
-        return;
-    }
-    if (!workflowShouldQueueDownloads(job.payload?.workflow)) {
-        return;
-    }
-    // Wait for the whole pipeline to drain so a single DownloadMissing covers all
-    // freshly intaken artists at once (it dedupes internally and is artist-wide).
-    if (hasActiveArtistWorkflowJobs() || hasActiveMonitoringCycleWorkflow()) {
-        return;
-    }
-    if (hasActiveTask(JobTypes.DownloadMissing)) {
-        return;
-    }
-    const jobId = queueDownloadMissingPass({ trigger: job.trigger ?? 0 });
-    if (jobId !== -1) {
-        console.log("📥 Artist intake/curation drained — queued DownloadMissing for monitored items");
-    }
-}
-
 export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
-    maybeQueueDownloadsAfterArtistIntake(job);
-
     const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
     if (!monitoringCycle) {
         return;
@@ -395,7 +346,7 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
         case JobTypes.RescanFolders:
             break;
         case JobTypes.ApplyCuration:
-            // Manual ApplyCuration still chains to DownloadMissing
+            // Monitoring-cycle curation explicitly chains to the terminal download pass.
             queueDownloadMissingPass({
                 trigger: job.trigger ?? 0,
                 monitoringCycle,
