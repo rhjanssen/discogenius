@@ -27,11 +27,19 @@ function isNewerThanHours(timestamp: number, hours: number): boolean {
 }
 
 export function getLatestArtistReleaseTimestamp(artistId: string | number): number | null {
+  const identifier = String(artistId);
   const row = db.prepare(`
-    SELECT MAX(release_date) AS latest_release
-    FROM ProviderAlbums
-    WHERE artist_id = ?
-  `).get(String(artistId)) as { latest_release?: string | null } | undefined;
+    WITH target_artist(mbid) AS (
+      SELECT mbid
+      FROM Artists
+      WHERE CAST(id AS TEXT) = ? OR mbid = ?
+      UNION
+      SELECT ?
+    )
+    SELECT MAX(album.first_release_date) AS latest_release
+    FROM Albums album
+    JOIN target_artist target ON target.mbid = album.artist_mbid
+  `).get(identifier, identifier, identifier) as { latest_release?: string | null } | undefined;
 
   return parseTimestamp(row?.latest_release ?? null);
 }
@@ -91,13 +99,22 @@ export function shouldRefreshTrackSet(options: {
 }): boolean {
   const row = db.prepare(`
     SELECT
-      COUNT(*) AS total_tracks,
-      SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) AS missing_scans,
-      MIN(last_scanned) AS oldest_scan,
-      MAX(a.release_date) AS album_release_date
-    FROM ProviderMedia m
-    LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-    WHERE m.album_id = ? AND m.type != 'Music Video'
+      COUNT(track_item.provider_id) AS total_tracks,
+      SUM(CASE WHEN track_item.provider_id IS NOT NULL AND track_item.updated_at IS NULL THEN 1 ELSE 0 END) AS missing_scans,
+      MIN(track_item.updated_at) AS oldest_scan,
+      MAX(COALESCE(release.date, album.first_release_date, album_item.release_date)) AS album_release_date
+    FROM ProviderItems album_item
+    LEFT JOIN ProviderItems track_item
+      ON track_item.provider = album_item.provider
+     AND track_item.entity_type = 'track'
+     AND (
+       (album_item.release_mbid IS NOT NULL AND track_item.release_mbid = album_item.release_mbid)
+       OR (album_item.release_group_mbid IS NOT NULL AND track_item.release_group_mbid = album_item.release_group_mbid)
+     )
+    LEFT JOIN AlbumReleases release ON release.mbid = album_item.release_mbid
+    LEFT JOIN Albums album ON album.mbid = COALESCE(album_item.release_group_mbid, release.release_group_mbid)
+    WHERE album_item.entity_type = 'album'
+      AND album_item.provider_id = ?
   `).get(String(options.albumId)) as {
     total_tracks?: number;
     missing_scans?: number;
@@ -121,14 +138,24 @@ export function shouldRefreshVideos(options: {
   artistId: string | number;
   fallbackLastScanned?: string | null;
 }): boolean {
+  const identifier = String(options.artistId);
   const row = db.prepare(`
+    WITH target_artist(mbid) AS (
+      SELECT mbid
+      FROM Artists
+      WHERE CAST(id AS TEXT) = ? OR mbid = ?
+      UNION
+      SELECT ?
+    )
     SELECT
-      COUNT(*) AS total_videos,
-      SUM(CASE WHEN last_scanned IS NULL THEN 1 ELSE 0 END) AS missing_scans,
-      MIN(last_scanned) AS oldest_scan
-    FROM ProviderMedia
-    WHERE artist_id = ? AND type = 'Music Video'
-  `).get(String(options.artistId)) as {
+      COUNT(video_item.provider_id) AS total_videos,
+      SUM(CASE WHEN video_item.provider_id IS NOT NULL AND video_item.updated_at IS NULL THEN 1 ELSE 0 END) AS missing_scans,
+      MIN(video_item.updated_at) AS oldest_scan
+    FROM target_artist target
+    LEFT JOIN ProviderItems video_item
+      ON video_item.artist_mbid = target.mbid
+     AND video_item.entity_type = 'video'
+  `).get(identifier, identifier, identifier) as {
     total_videos?: number;
     missing_scans?: number;
     oldest_scan?: string | null;

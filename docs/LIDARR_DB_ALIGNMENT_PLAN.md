@@ -244,3 +244,10 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   and artist MBID identity, rather than `ProviderMedia.last_scanned`.
   Regression: `scan-refresh-state.test.ts` covers fresh, missing, and stale
   canonical-only track/video provider items with zero legacy provider rows.
+- ✅ **`refresh-policy` cutover** — artist active/inactive release freshness now
+  reads canonical `Albums.first_release_date`, and the exported track/video
+  freshness helpers use `ProviderItems.updated_at` joined through canonical
+  release and artist identity instead of legacy provider scan columns.
+  Regression: `refresh-policy.test.ts` covers recent/inactive artists plus
+  fresh/stale canonical-only track/video provider items with zero legacy provider
+  rows.
