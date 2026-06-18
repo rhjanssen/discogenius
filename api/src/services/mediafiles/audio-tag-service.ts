@@ -801,7 +801,12 @@ export class AudioTagService {
           CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END,
           CASE WHEN json_valid(provider_recording.isrcs) THEN json_extract(provider_recording.isrcs, '$[0]') ELSE provider_recording.isrcs END
         ) AS media_isrc,
-        m.copyright AS media_copyright,
+        COALESCE(
+          canonical_recording.copyright,
+          provider_recording.copyright,
+          CASE WHEN json_valid(provider_track.data) THEN json_extract(provider_track.data, '$.copyright') END,
+          m.copyright
+        ) AS media_copyright,
         m.replay_gain AS media_replay_gain,
         m.peak AS media_peak,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title, a.title) AS album_title,
@@ -809,8 +814,14 @@ export class AudioTagService {
         COALESCE(canonical_release.date, ar.date, provider_album.release_date, a.release_date) AS album_release_date,
         COALESCE(canonical_release.media_count, a.num_volumes) AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc, a.upc) AS album_upc,
-        a.review_text AS album_review_text,
-        m.credits AS media_credits,
+        COALESCE(
+          canonical_group.review_text,
+          alb.review_text,
+          CASE WHEN json_valid(provider_album.data) THEN json_extract(provider_album.data, '$.review_text') END,
+          CASE WHEN json_valid(provider_album.data) THEN json_extract(provider_album.data, '$.review') END,
+          a.review_text
+        ) AS album_review_text,
+        COALESCE(canonical_recording.credits, provider_recording.credits, m.credits) AS media_credits,
         COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid, m.mbid) AS media_mbid,
         m.acoustid_id AS media_acoustid_id,
         m.acoustid_fingerprint AS media_acoustid_fingerprint,

@@ -51,9 +51,9 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?)
     `).run("artist-mbid-100", "The Example Artist");
     dbModule.db.prepare(`
-        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type)
-        VALUES(?, ?, ?, ?, ?)
-    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album");
+        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type, review_text)
+        VALUES(?, ?, ?, ?, ?, ?)
+    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album", "Album review with <markup>");
     dbModule.db.prepare(`
         INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?)
@@ -87,7 +87,7 @@ function seedMusicBrainzMetadata() {
         180,
         "2024-02-03",
         "stereo",
-        JSON.stringify({ review_text: "Album review with <markup>", num_tracks: 1, num_volumes: 1, num_videos: 1 }),
+        JSON.stringify({ num_tracks: 1, num_volumes: 1, num_videos: 1 }),
     );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(

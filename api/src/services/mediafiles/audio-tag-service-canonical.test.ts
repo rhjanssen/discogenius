@@ -43,14 +43,14 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   `).run("album-artist-mbid-1", "album-artist-mbid-1", "Album Artist One");
 
   dbModule.db.prepare(`
-    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, secondary_types, first_release_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Album", "[\"Compilation\"]", "2024-03-01");
+    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, review_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Album", "[\"Compilation\"]", "2024-03-01", "Canonical review text");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, media_count, track_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", null, 1, 1);
+    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, copyright, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", null, "(P) 2024 Canonical Release", 1, 1);
 
   dbModule.db.prepare(`
     INSERT INTO AlbumArtists (release_group_mbid, artist_mbid, ord, credited_name, is_primary)
@@ -58,8 +58,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   `).run("release-group-mbid-1", "album-artist-mbid-1", 0, "Album Artist One", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, isrcs, data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, isrcs, copyright, data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "recording-mbid-1",
     "recording-mbid-1",
@@ -68,6 +68,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "Artist One",
     181000,
     "[\"TESTISRC1234\"]",
+    "(P) 2024 Canonical Recording",
     JSON.stringify({
       "artist-credit": [
         { name: "Artist One", artist: { id: "artist-mbid-1", name: "Artist One" } },
@@ -149,7 +150,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
 
   const tags = audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest(
     [Number(inserted.lastInsertRowid)],
-    { write_tidal_url: true },
+    { write_tidal_url: true, embed_album_review: true },
   );
   const byKey = new Map(tags.map((tag) => [tag.key, tag.targetValue]));
 
@@ -162,6 +163,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   assert.equal(byKey.get("date"), "2024-03-01");
   assert.equal(byKey.get("barcode"), "987654321000");
   assert.equal(byKey.get("isrc"), "TESTISRC1234");
+  assert.equal(byKey.get("copyright"), "(P) 2024 Canonical Recording");
+  assert.equal(byKey.get("comment"), "Canonical review text");
   assert.equal(byKey.get("provider_url"), "https://tidal.com/browse/track/provider-track-1");
   assert.equal(byKey.get("musicbrainz_recordingid"), "recording-mbid-1");
   assert.equal(byKey.get("musicbrainz_albumid"), "release-mbid-1");

@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 23;
+const BASE_SCHEMA_VERSION = 24;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -401,6 +401,31 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
       db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_release_group_id ON TrackFiles(release_group_id)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_album_release_id ON TrackFiles(album_release_id)`);
     }
+  },
+  {
+    version: 24,
+    description: "Canonical provider supplement fields for albums, releases, and recordings",
+    up: () => {
+      const addColumn = (table: string, name: string, ddl: string) => {
+        if (hasTable(table) && !hasColumn(table, name)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+        }
+      };
+
+      addColumn("Albums", "cover_image_id", "cover_image_id TEXT");
+      addColumn("Albums", "vibrant_color", "vibrant_color TEXT");
+      addColumn("Albums", "video_cover", "video_cover TEXT");
+      addColumn("Albums", "popularity", "popularity INT");
+      addColumn("Albums", "review_text", "review_text TEXT");
+      addColumn("Albums", "review_source", "review_source TEXT");
+      addColumn("Albums", "review_last_updated", "review_last_updated DATETIME");
+
+      addColumn("AlbumReleases", "copyright", "copyright TEXT");
+
+      addColumn("Recordings", "copyright", "copyright TEXT");
+      addColumn("Recordings", "popularity", "popularity INT");
+      addColumn("Recordings", "credits", "credits TEXT");
+    }
   }
 ];
 
@@ -554,6 +579,13 @@ function ensureMusicBrainzProviderSchema(): void {
       primary_type TEXT,
       secondary_types TEXT,
       first_release_date TEXT,
+      cover_image_id TEXT,
+      vibrant_color TEXT,
+      video_cover TEXT,
+      popularity INT,
+      review_text TEXT,
+      review_source TEXT,
+      review_last_updated DATETIME,
       disambiguation TEXT,
       data TEXT,
       images TEXT,
@@ -573,6 +605,7 @@ function ensureMusicBrainzProviderSchema(): void {
       country TEXT,
       date TEXT,
       barcode TEXT,
+      copyright TEXT,
       disambiguation TEXT,
       media_count INT,
       track_count INT,
@@ -646,6 +679,9 @@ function ensureMusicBrainzProviderSchema(): void {
       release_date DATETIME,
       cover_image_id TEXT,
       cover_image_url TEXT,
+      copyright TEXT,
+      popularity INT,
+      credits TEXT,
       monitored BOOLEAN NOT NULL DEFAULT 0,
       monitored_lock BOOLEAN NOT NULL DEFAULT 0,
       monitored_at DATETIME,

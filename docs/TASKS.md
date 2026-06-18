@@ -100,7 +100,11 @@ Docker runtime image.
   `rename-track-file-service` now replicates separated-root sidecars by canonical
   release-group/track/recording identity plus `ProviderItems`; `audio-tag-service`
   now builds retag target context from canonical identity + `ProviderItems`
-  before legacy fallback data. **Remaining:** other read/write paths
+  before legacy fallback data. **Phase 3 supplement homing started:** v24 adds
+  canonical provider-supplement columns on `Albums`/`AlbumReleases`/`Recordings`;
+  `refresh-album-service` mirrors album/release/track supplements there while
+  keeping legacy compatibility writes, and NFO/audio-tag fallbacks read the
+  canonical values first. **Remaining:** other read/write paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (organizer, quality/upgrader, audio-tag MB/AcoustID write-back and legacy
   tag fallbacks, plus file-identity fallback);

@@ -32,10 +32,18 @@ type AlbumProviderItemRow = {
     release_group_title: string | null;
     primary_type: string | null;
     first_release_date: string | null;
+    release_group_cover_image_id: string | null;
+    release_group_vibrant_color: string | null;
+    release_group_video_cover: string | null;
+    release_group_popularity: number | null;
+    release_group_review_text: string | null;
+    release_group_review_source: string | null;
+    release_group_review_last_updated: string | null;
     release_group_data: string | null;
     release_title: string | null;
     release_date: string | null;
     barcode: string | null;
+    release_copyright: string | null;
     media_count: number | null;
     track_count: number | null;
     release_data: string | null;
@@ -150,10 +158,18 @@ function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
             rg.title AS release_group_title,
             rg.primary_type AS primary_type,
             rg.first_release_date AS first_release_date,
+            rg.cover_image_id AS release_group_cover_image_id,
+            rg.vibrant_color AS release_group_vibrant_color,
+            rg.video_cover AS release_group_video_cover,
+            rg.popularity AS release_group_popularity,
+            rg.review_text AS release_group_review_text,
+            rg.review_source AS release_group_review_source,
+            rg.review_last_updated AS release_group_review_last_updated,
             rg.data AS release_group_data,
             release.title AS release_title,
             release.date AS release_date,
             release.barcode AS barcode,
+            release.copyright AS release_copyright,
             release.media_count AS media_count,
             release.track_count AS track_count,
             release.data AS release_data,
@@ -274,18 +290,18 @@ async function getAlbumForNfo(albumId: string) {
                     return null;
                 }
             })(),
-            cover: row.provider_asset_id || providerData.cover || providerData.image || null,
+            cover: row.release_group_cover_image_id || row.provider_asset_id || providerData.cover || providerData.image || null,
             releaseDate,
             release_date: releaseDate,
             type: row.primary_type || providerData.type || "ALBUM",
             quality: row.provider_quality || providerData.quality || "UNKNOWN",
             explicit: Boolean(row.provider_explicit ?? providerData.explicit),
-            popularity: 0,
+            popularity: row.release_group_popularity || providerData.popularity || 0,
             duration: row.provider_duration || providerData.duration || 0,
             numberOfTracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
             numberOfVideos: providerData.num_videos || providerData.videoCount || 0,
             numberOfVolumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
-            vibrant_color: providerData.vibrant_color || null,
+            vibrant_color: row.release_group_vibrant_color || providerData.vibrant_color || null,
             version: row.provider_version || providerData.version || null,
             items: [],
             artist: {
@@ -296,8 +312,8 @@ async function getAlbumForNfo(albumId: string) {
             artist_id: String(artistId),
             artist_name: artistName,
             upc: row.barcode || row.provider_upc || providerData.upc || null,
-            copyright: providerData.copyright || releaseData.copyright || null,
-            video_cover: providerData.video_cover || providerData.videoCover || null,
+            copyright: row.release_copyright || providerData.copyright || releaseData.copyright || null,
+            video_cover: row.release_group_video_cover || providerData.video_cover || providerData.videoCover || null,
             num_videos: providerData.num_videos || providerData.videoCount || 0,
             num_volumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
             num_tracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
@@ -318,6 +334,7 @@ async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
     const providerData = parseJsonObject(row?.provider_data) || {};
     const releaseGroupData = parseJsonObject(row?.release_group_data) || {};
     const review = textOrNull(
+        row?.release_group_review_text,
         providerData.review_text,
         providerData.review,
         providerData.description,
@@ -458,6 +475,7 @@ function loadAlbumArtworkContext(albumId: string): {
             pi.asset_id AS provider_asset_id,
             pi.data AS provider_data,
             rg.mbid AS album_mbid,
+            rg.cover_image_id AS release_group_cover,
             rg.data AS release_group_data,
             stereo.selected_provider AS stereo_provider,
             stereo.selected_provider_id AS stereo_provider_id,
@@ -486,6 +504,12 @@ function loadAlbumArtworkContext(albumId: string): {
 
     const providerCandidates = [
         ...albumProviderArtworkCandidatesFromRow(row),
+        {
+            provider: String(row.selected_provider || "tidal"),
+            entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),
+            imageId: row.release_group_cover == null ? null : String(row.release_group_cover),
+            data: null,
+        },
         {
             provider: String(row.selected_provider || "tidal"),
             entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),

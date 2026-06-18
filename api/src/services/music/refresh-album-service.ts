@@ -70,20 +70,35 @@ function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
         isrc: providerTrack.isrc || null,
         explicit: false,
         quality: providerTrack.quality || "LOSSLESS",
-        copyright: null,
+        copyright: (providerTrack as any).copyright || null,
         artist_id: providerTrack.artist?.providerId || null,
         artist_name: providerTrack.artist?.name || "Unknown Artist",
         artists: Array.isArray(providerTrack.artists)
             ? providerTrack.artists.map(a => ({ id: a.providerId, name: a.name }))
             : (providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : []),
         url: providerTrack.url,
-        popularity: 0,
+        popularity: (providerTrack as any).popularity || 0,
         release_date: null,
     };
 }
 
 function getProviderLibrarySlot(quality?: string | null): string {
     return isSpatialAudioQuality(quality) ? "spatial" : "stereo";
+}
+
+function textOrNull(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = String(value ?? "").trim();
+        if (text) {
+            return text;
+        }
+    }
+    return null;
+}
+
+function positiveNumberOrNull(value: unknown): number | null {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
@@ -103,6 +118,153 @@ function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null
 }
 
 export class RefreshAlbumService {
+    private static getCanonicalAlbumLink(providerId: string, albumId: string): {
+        releaseGroupMbid: string | null;
+        releaseMbid: string | null;
+    } {
+        const providerItem = db.prepare(`
+            SELECT release_group_mbid, release_mbid
+            FROM ProviderItems
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND provider_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
+
+        if (providerItem?.release_group_mbid || providerItem?.release_mbid) {
+            return {
+                releaseGroupMbid: providerItem.release_group_mbid || null,
+                releaseMbid: providerItem.release_mbid || null,
+            };
+        }
+
+        const legacyAlbum = db.prepare(`
+            SELECT mb_release_group_id, mbid
+            FROM ProviderAlbums
+            WHERE id = ?
+            LIMIT 1
+        `).get(albumId) as { mb_release_group_id?: string | null; mbid?: string | null } | undefined;
+
+        return {
+            releaseGroupMbid: legacyAlbum?.mb_release_group_id || null,
+            releaseMbid: legacyAlbum?.mbid || null,
+        };
+    }
+
+    private static storeCanonicalAlbumSupplements(input: {
+        releaseGroupMbid?: string | null;
+        releaseMbid?: string | null;
+        album: any;
+    }): void {
+        const releaseGroupMbid = textOrNull(input.releaseGroupMbid);
+        const releaseMbid = textOrNull(input.releaseMbid);
+        const album = input.album || {};
+
+        if (releaseGroupMbid) {
+            db.prepare(`
+                UPDATE Albums SET
+                    cover_image_id = COALESCE(NULLIF(?, ''), cover_image_id),
+                    vibrant_color = COALESCE(NULLIF(?, ''), vibrant_color),
+                    video_cover = COALESCE(NULLIF(?, ''), video_cover),
+                    popularity = COALESCE(?, popularity),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE mbid = ?
+            `).run(
+                textOrNull(album.cover, album.image_id, album.imageId),
+                textOrNull(album.vibrant_color, album.vibrantColor),
+                textOrNull(album.video_cover, album.videoCover),
+                positiveNumberOrNull(album.popularity),
+                releaseGroupMbid,
+            );
+        }
+
+        if (releaseMbid) {
+            db.prepare(`
+                UPDATE AlbumReleases SET
+                    barcode = COALESCE(NULLIF(barcode, ''), NULLIF(?, ''), barcode),
+                    copyright = COALESCE(NULLIF(?, ''), copyright),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE mbid = ?
+            `).run(
+                textOrNull(album.upc, album.barcode),
+                textOrNull(album.copyright),
+                releaseMbid,
+            );
+        }
+    }
+
+    private static storeCanonicalAlbumReview(input: {
+        releaseGroupMbid?: string | null;
+        reviewText: string;
+        reviewSource?: string | null;
+        reviewLastUpdated?: string | null;
+    }): void {
+        const releaseGroupMbid = textOrNull(input.releaseGroupMbid);
+        if (!releaseGroupMbid) {
+            return;
+        }
+
+        db.prepare(`
+            UPDATE Albums SET
+                review_text = ?,
+                review_source = COALESCE(NULLIF(?, ''), review_source),
+                review_last_updated = COALESCE(NULLIF(?, ''), review_last_updated),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE mbid = ?
+        `).run(
+            input.reviewText,
+            textOrNull(input.reviewSource),
+            textOrNull(input.reviewLastUpdated),
+            releaseGroupMbid,
+        );
+    }
+
+    private static storeCanonicalTrackSupplements(recordingId: number | null | undefined, track: any): void {
+        if (!recordingId) {
+            return;
+        }
+
+        db.prepare(`
+            UPDATE Recordings SET
+                copyright = COALESCE(NULLIF(?, ''), copyright),
+                popularity = COALESCE(?, popularity),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(
+            textOrNull(track?.copyright),
+            positiveNumberOrNull(track?.popularity),
+            recordingId,
+        );
+    }
+
+    private static storeCanonicalTrackCredits(providerId: string, trackProviderId: string, credits: unknown): void {
+        const serializedCredits = JSON.stringify(credits);
+        db.prepare(`
+            UPDATE Recordings SET
+                credits = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = (
+                SELECT recording_id
+                FROM ProviderItems
+                WHERE provider = ?
+                  AND entity_type = 'track'
+                  AND provider_id = ?
+                  AND recording_id IS NOT NULL
+                LIMIT 1
+            )
+               OR mbid = (
+                SELECT recording_mbid
+                FROM ProviderItems
+                WHERE provider = ?
+                  AND entity_type = 'track'
+                  AND provider_id = ?
+                  AND recording_mbid IS NOT NULL
+                LIMIT 1
+            )
+        `).run(serializedCredits, providerId, trackProviderId, providerId, trackProviderId);
+    }
+
     private static resolveProviderForAlbum(albumId: string): any {
         const itemRow = db.prepare(`
             SELECT provider
@@ -380,6 +542,12 @@ export class RefreshAlbumService {
         }
 
         await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, includeTracks: false });
+        const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+        this.storeCanonicalAlbumSupplements({
+            releaseGroupMbid: canonicalLink.releaseGroupMbid,
+            releaseMbid: canonicalLink.releaseMbid,
+            album: albumData,
+        });
 
         const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
         const similarAlbums = includeSimilar
@@ -443,19 +611,34 @@ export class RefreshAlbumService {
             try {
                 const provider = this.resolveProviderForAlbum(albumId);
                 const reviewText = await provider.getAlbumReview?.(albumId);
+                const reviewLastUpdated = new Date().toISOString();
 
                 if (reviewText !== null && reviewText !== undefined) {
                     db.prepare(`
                         UPDATE ProviderAlbums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
-                    `).run(reviewText ?? "", provider.id, new Date().toISOString(), albumId);
+                    `).run(reviewText ?? "", provider.id, reviewLastUpdated, albumId);
+                    const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+                    this.storeCanonicalAlbumReview({
+                        releaseGroupMbid: canonicalLink.releaseGroupMbid,
+                        reviewText: reviewText ?? "",
+                        reviewSource: provider.id,
+                        reviewLastUpdated,
+                    });
                 } else if (options.forceUpdate === true || existing?.review_text == null) {
                     db.prepare(`
                         UPDATE ProviderAlbums
                         SET review_text = ?, review_source = ?, review_last_updated = ?
                         WHERE id = ?
-                    `).run("", provider.id, new Date().toISOString(), albumId);
+                    `).run("", provider.id, reviewLastUpdated, albumId);
+                    const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+                    this.storeCanonicalAlbumReview({
+                        releaseGroupMbid: canonicalLink.releaseGroupMbid,
+                        reviewText: "",
+                        reviewSource: provider.id,
+                        reviewLastUpdated,
+                    });
                 }
             } catch (error) {
                 console.warn(`[RefreshAlbumService] Failed to fetch review for album ${albumId}:`, error);
@@ -499,6 +682,7 @@ export class RefreshAlbumService {
                 db.transaction(() => {
                     for (const [trackId, credits] of trackCreditsMap) {
                         updateTrackCredits.run(JSON.stringify(credits), trackId, albumId);
+                        this.storeCanonicalTrackCredits(provider.id, String(trackId), credits);
                     }
                 })();
             }
@@ -786,6 +970,7 @@ export class RefreshAlbumService {
                                 popularity: currentTrack.popularity || null,
                             }),
                         );
+                        this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
 
                         this.storeTrackArtists(currentTrack, currentTrackArtistId, resolvedGuestsMap);
                     }
@@ -1040,10 +1225,24 @@ export class RefreshAlbumService {
             releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
             JSON.stringify({
                 cover: album.cover || album.image_id || album.imageId || null,
+                vibrant_color: album.vibrant_color || album.vibrantColor || null,
+                video_cover: album.video_cover || album.videoCover || null,
+                num_tracks: album.num_tracks || album.trackCount || null,
+                num_volumes: album.num_volumes || album.volumeCount || null,
+                num_videos: album.num_videos || album.videoCount || null,
+                copyright: album.copyright || null,
+                popularity: album.popularity || null,
+                upc: album.upc || null,
                 explicit: album.explicit == null ? null : Boolean(album.explicit),
                 quality: album.quality || null,
             }),
         );
+
+        this.storeCanonicalAlbumSupplements({
+            releaseGroupMbid: matchedReleaseGroup?.mbid || null,
+            releaseMbid: matchedReleaseMbid,
+            album,
+        });
 
         if (options.resolveMusicBrainz === false) {
             db.prepare(`

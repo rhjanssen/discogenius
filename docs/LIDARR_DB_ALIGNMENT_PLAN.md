@@ -235,6 +235,18 @@ legacy writes can be removed:
 4. Only then delete the legacy `ProviderAlbums`/`ProviderMedia` INSERT/UPDATE and
    their internal SELECTs.
 
+**Progress (2026-06-18, continued):** v24 adds canonical provider-supplement
+columns (`Albums.cover_image_id`/`vibrant_color`/`video_cover`/`popularity`/
+review fields, `AlbumReleases.copyright`, `Recordings.copyright`/`popularity`/
+`credits`). `refresh-album-service` now mirrors album/release/track provider
+supplements into those canonical rows while keeping the legacy compatibility
+`ProviderAlbums`/`ProviderMedia` writes. `metadata-files`,
+`library-metadata-backfill`, and `audio-tag-service` now prefer those canonical
+supplement values before falling back to `ProviderItems.data` or legacy rows.
+Regressions cover canonical album/release supplement homing, canonical recording
+copyright/popularity, NFO review fallback from `Albums.review_text`, and audio
+tags from canonical review/copyright with zero legacy provider rows.
+
 Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
 `ProviderItems`-only), the **upgrade subsystem** (`upgrade_queue` stores legacy
 `media_id`/`album_id`; re-key to `recording_id`/canonical), and
@@ -334,7 +346,8 @@ Remaining order:
 2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
    original plan called "keystones" were dead code (zero imports) and have been
    deleted; the active write SQL is inline in the services. Cut over
-   `refresh-album-service`, `import-service`, `manual-import-service`,
+   `refresh-album-service` (supplement-field homing started; legacy compatibility
+   writes still present), `import-service`, `manual-import-service`,
    `organizer`, `audio-tag-service`, `library-scan`, `metadata-identity-service`,
    `version-grouper`, `module-fixer` to write canonical + `ProviderItems`.
 3. **Phase 4 — housekeeping.** Repoint/retire `repairMonitoringGaps` +

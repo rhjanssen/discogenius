@@ -254,7 +254,7 @@ class LibraryMetadataBackfillService {
                 version: albumData.version || null,
                 release_date: canonicalAlbum?.releaseDate || albumData.release_date || null,
                 num_volumes: canonicalAlbum?.volumeCount || albumData.num_volumes || 1,
-                video_cover: albumData.video_cover || null,
+                video_cover: canonicalAlbum?.videoCover || albumData.video_cover || null,
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,
                 mb_release_group_id: canonicalReleaseGroupMbid,

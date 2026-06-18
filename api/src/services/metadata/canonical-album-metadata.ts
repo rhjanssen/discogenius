@@ -6,6 +6,12 @@ export type CanonicalAlbumMetadata = {
   albumType: string | null;
   albumMbid: string | null;
   volumeCount: number | null;
+  coverImageId: string | null;
+  vibrantColor: string | null;
+  videoCover: string | null;
+  popularity: number | null;
+  reviewText: string | null;
+  copyright: string | null;
 };
 
 export function getCanonicalAlbumMetadata(input: {
@@ -24,7 +30,13 @@ export function getCanonicalAlbumMetadata(input: {
       release.date AS release_date,
       release_group.primary_type AS album_type,
       release.mbid AS album_mbid,
-      release.media_count AS volume_count
+      release.media_count AS volume_count,
+      release_group.cover_image_id AS cover_image_id,
+      release_group.vibrant_color AS vibrant_color,
+      release_group.video_cover AS video_cover,
+      release_group.popularity AS popularity,
+      release_group.review_text AS review_text,
+      release.copyright AS copyright
     FROM Albums release_group
     LEFT JOIN AlbumReleases release
       ON release.release_group_mbid = release_group.mbid
@@ -37,6 +49,12 @@ export function getCanonicalAlbumMetadata(input: {
     album_type: string | null;
     album_mbid: string | null;
     volume_count: number | null;
+    cover_image_id: string | null;
+    vibrant_color: string | null;
+    video_cover: string | null;
+    popularity: number | null;
+    review_text: string | null;
+    copyright: string | null;
   } | undefined;
 
   if (!row?.title) {
@@ -49,5 +67,11 @@ export function getCanonicalAlbumMetadata(input: {
     albumType: row.album_type || null,
     albumMbid: row.album_mbid || null,
     volumeCount: row.volume_count || null,
+    coverImageId: row.cover_image_id || null,
+    vibrantColor: row.vibrant_color || null,
+    videoCover: row.video_cover || null,
+    popularity: row.popularity || null,
+    reviewText: row.review_text || null,
+    copyright: row.copyright || null,
   };
 }
