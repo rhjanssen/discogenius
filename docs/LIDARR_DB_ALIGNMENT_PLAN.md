@@ -186,6 +186,32 @@ model. Applied so far:
 Large. ~25 files per legacy table, concentrated in mediafiles. Realistically
 3–5 focused sessions (one per phase). Phases 1–3 are the bulk; 4–5 are cleanup.
 
+## 6b. TrackFiles linkage = canonical integer FKs (Robert's decision, 2026-06-18)
+
+Local files link **directly to the canonical graph via integer FKs** (Lidarr-style),
+not by mbid-join and not through `ProviderItems`:
+- `TrackFiles.release_group_id → Albums.id`, `album_release_id → AlbumReleases.id`,
+  `track_id → Tracks.id`, `recording_id → Recordings.id`.
+- `recording_id` cleanly covers **mbid-less provider videos** (points straight at
+  their `Recordings` row), retiring the `provider_id→ProviderItems→recording_id`
+  read workaround.
+- `canonical_*_mbid` columns stay as denormalized convenience (and the dedupe key);
+  legacy `media_id`/`album_id` are dropped once readers/writers are off them.
+
+**Foundation shipped (additive, green):** v23 migration + base schema add the four
+FK columns and backfill them (from canonical mbids; videos from the video
+`ProviderItems` offer); `runtime-maintenance.backfillTrackFileForeignKeys` keeps
+them current. **Remaining for the pivot:** (1) populate the FKs at write time in
+`upsertLibraryFile`/import finalize (immediate, not just housekeeping); (2) convert
+the readers from mbid-joins to FK-joins (`library-files`, `library-files-query`,
+`metadata-files`, `library-metadata-backfill`, `rename`, `lyric`, `audio-tag`,
+`organizer`, query-services); (3) subtract legacy writes; (4) numbered migration
+dropping `media_id`/legacy `album_id` + the legacy provider tables; (5) migrate
+test seeds and validate via a from-scratch rebuild (Bastille + Bakermat).
+
+Similar-artists feature already removed (provider-exclusive, no MB equivalent — see
+§3b); that retires `ProviderSimilarArtists`/`ProviderSimilarAlbums` from the drop set.
+
 ## 7. Phase 0 inventory (read/write map) — done
 
 Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
