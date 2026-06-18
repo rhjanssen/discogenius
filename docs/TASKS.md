@@ -86,7 +86,9 @@ Docker runtime image.
   `Albums.first_release_date` and `ProviderItems.updated_at` instead of legacy
   provider release/scan columns; `providers/tidal/tidal-provider` now falls back
   to canonical `ProviderItems` for album download-progress track lists instead
-  of `ProviderMedia`. **Remaining:** other read paths still join
+  of `ProviderMedia`; `import-matcher-service` now resolves fingerprint album
+  candidates from canonical `TrackFiles` identity + `ProviderItems` instead of
+  joining `ProviderMedia`. **Remaining:** other read paths still join
   `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (lyrics, audio-tag, organizer, metadata-backfill, rename); the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled

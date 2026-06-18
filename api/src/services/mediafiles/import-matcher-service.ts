@@ -413,13 +413,52 @@ export class ImportMatcherService {
 
         const placeholders = fingerprints.map(() => "?").join(", ");
         const rows = db.prepare(`
-            SELECT COALESCE(m.album_id, lf.album_id) AS album_id, COUNT(*) AS matched_files
-            FROM TrackFiles lf
-            LEFT JOIN ProviderMedia m ON m.id = lf.media_id
-            WHERE lf.file_type = 'track'
-              AND lf.fingerprint IN (${placeholders})
-              AND COALESCE(m.album_id, lf.album_id) IS NOT NULL
-            GROUP BY COALESCE(m.album_id, lf.album_id)
+            SELECT album_id, COUNT(*) AS matched_files
+            FROM (
+                SELECT COALESCE(
+                    (
+                        SELECT album_item.provider_id
+                        FROM ProviderItems album_item
+                        WHERE album_item.entity_type = 'album'
+                          AND (lf.provider IS NULL OR album_item.provider = lf.provider)
+                          AND (
+                            (lf.album_id IS NOT NULL AND album_item.provider_id = lf.album_id)
+                            OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
+                            OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
+                          )
+                        ORDER BY
+                          album_item.updated_at DESC
+                        LIMIT 1
+                    ),
+                    (
+                        SELECT album_item.provider_id
+                        FROM ProviderItems track_item
+                        JOIN ProviderItems album_item
+                          ON album_item.provider = track_item.provider
+                         AND album_item.entity_type = 'album'
+                         AND (
+                           (track_item.release_mbid IS NOT NULL AND album_item.release_mbid = track_item.release_mbid)
+                           OR (track_item.release_group_mbid IS NOT NULL AND album_item.release_group_mbid = track_item.release_group_mbid)
+                         )
+                        WHERE track_item.entity_type = 'track'
+                          AND (lf.provider IS NULL OR track_item.provider = lf.provider)
+                          AND (
+                            (lf.media_id IS NOT NULL AND track_item.provider_id = lf.media_id)
+                            OR (lf.canonical_track_mbid IS NOT NULL AND track_item.track_mbid = lf.canonical_track_mbid)
+                            OR (lf.canonical_recording_mbid IS NOT NULL AND track_item.recording_mbid = lf.canonical_recording_mbid)
+                          )
+                        ORDER BY
+                          track_item.updated_at DESC
+                        LIMIT 1
+                    ),
+                    lf.album_id
+                ) AS album_id
+                FROM TrackFiles lf
+                WHERE lf.file_type = 'track'
+                  AND lf.fingerprint IN (${placeholders})
+            ) matched
+            WHERE album_id IS NOT NULL
+            GROUP BY album_id
             ORDER BY matched_files DESC
         `).all(...fingerprints) as Array<{ album_id: string; matched_files: number }>;
 

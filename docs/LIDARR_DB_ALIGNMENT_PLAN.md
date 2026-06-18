@@ -257,3 +257,8 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   `ProviderItems` instead of `ProviderMedia`. Regression:
   `tidal-provider-canonical.test.ts` covers provider-only album/track items with
   zero legacy provider rows.
+- ✅ **`import-matcher-service` fingerprint candidate cutover** — fingerprinted
+  local files now resolve candidate album provider ids through canonical
+  `TrackFiles` MBIDs plus album/track `ProviderItems` instead of joining
+  `ProviderMedia`. Regression: `import-matcher-service.test.ts` covers a
+  canonical-only fingerprint match with zero legacy provider rows.
