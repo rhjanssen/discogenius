@@ -324,7 +324,11 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "MetadataFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
+                 NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+                 file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
+                 provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
+                 NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM MetadataFiles
           WHERE id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -333,7 +337,11 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "ExtraFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot, NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
+                 NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+                 file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
+                 provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
+                 NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM ExtraFiles
           WHERE id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -344,7 +352,9 @@ export class RenameTrackFileService {
         const row = db.prepare(`
           SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
                  canonical_artist_mbid AS canonical_artist_mbid, canonical_release_group_mbid AS canonical_release_group_mbid, canonical_release_mbid AS canonical_release_mbid, canonical_track_mbid AS canonical_track_mbid, canonical_recording_mbid AS canonical_recording_mbid,
-                 file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, extension AS extension, library_slot AS library_slot, Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
+                 file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, extension AS extension, library_slot AS library_slot,
+                 provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
+                 Quality AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
           FROM LyricFiles
           WHERE id = ?
         `).get(decoded.id) as RenameLibraryFileRow | undefined;
@@ -609,32 +619,48 @@ export class RenameTrackFileService {
     }
 
     const tracks = db.prepare(`
-      SELECT tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality, tf.file_type,
-             pa.title AS album_title, pm.title AS track_title
+      SELECT tf.id, tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality, tf.file_type,
+             tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
+             tf.canonical_track_mbid, tf.canonical_recording_mbid,
+             tf.provider, tf.provider_entity_type, tf.provider_id
       FROM TrackFiles tf
-      JOIN ProviderAlbums pa ON pa.id = tf.album_id
-      JOIN ProviderMedia pm ON pm.id = tf.media_id
       WHERE tf.file_type IN ('track', 'video')
         AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
     `).all() as Array<{
+      id: number;
       artist_id: string;
-      album_id: string;
-      media_id: string;
+      album_id: string | null;
+      media_id: string | null;
       library_slot: "stereo" | "spatial" | null;
       file_type: string;
       quality: string | null;
-      album_title: string;
-      track_title: string;
+      canonical_artist_mbid: string | null;
+      canonical_release_group_mbid: string | null;
+      canonical_release_mbid: string | null;
+      canonical_track_mbid: string | null;
+      canonical_recording_mbid: string | null;
+      provider: string | null;
+      provider_entity_type: string | null;
+      provider_id: string | null;
     }>;
 
     const copyTrackedAsset = (source: any, target: {
       artistId: string;
       albumId?: string | null;
       mediaId?: string | null;
+      trackFileId?: number | null;
       librarySlot?: "stereo" | "spatial" | string | null;
       libraryRoot: string;
       quality?: string | null;
       fileType: string;
+      canonicalArtistMbid?: string | null;
+      canonicalReleaseGroupMbid?: string | null;
+      canonicalReleaseMbid?: string | null;
+      canonicalTrackMbid?: string | null;
+      canonicalRecordingMbid?: string | null;
+      provider?: string | null;
+      providerEntityType?: string | null;
+      providerId?: string | null;
     }) => {
       const sourcePath = resolveStoredLibraryPath({
         filePath: source.file_path,
@@ -655,6 +681,14 @@ export class RenameTrackFileService {
         file_type: target.fileType,
         extension: source.extension || path.extname(sourcePath).replace(".", ""),
         quality: target.quality || null,
+        canonical_artist_mbid: target.canonicalArtistMbid || null,
+        canonical_release_group_mbid: target.canonicalReleaseGroupMbid || null,
+        canonical_release_mbid: target.canonicalReleaseMbid || null,
+        canonical_track_mbid: target.canonicalTrackMbid || null,
+        canonical_recording_mbid: target.canonicalRecordingMbid || null,
+        provider: target.provider || null,
+        provider_entity_type: target.providerEntityType || null,
+        provider_id: target.providerId || null,
       }).expectedPath;
       if (!expectedPath) return;
 
@@ -666,11 +700,20 @@ export class RenameTrackFileService {
         artistId: target.artistId,
         albumId: target.albumId,
         mediaId: target.mediaId,
+        trackFileId: target.trackFileId,
         filePath: expectedPath,
         libraryRoot: target.libraryRoot,
         fileType: target.fileType,
         quality: target.quality,
         librarySlot: target.librarySlot,
+        canonicalArtistMbid: target.canonicalArtistMbid,
+        canonicalReleaseGroupMbid: target.canonicalReleaseGroupMbid,
+        canonicalReleaseMbid: target.canonicalReleaseMbid,
+        canonicalTrackMbid: target.canonicalTrackMbid,
+        canonicalRecordingMbid: target.canonicalRecordingMbid,
+        provider: target.provider,
+        providerEntityType: target.providerEntityType,
+        providerId: target.providerId,
       });
     };
 
@@ -689,16 +732,31 @@ export class RenameTrackFileService {
           librarySlot: track.library_slot,
           libraryRoot: targetRoot,
           fileType: asset.file_type,
+          canonicalArtistMbid: track.canonical_artist_mbid,
         });
       }
 
       const albumAssets = db.prepare(`
         SELECT mf.*
         FROM MetadataFiles mf
-        JOIN ProviderAlbums pa ON pa.id = mf.album_id
+        LEFT JOIN ProviderItems album_item
+          ON album_item.entity_type = 'album'
+         AND (mf.provider IS NULL OR album_item.provider = mf.provider)
+         AND CAST(album_item.provider_id AS TEXT) = CAST(COALESCE(mf.provider_id, mf.album_id) AS TEXT)
         WHERE mf.artist_id = ? AND mf.album_id IS NOT NULL AND mf.media_id IS NULL
-          AND mf.file_type IN ('cover', 'nfo') AND pa.title = ?
-      `).all(track.artist_id, track.album_title) as any[];
+          AND mf.file_type IN ('cover', 'nfo')
+          AND (
+            (? IS NOT NULL AND album_item.release_group_mbid = ?)
+            OR (? IS NULL AND ? IS NOT NULL AND CAST(mf.album_id AS TEXT) = CAST(? AS TEXT))
+          )
+      `).all(
+        track.artist_id,
+        track.canonical_release_group_mbid,
+        track.canonical_release_group_mbid,
+        track.canonical_release_group_mbid,
+        track.album_id,
+        track.album_id,
+      ) as any[];
       for (const asset of albumAssets) {
         copyTrackedAsset(asset, {
           artistId: track.artist_id,
@@ -706,24 +764,69 @@ export class RenameTrackFileService {
           librarySlot: track.library_slot,
           libraryRoot: targetRoot,
           fileType: asset.file_type,
+          canonicalArtistMbid: track.canonical_artist_mbid,
+          canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
+          canonicalReleaseMbid: track.canonical_release_mbid,
+          provider: asset.provider || track.provider || null,
+          providerEntityType: (track.album_id || asset.provider_id) ? "album" : (asset.provider_entity_type || null),
+          providerId: track.album_id || asset.provider_id || null,
         });
       }
 
       const lyrics = db.prepare(`
         SELECT lf.*
         FROM LyricFiles lf
-        JOIN ProviderMedia pm ON pm.id = lf.media_id
-        WHERE lf.artist_id = ? AND pm.title = ?
-      `).all(track.artist_id, track.track_title) as any[];
+        LEFT JOIN ProviderItems lyric_item
+          ON lyric_item.entity_type = 'track'
+         AND (lf.provider IS NULL OR lyric_item.provider = lf.provider)
+         AND CAST(lyric_item.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+        WHERE lf.artist_id = ?
+          AND (
+            (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
+            OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
+            OR (? IS NOT NULL AND lyric_item.recording_mbid = ?)
+            OR (? IS NOT NULL AND lyric_item.track_mbid = ?)
+            OR (
+              ? IS NULL AND ? IS NULL
+              AND ? IS NOT NULL
+              AND CAST(lf.media_id AS TEXT) = CAST(? AS TEXT)
+            )
+          )
+      `).all(
+        track.artist_id,
+        track.canonical_recording_mbid,
+        track.canonical_recording_mbid,
+        track.canonical_track_mbid,
+        track.canonical_track_mbid,
+        track.canonical_recording_mbid,
+        track.canonical_recording_mbid,
+        track.canonical_track_mbid,
+        track.canonical_track_mbid,
+        track.canonical_recording_mbid,
+        track.canonical_track_mbid,
+        track.media_id,
+        track.media_id,
+      ) as any[];
       for (const lyric of lyrics) {
         copyTrackedAsset(lyric, {
           artistId: track.artist_id,
           albumId: track.album_id,
           mediaId: track.media_id,
+          trackFileId: track.id,
           librarySlot: track.library_slot,
           libraryRoot: targetRoot,
           quality: track.quality,
           fileType: "lyrics",
+          canonicalArtistMbid: track.canonical_artist_mbid,
+          canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
+          canonicalReleaseMbid: track.canonical_release_mbid,
+          canonicalTrackMbid: track.canonical_track_mbid,
+          canonicalRecordingMbid: track.canonical_recording_mbid,
+          provider: track.provider || lyric.provider || null,
+          providerEntityType: (track.provider_id || track.media_id || lyric.provider_id)
+            ? (track.provider_entity_type === "track" ? "track" : (lyric.provider_entity_type || "track"))
+            : (lyric.provider_entity_type || null),
+          providerId: track.provider_id || track.media_id || lyric.provider_id || null,
         });
       }
     }

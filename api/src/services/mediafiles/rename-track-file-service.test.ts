@@ -96,6 +96,70 @@ function seedTrackedFile() {
   };
 }
 
+function seedCanonicalGraph(options: { albumTitle?: string; trackTitle?: string } = {}) {
+  const albumTitle = options.albumTitle || "Canonical Album";
+  const trackTitle = options.trackTitle || "Canonical Song";
+
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitored)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (foreign_artist_id, mbid, name)
+    VALUES (?, ?, ?)
+  `).run("artist-mbid-1", "artist-mbid-1", "Artist One");
+
+  dbModule.db.prepare(`
+    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Album", "2024-03-01");
+
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
+
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?)
+  `).run("recording-mbid-1", "recording-mbid-1", "artist-mbid-1", trackTitle);
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", trackTitle);
+}
+
+function upsertCanonicalAudioFile(input: {
+  filePath: string;
+  libraryRoot: string;
+  librarySlot: "stereo" | "spatial";
+  quality?: string | null;
+  albumId?: string | null;
+  mediaId?: string | null;
+  providerId?: string | null;
+}) {
+  return libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: input.albumId || null,
+    mediaId: input.mediaId || null,
+    filePath: input.filePath,
+    libraryRoot: input.libraryRoot,
+    fileType: "track",
+    quality: input.quality || "LOSSLESS",
+    librarySlot: input.librarySlot,
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalReleaseGroupMbid: "release-group-mbid-1",
+    canonicalReleaseMbid: "release-mbid-1",
+    canonicalTrackMbid: "track-mbid-1",
+    canonicalRecordingMbid: "recording-mbid-1",
+    provider: input.providerId ? "tidal" : null,
+    providerEntityType: input.providerId ? "track" : null,
+    providerId: input.providerId || null,
+  });
+}
+
 before(async () => {
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
@@ -114,6 +178,9 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM history_events").run();
+  db.prepare("DELETE FROM MetadataFiles").run();
+  db.prepare("DELETE FROM LyricFiles").run();
+  db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
@@ -430,4 +497,191 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
   assert.equal(trackedFile.providerEntityType, "video");
   assert.equal(trackedFile.providerId, "tidal-video-123");
   assert.equal(trackedFile.mediaId, null);
+});
+
+test("RenameTrackFileService replicates canonical lyrics across separated roots without provider catalog rows", () => {
+  seedCanonicalGraph();
+
+  const musicRoot = configModule.Config.getMusicPath();
+  const spatialRoot = configModule.Config.getSpatialPath();
+  const sourceTrackPath = path.join(musicRoot, "Artist One", "Imports", "canonical-song.flac");
+  const expectedMusicTrackPath = path.join(musicRoot, "Artist One", "Canonical Album", "01 - Canonical Song.flac");
+  const spatialTrackPath = path.join(spatialRoot, "Artist One", "Canonical Album", "01 - Canonical Song.flac");
+  const sourceLyricPath = path.join(musicRoot, "Artist One", "Canonical Album", "01 - Canonical Song.lrc");
+  const expectedSpatialLyricPath = path.join(spatialRoot, "Artist One", "Canonical Album", "01 - Canonical Song.lrc");
+
+  fs.mkdirSync(path.dirname(sourceTrackPath), { recursive: true });
+  fs.writeFileSync(sourceTrackPath, "test-audio");
+  fs.mkdirSync(path.dirname(sourceLyricPath), { recursive: true });
+  fs.writeFileSync(sourceLyricPath, "[00:00.00]Canonical lyric");
+
+  upsertCanonicalAudioFile({
+    filePath: sourceTrackPath,
+    libraryRoot: musicRoot,
+    librarySlot: "stereo",
+  });
+  upsertCanonicalAudioFile({
+    filePath: spatialTrackPath,
+    libraryRoot: spatialRoot,
+    librarySlot: "spatial",
+    quality: "DOLBY_ATMOS",
+  });
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: null,
+    mediaId: null,
+    filePath: sourceLyricPath,
+    libraryRoot: musicRoot,
+    fileType: "lyrics",
+    quality: "LOSSLESS",
+    librarySlot: "stereo",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalReleaseGroupMbid: "release-group-mbid-1",
+    canonicalReleaseMbid: "release-mbid-1",
+    canonicalTrackMbid: "track-mbid-1",
+    canonicalRecordingMbid: "recording-mbid-1",
+  });
+
+  const providerAlbumCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number };
+  const providerMediaCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number };
+  assert.equal(providerAlbumCount.count, 0);
+  assert.equal(providerMediaCount.count, 0);
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(expectedMusicTrackPath), true);
+  assert.equal(fs.existsSync(expectedSpatialLyricPath), true);
+  assert.equal(fs.readFileSync(expectedSpatialLyricPath, "utf8"), "[00:00.00]Canonical lyric");
+
+  const replicatedLyric = dbModule.db.prepare(`
+    SELECT album_id AS albumId, media_id AS mediaId, track_file_id AS trackFileId,
+           canonical_track_mbid AS canonicalTrackMbid,
+           canonical_recording_mbid AS canonicalRecordingMbid,
+           library_slot AS librarySlot
+    FROM LyricFiles
+    WHERE file_path = ?
+  `).get(expectedSpatialLyricPath) as {
+    albumId: string | null;
+    mediaId: string | null;
+    trackFileId: number | null;
+    canonicalTrackMbid: string | null;
+    canonicalRecordingMbid: string | null;
+    librarySlot: string;
+  };
+
+  assert.equal(replicatedLyric.albumId, null);
+  assert.equal(replicatedLyric.mediaId, null);
+  assert.equal(replicatedLyric.canonicalTrackMbid, "track-mbid-1");
+  assert.equal(replicatedLyric.canonicalRecordingMbid, "recording-mbid-1");
+  assert.equal(replicatedLyric.librarySlot, "spatial");
+  assert.ok(replicatedLyric.trackFileId);
+});
+
+test("RenameTrackFileService replicates album sidecars by ProviderItems release group, not provider titles", () => {
+  seedCanonicalGraph();
+
+  const musicRoot = configModule.Config.getMusicPath();
+  const spatialRoot = configModule.Config.getSpatialPath();
+  const sourceTrackPath = path.join(musicRoot, "Artist One", "Imports", "canonical-song.flac");
+  const spatialTrackPath = path.join(spatialRoot, "Artist One", "Canonical Album", "01 - Canonical Song.flac");
+  const sourceCoverPath = path.join(musicRoot, "Artist One", "Canonical Album", "cover.jpg");
+  const expectedSpatialCoverPath = path.join(spatialRoot, "Artist One", "Canonical Album", "cover.jpg");
+
+  fs.mkdirSync(path.dirname(sourceTrackPath), { recursive: true });
+  fs.writeFileSync(sourceTrackPath, "test-audio");
+  fs.mkdirSync(path.dirname(sourceCoverPath), { recursive: true });
+  fs.writeFileSync(sourceCoverPath, "cover-bytes");
+
+  // Legacy rows exist only for TrackFiles foreign keys and deliberately have
+  // different titles. Replication should use ProviderItems release-group links.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAlbums (
+      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "10", "1", "Legacy Stereo Title", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1,
+    "20", "1", "Legacy Spatial Title", "ALBUM", 0, "DOLBY_ATMOS", 1, 1, 0, 180, 1,
+  );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderMedia (
+      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "100", "1", "10", "Legacy Stereo Track", "Track", 0, "LOSSLESS", 1, 1, 180, 1,
+    "200", "1", "20", "Legacy Spatial Track", "Track", 0, "DOLBY_ATMOS", 1, 1, 180, 1,
+  );
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
+    VALUES
+      ('tidal', 'album', '10', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1', '10', 'Canonical Album', 'LOSSLESS', 'stereo'),
+      ('tidal', 'album', '20', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1', '20', 'Canonical Album', 'DOLBY_ATMOS', 'spatial')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES
+      ('tidal', 'track', '100', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Canonical Song', 'LOSSLESS', 'stereo'),
+      ('tidal', 'track', '200', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '20', 'Canonical Song', 'DOLBY_ATMOS', 'spatial')
+  `).run();
+
+  upsertCanonicalAudioFile({
+    filePath: sourceTrackPath,
+    libraryRoot: musicRoot,
+    librarySlot: "stereo",
+    albumId: "10",
+    mediaId: "100",
+    providerId: "100",
+  });
+  upsertCanonicalAudioFile({
+    filePath: spatialTrackPath,
+    libraryRoot: spatialRoot,
+    librarySlot: "spatial",
+    quality: "DOLBY_ATMOS",
+    albumId: "20",
+    mediaId: "200",
+    providerId: "200",
+  });
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: null,
+    filePath: sourceCoverPath,
+    libraryRoot: musicRoot,
+    fileType: "cover",
+    librarySlot: "stereo",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalReleaseGroupMbid: "release-group-mbid-1",
+    canonicalReleaseMbid: "release-mbid-1",
+    provider: "tidal",
+    providerEntityType: "album",
+    providerId: "10",
+  });
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
+
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(expectedSpatialCoverPath), true);
+  assert.equal(fs.readFileSync(expectedSpatialCoverPath, "utf8"), "cover-bytes");
+
+  const replicatedCover = dbModule.db.prepare(`
+    SELECT album_id AS albumId, media_id AS mediaId, provider, provider_entity_type AS providerEntityType,
+           provider_id AS providerId, library_slot AS librarySlot
+    FROM MetadataFiles
+    WHERE file_path = ?
+  `).get(expectedSpatialCoverPath) as {
+    albumId: string | null;
+    mediaId: string | null;
+    provider: string | null;
+    providerEntityType: string | null;
+    providerId: string | null;
+    librarySlot: string;
+  };
+
+  assert.equal(replicatedCover.albumId, "20");
+  assert.equal(replicatedCover.mediaId, null);
+  assert.equal(replicatedCover.provider, "tidal");
+  assert.equal(replicatedCover.providerEntityType, "album");
+  assert.equal(replicatedCover.providerId, "20");
+  assert.equal(replicatedCover.librarySlot, "spatial");
 });

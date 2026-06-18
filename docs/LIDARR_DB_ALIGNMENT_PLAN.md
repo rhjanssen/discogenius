@@ -295,9 +295,9 @@ libraries before flipping reads.
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Remaining read-path lookups (`lyric`, `audio-tag`, organizer,
-    metadata-backfill, rename) still join `TrackFiles.media_id → ProviderMedia →
-    ProviderAlbums`; these move in Phase 2.
+  - Remaining read-path lookups (`lyric`, `audio-tag`, organizer, quality,
+    upgrader, and the final file-identity fallback) still touch legacy provider
+    tables; these move in Phase 2 or the final pre-Phase-5 cleanup.
 
 Keep `media_id`/`album_id` as shadow columns until Phase 5.
 
@@ -357,3 +357,11 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   through `lyric-service.ts` and is tracked with the lyric fallback cleanup.
   Regression: `metadata-files.test.ts` covers canonical-only album/video NFO
   fallback with zero legacy provider rows.
+- ✅ **`rename-track-file-service` sidecar replication cutover** — separated-root
+  sidecar replication no longer joins through legacy provider album/track titles.
+  Album sidecars are matched by canonical release group via album
+  `ProviderItems`, lyrics are matched by canonical track/recording identity, and
+  direct sidecar rename applies now fetch provider/canonical fields consistently.
+  Regression: `rename-track-file-service.test.ts` covers canonical-only lyric
+  replication with zero legacy provider rows and album cover replication where
+  legacy provider titles intentionally disagree.
