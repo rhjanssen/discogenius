@@ -212,6 +212,38 @@ test seeds and validate via a from-scratch rebuild (Bastille + Bakermat).
 Similar-artists feature already removed (provider-exclusive, no MB equivalent — see
 §3b); that retires `ProviderSimilarArtists`/`ProviderSimilarAlbums` from the drop set.
 
+## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
+
+The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
+`import-service`, `manual-import`) already write `ProviderItems` (availability,
+with `track_id`/`recording_id`) **alongside** the legacy `ProviderAlbums`/
+`ProviderMedia`. So the legacy *writes* are redundant for identity/availability —
+**except** for provider *supplement* fields the legacy tables hold that
+`ProviderItems` does not: album `cover` (already in `ProviderItems.data`),
+`popularity`, `copyright`, `vibrant_color`, `video_cover`, `num_tracks/volumes/
+videos`, `upc`, `review_text`; and per-track `copyright`/credits.
+
+Per Robert's directive (§3b) these **supplement the canonical row**, so before the
+legacy writes can be removed:
+1. Decide each field's canonical home (add columns as needed): `cover`→`Albums`/
+   `Recordings.cover_image_id` (exists), `copyright`→`AlbumReleases`/`Recordings`,
+   `popularity`/`vibrant_color`/`video_cover`/`upc`/`review_text`→ canonical column
+   or `ProviderItems.data` if purely provider-flavour.
+2. Write them onto the canonical row during scan (`refresh-album-service`).
+3. Point the readers (`metadata-files`, `library-metadata-backfill`, NFO/cover
+   generation, `audio-tag`) at the canonical source.
+4. Only then delete the legacy `ProviderAlbums`/`ProviderMedia` INSERT/UPDATE and
+   their internal SELECTs.
+
+Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
+`ProviderItems`-only), the **upgrade subsystem** (`upgrade_queue` stores legacy
+`media_id`/`album_id`; re-key to `recording_id`/canonical), and
+`runtime-maintenance.repairMonitoringGaps` (→ Phase 4, `ReleaseGroupSlots`/
+`Recordings` monitored state). `version-grouper` is dead code (verify, then drop).
+
+This is the careful core of Phase 3 (artwork/NFO/scan correctness) and is the
+next focused session's work; rushing it risks breaking display/organization.
+
 ## 7. Phase 0 inventory (read/write map) — done
 
 Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
