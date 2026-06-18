@@ -66,6 +66,7 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 
 ## Database Rules
 - Never touch the host SQLite DB directly while the container is running. For ad-hoc inspection, run `docker exec discogenius sh -c 'node /tmp/x.js'` opening better-sqlite3 with `{readonly:true, fileMustExist:true}`.
+- **MusicBrainz/Skyhook is the canonical source of truth.** Providers exist only to (1) download media and (2) *supplement* holes in canonical columns (cover-art ids, a video's copyright) — populating the `Albums`/`AlbumReleases`/`Recordings`/`ArtistMetadata` row, never a parallel catalog table. There are no provider catalog tables (the 2.0.8 migration retires the legacy `Provider*` set); `ProviderItems` is availability/offers only, keyed to canonical mbids. If a feature is populated *exclusively* from provider data, re-source it from MB/Skyhook or remove it (e.g. similar-artists was removed — no MB equivalent, not a Lidarr feature). See `docs/LIDARR_DB_ALIGNMENT_PLAN.md` §3b.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).

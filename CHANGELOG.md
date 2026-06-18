@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [2.0.8] - Unreleased
 
+### Removed
+- **Similar-artists section removed.** It was populated exclusively from TIDAL's `getSimilarArtists` into legacy `ProviderSimilarArtists`; MusicBrainz/Skyhook has no similar-artist concept and Lidarr has no such section. Per the canonical-source-of-truth policy (providers download + supplement canonical columns only, never seed parallel catalogs/features), the artist-page "Similar Artists" module, its read (`artist-query-service`) and population (`refresh-artist-service`), and the `ProviderSimilarArtists`/`ProviderSimilarAlbums` tables were retired. Top-tracks stays (already MusicBrainz-driven). See `docs/LIDARR_DB_ALIGNMENT_PLAN.md` §3b.
+
 ### Changed
 - **DB alignment Phase 1 (TrackFiles canonical-first), foundational step:** housekeeping now runs a `backfillCanonicalTrackFiles` pass that resolves and COALESCE-fills the `canonical_*_mbid` columns for any `TrackFiles` row still relying on the legacy `media_id`/`album_id` provider linkage (NULL-only, never overwrites, idempotent). This closes canonical gaps on older/pre-canonical-column rows so file lookups/dedup can later switch off the legacy ids without orphaning files. New downloads/imports already populate these on write; a real-DB dry-run confirmed 0 orphan-risk and 100% canonical resolution. See `docs/LIDARR_DB_ALIGNMENT_PLAN.md`.
 - **Library-file dedupe is now canonical-aware:** the housekeeping dedupe runs a canonical pass keyed on `(canonical_recording_mbid, file_type, library_slot)` in addition to the legacy `(media_id, file_type)` pass — catching duplicate files of the same recording within a slot even when they carry different provider `media_id`s, while never merging a recording's stereo and spatial copies (library_slot is part of the key).

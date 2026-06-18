@@ -852,30 +852,9 @@ export class ArtistQueryService {
        `).all(artist.mbid, artist.mbid) as any[]
             : [];
 
-        let similarArtists: any[] = [];
-        try {
-            const similarRows = db.prepare(`
-        SELECT
-          a.mbid as id,
-          a.name,
-          a.picture,
-          COALESCE(a.popularity, 0) as popularity
-        FROM ProviderSimilarArtists sa
-        JOIN ArtistMetadata a ON sa.similar_artist_id = a.mbid
-        WHERE sa.artist_id = ?
-        ORDER BY COALESCE(a.popularity, 0) DESC, sa.created_at ASC, a.mbid ASC
-        LIMIT 10
-      `).all(artist.mbid || artistId) as any[];
-
-            similarArtists = similarRows.map((row) => ({
-                id: row.id,
-                name: row.name,
-                picture: row.picture,
-                popularity: row.popularity || 0,
-            }));
-        } catch {
-            similarArtists = [];
-        }
+        // Similar artists were a provider-exclusive feature (TIDAL's getSimilarArtists);
+        // MusicBrainz/Skyhook has no similar-artist concept and Lidarr has no such
+        // section, so the feature was removed during the provider-table retirement.
 
         const topTracks = db.prepare(`
       -- Drive from the artist's release groups (a small, indexed set) instead of
@@ -1086,16 +1065,6 @@ export class ArtistQueryService {
                         downloaded: video.is_downloaded ? 1 : 0,
                         is_downloaded: Boolean(video.is_downloaded),
                     })),
-                }],
-            });
-        }
-
-        if (similarArtists.length > 0) {
-            rows.push({
-                modules: [{
-                    type: "ARTIST_LIST",
-                    title: "Similar Artists",
-                    items: similarArtists,
                 }],
             });
         }

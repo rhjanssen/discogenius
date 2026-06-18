@@ -112,6 +112,34 @@ Once nothing reads or writes them: drop `ProviderAlbums`, `ProviderMedia`,
 columns, via a numbered schema migration (bump `user_version`). Keep a one-time
 data-migration guard so existing DBs backfill before the drop.
 
+## 3b. Provider-data policy (Robert, 2026-06-18) — governs every cutover decision
+
+MusicBrainz/Skyhook is the **canonical source of truth**; providers (TIDAL, future
+Apple Music) exist for exactly two things:
+
+1. **The download capability** MusicBrainz can't offer (the core feature).
+2. **Supplementing holes in the canonical tables** — provider data may *fill columns*
+   on `Albums`/`AlbumReleases`/`Recordings`/`ArtistMetadata` that MB/Skyhook lacks
+   (e.g. cover-art ids, a video's copyright string). It populates the canonical
+   row; it does **not** get its own catalog table.
+
+There are **no separate provider catalog tables** after this migration — that is the
+whole point. `ProviderItems` stays, but only as *availability/offer* rows keyed to
+canonical mbids (which provider can download what, at which quality/slot), never as a
+parallel catalog of titles/relationships.
+
+**When a feature is found to be populated *exclusively* from provider data, stop and
+decide:** can it be sourced from MusicBrainz/Skyhook instead? If yes, re-source it. If
+no, **remove the feature and its code** — Discogenius is a discography downloader
+(Lidarr-shaped); non-essential provider-only features are not worth a parallel data
+model. Applied so far:
+- **Similar artists** (`ProviderSimilarArtists`, TIDAL `getSimilarArtists`): no MB/
+  Skyhook equivalent, no Lidarr counterpart → **removed** (read in
+  `artist-query-service`, population in `refresh-artist-service`, the "Similar Artists"
+  artist-page module, and the `ProviderSimilarArtists`/`ProviderSimilarAlbums` tables).
+- **Top tracks**: already MB-driven (canonical `Tracks` scoped to the artist's release
+  groups) → **kept**.
+
 ## 4. Distinguishing features to PRESERVE (do not "align away")
 
 > **Video canonical-identity wrinkle (verified on real data, 2026-06-18).**

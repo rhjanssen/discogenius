@@ -1109,63 +1109,6 @@ export class RefreshArtistService {
         db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(nextPath, artistId);
     }
 
-    private static async storeSimilarArtists(artistId: string, forceUpdate = false): Promise<string[]> {
-        try {
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
-            const artistMbid = this.getArtistMusicBrainzId(artistId);
-            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
-            if (!providerArtistId || !artistMbid) {
-                return [];
-            }
-
-            const similarArtists = provider.getSimilarArtists
-                ? await provider.getSimilarArtists(providerArtistId)
-                : [];
-            const ids = new Set<string>();
-
-            const deleteRelations = db.prepare("DELETE FROM ProviderSimilarArtists WHERE artist_id = ?");
-            const insertRelation = db.prepare(`
-                INSERT OR IGNORE INTO ProviderSimilarArtists (artist_id, similar_artist_id)
-                VALUES (?, ?)
-            `);
-
-            deleteRelations.run(artistMbid);
-            for (const similarArtist of similarArtists || []) {
-                const providerIdentity = normalizeProviderArtist(similarArtist);
-                if (!providerIdentity.providerId || providerIdentity.providerId === providerArtistId) {
-                    continue;
-                }
-
-                const musicBrainzIdentity = await ProviderArtistIdentityService.resolve(provider.id, providerIdentity);
-                if (!musicBrainzIdentity.mbid) {
-                    ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, null);
-                    continue;
-                }
-
-                // Check if they exist in ArtistMetadata
-                const similarArtistExists = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(musicBrainzIdentity.mbid);
-                if (!similarArtistExists) {
-                    const pictureUrl = similarArtist.picture || null;
-                    db.prepare(`
-                        INSERT OR IGNORE INTO ArtistMetadata (mbid, name, picture, updated_at)
-                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                    `).run(musicBrainzIdentity.mbid, providerIdentity.name, pictureUrl);
-                }
-
-                ProviderArtistIdentityService.store(provider.id, providerIdentity, musicBrainzIdentity, musicBrainzIdentity.mbid);
-                if (musicBrainzIdentity.mbid && musicBrainzIdentity.mbid !== artistMbid) {
-                    ids.add(musicBrainzIdentity.mbid);
-                    insertRelation.run(artistMbid, musicBrainzIdentity.mbid);
-                }
-            }
-
-            return Array.from(ids);
-        } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to fetch/store similar artists for ${artistId}:`, error);
-            return [];
-        }
-    }
-
     static getScanLevel(artistId: string): ScanLevel {
         const artist = db.prepare(`
             SELECT id, name, bio_text, last_scanned, mbid
@@ -1304,32 +1247,6 @@ export class RefreshArtistService {
                         monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                     WHERE id = ?
                 `).run(shouldMonitorInt, shouldMonitorInt, artistId);
-            }
-
-            const includeSimilar = options.includeSimilarArtists !== false || options.seedSimilarArtists === true;
-            if (includeSimilar) {
-                const queryId = existing?.mbid || artistId;
-                const hasSimilar = db.prepare(
-                    "SELECT 1 FROM ProviderSimilarArtists WHERE artist_id = ? LIMIT 1",
-                ).get(queryId) as any;
-                const shouldFetchSimilar = options.seedSimilarArtists === true || !hasSimilar;
-
-                if (shouldFetchSimilar) {
-                    const similarArtistIds = await this.storeSimilarArtists(artistId, options.forceUpdate === true);
-                    if (options.seedSimilarArtists) {
-                        for (const similarArtistId of similarArtistIds) {
-                            try {
-                                await this.scanShallow(similarArtistId, {
-                                    monitorArtist: false,
-                                    includeSimilarArtists: false,
-                                    seedSimilarArtists: false,
-                                });
-                            } catch (error) {
-                                console.warn(`[RefreshArtistService] Failed to seed similar artist ${similarArtistId}:`, error);
-                            }
-                        }
-                    }
-                }
             }
 
             if (!existing.mbid || options.forceUpdate === true) {

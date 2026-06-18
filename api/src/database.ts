@@ -994,29 +994,9 @@ export function initDatabase() {
   // SIMILAR ENTITIES JUNCTION TABLES
   // ====================================================================
 
-  // Similar artists relationship (junction table)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderSimilarArtists (
-      artist_id TEXT NOT NULL,              -- Source artist
-      similar_artist_id TEXT NOT NULL,      -- Similar artist
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (artist_id, similar_artist_id),
-      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
-      FOREIGN KEY (similar_artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
-    )
-  `);
-
-  // Similar albums relationship (junction table)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderSimilarAlbums (
-      album_id INT NOT NULL,               -- Source album
-      similar_album_id INT NOT NULL,       -- Similar album
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (album_id, similar_album_id),
-      FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE,
-      FOREIGN KEY (similar_album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
-    )
-  `);
+  // (ProviderSimilarArtists / ProviderSimilarAlbums removed: similar-artist/album
+  // recommendations were a provider-exclusive feature with no MusicBrainz/Skyhook
+  // equivalent and no Lidarr counterpart. Retired with the legacy provider tables.)
 
 
   // ====================================================================
@@ -1295,12 +1275,6 @@ export function initDatabase() {
 
   // Album artists indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_album_artists_version_group ON ProviderAlbumArtists(version_group_id)`);
-
-  // Similar entities indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_source ON ProviderSimilarArtists(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_artists_target ON ProviderSimilarArtists(similar_artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_source ON ProviderSimilarAlbums(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_similar_albums_target ON ProviderSimilarAlbums(similar_album_id)`);
 
   // Media indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artist_id ON ProviderMedia(artist_id)`);
