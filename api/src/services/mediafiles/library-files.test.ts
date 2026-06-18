@@ -93,24 +93,41 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     albumTrackPathSingle: "{albumTitle}/{trackNumber00} - {trackTitle}",
   });
 
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-1", "Queen");
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen (legacy-folder)", 1);
 
+  // Canonical graph (post-DB-alignment: naming resolves from canonical tables).
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
+    .run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album", "1975-11-21");
   dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1);
-
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1, 1, "1975-11-21");
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)")
+    .run("recording-mbid-1", "Bohemian Rhapsody", "artist-mbid-1");
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1);
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, selected_provider,
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "stereo", "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
+  // Provider availability mapped to the canonical ids (no legacy ProviderAlbums/ProviderMedia rows).
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+  `).run();
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 500,
