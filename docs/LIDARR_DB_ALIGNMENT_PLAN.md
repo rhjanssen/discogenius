@@ -194,18 +194,24 @@ Branch is green. A broken Phase 3 attempt (test-only `INSTEAD OF` trigger shim +
 half-done writes) was discarded to `git stash@{0}`; **do not resurrect that
 approach** — write canonical rows + `ProviderItems` directly.
 
-**The keystone blocker** is `services/mediafiles/library-files.ts`: its
-wanted/missing computation still mixes canonical monitored state
-(`rgs.monitored`, `recording.monitored`) with **legacy** `ProviderMedia.monitored`
-/ `ProviderAlbums.monitored` (e.g. the missing-tracks query ~L820-870 and the
-prune/unmonitored query ~L2200-2235). Until that reads canonical-only, the
-Phase 3 writers and `repairMonitoringGaps` (Phase 4) **cannot** stop maintaining
-the legacy `monitored`/`skip_*` flags without breaking "what's missing". So the
-correct order is:
+**Progress (2026-06-18, continued):** the keystone `library-files.ts` is now
+**fully canonical** — `computeExpectedPath` (audio + video naming/layout/root),
+the inline video→audio match, and `pruneUnmonitoredFiles` all resolve from the
+canonical graph + `ProviderItems` (videos via `getCanonicalVideoMetadataForRow`,
+which uses `ProviderItems.recording_id` for mbid-less provider videos). The dead
+`repositories/music/*` were deleted. Dependent tests (rename / move-artist /
+import-finalize / inline-video) were migrated to seed the canonical graph +
+`ProviderItems` (legacy provider rows kept only for the transitional
+`TrackFiles` FK until Phase 5). Full suite green.
 
-1. **Finish Phase 2 — `library-files.ts` monitored/wanted → canonical-only.** The
-   single highest-risk reader (drives downloads + prune); convert with focused
-   tests on a real-data DB (a wrong flip orphans or over-downloads).
+Remaining order:
+
+1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
+   writer — video INSERT/UPDATE), `metadata-files.ts`, `library-metadata-backfill.ts`,
+   `audio-tag-service.ts` (also a writer), `quality.ts`/`upgrader.ts` (entangled
+   with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `lyric-service.ts` and
+   `library-file-identity.ts` use legacy only as a FALLBACK after `ProviderItems`
+   — remove those right before the Phase 5 drop.
 2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
    original plan called "keystones" were dead code (zero imports) and have been
    deleted; the active write SQL is inline in the services. Cut over
