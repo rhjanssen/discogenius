@@ -87,4 +87,9 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   assert.equal(row?.canonical_track_mbid, "track-2");
   assert.equal(row?.canonical_recording_mbid, "recording-2");
   assert.equal(row?.title, "Track Two");
+  assert.equal(row?.id, "provider-track-2");
+  assert.equal(row?.album_id, "provider-album-1");
+  assert.equal(row?.track_number, 2);
+  assert.equal(row?.volume_number, 1);
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
 });

@@ -631,21 +631,12 @@ export class OrganizerService {
         pi.version,
         pi.explicit,
         pi.quality,
+        pi.album_id,
         pi.track_mbid,
         pi.recording_mbid,
         pi.match_evidence,
-        pm.id AS provider_media_id,
-        pm.album_id AS provider_album_id,
-        pm.artist_id AS provider_artist_id,
-        pm.title AS provider_media_title,
-        pm.version AS provider_media_version,
-        pm.explicit AS provider_media_explicit,
-        pm.quality AS provider_media_quality,
-        pm.track_number AS provider_media_track_number,
-        pm.volume_number AS provider_media_volume_number,
-        pm.mbid AS provider_media_recording_mbid
+        json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
       FROM ProviderItems pi
-      LEFT JOIN ProviderMedia pm ON CAST(pm.id AS TEXT) = CAST(pi.provider_id AS TEXT)
       WHERE pi.provider = ?
         AND pi.entity_type = 'track'
         AND pi.provider_id = ?
@@ -655,8 +646,8 @@ export class OrganizerService {
 
     if (providerTrack) {
       const evidence = this.parseJsonObject(providerTrack.match_evidence);
-      const mediumPosition = Number(evidence.mediumPosition || providerTrack.provider_media_volume_number || 0);
-      const trackPosition = Number(evidence.trackPosition || providerTrack.provider_media_track_number || 0);
+      const mediumPosition = Number(evidence.mediumPosition || 0);
+      const trackPosition = Number(evidence.trackPosition || 0);
       const canonicalTrack = db.prepare(`
         SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
         FROM Tracks t
@@ -685,16 +676,16 @@ export class OrganizerService {
       ) as any;
 
       return {
-        id: providerTrack.provider_media_id || providerTrack.provider_id || params.trackId,
-        album_id: providerTrack.provider_album_id || params.fallbackAlbumId,
-        artist_id: providerTrack.provider_artist_id || params.fallbackArtistId,
-        title: providerTrack.provider_media_title || providerTrack.title || canonicalTrack?.title || null,
-        version: providerTrack.provider_media_version || providerTrack.version || null,
-        explicit: providerTrack.provider_media_explicit ?? providerTrack.explicit ?? null,
-        quality: providerTrack.provider_media_quality || providerTrack.quality || params.fallbackQuality,
-        track_number: providerTrack.provider_media_track_number ?? canonicalTrack?.position ?? null,
-        volume_number: providerTrack.provider_media_volume_number ?? canonicalTrack?.medium_position ?? null,
-        mbid: providerTrack.provider_media_recording_mbid || providerTrack.recording_mbid || canonicalTrack?.recording_mbid || null,
+        id: providerTrack.provider_id || params.trackId,
+        album_id: providerTrack.album_id || providerTrack.evidence_album_id || params.fallbackAlbumId,
+        artist_id: params.fallbackArtistId,
+        title: providerTrack.title || canonicalTrack?.title || null,
+        version: providerTrack.version || null,
+        explicit: providerTrack.explicit ?? null,
+        quality: providerTrack.quality || params.fallbackQuality,
+        track_number: canonicalTrack?.position ?? (trackPosition > 0 ? trackPosition : null),
+        volume_number: canonicalTrack?.medium_position ?? (mediumPosition > 0 ? mediumPosition : null),
+        mbid: providerTrack.recording_mbid || canonicalTrack?.recording_mbid || null,
         canonical_track_mbid: canonicalTrack?.mbid || providerTrack.track_mbid || null,
         canonical_recording_mbid: canonicalTrack?.recording_mbid || providerTrack.recording_mbid || null,
       };

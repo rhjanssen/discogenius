@@ -386,3 +386,10 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   file are compatibility fallbacks plus MB/AcoustID enrichment write-backs for
   Phase 3. Regression: `audio-tag-service-canonical.test.ts` covers target tags
   from canonical/provider-item rows with zero legacy provider rows.
+- ✅ **`organizer` exact track helper partial cutover** — the canonical album
+  import helper that resolves an exact provider track id now reads
+  `ProviderItems.match_evidence` and canonical `Tracks` directly instead of
+  joining `ProviderMedia` for fallback title/position/MBID fields. The broader
+  organizer album fallback, single-track import, video import, and write paths
+  remain on the legacy list. Regression: `organizer-canonical.test.ts` covers
+  exact provider track resolution with zero legacy media rows.
