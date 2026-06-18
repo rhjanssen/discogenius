@@ -22,6 +22,7 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM MetadataFiles").run();
     dbModule.db.prepare("DELETE FROM ExtraFiles").run();
     dbModule.db.prepare("DELETE FROM TrackFiles").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems").run();
     dbModule.db.prepare("DELETE FROM RecordingRelations").run();
     dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -46,91 +47,96 @@ function seedMusicBrainzMetadata() {
     `).run("100", "The Example Artist", "artist-mbid-100", "Artist bio & history");
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums(
-            id, artist_id, title, release_date, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, review_text,
-            upc, mbid, mb_release_group_id
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "200",
-        "100",
-        "Example Album",
-        "2024-02-03",
-        "ALBUM",
-        0,
-        "LOSSLESS",
-        1,
-        1,
-        1,
-        180,
-        "Album review with <markup>",
-        "123456789012",
-        "album-mbid-200",
-        "release-group-mbid-200",
-    );
-
-    dbModule.db.prepare(`
-        INSERT INTO ProviderMedia(
-            id, artist_id, album_id, title, release_date, type, explicit,
-            quality, track_number, volume_number, duration, mbid
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "300",
-        "100",
-        "200",
-        "Example Track",
-        "2024-02-03",
-        "TRACK",
-        0,
-        "LOSSLESS",
-        1,
-        1,
-        180,
-        "recording-mbid-300",
-    );
-
-    dbModule.db.prepare(`
         INSERT INTO ArtistMetadata(mbid, name)
         VALUES(?, ?)
     `).run("artist-mbid-100", "The Example Artist");
     dbModule.db.prepare(`
-        INSERT INTO Albums(mbid, artist_mbid, title)
-        VALUES(?, ?, ?)
-    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album");
+        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type)
+        VALUES(?, ?, ?, ?, ?)
+    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album");
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title)
-        VALUES(?, ?, ?, ?)
-    `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album");
+        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "123456789012", 1, 1);
     dbModule.db.prepare(`
-        INSERT INTO Recordings(mbid, title)
-        VALUES(?, ?)
-    `).run("recording-mbid-300", "Example Track");
+        INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date)
+        VALUES(?, ?, ?, ?, ?)
+    `).run("recording-mbid-300", "artist-mbid-100", "Example Track", 0, "2024-02-03");
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title)
-        VALUES(?, ?, ?, ?, ?, ?)
-    `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track");
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track", 180000);
 
     dbModule.db.prepare(`
-        INSERT INTO ProviderMedia(
-            id, artist_id, album_id, title, release_date, type, explicit,
-            quality, track_number, volume_number, duration, credits
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            album_id, title, quality, upc, duration, release_date, library_slot, data
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
+        "tidal",
+        "album",
+        "200",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "200",
+        "Example Album",
+        "LOSSLESS",
+        "123456789012",
+        180,
+        "2024-02-03",
+        "stereo",
+        JSON.stringify({ review_text: "Album review with <markup>", num_tracks: 1, num_volumes: 1, num_videos: 1 }),
+    );
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            track_mbid, recording_mbid, album_id, title, quality, duration, library_slot
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "track",
+        "300",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "track-mbid-300",
+        "recording-mbid-300",
+        "200",
+        "Example Track",
+        "LOSSLESS",
+        180,
+        "stereo",
+    );
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, length_ms)
+        VALUES(?, ?, ?, ?, ?, ?)
+    `).run("video-mbid-400", "artist-mbid-100", "Example Video", 1, "2024-02-03", 210000);
+    const videoRecordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-mbid-400") as { id: number }).id;
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            recording_mbid, recording_id, album_id, title, quality, duration, release_date, library_slot, data
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "video",
         "400",
-        "100",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "video-mbid-400",
+        videoRecordingId,
         "200",
         "Example Video",
-        "2024-02-03",
-        "Music Video",
-        0,
         "MP4_1080P",
-        null,
-        null,
         210,
-        JSON.stringify([{ name: "The Example Artist" }, { name: "Guest Artist" }]),
+        "2024-02-03",
+        "video",
+        JSON.stringify({ artists: [{ name: "The Example Artist" }, { name: "Guest Artist" }] }),
     );
 }
 
@@ -166,6 +172,8 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(videoNfo, /<uniqueid type="tidalVideo" default="true">400<\/uniqueid>/);
     assert.match(videoNfo, /<artist>The Example Artist<\/artist>/);
     assert.match(videoNfo, /<artist>Guest Artist<\/artist>/);
+    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
+    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
 });
 
 test("lyrics cached for a stereo provider item are shared with a spatial counterpart", async () => {
@@ -262,13 +270,6 @@ test("album NFO uses the selected canonical release for a composite provider slo
     dbModule.db.prepare("UPDATE AlbumReleases SET title = ? WHERE mbid = ?")
       .run("Edition-Specific Release Title", "album-mbid-200");
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums(
-            id, artist_id, title, release_date, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, mb_release_group_id
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("201", "100", "Second provider Single", "2024-02-03", "SINGLE", 0, "LOSSLESS", 1, 1, 0, 120, "other-release-group");
     dbModule.db.prepare(`
         INSERT INTO Recordings(mbid, title)
         VALUES(?, ?)

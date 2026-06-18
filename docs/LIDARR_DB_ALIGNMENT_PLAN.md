@@ -221,11 +221,20 @@ provider/canonical identity and can link directly to the owning `TrackFiles` row
 Regression: `library-metadata-backfill.test.ts` covers canonical-only album/video
 sidecar discovery with zero legacy provider rows. Full suite green.
 
+**Progress (2026-06-18, continued):** `metadata-files.ts` no longer has direct
+`ProviderAlbums`/`ProviderMedia` reads. Local NFO/artwork fallbacks now resolve
+album metadata, selected releases, reviews, track lists, video metadata, and
+artist/album MBIDs from `ProviderItems` + canonical `Albums`/`AlbumReleases`/
+`Tracks`/`Recordings`. The lyric helper still delegates to `lyric-service.ts`,
+whose legacy fallback remains isolated for the later lyric cutover. Regression:
+`metadata-files.test.ts` now covers album/video NFO fallback with zero legacy
+provider rows.
+
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
-   writer — video INSERT/UPDATE), `metadata-files.ts`,
-   `audio-tag-service.ts` (also a writer), `quality.ts`/`upgrader.ts` (entangled
+   writer — video INSERT/UPDATE), `audio-tag-service.ts` (also a writer),
+   `quality.ts`/`upgrader.ts` (entangled
    with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `lyric-service.ts` and
    `library-file-identity.ts` use legacy only as a FALLBACK after `ProviderItems`
    — remove those right before the Phase 5 drop.
@@ -342,3 +351,9 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   plus `ProviderItems`, with provider/canonical identity written into sidecar
   rows. Regression: `library-metadata-backfill.test.ts` covers canonical-only
   album/video sidecar discovery with zero legacy provider rows.
+- ✅ **`metadata-files` cutover** — local NFO/artwork fallback helpers now read
+  canonical album/release/track/video metadata plus `ProviderItems` instead of
+  `ProviderAlbums`/`ProviderMedia`. The existing lyric wrapper still routes
+  through `lyric-service.ts` and is tracked with the lyric fallback cleanup.
+  Regression: `metadata-files.test.ts` covers canonical-only album/video NFO
+  fallback with zero legacy provider rows.

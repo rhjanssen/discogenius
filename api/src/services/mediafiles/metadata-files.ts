@@ -14,6 +14,62 @@ import {
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 
+type AlbumProviderItemRow = {
+    provider: string | null;
+    provider_id: string;
+    artist_mbid: string | null;
+    release_group_mbid: string | null;
+    release_mbid: string | null;
+    provider_title: string | null;
+    provider_version: string | null;
+    provider_quality: string | null;
+    provider_explicit: number | null;
+    provider_duration: number | null;
+    provider_release_date: string | null;
+    provider_upc: string | null;
+    provider_asset_id: string | null;
+    provider_data: string | null;
+    release_group_title: string | null;
+    primary_type: string | null;
+    first_release_date: string | null;
+    release_group_data: string | null;
+    release_title: string | null;
+    release_date: string | null;
+    barcode: string | null;
+    media_count: number | null;
+    track_count: number | null;
+    release_data: string | null;
+    artist_id: string | null;
+    artist_name: string | null;
+};
+
+type VideoProviderItemRow = {
+    provider: string | null;
+    provider_id: string;
+    artist_mbid: string | null;
+    release_group_mbid: string | null;
+    release_mbid: string | null;
+    recording_mbid: string | null;
+    album_id: string | null;
+    provider_title: string | null;
+    provider_quality: string | null;
+    provider_explicit: number | null;
+    provider_duration: number | null;
+    provider_release_date: string | null;
+    provider_asset_id: string | null;
+    provider_data: string | null;
+    recording_title: string | null;
+    recording_release_date: string | null;
+    recording_cover_image_id: string | null;
+    recording_artist_credit: string | null;
+    recording_length_ms: number | null;
+    recording_data: string | null;
+    artist_id: string | null;
+    artist_name: string | null;
+    album_title: string | null;
+    album_mbid: string | null;
+};
+
 /**
  * Clean provider text by removing TIDAL-style [wimpLink] tags and normalizing line breaks.
  */
@@ -59,6 +115,106 @@ function warnNfoFallback(entity: string, id: string, error: unknown): void {
     console.warn(`⚠️ [METADATA] Falling back to local ${entity} metadata for ${id}: ${message}`);
 }
 
+function textOrNull(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = String(value ?? "").trim();
+        if (text) return text;
+    }
+    return null;
+}
+
+function splitProviderIds(value: string | null | undefined): string[] {
+    return String(value || "")
+        .split(";")
+        .map((id) => id.trim())
+        .filter(Boolean);
+}
+
+function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
+    return (db.prepare(`
+        SELECT
+            pi.provider,
+            pi.provider_id,
+            pi.artist_mbid,
+            pi.release_group_mbid,
+            pi.release_mbid,
+            pi.title AS provider_title,
+            pi.version AS provider_version,
+            pi.quality AS provider_quality,
+            pi.explicit AS provider_explicit,
+            pi.duration AS provider_duration,
+            pi.release_date AS provider_release_date,
+            pi.upc AS provider_upc,
+            pi.asset_id AS provider_asset_id,
+            pi.data AS provider_data,
+            rg.title AS release_group_title,
+            rg.primary_type AS primary_type,
+            rg.first_release_date AS first_release_date,
+            rg.data AS release_group_data,
+            release.title AS release_title,
+            release.date AS release_date,
+            release.barcode AS barcode,
+            release.media_count AS media_count,
+            release.track_count AS track_count,
+            release.data AS release_data,
+            artist.id AS artist_id,
+            COALESCE(artist.name, artist_metadata.name) AS artist_name
+        FROM ProviderItems pi
+        LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
+        LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+        LEFT JOIN ArtistMetadata artist_metadata
+          ON artist_metadata.mbid = COALESCE(pi.artist_mbid, rg.artist_mbid, release.artist_mbid)
+        LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
+        WHERE pi.entity_type = 'album'
+          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY pi.updated_at DESC
+        LIMIT 1
+    `).get(albumId) as AlbumProviderItemRow | undefined) ?? null;
+}
+
+function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
+    return (db.prepare(`
+        SELECT
+            pi.provider,
+            pi.provider_id,
+            pi.artist_mbid,
+            pi.release_group_mbid,
+            pi.release_mbid,
+            pi.recording_mbid,
+            CAST(pi.album_id AS TEXT) AS album_id,
+            pi.title AS provider_title,
+            pi.quality AS provider_quality,
+            pi.explicit AS provider_explicit,
+            pi.duration AS provider_duration,
+            pi.release_date AS provider_release_date,
+            pi.asset_id AS provider_asset_id,
+            pi.data AS provider_data,
+            recording.title AS recording_title,
+            recording.release_date AS recording_release_date,
+            recording.cover_image_id AS recording_cover_image_id,
+            recording.artist_credit AS recording_artist_credit,
+            recording.length_ms AS recording_length_ms,
+            recording.data AS recording_data,
+            artist.id AS artist_id,
+            COALESCE(artist.name, artist_metadata.name) AS artist_name,
+            album.title AS album_title,
+            release.mbid AS album_mbid
+        FROM ProviderItems pi
+        LEFT JOIN Recordings recording
+          ON recording.id = pi.recording_id
+          OR (pi.recording_mbid IS NOT NULL AND recording.mbid = pi.recording_mbid)
+        LEFT JOIN ArtistMetadata artist_metadata
+          ON artist_metadata.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid)
+        LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
+        LEFT JOIN Albums album ON album.mbid = pi.release_group_mbid
+        LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+        WHERE pi.entity_type = 'video'
+          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY pi.updated_at DESC
+        LIMIT 1
+    `).get(videoId) as VideoProviderItemRow | undefined) ?? null;
+}
+
 async function getArtistForNfo(artistId: string) {
     try {
         return await streamingProviderManager.getDefaultStreamingProvider().getArtist(artistId);
@@ -99,72 +255,53 @@ async function getAlbumForNfo(albumId: string) {
         return await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
     } catch (error) {
         warnNfoFallback("album", albumId, error);
-        const row = db.prepare(`
-            SELECT a.*, ar.name AS artist_name
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE a.id = ?
-        `).get(albumId) as {
-            id: number | string;
-            artist_id: number | string;
-            artist_name?: string | null;
-            title: string;
-            release_date?: string | null;
-            type?: string | null;
-            quality?: string | null;
-            explicit?: number | boolean | null;
-            duration?: number | null;
-            num_tracks?: number | null;
-            num_videos?: number | null;
-            num_volumes?: number | null;
-            cover?: string | null;
-            vibrant_color?: string | null;
-            video_cover?: string | null;
-            version?: string | null;
-            upc?: string | null;
-            copyright?: string | null;
-        } | undefined;
+        const row = loadAlbumProviderItem(albumId);
 
         if (!row) throw error;
+        const providerData = parseJsonObject(row.provider_data) || {};
+        const releaseData = parseJsonObject(row.release_data) || {};
         const artistName = row.artist_name || "Unknown Artist";
+        const artistId = row.artist_id || row.artist_mbid || "";
+        const title = row.release_group_title || row.release_title || row.provider_title || providerData.title || "Unknown Album";
+        const releaseDate = row.release_date || row.first_release_date || row.provider_release_date || providerData.release_date || null;
         return {
-            id: String(row.id),
-            title: row.title || "Unknown Album",
+            id: String(row.provider_id),
+            title,
             url: (() => {
                 try {
-                    return buildStreamingMediaUrl("album", String(row.id));
+                    return buildStreamingMediaUrl("album", String(row.provider_id));
                 } catch {
                     return null;
                 }
             })(),
-            cover: row.cover || null,
-            releaseDate: row.release_date || null,
-            release_date: row.release_date || null,
-            type: row.type || "ALBUM",
-            quality: row.quality || "UNKNOWN",
-            explicit: Boolean(row.explicit),
+            cover: row.provider_asset_id || providerData.cover || providerData.image || null,
+            releaseDate,
+            release_date: releaseDate,
+            type: row.primary_type || providerData.type || "ALBUM",
+            quality: row.provider_quality || providerData.quality || "UNKNOWN",
+            explicit: Boolean(row.provider_explicit ?? providerData.explicit),
             popularity: 0,
-            duration: row.duration || 0,
-            numberOfTracks: row.num_tracks || 0,
-            numberOfVideos: row.num_videos || 0,
-            numberOfVolumes: row.num_volumes || 1,
-            vibrant_color: row.vibrant_color || null,
-            version: row.version || null,
+            duration: row.provider_duration || providerData.duration || 0,
+            numberOfTracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
+            numberOfVideos: providerData.num_videos || providerData.videoCount || 0,
+            numberOfVolumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
+            vibrant_color: providerData.vibrant_color || null,
+            version: row.provider_version || providerData.version || null,
             items: [],
             artist: {
-                id: String(row.artist_id),
+                id: String(artistId),
                 name: artistName,
                 picture: null,
             },
-            artist_id: String(row.artist_id),
+            artist_id: String(artistId),
             artist_name: artistName,
-            upc: row.upc || null,
-            copyright: row.copyright || null,
-            video_cover: row.video_cover || null,
-            num_videos: row.num_videos || 0,
-            num_volumes: row.num_volumes || 1,
-            num_tracks: row.num_tracks || 0,
-            artists: [{ id: String(row.artist_id), name: artistName, picture: null }],
+            upc: row.barcode || row.provider_upc || providerData.upc || null,
+            copyright: providerData.copyright || releaseData.copyright || null,
+            video_cover: providerData.video_cover || providerData.videoCover || null,
+            num_videos: providerData.num_videos || providerData.videoCount || 0,
+            num_volumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
+            num_tracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
+            artists: [{ id: String(artistId), name: artistName, picture: null }],
         };
     }
 }
@@ -177,8 +314,17 @@ async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
         warnNfoFallback("album review", albumId, error);
     }
 
-    const row = db.prepare("SELECT review_text FROM ProviderAlbums WHERE id = ?").get(albumId) as { review_text?: string | null } | undefined;
-    return row?.review_text ? cleanProviderText(row.review_text) : "";
+    const row = loadAlbumProviderItem(albumId);
+    const providerData = parseJsonObject(row?.provider_data) || {};
+    const releaseGroupData = parseJsonObject(row?.release_group_data) || {};
+    const review = textOrNull(
+        providerData.review_text,
+        providerData.review,
+        providerData.description,
+        releaseGroupData.review_text,
+        releaseGroupData.overview,
+    );
+    return review ? cleanProviderText(review) : "";
 }
 
 async function getVideoForNfo(videoId: string) {
@@ -190,56 +336,37 @@ async function getVideoForNfo(videoId: string) {
         return video;
     } catch (error) {
         warnNfoFallback("video", videoId, error);
-        const row = db.prepare(`
-            SELECT m.id, m.title, m.artist_id, ar.name AS artist_name, m.album_id,
-                   m.duration, m.release_date, m.cover, m.quality, m.explicit, m.popularity,
-                   m.credits
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            WHERE m.id = ?
-        `).get(videoId) as {
-            id: number | string;
-            title: string;
-            artist_id?: number | string | null;
-            artist_name?: string | null;
-            album_id?: number | string | null;
-            duration?: number | null;
-            release_date?: string | null;
-            cover?: string | null;
-            quality?: string | null;
-            explicit?: number | boolean | null;
-            popularity?: number | null;
-            credits?: string | null;
-        } | undefined;
+        const row = loadVideoProviderItem(videoId);
 
         if (!row) throw error;
         const artistId = row.artist_id ? String(row.artist_id) : null;
-        const artistName = row.artist_name || null;
+        const providerData = parseJsonObject(row.provider_data) || {};
+        const recordingData = parseJsonObject(row.recording_data) || {};
+        const artistName = row.artist_name || row.recording_artist_credit || null;
+        const artists = Array.isArray(providerData.artists)
+            ? providerData.artists
+            : Array.isArray(providerData.credits)
+                ? providerData.credits
+                : Array.isArray(recordingData.artists)
+                    ? recordingData.artists
+                    : [];
         return {
-            id: String(row.id),
-            title: row.title || "Unknown Video",
+            id: String(row.provider_id),
+            title: row.recording_title || row.provider_title || providerData.title || "Unknown Video",
             artist_id: artistId,
             artist_name: artistName,
-            artists: (() => {
-                try {
-                    const credits = JSON.parse(row.credits || "[]");
-                    if (Array.isArray(credits) && credits.length > 0) return credits;
-                } catch {
-                    // Ignore JSON parsing errors and fall back to single artist
-                }
-                return artistId && artistName ? [{ id: artistId, name: artistName }] : [];
-            })(),
+            artists: artists.length > 0 ? artists : (artistId && artistName ? [{ id: artistId, name: artistName }] : []),
             album_id: row.album_id ? String(row.album_id) : null,
-            duration: row.duration || 0,
-            release_date: row.release_date || null,
-            image_id: row.cover || null,
+            duration: row.provider_duration || (row.recording_length_ms ? Math.round(row.recording_length_ms / 1000) : 0),
+            release_date: row.recording_release_date || row.provider_release_date || providerData.release_date || null,
+            image_id: row.recording_cover_image_id || row.provider_asset_id || providerData.cover || null,
             vibrant_color: null,
-            quality: row.quality || "MP4_1080P",
-            explicit: Boolean(row.explicit),
-            popularity: row.popularity || 0,
+            quality: row.provider_quality || providerData.quality || "MP4_1080P",
+            explicit: Boolean(row.provider_explicit ?? providerData.explicit),
+            popularity: providerData.popularity || 0,
             url: (() => {
                 try {
-                    return buildStreamingMediaUrl("video", String(row.id));
+                    return buildStreamingMediaUrl("video", String(row.provider_id));
                 } catch {
                     return null;
                 }
@@ -318,16 +445,19 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
 }
 
 function loadAlbumArtworkContext(albumId: string): {
+    albumMbid: string | null;
     skyHookData: Record<string, any> | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
     const row = db.prepare(`
         SELECT
-            pa.id AS provider_album_id,
-            pa.cover AS provider_cover,
+            pi.provider_id AS provider_album_id,
+            pi.asset_id AS provider_cover,
             pi.provider AS selected_provider,
             pi.provider_id AS selected_provider_id,
+            pi.asset_id AS provider_asset_id,
             pi.data AS provider_data,
+            rg.mbid AS album_mbid,
             rg.data AS release_group_data,
             stereo.selected_provider AS stereo_provider,
             stereo.selected_provider_id AS stereo_provider_id,
@@ -335,20 +465,18 @@ function loadAlbumArtworkContext(albumId: string): {
             spatial.selected_provider AS spatial_provider,
             spatial.selected_provider_id AS spatial_provider_id,
             spatial.provider_data AS spatial_provider_data
-        FROM ProviderAlbums pa
-        LEFT JOIN ProviderItems pi
-          ON pi.entity_type = 'album'
-         AND CAST(pi.provider_id AS TEXT) = CAST(pa.id AS TEXT)
+        FROM ProviderItems pi
         LEFT JOIN Albums rg
-          ON rg.mbid = COALESCE(pi.release_group_mbid, pa.mb_release_group_id)
+          ON rg.mbid = pi.release_group_mbid
         LEFT JOIN ReleaseGroupSlots stereo
           ON stereo.release_group_mbid = rg.mbid
          AND stereo.slot = 'stereo'
         LEFT JOIN ReleaseGroupSlots spatial
           ON spatial.release_group_mbid = rg.mbid
          AND spatial.slot = 'spatial'
-        WHERE CAST(pa.id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY CASE WHEN pi.release_group_mbid IS NOT NULL THEN 0 ELSE 1 END
+        WHERE pi.entity_type = 'album'
+          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY pi.updated_at DESC
         LIMIT 1
     `).get(albumId) as Record<string, any> | undefined;
 
@@ -367,6 +495,7 @@ function loadAlbumArtworkContext(albumId: string): {
     ];
 
     return {
+        albumMbid: row.album_mbid ? String(row.album_mbid) : null,
         skyHookData: parseJsonObject(row.release_group_data),
         providerCandidates,
     };
@@ -438,6 +567,7 @@ export async function downloadAlbumCover(
     const context = loadAlbumArtworkContext(albumId);
     let url = context
         ? await resolveAlbumArtwork({
+            albumMbid: context.albumMbid,
             skyHookData: context.skyHookData,
             providerCandidates: context.providerCandidates,
             size: resolution,
@@ -592,13 +722,18 @@ export async function saveArtistNfoFile(
         WHERE id = ?
     `).get(artistId) as { mbid?: string | null } | undefined;
 
-    const albums = db.prepare(`
+    const albums = localArtist?.mbid
+        ? db.prepare(`
         SELECT title, release_date
-        FROM ProviderAlbums
-        WHERE artist_id = ?
+        FROM (
+            SELECT title, first_release_date AS release_date
+            FROM Albums
+            WHERE artist_mbid = ?
+        )
         ORDER BY release_date, title
         LIMIT 250
-    `).all(artistId) as Array<{ title: string; release_date: string | null }>;
+    `).all(localArtist.mbid) as Array<{ title: string; release_date: string | null }>
+        : [];
 
     const elements = [
         xmlElement("title", artist.name),
@@ -633,13 +768,8 @@ export async function saveAlbumNfoFile(
     const provider = streamingProviderManager.getDefaultStreamingProvider();
     const album = await getAlbumForNfo(albumId);
     const reviewText = await getAlbumReviewTextForNfo(albumId);
-    const localAlbum = db.prepare(`
-        SELECT a.mbid, a.mb_release_group_id, ar.mbid AS artist_mbid
-        FROM ProviderAlbums a
-        LEFT JOIN Artists ar ON ar.id = a.artist_id
-        WHERE a.id = ?
-    `).get(albumId) as { mbid?: string | null; mb_release_group_id?: string | null; artist_mbid?: string | null } | undefined;
-    const selectedSlot = localAlbum?.mb_release_group_id
+    const localAlbum = loadAlbumProviderItem(albumId);
+    const selectedSlot = localAlbum?.release_group_mbid
         ? db.prepare(`
             SELECT selected_release_mbid, selected_provider_id
             FROM ReleaseGroupSlots
@@ -654,31 +784,29 @@ export async function saveAlbumNfoFile(
             ORDER BY CASE WHEN slot = 'stereo' THEN 0 ELSE 1 END
             LIMIT 1
         `).get(
-            localAlbum.mb_release_group_id,
+            localAlbum.release_group_mbid,
             albumId,
             `${albumId};%`,
             `%;${albumId};%`,
             `%;${albumId}`,
         ) as { selected_release_mbid?: string | null; selected_provider_id?: string | null } | undefined
         : undefined;
-    const canonicalRelease = selectedSlot?.selected_release_mbid
+    const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || localAlbum?.release_mbid || null;
+    const canonicalRelease = canonicalReleaseMbid
         ? db.prepare(`
             SELECT release.mbid, release_group.title, release.date, release.barcode
             FROM AlbumReleases release
             JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
             WHERE release.mbid = ?
             LIMIT 1
-        `).get(selectedSlot.selected_release_mbid) as {
+        `).get(canonicalReleaseMbid) as {
             mbid?: string | null;
             title?: string | null;
             date?: string | null;
             barcode?: string | null;
         } | undefined
         : undefined;
-    const providerAlbumIds = String(selectedSlot?.selected_provider_id || albumId)
-        .split(";")
-        .map((id) => id.trim())
-        .filter(Boolean);
+    const providerAlbumIds = splitProviderIds(selectedSlot?.selected_provider_id || albumId);
     const tracks = canonicalRelease?.mbid
         ? db.prepare(`
             SELECT
@@ -694,24 +822,16 @@ export async function saveAlbumNfoFile(
         `).all(canonicalRelease.mbid)
         : db.prepare(`
         SELECT
-            media.title,
-            media.duration,
-            media.track_number,
-            media.volume_number,
-            media.mbid AS recording_mbid,
-            (
-                SELECT track.mbid
-                FROM Tracks track
-                WHERE track.release_mbid = album.mbid
-                  AND track.recording_mbid = media.mbid
-                  AND track.medium_position = COALESCE(media.volume_number, 1)
-                  AND track.position = COALESCE(media.track_number, 1)
-                LIMIT 1
-            ) AS track_mbid
-        FROM ProviderMedia media
-        JOIN ProviderAlbums album ON album.id = media.album_id
-        WHERE media.album_id = ? AND media.type != 'Music Video'
-        ORDER BY COALESCE(media.volume_number, 1), COALESCE(media.track_number, 0), media.id
+            pi.title,
+            pi.duration,
+            NULL AS track_number,
+            NULL AS volume_number,
+            pi.recording_mbid,
+            pi.track_mbid
+        FROM ProviderItems pi
+        WHERE pi.entity_type = 'track'
+          AND CAST(pi.album_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY pi.provider_id
     `).all(albumId);
     const nfoTracks = tracks as Array<{
         title: string;
@@ -735,12 +855,12 @@ export async function saveAlbumNfoFile(
         xmlElement("releasedate", releaseDate),
         ...artists.map((artistName: unknown) => xmlElement("artist", artistName)),
         ...artists.map((artistName: unknown) => xmlElement("albumartist", artistName)),
-        xmlElement("musicbrainzalbumid", canonicalRelease?.mbid || localAlbum?.mbid),
-        xmlElement("musicbrainzreleasegroupid", localAlbum?.mb_release_group_id),
+        xmlElement("musicbrainzalbumid", canonicalRelease?.mbid || localAlbum?.release_mbid),
+        xmlElement("musicbrainzreleasegroupid", localAlbum?.release_group_mbid),
         xmlElement("musicbrainzalbumartistid", localAlbum?.artist_mbid),
         xmlElement("upc", canonicalRelease?.barcode || album.upc),
-        xmlUniqueId("MusicBrainzAlbum", canonicalRelease?.mbid || localAlbum?.mbid, true),
-        xmlUniqueId("MusicBrainzReleaseGroup", localAlbum?.mb_release_group_id),
+        xmlUniqueId("MusicBrainzAlbum", canonicalRelease?.mbid || localAlbum?.release_mbid, true),
+        xmlUniqueId("MusicBrainzReleaseGroup", localAlbum?.release_group_mbid),
         xmlUniqueId("MusicBrainzAlbumArtist", localAlbum?.artist_mbid),
         ...providerAlbumIds.map((providerAlbumId) => xmlUniqueId(`${provider.id}Album`, providerAlbumId)),
         ...nfoTracks.map((track) => {
@@ -771,20 +891,24 @@ export async function saveVideoNfoFile(
     const provider = streamingProviderManager.getDefaultStreamingProvider();
     const video = await getVideoForNfo(videoId);
     const videoRecord = video as any;
-    const videoArtistId = videoRecord.artist_id || videoRecord.artist?.providerId || null;
-    const videoArtistName = videoRecord.artist_name || videoRecord.artist?.name || null;
+    const localVideo = loadVideoProviderItem(videoId);
+    const videoArtistId = videoRecord.artist_id || videoRecord.artist?.providerId || localVideo?.artist_id || null;
+    const videoArtistName = videoRecord.artist_name || videoRecord.artist?.name || localVideo?.artist_name || null;
     const videoAlbumId = videoRecord.album_id || null;
     const videoReleaseDate = videoRecord.release_date || videoRecord.releaseDate || null;
     const artistRow = videoArtistId
         ? db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
-    const albumRow = videoAlbumId
-        ? db.prepare("SELECT title, mbid, mb_release_group_id FROM ProviderAlbums WHERE id = ?").get(videoAlbumId) as {
-            title?: string | null;
-            mbid?: string | null;
-            mb_release_group_id?: string | null;
-        } | undefined
-        : undefined;
+    const albumItem = videoAlbumId ? loadAlbumProviderItem(String(videoAlbumId)) : null;
+    const albumRow = albumItem ? {
+        title: albumItem.release_group_title || albumItem.release_title || albumItem.provider_title,
+        mbid: albumItem.release_mbid,
+        mb_release_group_id: albumItem.release_group_mbid,
+    } : localVideo ? {
+        title: localVideo.album_title,
+        mbid: localVideo.album_mbid || localVideo.release_mbid,
+        mb_release_group_id: localVideo.release_group_mbid,
+    } : undefined;
     const year = String(videoReleaseDate || "").match(/^\d{4}/)?.[0] || "";
     const videoArtists = Array.isArray(videoRecord.artists) && videoRecord.artists.length > 0
         ? videoRecord.artists
@@ -799,10 +923,10 @@ export async function saveVideoNfoFile(
         xmlElement("releasedate", videoReleaseDate),
         ...artistNames.map((artistName: unknown) => xmlElement("artist", artistName)),
         xmlElement("album", albumRow?.title),
-        xmlElement("musicbrainzartistid", artistRow?.mbid),
+        xmlElement("musicbrainzartistid", artistRow?.mbid || localVideo?.artist_mbid),
         xmlElement("musicbrainzalbumid", albumRow?.mbid),
         xmlElement("musicbrainzreleasegroupid", albumRow?.mb_release_group_id),
-        xmlUniqueId("MusicBrainzArtist", artistRow?.mbid),
+        xmlUniqueId("MusicBrainzArtist", artistRow?.mbid || localVideo?.artist_mbid),
         xmlUniqueId("MusicBrainzAlbum", albumRow?.mbid),
         xmlUniqueId("MusicBrainzReleaseGroup", albumRow?.mb_release_group_id),
         xmlUniqueId(`${provider.id}Video`, videoId, true),

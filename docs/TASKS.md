@@ -91,9 +91,10 @@ Docker runtime image.
   joining `ProviderMedia`; `library-files.ts` (path computation, video layout/root
   resolution, pruning) is fully canonical; `library-metadata-backfill` now
   discovers album/lyrics/video sidecars from canonical `ProviderItems` and carries
-  provider/canonical identity into sidecar rows. **Remaining:** other read paths
+  provider/canonical identity into sidecar rows; `metadata-files` now uses
+  canonical/provider-item metadata for local NFO/artwork fallbacks. **Remaining:** other read paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (metadata-files, audio-tag, organizer, rename plus lyric/file-identity fallbacks);
+  (audio-tag, organizer, rename plus lyric/file-identity fallbacks);
   the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
   with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
