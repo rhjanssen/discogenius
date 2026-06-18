@@ -344,8 +344,10 @@ covers stereo-to-spatial lyric sharing with zero legacy provider rows.
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
-   writer — video INSERT/UPDATE), `quality.ts`/`upgrader.ts` (entangled
-   with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `library-file-identity.ts`
+   writer — video INSERT/UPDATE), `upgrader.ts` (entangled with
+   `upgrade_queue`'s legacy `media_id`/`album_id` FKs; the dead
+   `QualityService` provider-table helpers in `quality.ts` have been removed).
+   `library-file-identity.ts`
    still has the final legacy fallback to remove right before the Phase 5 drop.
    `audio-tag-service.ts` retag context is now canonical/provider-item first,
    but its compatibility fallbacks and MB/AcoustID write-backs remain legacy.
@@ -408,7 +410,7 @@ libraries before flipping reads.
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Remaining read/write lookups (organizer, quality/upgrader, the audio-tag
+  - Remaining read/write lookups (organizer, upgrader, the audio-tag
     MB/AcoustID write-back + compatibility fallbacks, and the final
     file-identity fallback) still touch legacy provider tables; these move in
     Phase 2/3 or the final pre-Phase-5 cleanup.

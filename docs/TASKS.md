@@ -111,7 +111,7 @@ Docker runtime image.
   `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
   **Remaining:** other read/write paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (organizer, quality/upgrader, audio-tag MB/AcoustID write-back and legacy
+  (organizer, upgrader, audio-tag MB/AcoustID write-back and legacy
   tag fallbacks, plus file-identity fallback);
   the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
