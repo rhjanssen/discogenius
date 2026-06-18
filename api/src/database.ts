@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 22;
+const BASE_SCHEMA_VERSION = 23;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -346,6 +346,60 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
           db.exec(`ALTER TABLE Tracks RENAME COLUMN ${oldCol} TO ${newCol}`);
         }
       }
+    }
+  },
+  {
+    version: 23,
+    description: "TrackFiles canonical integer FKs (Lidarr-style: link files to Albums/AlbumReleases/Tracks/Recordings)",
+    up: () => {
+      // Additive step of the integer-FK linkage migration: add canonical integer
+      // FK columns and backfill them from the canonical mbids + ProviderItems
+      // (videos). Legacy media_id/album_id stay until the code is fully converted
+      // off them (dropped in a later numbered migration).
+      if (!hasTable("TrackFiles")) {
+        return;
+      }
+      const addColumn = (name: string, ddl: string) => {
+        if (!hasColumn("TrackFiles", name)) {
+          db.exec(`ALTER TABLE TrackFiles ADD COLUMN ${ddl}`);
+        }
+      };
+      addColumn("recording_id", "recording_id INTEGER REFERENCES Recordings(id) ON DELETE SET NULL");
+      addColumn("track_id", "track_id INTEGER REFERENCES Tracks(id) ON DELETE SET NULL");
+      addColumn("release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL");
+      addColumn("album_release_id", "album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL");
+
+      // Backfill from the already-populated canonical mbids.
+      db.exec(`
+        UPDATE TrackFiles SET
+          release_group_id = (SELECT id FROM Albums WHERE mbid = TrackFiles.canonical_release_group_mbid),
+          album_release_id = (SELECT id FROM AlbumReleases WHERE mbid = TrackFiles.canonical_release_mbid),
+          track_id = (SELECT id FROM Tracks WHERE mbid = TrackFiles.canonical_track_mbid),
+          recording_id = (SELECT id FROM Recordings WHERE mbid = TrackFiles.canonical_recording_mbid)
+        WHERE canonical_release_group_mbid IS NOT NULL
+           OR canonical_release_mbid IS NOT NULL
+           OR canonical_track_mbid IS NOT NULL
+           OR canonical_recording_mbid IS NOT NULL
+      `);
+
+      // mbid-less provider videos: link recording_id via the video ProviderItems offer.
+      if (hasTable("ProviderItems")) {
+        db.exec(`
+          UPDATE TrackFiles SET recording_id = (
+            SELECT pi.recording_id FROM ProviderItems pi
+            WHERE pi.entity_type = 'video'
+              AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+              AND pi.recording_id IS NOT NULL
+            LIMIT 1
+          )
+          WHERE file_type = 'video' AND recording_id IS NULL AND provider_id IS NOT NULL
+        `);
+      }
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_recording_id ON TrackFiles(recording_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_track_id ON TrackFiles(track_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_release_group_id ON TrackFiles(release_group_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_album_release_id ON TrackFiles(album_release_id)`);
     }
   }
 ];
@@ -739,6 +793,10 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_group_release_slot ON ReleaseGroupSlots(release_group_mbid, selected_release_mbid, slot)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_track_type ON TrackFiles(canonical_track_mbid, file_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_canonical_recording_type ON TrackFiles(canonical_recording_mbid, file_type)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_recording_id ON TrackFiles(recording_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_track_id ON TrackFiles(track_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_release_group_id ON TrackFiles(release_group_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_track_files_album_release_id ON TrackFiles(album_release_id)");
   // Recordings is large on real libraries (one row per MusicBrainz recording —
   // ~280k on a 2.3k-artist library). Artist-completion, download-stats and the
   // video counts filter Recordings by artist on every library + dashboard load;
@@ -1017,6 +1075,13 @@ export function initDatabase() {
       canonical_release_mbid TEXT,
       canonical_track_mbid TEXT,
       canonical_recording_mbid TEXT,
+
+      -- Canonical integer FKs (Lidarr-style: files link straight to the canonical
+      -- graph; recording_id covers mbid-less provider videos too)
+      release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL,
+      album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL,
+      track_id INTEGER REFERENCES Tracks(id) ON DELETE SET NULL,
+      recording_id INTEGER REFERENCES Recordings(id) ON DELETE SET NULL,
 
       -- Provider resource that produced or owns this file
       provider TEXT,

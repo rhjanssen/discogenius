@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 22;
+const CURRENT_SCHEMA_VERSION = 23;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -126,6 +126,10 @@ test("fresh database initializes with correct schema version", () => {
     "canonical_release_mbid",
     "canonical_track_mbid",
     "canonical_recording_mbid",
+    "release_group_id",
+    "album_release_id",
+    "track_id",
+    "recording_id",
     "provider",
     "provider_entity_type",
     "provider_id",
