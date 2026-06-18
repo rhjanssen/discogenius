@@ -206,8 +206,9 @@ correct order is:
 1. **Finish Phase 2 — `library-files.ts` monitored/wanted → canonical-only.** The
    single highest-risk reader (drives downloads + prune); convert with focused
    tests on a real-data DB (a wrong flip orphans or over-downloads).
-2. **Phase 3 — write path.** Repositories don't actually exist as separate files
-   (Codex/Antigravity confirmed; SQL is inline in the services); cut over
+2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
+   original plan called "keystones" were dead code (zero imports) and have been
+   deleted; the active write SQL is inline in the services. Cut over
    `refresh-album-service`, `import-service`, `manual-import-service`,
    `organizer`, `audio-tag-service`, `library-scan`, `metadata-identity-service`,
    `version-grouper`, `module-fixer` to write canonical + `ProviderItems`.
