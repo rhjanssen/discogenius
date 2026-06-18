@@ -240,10 +240,11 @@ covers stereo-to-spatial lyric sharing with zero legacy provider rows.
 Remaining order:
 
 1. **Finish Phase 2 readers** still on legacy as PRIMARY: `organizer.ts` (also a
-   writer — video INSERT/UPDATE), `audio-tag-service.ts` (also a writer),
-   `quality.ts`/`upgrader.ts` (entangled
+   writer — video INSERT/UPDATE), `quality.ts`/`upgrader.ts` (entangled
    with `upgrade_queue`'s legacy `media_id`/`album_id` FKs). `library-file-identity.ts`
    still has the final legacy fallback to remove right before the Phase 5 drop.
+   `audio-tag-service.ts` retag context is now canonical/provider-item first,
+   but its compatibility fallbacks and MB/AcoustID write-backs remain legacy.
 2. **Phase 3 — write path.** The `repositories/music/*Repository.ts` files the
    original plan called "keystones" were dead code (zero imports) and have been
    deleted; the active write SQL is inline in the services. Cut over
@@ -301,9 +302,10 @@ libraries before flipping reads.
     import upsert's ON CONFLICT target are media-id-based; switching them to a
     canonical `(canonical_recording_mbid, file_type, library_slot)` identity is a
     numbered schema migration that belongs with the Phase 3 write-path cutover.
-  - Remaining read-path lookups (`audio-tag`, organizer, quality,
-    upgrader, and the final file-identity fallback) still touch legacy provider
-    tables; these move in Phase 2 or the final pre-Phase-5 cleanup.
+  - Remaining read/write lookups (organizer, quality/upgrader, the audio-tag
+    MB/AcoustID write-back + compatibility fallbacks, and the final
+    file-identity fallback) still touch legacy provider tables; these move in
+    Phase 2/3 or the final pre-Phase-5 cleanup.
 
 Keep `media_id`/`album_id` as shadow columns until Phase 5.
 
@@ -375,3 +377,12 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   Regression: `rename-track-file-service.test.ts` covers canonical-only lyric
   replication with zero legacy provider rows and album cover replication where
   legacy provider titles intentionally disagree.
+- ✅ **`audio-tag-service` retag context cutover** — retag previews/tag target
+  construction now hydrate canonical `Tracks`/`Recordings`/`AlbumReleases` plus
+  exact `ProviderItems` before legacy provider rows. MusicBrainz recording
+  credits and `AlbumArtists` drive Artist/Album Artist tags, provider track ids
+  drive provider URLs, and provider album UPC/track explicit flags fill holes
+  without `ProviderAlbums`/`ProviderMedia`. The remaining legacy refs in this
+  file are compatibility fallbacks plus MB/AcoustID enrichment write-backs for
+  Phase 3. Regression: `audio-tag-service-canonical.test.ts` covers target tags
+  from canonical/provider-item rows with zero legacy provider rows.

@@ -32,6 +32,7 @@ type RetagTrackRow = {
   file_codec: string | null;
   file_channels: number | null;
   file_provider: string | null;
+  file_provider_entity_type: string | null;
   file_provider_id: string | null;
   file_fingerprint: string | null;
   file_acoustid_id: string | null;
@@ -70,6 +71,8 @@ type RetagTrackRow = {
   canonical_release_mbid: string | null;
   canonical_track_mbid: string | null;
   canonical_recording_mbid: string | null;
+  recording_artist_credit: string | null;
+  recording_data: string | null;
 };
 
 export type ManagedTag = {
@@ -171,6 +174,34 @@ function normalizeReleaseDate(value: string | null | undefined): string | null {
 
   const match = raw.match(/^\d{4}(?:-\d{2}-\d{2})?/);
   return match ? match[0] : raw;
+}
+
+function parseArtistCreditNames(artistCredit?: string | null, data?: string | null): string[] {
+  const names: string[] = [];
+
+  if (data) {
+    try {
+      const parsed = JSON.parse(data);
+      const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+      if (Array.isArray(credits)) {
+        for (const credit of credits) {
+          const name = String(credit?.name || credit?.artist?.name || "").trim();
+          if (name) {
+            names.push(name);
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed MusicBrainz payloads and fall back below.
+    }
+  }
+
+  const fallbackCredit = String(artistCredit || "").trim();
+  if (names.length === 0 && fallbackCredit) {
+    names.push(fallbackCredit);
+  }
+
+  return Array.from(new Set(names));
 }
 
 function collapseWhitespace(value: string): string {
@@ -744,62 +775,136 @@ export class AudioTagService {
         lf.quality AS file_quality,
         lf.codec AS file_codec,
         lf.channels AS file_channels,
-        lf.provider AS file_provider,
-        lf.provider_id AS file_provider_id,
+        COALESCE(lf.provider, provider_track.provider, provider_album.provider) AS file_provider,
+        lf.provider_entity_type AS file_provider_entity_type,
+        COALESCE(lf.provider_id, provider_track.provider_id) AS file_provider_id,
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
         artist.name AS primary_artist_name,
-        COALESCE(canonical_track.title, canonical_recording.title, m.title) AS media_title,
-        CASE WHEN canonical_track.mbid IS NOT NULL THEN NULL ELSE m.version END AS media_version,
+        COALESCE(canonical_track.title, provider_canonical_track.title, canonical_recording.title, provider_recording.title, provider_track.title, m.title) AS media_title,
+        CASE WHEN COALESCE(canonical_track.mbid, provider_canonical_track.mbid) IS NOT NULL THEN NULL ELSE COALESCE(provider_track.version, m.version) END AS media_version,
         COALESCE(
           CASE WHEN canonical_track.length_ms IS NOT NULL THEN ROUND(canonical_track.length_ms / 1000.0) END,
+          CASE WHEN provider_canonical_track.length_ms IS NOT NULL THEN ROUND(provider_canonical_track.length_ms / 1000.0) END,
           CASE WHEN canonical_recording.length_ms IS NOT NULL THEN ROUND(canonical_recording.length_ms / 1000.0) END,
+          CASE WHEN provider_recording.length_ms IS NOT NULL THEN ROUND(provider_recording.length_ms / 1000.0) END,
+          provider_track.duration,
           m.duration
         ) AS media_duration,
-        COALESCE(canonical_release.date, m.release_date) AS media_release_date,
-        COALESCE(canonical_track.position, m.track_number) AS media_track_number,
-        COALESCE(canonical_track.medium_position, m.volume_number) AS media_volume_number,
-        COALESCE(m.isrc, CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END) AS media_isrc,
+        COALESCE(canonical_release.date, ar.date, provider_track.release_date, provider_album.release_date, m.release_date) AS media_release_date,
+        COALESCE(canonical_track.position, provider_canonical_track.position, m.track_number) AS media_track_number,
+        COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, m.volume_number) AS media_volume_number,
+        COALESCE(
+          m.isrc,
+          provider_track.isrc,
+          CASE WHEN json_valid(canonical_recording.isrcs) THEN json_extract(canonical_recording.isrcs, '$[0]') ELSE canonical_recording.isrcs END,
+          CASE WHEN json_valid(provider_recording.isrcs) THEN json_extract(provider_recording.isrcs, '$[0]') ELSE provider_recording.isrcs END
+        ) AS media_isrc,
         m.copyright AS media_copyright,
         m.replay_gain AS media_replay_gain,
         m.peak AS media_peak,
-        COALESCE(canonical_group.title, canonical_release.title, a.title) AS album_title,
-        CASE WHEN lf.canonical_release_group_mbid IS NOT NULL THEN NULL ELSE a.version END AS album_version,
-        COALESCE(canonical_release.date, a.release_date) AS album_release_date,
+        COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title, a.title) AS album_title,
+        CASE WHEN COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid) IS NOT NULL THEN NULL ELSE COALESCE(provider_album.version, a.version) END AS album_version,
+        COALESCE(canonical_release.date, ar.date, provider_album.release_date, a.release_date) AS album_release_date,
         COALESCE(canonical_release.media_count, a.num_volumes) AS album_num_volumes,
-        COALESCE(canonical_release.barcode, a.upc) AS album_upc,
+        COALESCE(canonical_release.barcode, provider_album.upc, a.upc) AS album_upc,
         a.review_text AS album_review_text,
         m.credits AS media_credits,
-        COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, m.mbid) AS media_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid, m.mbid) AS media_mbid,
         m.acoustid_id AS media_acoustid_id,
         m.acoustid_fingerprint AS media_acoustid_fingerprint,
         m.fingerprint_duration AS media_fingerprint_duration,
-        m.explicit AS media_explicit,
-        COALESCE(lf.canonical_release_mbid, a.mbid) AS album_mbid,
-        COALESCE(lf.canonical_release_group_mbid, a.mb_release_group_id) AS album_mb_release_group_id,
-        COALESCE(lf.canonical_artist_mbid, artist.mbid) AS artist_mbid,
+        COALESCE(provider_track.explicit, m.explicit) AS media_explicit,
+        COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid, a.mbid) AS album_mbid,
+        COALESCE(lf.canonical_release_group_mbid, provider_track.release_group_mbid, provider_album.release_group_mbid, a.mb_release_group_id) AS album_mb_release_group_id,
+        COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, provider_track.artist_mbid, provider_album.artist_mbid, artist.mbid) AS artist_mbid,
         COALESCE(canonical_release.status, ar.status) AS release_status,
         COALESCE(canonical_release.country, ar.country) AS release_country,
         COALESCE(canonical_group.primary_type, alb.primary_type) AS release_primary_type,
         COALESCE(canonical_group.secondary_types, alb.secondary_types) AS release_secondary_types,
-        lf.canonical_release_mbid,
-        lf.canonical_track_mbid,
-        lf.canonical_recording_mbid
+        COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS canonical_release_mbid,
+        COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid, provider_track.track_mbid) AS canonical_track_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS canonical_recording_mbid,
+        COALESCE(canonical_recording.artist_credit, provider_recording.artist_credit) AS recording_artist_credit,
+        COALESCE(canonical_recording.data, provider_recording.data) AS recording_data
       FROM TrackFiles lf
-      LEFT JOIN ProviderMedia m ON m.id = lf.media_id
-      LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
       JOIN Artists artist ON artist.id = lf.artist_id
-      LEFT JOIN AlbumReleases ar ON ar.mbid = a.mbid
-      LEFT JOIN Albums alb ON alb.mbid = a.mb_release_group_id
       LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid
       LEFT JOIN AlbumReleases canonical_release ON canonical_release.mbid = lf.canonical_release_mbid
       LEFT JOIN Albums canonical_group ON canonical_group.mbid = lf.canonical_release_group_mbid
       LEFT JOIN Recordings canonical_recording
         ON canonical_recording.mbid = COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid)
+      LEFT JOIN ProviderItems provider_track
+        ON provider_track.rowid = (
+          SELECT candidate.rowid
+          FROM ProviderItems candidate
+          WHERE candidate.entity_type = 'track'
+            AND (
+              (
+                COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) IS NOT NULL
+                AND CAST(candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) AS TEXT)
+                AND (lf.provider IS NULL OR candidate.provider = lf.provider)
+              )
+              OR (
+                COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) IS NULL
+                AND (
+                  (lf.canonical_track_mbid IS NOT NULL AND candidate.track_mbid = lf.canonical_track_mbid)
+                  OR (lf.canonical_recording_mbid IS NOT NULL AND candidate.recording_mbid = lf.canonical_recording_mbid)
+                  OR (canonical_track.mbid IS NOT NULL AND candidate.track_mbid = canonical_track.mbid)
+                  OR (canonical_recording.mbid IS NOT NULL AND candidate.recording_mbid = canonical_recording.mbid)
+                  OR (canonical_recording.id IS NOT NULL AND candidate.recording_id = canonical_recording.id)
+                )
+              )
+            )
+          ORDER BY
+            CASE candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+            candidate.updated_at DESC,
+            candidate.provider_id ASC
+          LIMIT 1
+        )
+      LEFT JOIN Tracks provider_canonical_track
+        ON provider_canonical_track.mbid = provider_track.track_mbid
+        OR (provider_track.track_id IS NOT NULL AND provider_canonical_track.id = provider_track.track_id)
+      LEFT JOIN Recordings provider_recording
+        ON provider_recording.mbid = COALESCE(provider_track.recording_mbid, provider_canonical_track.recording_mbid)
+        OR (provider_track.recording_id IS NOT NULL AND provider_recording.id = provider_track.recording_id)
+      LEFT JOIN ProviderItems provider_album
+        ON provider_album.rowid = (
+          SELECT album_candidate.rowid
+          FROM ProviderItems album_candidate
+          WHERE album_candidate.entity_type = 'album'
+            AND (
+              (
+                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) IS NOT NULL
+                AND CAST(album_candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) AS TEXT)
+                AND (COALESCE(lf.provider, provider_track.provider) IS NULL OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider))
+              )
+              OR (
+                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) IS NULL
+                AND (
+                  (lf.canonical_release_mbid IS NOT NULL AND album_candidate.release_mbid = lf.canonical_release_mbid)
+                  OR (lf.canonical_release_group_mbid IS NOT NULL AND album_candidate.release_group_mbid = lf.canonical_release_group_mbid)
+                  OR (canonical_release.mbid IS NOT NULL AND album_candidate.release_mbid = canonical_release.mbid)
+                  OR (canonical_group.mbid IS NOT NULL AND album_candidate.release_group_mbid = canonical_group.mbid)
+                  OR (provider_track.release_mbid IS NOT NULL AND album_candidate.release_mbid = provider_track.release_mbid)
+                  OR (provider_track.release_group_mbid IS NOT NULL AND album_candidate.release_group_mbid = provider_track.release_group_mbid)
+                )
+              )
+            )
+          ORDER BY
+            CASE album_candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+            album_candidate.updated_at DESC,
+            album_candidate.provider_id ASC
+          LIMIT 1
+        )
+      LEFT JOIN ProviderMedia m ON m.id = lf.media_id
+      LEFT JOIN ProviderAlbums a ON a.id = lf.album_id
+      LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(provider_album.release_mbid, provider_track.release_mbid, a.mbid)
+      LEFT JOIN Albums alb ON alb.mbid = COALESCE(provider_album.release_group_mbid, provider_track.release_group_mbid, a.mb_release_group_id)
       WHERE ${whereClause}
-        AND (m.id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL)
-      ORDER BY lf.artist_id, lf.album_id, COALESCE(canonical_track.medium_position, m.volume_number, 1), COALESCE(canonical_track.position, m.track_number, 0), lf.id
+        AND (m.id IS NOT NULL OR provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
+      ORDER BY lf.artist_id, lf.album_id, COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, m.volume_number, 1), COALESCE(canonical_track.position, provider_canonical_track.position, m.track_number, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
   }
@@ -813,38 +918,88 @@ export class AudioTagService {
     return db.prepare(this.buildTrackRowsSql(`lf.id IN (${placeholders})`, false)).all(...ids) as RetagTrackRow[];
   }
 
-  private static getTrackArtistNames(mediaId: number | null, fallbackArtistName: string): string[] {
-    if (!mediaId) {
-      return [fallbackArtistName];
+  private static getTrackArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
+    const canonicalNames = parseArtistCreditNames(row.recording_artist_credit, row.recording_data);
+    if (canonicalNames.length > 0) {
+      return canonicalNames;
     }
 
-    const rows = db.prepare(`
-      SELECT DISTINCT artist.name
-      FROM ProviderMediaArtists ma
-      JOIN ArtistMetadata artist ON artist.mbid = ma.artist_id
-      WHERE ma.media_id = ?
-      ORDER BY CASE ma.type WHEN 'MAIN' THEN 0 WHEN 'ARTIST' THEN 0 WHEN 'FEATURED' THEN 1 ELSE 2 END, artist.name
-    `).all(mediaId) as Array<{ name?: string }>;
+    if (row.media_id) {
+      const rows = db.prepare(`
+        SELECT DISTINCT artist.name
+        FROM ProviderMediaArtists ma
+        JOIN ArtistMetadata artist ON artist.mbid = ma.artist_id
+        WHERE ma.media_id = ?
+        ORDER BY CASE ma.type WHEN 'MAIN' THEN 0 WHEN 'ARTIST' THEN 0 WHEN 'FEATURED' THEN 1 ELSE 2 END, artist.name
+      `).all(row.media_id) as Array<{ name?: string }>;
 
-    const names = rows.map((row) => String(row.name || "").trim()).filter(Boolean);
-    return names.length > 0 ? names : [fallbackArtistName];
+      const names = rows.map((providerRow) => String(providerRow.name || "").trim()).filter(Boolean);
+      if (names.length > 0) {
+        return names;
+      }
+    }
+
+    if (row.artist_mbid) {
+      const artistRow = db.prepare(`
+        SELECT name
+        FROM ArtistMetadata
+        WHERE mbid = ?
+        LIMIT 1
+      `).get(row.artist_mbid) as { name?: string | null } | undefined;
+      const artistName = String(artistRow?.name || "").trim();
+      if (artistName) {
+        return [artistName];
+      }
+    }
+
+    return [fallbackArtistName];
   }
 
-  private static getAlbumArtistNames(albumId: number | null, fallbackArtistName: string): string[] {
-    if (!albumId) {
-      return [fallbackArtistName];
+  private static getAlbumArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
+    if (row.album_mb_release_group_id) {
+      const canonicalRows = db.prepare(`
+        SELECT COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS name
+        FROM AlbumArtists aa
+        LEFT JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
+        WHERE aa.release_group_mbid = ?
+        ORDER BY aa.ord ASC
+      `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
+
+      const canonicalNames = canonicalRows.map((canonicalRow) => String(canonicalRow.name || "").trim()).filter(Boolean);
+      if (canonicalNames.length > 0) {
+        return canonicalNames;
+      }
     }
 
-    const rows = db.prepare(`
-      SELECT DISTINCT artist.name
-      FROM ProviderAlbumArtists aa
-      JOIN ArtistMetadata artist ON artist.mbid = aa.artist_id
-      WHERE aa.album_id = ?
-      ORDER BY COALESCE(aa.ord, 9999), artist.name
-    `).all(albumId) as Array<{ name?: string }>;
+    if (row.album_id) {
+      const rows = db.prepare(`
+        SELECT DISTINCT artist.name
+        FROM ProviderAlbumArtists aa
+        JOIN ArtistMetadata artist ON artist.mbid = aa.artist_id
+        WHERE aa.album_id = ?
+        ORDER BY COALESCE(aa.ord, 9999), artist.name
+      `).all(row.album_id) as Array<{ name?: string }>;
 
-    const names = rows.map((row) => String(row.name || "").trim()).filter(Boolean);
-    return names.length > 0 ? names : [fallbackArtistName];
+      const names = rows.map((providerRow) => String(providerRow.name || "").trim()).filter(Boolean);
+      if (names.length > 0) {
+        return names;
+      }
+    }
+
+    if (row.artist_mbid) {
+      const artistRow = db.prepare(`
+        SELECT name
+        FROM ArtistMetadata
+        WHERE mbid = ?
+        LIMIT 1
+      `).get(row.artist_mbid) as { name?: string | null } | undefined;
+      const artistName = String(artistRow?.name || "").trim();
+      if (artistName) {
+        return [artistName];
+      }
+    }
+
+    return [fallbackArtistName];
   }
 
   private static getTrackCountForDisc(albumId: number | null, volumeNumber: number, canonicalReleaseMbid?: string | null): number | null {
@@ -874,7 +1029,7 @@ export class AudioTagService {
     `).get(albumId, volumeNumber) as { count?: number } | undefined;
 
     const count = Number(row?.count || 0);
-  return count > 0 ? count : null;
+    return count > 0 ? count : null;
   }
 
   static buildAudioTagWriteMap(tags: ManagedTag[], extension?: string): Record<string, string> {
@@ -1334,11 +1489,11 @@ export class AudioTagService {
 
   private static buildDesiredTags(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
     const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
-    const artistNames = this.getTrackArtistNames(row.media_id, fallbackArtistName);
-    const albumArtistNames = this.getAlbumArtistNames(row.album_id, fallbackArtistName);
+    const artistNames = this.getTrackArtistNames(row, fallbackArtistName);
+    const albumArtistNames = this.getAlbumArtistNames(row, fallbackArtistName);
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
-    const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid);
+    const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid || row.album_mbid);
     const releaseDate = normalizeReleaseDate(row.media_release_date || row.album_release_date);
 
     // Resolve the MusicBrainz release track ID from the canonical Tracks table
@@ -1970,8 +2125,11 @@ export class AudioTagService {
       SELECT id
       FROM TrackFiles
       WHERE file_type = 'track'
-        AND media_id IN (${placeholders})
-    `).all(...uniqueMediaIds) as Array<{ id: number }>;
+        AND (
+          media_id IN (${placeholders})
+          OR (provider_entity_type = 'track' AND provider_id IN (${placeholders}))
+        )
+    `).all(...uniqueMediaIds, ...uniqueMediaIds) as Array<{ id: number }>;
 
     return this.apply(libraryFileIds.map((row) => row.id));
   }
