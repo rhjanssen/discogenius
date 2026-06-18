@@ -24,6 +24,9 @@ before(async () => {
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM job_queue").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
+    for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata", "Artists"]) {
+        dbModule.db.prepare(`DELETE FROM ${table}`).run();
+    }
 });
 
 after(() => {
@@ -183,6 +186,83 @@ test("activity page prioritizes processing downloads ahead of newer pending down
     assert.deepEqual(page.items.map((item) => item.id), [processingId, pendingOneId]);
     assert.equal(page.items[0]?.status, "running");
     assert.equal(page.items[1]?.queuePosition, 1);
+});
+
+test("activity descriptions resolve download jobs from canonical provider items without legacy provider rows", () => {
+    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
+        .run("artist-local", "Canonical Artist", "artist-mbid", 1);
+    dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-mbid", "Canonical Artist");
+    dbModule.db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+        VALUES (?, ?, ?, ?)
+    `).run("release-group-mbid", "artist-mbid", "Canonical Album", "album");
+    dbModule.db.prepare(`
+        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run("release-mbid", "release-group-mbid", "artist-mbid", "Canonical Album", 1, 1);
+    dbModule.db.prepare(`
+        INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+        VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+    `).run(
+        "recording-mbid",
+        "Canonical Track",
+        "artist-mbid",
+        0,
+        "video-recording-mbid",
+        "Canonical Video",
+        "artist-mbid",
+        1,
+    );
+    dbModule.db.prepare(`
+        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run("track-mbid", "release-mbid", "recording-mbid", "Canonical Track", 1, 1);
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems (
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+            release_mbid, track_mbid, recording_mbid, title, library_slot,
+            match_status, match_confidence, match_method
+        ) VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal", "album", "provider-album", "artist-mbid", "release-group-mbid",
+        "release-mbid", null, null, "Canonical Album", "stereo", "verified", 1, "test",
+        "tidal", "track", "provider-track", "artist-mbid", "release-group-mbid",
+        "release-mbid", "track-mbid", "recording-mbid", "Canonical Track", "stereo", "verified", 1, "test",
+        "tidal", "video", "provider-video", "artist-mbid", null,
+        null, null, "video-recording-mbid", "Canonical Video", "video", "verified", 1, "test",
+    );
+
+    const albumJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadAlbum,
+        { providerId: "provider-album" },
+        "provider-album",
+    );
+    const trackJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadTrack,
+        { providerId: "provider-track" },
+        "provider-track",
+    );
+    const videoJobId = queueModule.TaskQueueService.addJob(
+        queueModule.JobTypes.DownloadVideo,
+        { providerId: "provider-video" },
+        "provider-video",
+    );
+
+    const page = commandHistoryModule.getActivityPage({
+        statuses: ["pending"],
+        categories: ["downloads"],
+        limit: 10,
+        offset: 0,
+    });
+
+    const descriptionById = new Map(page.items.map((item) => [item.id, item.description]));
+    assert.equal(descriptionById.get(albumJobId), "Canonical Album by Canonical Artist");
+    assert.equal(descriptionById.get(trackJobId), "Canonical Track on Canonical Album by Canonical Artist");
+    assert.equal(descriptionById.get(videoJobId), "Canonical Video by Canonical Artist");
 });
 
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {

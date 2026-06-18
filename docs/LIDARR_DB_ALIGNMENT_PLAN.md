@@ -230,3 +230,12 @@ Keep `media_id`/`album_id` as shadow columns until Phase 5.
   `library-files-query-service.test.ts` proves a canonical-only file with no
   legacy provider rows still receives its provider source quality and avoids an
   impossible upgrade above provider availability.
+- ✅ **`command-history` activity description cutover** — activity/history task
+  descriptions for `DownloadAlbum`, `DownloadTrack`, `DownloadVideo`,
+  `RefreshAlbum`, and `ScanAlbum` now resolve provider refs through
+  `ProviderItems` plus `ArtistMetadata`/`Albums`/`AlbumReleases`/`Tracks`/
+  `Recordings`, with payload text as the legacy-job fallback. The service no
+  longer references `ProviderAlbums` or `ProviderMedia`. Regression:
+  `activity.test.ts` covers canonical-only album/track/video download jobs with
+  zero legacy provider rows; browser smoke verified `/api/v1/history/activity`
+  returns the canonical descriptions from a temp runtime DB.

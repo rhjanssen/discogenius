@@ -133,10 +133,17 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
     for (const chunk of chunkValues(missingIds, 200)) {
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(`
-            SELECT a.id, a.title, a.version, ar.name as artist_name
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE a.id IN (${placeholders})
+            SELECT
+                pi.provider_id AS id,
+                COALESCE(pi.title, release.title, album.title) AS title,
+                pi.version AS version,
+                artist.name AS artist_name
+            FROM ProviderItems pi
+            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, release.artist_mbid, album.artist_mbid)
+            WHERE pi.entity_type = 'album'
+              AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
             title: string | null;
@@ -173,16 +180,21 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(`
             SELECT
-                m.id,
-                m.title as track_title,
-                m.version as track_version,
-                a.title as album_title,
-                a.version as album_version,
-                ar.name as artist_name
-            FROM ProviderMedia m
-            LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE m.id IN (${placeholders})
+                pi.provider_id AS id,
+                COALESCE(pi.title, recording.title, track.title) AS track_title,
+                pi.version AS track_version,
+                COALESCE(release.title, album.title) AS album_title,
+                release.disambiguation AS album_version,
+                artist.name AS artist_name
+            FROM ProviderItems pi
+            LEFT JOIN Tracks track ON track.mbid = pi.track_mbid OR track.id = pi.track_id
+            LEFT JOIN Recordings recording ON recording.mbid = COALESCE(pi.recording_mbid, track.recording_mbid)
+                OR recording.id = pi.recording_id
+            LEFT JOIN AlbumReleases release ON release.mbid = COALESCE(pi.release_mbid, track.release_mbid)
+            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid, release.artist_mbid, album.artist_mbid)
+            WHERE pi.entity_type = 'track'
+              AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
             track_title: string | null;
@@ -222,10 +234,16 @@ function loadMissingVideos(ids: readonly string[], context: DescriptionLookupCon
     for (const chunk of chunkValues(missingIds, 200)) {
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(`
-            SELECT m.id, m.title, ar.name as artist_name
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            WHERE m.id IN (${placeholders}) AND m.type = 'Music Video'
+            SELECT
+                pi.provider_id AS id,
+                COALESCE(pi.title, recording.title) AS title,
+                artist.name AS artist_name
+            FROM ProviderItems pi
+            LEFT JOIN Recordings recording ON recording.mbid = pi.recording_mbid
+                OR recording.id = pi.recording_id
+            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid)
+            WHERE pi.entity_type = 'video'
+              AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
             title: string | null;
@@ -323,6 +341,30 @@ function preloadDescriptionLookups(
     loadMissingVideos(ids.videoIds, context);
 }
 
+function resolveAlbumLookup(id: string, context?: DescriptionLookupContext): AlbumLookupValue {
+    const lookupContext = context ?? createDescriptionLookupContext();
+    if (!lookupContext.albumById.has(id)) {
+        loadMissingAlbums([id], lookupContext);
+    }
+    return lookupContext.albumById.get(id) ?? null;
+}
+
+function resolveTrackLookup(id: string, context?: DescriptionLookupContext): TrackLookupValue {
+    const lookupContext = context ?? createDescriptionLookupContext();
+    if (!lookupContext.trackById.has(id)) {
+        loadMissingTracks([id], lookupContext);
+    }
+    return lookupContext.trackById.get(id) ?? null;
+}
+
+function resolveVideoLookup(id: string, context?: DescriptionLookupContext): VideoLookupValue {
+    const lookupContext = context ?? createDescriptionLookupContext();
+    if (!lookupContext.videoById.has(id)) {
+        loadMissingVideos([id], lookupContext);
+    }
+    return lookupContext.videoById.get(id) ?? null;
+}
+
 export const formatAlbumTitle = (title: string, version?: string | null) => {
     const base = title || "Unknown Album";
     const normalizedVersion = (version || "").trim();
@@ -385,32 +427,11 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             return `${formatAlbumTitle(payload.albumTitle, payload.albumVersion)} by ${payload.artistName}`;
         }
         if (providerId) {
-            const cached = context?.albumById.get(providerId);
-            if (cached !== undefined) {
-                if (cached?.title) {
-                    const albumTitle = formatAlbumTitle(cached.title, cached.version);
-                    return cached.artistName ? `${albumTitle} by ${cached.artistName}` : albumTitle;
-                }
-                return "Unknown Album";
+            const cached = resolveAlbumLookup(String(providerId), context);
+            if (cached?.title) {
+                const albumTitle = formatAlbumTitle(cached.title, cached.version);
+                return cached.artistName ? `${albumTitle} by ${cached.artistName}` : albumTitle;
             }
-
-            try {
-                const row = db.prepare(`
-                    SELECT a.title, a.version, ar.name as artist_name
-                    FROM ProviderAlbums a
-                    LEFT JOIN Artists ar ON ar.id = a.artist_id
-                    WHERE a.id = ?
-                `).get(providerId) as any;
-                context?.albumById.set(providerId, row?.title ? {
-                    title: row.title,
-                    version: row.version,
-                    artistName: row.artist_name,
-                } : null);
-                if (row?.title) {
-                    const albumTitle = formatAlbumTitle(row.title, row.version);
-                    return row.artist_name ? `${albumTitle} by ${row.artist_name}` : albumTitle;
-                }
-            } catch { /* ignore */ }
         }
         return "Unknown Album";
     }
@@ -520,97 +541,28 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
 
     try {
         if (job.type === "DownloadAlbum") {
-            const cached = providerId ? context?.albumById.get(providerId) : undefined;
-            if (cached !== undefined) {
-                const albumTitle = formatAlbumTitle(cached?.title || payload.title || "Unknown", cached?.version || null);
-                const artistName = cached?.artistName || payload.artist || "Unknown";
-                return `${albumTitle} by ${artistName}`;
-            }
-
-            const row = db.prepare(`
-                SELECT a.title, a.version, ar.name as artist_name
-                FROM ProviderAlbums a
-                LEFT JOIN Artists ar ON ar.id = a.artist_id
-                WHERE a.id = ?
-            `).get(providerId) as any;
-            if (providerId) {
-                context?.albumById.set(providerId, row?.title ? {
-                    title: row.title,
-                    version: row.version,
-                    artistName: row.artist_name,
-                } : null);
-            }
-            const albumTitle = formatAlbumTitle(row?.title || payload.title || "Unknown", row?.version || null);
-            const artistName = row?.artist_name || payload.artist || "Unknown";
+            const cached = resolveAlbumLookup(String(providerId), context);
+            const albumTitle = formatAlbumTitle(cached?.title || payload.title || "Unknown", cached?.version || null);
+            const artistName = cached?.artistName || payload.artist || "Unknown";
             return `${albumTitle} by ${artistName}`;
         }
 
         if (job.type === "DownloadTrack") {
-            const cached = providerId ? context?.trackById.get(providerId) : undefined;
-            if (cached !== undefined) {
-                const trackTitle = cached?.trackTitle
-                    ? formatTrackTitle(cached.trackTitle, cached.trackVersion || null)
-                    : (payload.title || "Unknown Track");
-                const albumTitle = cached?.albumTitle
-                    ? formatAlbumTitle(cached.albumTitle, cached.albumVersion || null)
-                    : (payload.albumTitle || payload.album || "Unknown Album");
-                const artistName = cached?.artistName || payload.artist || "Unknown";
-                return `${trackTitle} on ${albumTitle} by ${artistName}`;
-            }
-
-            const row = db.prepare(`
-                SELECT
-                    m.title as track_title,
-                    m.version as track_version,
-                    a.title as album_title,
-                    a.version as album_version,
-                    ar.name as artist_name
-                FROM ProviderMedia m
-                LEFT JOIN ProviderAlbums a ON a.id = m.album_id
-                LEFT JOIN Artists ar ON ar.id = a.artist_id
-                WHERE m.id = ?
-            `).get(providerId) as any;
-            if (providerId) {
-                context?.trackById.set(providerId, row?.track_title ? {
-                    trackTitle: row.track_title,
-                    trackVersion: row.track_version,
-                    albumTitle: row.album_title,
-                    albumVersion: row.album_version,
-                    artistName: row.artist_name,
-                } : null);
-            }
-            const trackTitle = row?.track_title
-                ? formatTrackTitle(row.track_title, row?.track_version || null)
+            const cached = resolveTrackLookup(String(providerId), context);
+            const trackTitle = cached?.trackTitle
+                ? formatTrackTitle(cached.trackTitle, cached.trackVersion || null)
                 : (payload.title || "Unknown Track");
-            const albumTitle = row?.album_title
-                ? formatAlbumTitle(row.album_title, row?.album_version || null)
+            const albumTitle = cached?.albumTitle
+                ? formatAlbumTitle(cached.albumTitle, cached.albumVersion || null)
                 : (payload.albumTitle || payload.album || "Unknown Album");
-            const artistName = row?.artist_name || payload.artist || "Unknown";
+            const artistName = cached?.artistName || payload.artist || "Unknown";
             return `${trackTitle} on ${albumTitle} by ${artistName}`;
         }
 
         if (job.type === "DownloadVideo") {
-            const cached = providerId ? context?.videoById.get(providerId) : undefined;
-            if (cached !== undefined) {
-                const title = cached?.title || payload.title || "Unknown Video";
-                const artistName = cached?.artistName || payload.artist || "Unknown";
-                return `${title} by ${artistName}`;
-            }
-
-            const row = db.prepare(`
-                SELECT m.title, ar.name as artist_name
-                FROM ProviderMedia m
-                LEFT JOIN Artists ar ON ar.id = m.artist_id
-                WHERE m.id = ? AND m.type = 'Music Video'
-            `).get(providerId) as any;
-            if (providerId) {
-                context?.videoById.set(providerId, row?.title ? {
-                    title: row.title,
-                    artistName: row.artist_name,
-                } : null);
-            }
-            const title = row?.title || payload.title || "Unknown Video";
-            const artistName = row?.artist_name || payload.artist || "Unknown";
+            const cached = resolveVideoLookup(String(providerId), context);
+            const title = cached?.title || payload.title || "Unknown Video";
+            const artistName = cached?.artistName || payload.artist || "Unknown";
             return `${title} by ${artistName}`;
         }
     } catch {
