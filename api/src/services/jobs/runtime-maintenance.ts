@@ -10,6 +10,9 @@ interface LibraryFileRow {
   id: number;
   media_id: number | null;
   canonical_recording_mbid: string | null;
+  canonical_track_mbid: string | null;
+  track_id: number | null;
+  recording_id: number | null;
   library_slot: string | null;
   file_type: string;
   file_path: string;
@@ -118,19 +121,28 @@ function mediaIdentityKey(row: LibraryFileRow): string {
 }
 
 /**
- * Canonical-first dedupe identity (Phase 1). A recording legitimately exists as
- * separate stereo *and* spatial files, so library_slot is part of the key —
- * otherwise a slot-blind canonical key would merge a track's stereo and Atmos
- * copies. Catches same-recording duplicates within a slot even when they carry
- * *different* legacy media_ids (e.g. two provider releases of the same track),
- * which the media-id key alone misses.
+ * Canonical-first dedupe identity (Phase 1, corrected). A file's canonical
+ * identity is the **track** (the release↔recording mapping), NOT the recording:
+ * one recording legitimately appears as a track on several releases, so the same
+ * recording downloaded from two different releases yields two *distinct* files
+ * that must NOT be merged. So audio dedupes by `track_id`/`canonical_track_mbid`
+ * (release-specific) within a slot. Videos have no release/track, so they dedupe
+ * by `recording_id`/`canonical_recording_mbid`. library_slot is part of the key
+ * (a track's stereo and spatial copies are distinct files). Returns "" when the
+ * relevant canonical id is missing, leaving such rows to the media-id pass.
  */
 function canonicalIdentityKey(row: LibraryFileRow): string {
-  const recording = String(row.canonical_recording_mbid ?? "").trim();
-  if (!recording) {
-    return "";
+  const slot = String(row.library_slot ?? "").trim().toLowerCase();
+  if (row.file_type === "video") {
+    const recording = row.recording_id != null
+      ? `id:${row.recording_id}`
+      : String(row.canonical_recording_mbid ?? "").trim();
+    return recording ? `vid:${recording}:${slot}` : "";
   }
-  return `rec:${recording}:${row.file_type}:${String(row.library_slot ?? "").trim().toLowerCase()}`;
+  const track = row.track_id != null
+    ? `id:${row.track_id}`
+    : String(row.canonical_track_mbid ?? "").trim();
+  return track ? `trk:${track}:${slot}` : "";
 }
 
 function dedupeLibraryFilesByKey(
@@ -142,6 +154,9 @@ function dedupeLibraryFilesByKey(
       id,
       media_id,
       canonical_recording_mbid,
+      canonical_track_mbid,
+      track_id,
+      recording_id,
       library_slot,
       file_type,
       file_path,
@@ -152,7 +167,7 @@ function dedupeLibraryFilesByKey(
       modified_at,
       created_at
     FROM TrackFiles
-    WHERE (media_id IS NOT NULL OR canonical_recording_mbid IS NOT NULL)
+    WHERE (media_id IS NOT NULL OR canonical_recording_mbid IS NOT NULL OR track_id IS NOT NULL OR recording_id IS NOT NULL)
       AND file_type IN ('track', 'video')
     ORDER BY id ASC
   `).all() as LibraryFileRow[];

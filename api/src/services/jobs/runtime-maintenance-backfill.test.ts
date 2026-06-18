@@ -192,12 +192,12 @@ function countTrackFiles() {
   return (db.prepare("SELECT COUNT(*) c FROM TrackFiles").get() as { c: number }).c;
 }
 
-test("canonical dedupe removes same-recording/same-slot dupes with different media_ids", () => {
+test("canonical dedupe removes same-track/same-slot dupes with different media_ids", () => {
   seedLegacyGraph();
-  // Same recording + slot, but two different legacy media_ids — the media-id key
-  // alone would keep both; the canonical key collapses them to one.
-  insertLegacyTrackFile({ media_id: "media-a", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/a.flac", filename: "a.flac" });
-  insertLegacyTrackFile({ media_id: "media-b", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/b.flac", filename: "b.flac" });
+  // Same track (same release appearance) + slot, two different legacy media_ids —
+  // the media-id key alone would keep both; the canonical track key collapses them.
+  insertLegacyTrackFile({ media_id: "media-a", canonical_track_mbid: "track-1", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/a.flac", filename: "a.flac" });
+  insertLegacyTrackFile({ media_id: "media-b", canonical_track_mbid: "track-1", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/b.flac", filename: "b.flac" });
   assert.equal(countTrackFiles(), 2);
 
   const summary = freshSummary();
@@ -207,17 +207,44 @@ test("canonical dedupe removes same-recording/same-slot dupes with different med
   assert.equal(countTrackFiles(), 1);
 });
 
-test("canonical dedupe keeps the same recording across different library slots", () => {
+test("canonical dedupe KEEPS the same recording on different releases (different tracks)", () => {
   seedLegacyGraph();
-  // Stereo and spatial copies of the same recording are NOT duplicates.
-  insertLegacyTrackFile({ media_id: "media-stereo", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/s.flac", filename: "s.flac" });
-  insertLegacyTrackFile({ media_id: "media-spatial", canonical_recording_mbid: "rec-1", library_slot: "spatial", file_path: "C:/Atmos/s.m4a", filename: "s.m4a", extension: "m4a" });
+  // The same recording appears as a track on two different releases — both files
+  // are legitimate and must NOT be merged (one recording -> many files).
+  insertLegacyTrackFile({ media_id: "media-album", canonical_track_mbid: "track-onAlbum", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/album.flac", filename: "album.flac" });
+  insertLegacyTrackFile({ media_id: "media-compilation", canonical_track_mbid: "track-onComp", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/comp.flac", filename: "comp.flac" });
 
   const summary = freshSummary();
   dedupeLibraryFiles(summary);
 
   assert.equal(summary.duplicateLibraryFilesRemoved, 0);
   assert.equal(countTrackFiles(), 2);
+});
+
+test("canonical dedupe keeps the same track across different library slots", () => {
+  seedLegacyGraph();
+  // Stereo and spatial copies of the same track are NOT duplicates.
+  insertLegacyTrackFile({ media_id: "media-stereo", canonical_track_mbid: "track-1", library_slot: "stereo", file_path: "C:/Music/s.flac", filename: "s.flac" });
+  insertLegacyTrackFile({ media_id: "media-spatial", canonical_track_mbid: "track-1", library_slot: "spatial", file_path: "C:/Atmos/s.m4a", filename: "s.m4a", extension: "m4a" });
+
+  const summary = freshSummary();
+  dedupeLibraryFiles(summary);
+
+  assert.equal(summary.duplicateLibraryFilesRemoved, 0);
+  assert.equal(countTrackFiles(), 2);
+});
+
+test("canonical dedupe merges duplicate videos by recording within a slot", () => {
+  seedLegacyGraph();
+  // Videos have no release/track — identity is the recording.
+  insertLegacyTrackFile({ media_id: "vid-a", canonical_recording_mbid: "video-rec-1", file_type: "video", library_slot: "video", file_path: "C:/Videos/v1.mp4", filename: "v1.mp4", extension: "mp4" });
+  insertLegacyTrackFile({ media_id: "vid-b", canonical_recording_mbid: "video-rec-1", file_type: "video", library_slot: "video", file_path: "C:/Videos/v2.mp4", filename: "v2.mp4", extension: "mp4" });
+
+  const summary = freshSummary();
+  dedupeLibraryFiles(summary);
+
+  assert.equal(summary.duplicateLibraryFilesRemoved, 1);
+  assert.equal(countTrackFiles(), 1);
 });
 
 test("dedupe still collapses legacy rows sharing media_id with no canonical recording", () => {
