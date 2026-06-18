@@ -104,7 +104,10 @@ Docker runtime image.
   canonical provider-supplement columns on `Albums`/`AlbumReleases`/`Recordings`;
   `refresh-album-service` mirrors album/release/track supplements there while
   keeping legacy compatibility writes, and NFO/audio-tag fallbacks read the
-  canonical values first. **Remaining:** other read/write paths
+  canonical values first. Dead legacy provider module/version repair helpers
+  (`module-fixer`, `version-grouper`) were removed after verifying zero
+  production imports, and `DownloadMissingForce` no longer carries an obsolete
+  provider skip-flag reset. **Remaining:** other read/write paths
   still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
   (organizer, quality/upgrader, audio-tag MB/AcoustID write-back and legacy
   tag fallbacks, plus file-identity fallback);

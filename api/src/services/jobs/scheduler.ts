@@ -832,10 +832,9 @@ export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
 }
 
 export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
-    const skipFlags = true;  // Clear skip_* flags before queueing DownloadMissing
     return TaskQueueService.addJob(
         JobTypes.DownloadMissingForce,
-        { skipFlags },
+        {},
         'download-missing-force',
         10,  // manual trigger boost
         options.trigger ?? 1,

@@ -1,4 +1,4 @@
-import { db, hasColumns } from "../../database.js";
+import { db } from "../../database.js";
 import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
@@ -57,15 +57,6 @@ export async function runLowCouplingMaintenanceJob(
             return;
         }
         case JobTypes.DownloadMissingForce: {
-            if (job.payload.skipFlags === true) {
-                const canResetSkipFlags = hasColumns('media', ['skip_download', 'skip_upgrade', 'monitored']);
-                if (canResetSkipFlags) {
-                    db.prepare(`UPDATE ProviderMedia SET skip_download = 0, skip_upgrade = 0 WHERE monitored = 1;`).run();
-                } else {
-                    console.warn('[Scheduler] DownloadMissingForce skip flag reset skipped: media.skip_download/skip_upgrade not available');
-                }
-            }
-
             TaskQueueService.addJob(
                 JobTypes.DownloadMissing,
                 {},

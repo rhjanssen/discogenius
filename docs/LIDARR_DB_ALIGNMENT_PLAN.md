@@ -251,7 +251,9 @@ Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
 `ProviderItems`-only), the **upgrade subsystem** (`upgrade_queue` stores legacy
 `media_id`/`album_id`; re-key to `recording_id`/canonical), and
 `runtime-maintenance.repairMonitoringGaps` (→ Phase 4, `ReleaseGroupSlots`/
-`Recordings` monitored state). `version-grouper` is dead code (verify, then drop).
+`Recordings` monitored state). Dead provider-catalog-only repair helpers
+(`version-grouper`, `module-fixer`) have been removed after verifying zero
+production imports.
 
 This is the careful core of Phase 3 (artwork/NFO/scan correctness) and is the
 next focused session's work; rushing it risks breaking display/organization.
@@ -271,8 +273,7 @@ Reference scope (non-test files): `ProviderAlbums` 26, `ProviderMedia` 26,
 - `services/mediafiles/library-scan.ts` — UPDATE `ProviderMedia`/`ProviderAlbums`.
 - `services/mediafiles/audio-tag-service.ts` — UPDATE `ProviderMedia`/`ProviderAlbums` (tag write-back).
 - `services/music/refresh-album-service.ts`, `services/music/refresh-artist-service.ts` — scan upserts.
-- `services/metadata/metadata-identity-service.ts`, `services/metadata/version-grouper.ts`.
-- `services/config/module-fixer.ts` — one-time repair UPDATEs.
+- `services/metadata/metadata-identity-service.ts`.
 - `services/jobs/runtime-maintenance.ts` (`repairMonitoringGaps`) + `scheduler-maintenance-handlers.ts` — **Phase 4**.
 
 **Readers (cut over in Phase 2 — point at canonical + `ProviderItems`):**
@@ -348,8 +349,8 @@ Remaining order:
    deleted; the active write SQL is inline in the services. Cut over
    `refresh-album-service` (supplement-field homing started; legacy compatibility
    writes still present), `import-service`, `manual-import-service`,
-   `organizer`, `audio-tag-service`, `library-scan`, `metadata-identity-service`,
-   `version-grouper`, `module-fixer` to write canonical + `ProviderItems`.
+   `organizer`, `audio-tag-service`, `library-scan`, and
+   `metadata-identity-service` to write canonical + `ProviderItems`.
 3. **Phase 4 — housekeeping.** Repoint/retire `repairMonitoringGaps` +
    `scheduler-maintenance-handlers` to canonical monitored/skip state; remove
    provider-only similar/top-track discovery code unless a MusicBrainz/SkyHook

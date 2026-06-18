@@ -85,7 +85,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
 | `BulkRefreshArtist` | Refresh metadata for all monitored artists | Type-exclusive |
-| `DownloadMissingForce` | Reset skip flags and requeue missing downloads for all monitored media | Type-exclusive |
+| `DownloadMissingForce` | Queue a missing-download pass for monitored media | Type-exclusive |
 | `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
 | `CheckHealth` | System health diagnostics (runtime, writable paths, tool availability, backend capability checks) | Globally exclusive |
 | `CompactDatabase` | SQLite VACUUM + ANALYZE for maintenance | Globally exclusive |

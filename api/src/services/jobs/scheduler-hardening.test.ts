@@ -31,15 +31,10 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("DownloadMissingForce skips legacy flag reset when skip_download/skip_upgrade columns are absent", async () => {
-    const mediaColumns = dbModule.db.prepare("PRAGMA table_info(ProviderMedia)").all() as Array<{ name: string }>;
-    const mediaColumnNames = new Set(mediaColumns.map((column) => column.name));
-    assert.equal(mediaColumnNames.has("skip_download"), false);
-    assert.equal(mediaColumnNames.has("skip_upgrade"), false);
-
+test("DownloadMissingForce queues a missing-download pass without legacy skip flag maintenance", async () => {
     const jobId = queueModule.TaskQueueService.addJob(
         queueModule.JobTypes.DownloadMissingForce,
-        { skipFlags: true },
+        {},
     );
 
     const job = queueModule.TaskQueueService.getById(jobId);

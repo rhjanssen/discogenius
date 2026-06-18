@@ -221,9 +221,7 @@ export interface RenameArtistJobPayload extends QueuePayloadCommon {
 
 export type BulkRefreshArtistJobPayload = QueuePayloadCommon;
 
-export interface DownloadMissingForceJobPayload extends QueuePayloadCommon {
-  skipFlags?: boolean;
-}
+export type DownloadMissingForceJobPayload = QueuePayloadCommon;
 
 export interface RescanAllRootsJobPayload extends QueuePayloadCommon {
   addNewArtists?: boolean;
