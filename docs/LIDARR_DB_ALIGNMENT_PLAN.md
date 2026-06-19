@@ -133,6 +133,14 @@ into `AlbumReleases.barcode` or provider ISRC into `Recordings.isrcs`. Local
 MusicBrainz-docker mode may later fill or model authoritative MB UPC/ISRC
 directly, but that is a separate mode/design decision.
 
+Slot identity must stay release-specific. A Dolby Atmos mix of an album can have
+a different provider UPC/barcode from the stereo mix, and can map to a different
+MusicBrainz release with a different track/recording/ISRC set inside the same
+release group. `ReleaseGroupSlots.selected_release_mbid` therefore belongs on
+the `(release_group_mbid, slot)` row and must not be collapsed to one release per
+release group. Provider UPC/ISRC evidence remains on the selected `ProviderItems`
+album/track rows for that slot.
+
 There are **no separate provider catalog tables** after this migration — that is the
 whole point. `ProviderItems` stays, but only as *availability/offer* rows keyed to
 canonical mbids (which provider can download what, at which quality/slot), never as a
@@ -167,7 +175,9 @@ model. Applied so far:
 > way; remaining readers (lyrics/audio-tag/etc.) and the write path must too.
 
 - `ReleaseGroupSlots` (stereo/spatial/video slot model) — core to multi-library
-  + Atmos support; Lidarr has no equivalent.
+  + Atmos support; Lidarr has no equivalent. Preserve per-slot selected releases:
+  stereo and spatial slots may point to different `AlbumReleases` with different
+  provider UPC/barcode and track ISRC evidence.
 - `ProviderItems` as availability-only, keyed to canonical mbids — the
   "providers never create canonical entities" rule from AGENTS.md.
 - Curation/dedup (`ArtistReleaseGroupCuration`) — Discogenius's discography
@@ -211,6 +221,10 @@ not by mbid-join and not through `ProviderItems`:
   rename any truly necessary file-level MBID provenance to neutral names such as
   `artist_mbid`, `release_mbid`, `track_mbid`, or `recording_mbid`. Legacy
   `media_id`/`album_id` are dropped once readers/writers are off them.
+- Do not replace `ReleaseGroupSlots.selected_release_mbid` with a release-group
+  representative shortcut. Stereo and spatial files can be different products
+  under one release group, so file/import/download readers must follow the
+  selected release for the relevant slot before resolving tracks/recordings.
 
 **Foundation COMPLETE + validated (2026-06-18):** v23 migration + base schema add
 the four FK columns; backfill from canonical mbids (videos from the video

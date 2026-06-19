@@ -75,6 +75,7 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -294,6 +295,147 @@ test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz r
       },
     ],
   );
+});
+
+test("provider slot selection can bind stereo and Atmos to different releases and provider identifiers", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-slot-specific-atmos";
+  const stereoReleaseMbid = "release-mbid-slot-stereo";
+  const atmosReleaseMbid = "release-mbid-slot-atmos";
+  insertReleaseGroup(releaseGroupMbid);
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(stereoReleaseMbid, releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "2024-01-01", 2, 1);
+  insertRelease.run(atmosReleaseMbid, releaseGroupMbid, "artist-mbid-1", "A Night at the Opera (Dolby Atmos)", "Official", "2024-01-01", 2, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const [releaseMbid, recordingPrefix, trackPrefix] of [
+    [stereoReleaseMbid, "rec-slot-stereo", "track-slot-stereo"],
+    [atmosReleaseMbid, "rec-slot-atmos", "track-slot-atmos"],
+  ] as const) {
+    insertRecording.run(`${recordingPrefix}-1`, "Track One");
+    insertRecording.run(`${recordingPrefix}-2`, "Track Two");
+    insertTrack.run(`${trackPrefix}-1`, releaseMbid, `${recordingPrefix}-1`, "Track One", 1, 1);
+    insertTrack.run(`${trackPrefix}-2`, releaseMbid, `${recordingPrefix}-2`, "Track Two", 2, 1);
+  }
+
+  const insertProviderItem = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, release_group_mbid, release_mbid,
+      title, quality, upc, isrc, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertProviderItem.run("tidal", "album", "provider-slot-stereo", releaseGroupMbid, stereoReleaseMbid, "A Night at the Opera", "LOSSLESS", "UPC-STEREO-001", null, "stereo");
+  insertProviderItem.run("tidal", "album", "provider-slot-atmos", releaseGroupMbid, atmosReleaseMbid, "A Night at the Opera", "DOLBY_ATMOS", "UPC-ATMOS-001", null, "spatial");
+  insertProviderItem.run("tidal", "track", "provider-slot-stereo-1", releaseGroupMbid, stereoReleaseMbid, "Track One", "LOSSLESS", null, "ISRCSTEREO001", "stereo");
+  insertProviderItem.run("tidal", "track", "provider-slot-stereo-2", releaseGroupMbid, stereoReleaseMbid, "Track Two", "LOSSLESS", null, "ISRCSTEREO002", "stereo");
+  insertProviderItem.run("tidal", "track", "provider-slot-atmos-1", releaseGroupMbid, atmosReleaseMbid, "Track One", "DOLBY_ATMOS", null, "ISRCATMOS001", "spatial");
+  insertProviderItem.run("tidal", "track", "provider-slot-atmos-2", releaseGroupMbid, atmosReleaseMbid, "Track Two", "DOLBY_ATMOS", null, "ISRCATMOS002", "spatial");
+
+  const stereoMatch = {
+    ...buildMatch(releaseGroupMbid, "provider-slot-stereo"),
+    releaseMbid: stereoReleaseMbid,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-slot-stereo").evidence,
+      availableReleaseMbids: [stereoReleaseMbid],
+      targetTrackCount: 2,
+    },
+  };
+  const atmosMatch = {
+    ...buildMatch(releaseGroupMbid, "provider-slot-atmos"),
+    releaseMbid: atmosReleaseMbid,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-slot-atmos").evidence,
+      availableReleaseMbids: [atmosReleaseMbid],
+      targetTrackCount: 2,
+    },
+  };
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [
+      {
+        providerId: "provider-slot-stereo",
+        title: "A Night at the Opera",
+        quality: "LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "ISRCSTEREO001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "ISRCSTEREO002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+        ],
+      },
+      {
+        providerId: "provider-slot-atmos",
+        title: "A Night at the Opera",
+        quality: "DOLBY_ATMOS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "ISRCATMOS001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+          { mbid: null, isrc: "ISRCATMOS002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+        ],
+      },
+    ],
+    matches: new Map([
+      ["provider-slot-stereo", stereoMatch],
+      ["provider-slot-atmos", atmosMatch],
+    ]),
+  });
+
+  const slots = db.prepare(`
+    SELECT slot, selected_provider_id, selected_release_mbid
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ?
+    ORDER BY slot
+  `).all(releaseGroupMbid) as Array<{
+    slot: string;
+    selected_provider_id: string | null;
+    selected_release_mbid: string | null;
+  }>;
+
+  assert.deepEqual(slots, [
+    { slot: "spatial", selected_provider_id: "provider-slot-atmos", selected_release_mbid: atmosReleaseMbid },
+    { slot: "stereo", selected_provider_id: "provider-slot-stereo", selected_release_mbid: stereoReleaseMbid },
+  ]);
+
+  const albumEvidence = db.prepare(`
+    SELECT provider_id, upc, library_slot, release_mbid
+    FROM ProviderItems
+    WHERE entity_type = 'album' AND release_group_mbid = ?
+    ORDER BY library_slot
+  `).all(releaseGroupMbid);
+  assert.deepEqual(albumEvidence, [
+    { provider_id: "provider-slot-atmos", upc: "UPC-ATMOS-001", library_slot: "spatial", release_mbid: atmosReleaseMbid },
+    { provider_id: "provider-slot-stereo", upc: "UPC-STEREO-001", library_slot: "stereo", release_mbid: stereoReleaseMbid },
+  ]);
+
+  const trackEvidence = db.prepare(`
+    SELECT release_mbid, library_slot, group_concat(isrc, ',') AS isrcs
+    FROM ProviderItems
+    WHERE entity_type = 'track' AND release_group_mbid = ?
+    GROUP BY release_mbid, library_slot
+    ORDER BY library_slot
+  `).all(releaseGroupMbid);
+  assert.deepEqual(trackEvidence, [
+    { release_mbid: atmosReleaseMbid, library_slot: "spatial", isrcs: "ISRCATMOS001,ISRCATMOS002" },
+    { release_mbid: stereoReleaseMbid, library_slot: "stereo", isrcs: "ISRCSTEREO001,ISRCSTEREO002" },
+  ]);
+
+  const catalogIsrcRows = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM Recordings
+    WHERE mbid LIKE 'rec-slot-%' AND isrcs IS NOT NULL
+  `).get() as { count: number };
+  assert.equal(catalogIsrcRows.count, 0);
 });
 
 test("provider sync retains Atmos matches while spatial downloads are disabled", () => {

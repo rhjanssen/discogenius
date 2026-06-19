@@ -257,6 +257,11 @@ function compatibleReleaseMbids(match: ProviderReleaseGroupMatch): string[] {
     ].map((releaseMbid) => String(releaseMbid || "").trim()).filter(Boolean)));
 }
 
+function candidateCanRepresentRelease(candidate: ProviderAlbumCandidateWithTracks, releaseMbid: string): boolean {
+    const compatibleMbids = compatibleReleaseMbids(candidate.match);
+    return compatibleMbids.length === 0 || compatibleMbids.includes(releaseMbid);
+}
+
 type ReleaseTrackTargets = {
     releaseMbid: string;
     tracks: TargetTrack[];
@@ -527,7 +532,10 @@ export function selectReleaseGroupSlotAlbums(
         // 2. Single candidate fully covering a release, most complete edition first.
         let selectedSingle: { candidate: ProviderAlbumCandidateWithTracks; releaseMbid: string } | null = null;
         for (const target of releaseTargets) {
-            const fullCovers = candidatesWithTracks.filter(c =>
+            const releaseCompatibleCandidates = candidatesWithTracks.filter(candidate =>
+                candidateCanRepresentRelease(candidate, target.releaseMbid)
+            );
+            const fullCovers = releaseCompatibleCandidates.filter(c =>
                 getMatchedTargets1to1(target.tracks, c.tracks).size === target.tracks.length
             );
             if (fullCovers.length > 0) {
@@ -565,15 +573,22 @@ export function selectReleaseGroupSlotAlbums(
         } | null = null;
 
         for (const target of releaseTargets) {
-            const primary = candidatesWithTracks[0];
+            const releaseCompatibleCandidates = candidatesWithTracks.filter(candidate =>
+                candidateCanRepresentRelease(candidate, target.releaseMbid)
+            );
+            if (releaseCompatibleCandidates.length === 0) {
+                continue;
+            }
+
+            const primary = releaseCompatibleCandidates[0];
             const selectedCandidates = [primary];
             let currentCovered = getMatchedTargets1to1(target.tracks, primary.tracks);
 
-            for (let i = 1; i < candidatesWithTracks.length; i++) {
+            for (let i = 1; i < releaseCompatibleCandidates.length; i++) {
                 if (currentCovered.size === target.tracks.length) {
                     break;
                 }
-                const candidate = candidatesWithTracks[i];
+                const candidate = releaseCompatibleCandidates[i];
                 if (candidate.provider !== primary.provider) {
                     continue; // Only combine candidates from the same provider
                 }

@@ -111,6 +111,9 @@ Docker runtime image.
   production imports, and `DownloadMissingForce` no longer carries an obsolete
   provider skip-flag reset. Runtime monitor-gap repair now writes canonical
   `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
+  Slot identity must remain release-specific: stereo and spatial selections can
+  point at different `AlbumReleases` and provider UPC/ISRC evidence inside one
+  release group.
   `CheckUpgrades` now scans `TrackFiles` canonical/provider identity +
   `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
   canonical-only audio/video upgrade downloads; only the transitional
