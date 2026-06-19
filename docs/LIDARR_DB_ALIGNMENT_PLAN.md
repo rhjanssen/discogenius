@@ -338,6 +338,45 @@ This is the same `canonical_recording.replay_gain` mistake the stashed broken WI
 made. `organizer` and `metadata-identity` have analogous re-sourcing needs (video
 provider rows, identity columns).
 
+### Progress (2026-06-19, pt.2): readers done — resolver lynchpin + audio-tag cut over ✓
+
+Three more cutovers landed green (full API suite: 329 pass):
+- **`replay_gain`/`peak` now home onto `Recordings`** in the scan
+  (`storeCanonicalTrackSupplements`, finite-number guard). Removes the
+  re-sourcing blocker the §6b gotcha warned about.
+- **`audio-tag-service` is fully legacy-table-free** — dropped its last
+  `ProviderAlbumArtists` fallback (canonical `AlbumArtists` + `artist_mbid`
+  cover it). It already read `Recordings.replay_gain/peak`, now populated.
+- **`MetadataIdentityService` (the lynchpin) reads canonical/`ProviderItems`.**
+  `resolveAlbum` reads the album offer's `release_group_mbid/release_mbid` and
+  ensures the canonical release-group row; `markVideoKnown` reads the video
+  offer; `resolveTrack` reports identity from the track offer's canonical link.
+  **The per-track ISRC/release-tracklist/AcoustID search resolver was retired**
+  (Robert's call, 2026-06-19): canonical `Tracks`/`Recordings` are the
+  authoritative tracklist and provider tracks map to them by position in
+  `scanTracks`; fingerprinting stays only for unknown *local* imports.
+  `resolveAlbumTracks` removed; `refresh-album-service` + the download-import
+  path updated. No test seeds referenced the resolver (exercised indirectly).
+
+**All catalog *readers* are now canonical.** Remaining legacy-table SQL (real,
+non-comment) is the *write path + path-computation reads*:
+- `refresh-album-service` (~31): writes `ProviderAlbums`/`ProviderMedia`/
+  `ProviderAlbumArtists`/`ProviderMediaArtists` as working state + self-reads
+  (`getScanLevel`, `scanBasic` freshness, `scanTracks` selectedRelease CTE,
+  `scanDeep` credits).
+- `organizer` (~11): path-computation reads (`ProviderAlbums`/`ProviderMedia`
+  for title/position/type) + the music-video import insert/update.
+- `import-service` (~8), `manual-import-service` (~5): import-time read/write.
+- `database.ts` (2): the `TrackFiles.media_id→ProviderMedia`/`album_id→
+  ProviderAlbums` FK definitions (dropped in Phase 5).
+
+Next pass (do with the container up — naming/path output needs real-data
+validation): convert `organizer`/`import`/`manual-import` reads to
+`ProviderItems`+canonical (position via canonical `Tracks` for matched tracks,
+`match_evidence` JSON for unmatched), then delete `refresh-album-service`'s
+legacy writes, then Phase 5 table drop + from-scratch rebuild (Bastille +
+Bakermat).
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
