@@ -167,39 +167,18 @@ function getProviderItem(provider: string | null, entityType: string, providerId
 }
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
-  const media = getRow<MediaRow>(
-    "SELECT artist_id, album_id, mbid, type, quality, track_number, volume_number FROM ProviderMedia WHERE CAST(id AS TEXT) = ? LIMIT 1",
-    input.mediaId
-  );
-  const albumId = nullableText(input.albumId) ?? nullableText(media?.album_id);
-  const album = getRow<AlbumRow>(
-    "SELECT artist_id, mbid, mb_release_group_id, quality FROM ProviderAlbums WHERE CAST(id AS TEXT) = ? LIMIT 1",
-    albumId
-  );
-  const artistId = nullableText(input.artistId) ?? nullableText(album?.artist_id) ?? nullableText(media?.artist_id);
+  // Canonical-only resolver: provider ids resolve through ProviderItems (keyed by
+  // provider_id) + the canonical graph + ReleaseGroupSlots. The legacy
+  // ProviderMedia/ProviderAlbums catalog reads were removed — ProviderItems is the
+  // single provider-availability source.
+  const albumId = nullableText(input.albumId);
+  const artistId = nullableText(input.artistId);
   const artist = getRow<ArtistRow>(
     "SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = ? LIMIT 1",
     artistId
   );
 
-  const albumRelease = getRow<MbReleaseRow>(
-    "SELECT mbid, release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
-    album?.mbid
-  );
-  const mediaTrack = getRow<MbTrackRow>(
-    "SELECT mbid, release_mbid, recording_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
-    media?.mbid
-  );
-  const mediaRecording = getRow<{ mbid: string }>(
-    "SELECT mbid FROM Recordings WHERE mbid = ? LIMIT 1",
-    media?.mbid
-  );
-  const trackRelease = getRow<MbReleaseRow>(
-    "SELECT mbid, release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
-    mediaTrack?.release_mbid
-  );
-
-  const providerEntityType = inferProviderEntityType(input, media);
+  const providerEntityType = inferProviderEntityType(input, null);
   const providerId = inferProviderId(input, providerEntityType);
   const provider = nullableText(input.provider);
   const providerAlbum = getProviderItem(provider, "album", albumId);
@@ -209,7 +188,7 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
   const preferredSlot = inferLibrarySlot({
     ...input,
     librarySlot: input.librarySlot ?? providerMedia?.library_slot ?? providerAlbum?.library_slot,
-    quality: input.quality ?? media?.quality ?? album?.quality,
+    quality: input.quality,
   });
   const releaseGroupSlot = albumId
     ? (db.prepare(`
@@ -223,26 +202,21 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
         LIMIT 1
       `).get(albumId, `${albumId};%`, `%;${albumId};%`, `%;${albumId}`, preferredSlot) as ReleaseGroupSlotRow | undefined) ?? null
     : null;
-  const selectedTrack = releaseGroupSlot?.selected_release_mbid && media?.mbid
+  // Resolve the exact track for the selected release via the provider offer's
+  // recording mbid (no provider-catalog position matching needed).
+  const offerRecordingMbid = nullableText(input.canonicalRecordingMbid) ?? nullableText(providerMedia?.recording_mbid);
+  const selectedTrack = releaseGroupSlot?.selected_release_mbid && offerRecordingMbid
     ? (db.prepare(`
         SELECT mbid, release_mbid, recording_mbid
         FROM Tracks
         WHERE release_mbid = ?
           AND recording_mbid = ?
-        ORDER BY
-          CASE WHEN position = ? THEN 0 ELSE 1 END,
-          CASE WHEN medium_position = ? THEN 0 ELSE 1 END,
-          mbid ASC
+        ORDER BY mbid ASC
         LIMIT 1
-      `).get(
-        releaseGroupSlot.selected_release_mbid,
-        media.mbid,
-        media.track_number ?? 0,
-        media.volume_number ?? 1,
-      ) as MbTrackRow | undefined) ?? null
+      `).get(releaseGroupSlot.selected_release_mbid, offerRecordingMbid) as MbTrackRow | undefined) ?? null
     : null;
 
-  const legacyProvider = (providerId && (media || album)) ? "tidal" : null;
+  const legacyProvider = providerId ? "tidal" : null;
 
   return {
     canonicalArtistMbid:
@@ -256,30 +230,22 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ?? nullableText(providerMedia?.release_group_mbid)
       ?? nullableText(providerAlbum?.release_group_mbid)
       ?? nullableText(releaseGroupSlot?.release_group_mbid)
-      ?? nullableText(album?.mb_release_group_id)
-      ?? nullableText(albumRelease?.release_group_mbid)
-      ?? nullableText(trackRelease?.release_group_mbid)
       ?? null,
     canonicalReleaseMbid:
       nullableText(input.canonicalReleaseMbid)
       ?? nullableText(releaseGroupSlot?.selected_release_mbid)
       ?? nullableText(providerMedia?.release_mbid)
       ?? nullableText(providerAlbum?.release_mbid)
-      ?? nullableText(albumRelease?.mbid)
-      ?? nullableText(mediaTrack?.release_mbid)
       ?? null,
     canonicalTrackMbid:
       nullableText(input.canonicalTrackMbid)
       ?? nullableText(providerMedia?.track_mbid)
       ?? nullableText(selectedTrack?.mbid)
-      ?? nullableText(mediaTrack?.mbid)
       ?? null,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
       ?? nullableText(providerMedia?.recording_mbid)
       ?? nullableText(selectedTrack?.recording_mbid)
-      ?? nullableText(mediaTrack?.recording_mbid)
-      ?? nullableText(mediaRecording?.mbid)
       ?? null,
     provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider ?? legacyProvider,
     providerEntityType,

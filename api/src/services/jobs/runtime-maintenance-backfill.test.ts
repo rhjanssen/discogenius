@@ -135,9 +135,18 @@ function getCanonical(id: number) {
   `).get(id) as Record<string, string | null>;
 }
 
-test("back-fills canonical ids for a legacy track file from media_id/album_id", () => {
+function seedProviderTrackOffer() {
+  // Provider availability offer the canonical-only resolver resolves mbids from.
+  db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid', 'release-group-1', 'release-1', 'track-1', 'recording-1', 'provider-album-1', 'Track One', 'LOSSLESS', 'stereo')
+  `).run();
+}
+
+test("back-fills canonical ids for a legacy track file via the ProviderItems offer", () => {
   seedLegacyGraph();
-  const id = insertLegacyTrackFile();
+  seedProviderTrackOffer();
+  const id = insertLegacyTrackFile({ provider: "tidal", provider_entity_type: "track", provider_id: "provider-track-1" });
 
   const summary = freshSummary();
   backfillCanonicalTrackFiles(summary);
@@ -153,7 +162,9 @@ test("back-fills canonical ids for a legacy track file from media_id/album_id", 
 
 test("never overwrites canonical ids already present and is idempotent", () => {
   seedLegacyGraph();
+  seedProviderTrackOffer();
   const id = insertLegacyTrackFile({
+    provider: "tidal", provider_entity_type: "track", provider_id: "provider-track-1",
     canonical_recording_mbid: "manually-pinned-recording",
   });
 

@@ -175,17 +175,13 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "rg-mbid-1", "stereo", "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
   dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "provider Album Title", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 354, "release-mbid-1", "rg-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'provider Album Title', 'LOSSLESS', 'stereo')
+  `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "provider Track Title", 1, 1, 0, "Track", "LOSSLESS", 354, "recording-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'provider Track Title', 'LOSSLESS', 'stereo')
+  `).run();
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 500,
@@ -428,18 +424,18 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
+  // Legacy rows kept only to satisfy the transitional TrackFiles.media_id/album_id
+  // FK (dropped in Phase 5); identity resolves from ProviderItems below.
+  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('10','1','A Night at the Opera','ALBUM',0,'LOSSLESS',1,1,0,3551)`).run();
+  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('100','1','10','Bohemian Rhapsody','Track',0,'LOSSLESS')`).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored, mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, "release-mbid-1", "rg-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+  `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, "track-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+  `).run();
 
   const filePath = path.join(configModule.Config.getMusicPath(), "Queen", "01 - Bohemian Rhapsody.flac");
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
@@ -596,18 +592,9 @@ test("upsertLibraryFile prefers selected release-group slot identity over legacy
     INSERT INTO Tracks (mbid, recording_mbid, release_mbid, medium_position, position, title)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("selected-track-mbid", "recording-mbid-1", "selected-release-mbid", 1, 1, "Shut Off The Lights");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored, mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-album-1", "artist-local", "Give Me The Future", "2022-02-04", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1, "legacy-release-mbid", "release-group-mbid-1");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-track-1", "artist-local", "provider-album-1", "Shut Off The Lights", 1, 1, 0, "Track", "LOSSLESS", 180, 1, "recording-mbid-1");
+  // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
+  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('provider-album-1','artist-local','Give Me The Future','ALBUM',0,'LOSSLESS',1,1,0,180)`).run();
+  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('provider-track-1','artist-local','provider-album-1','Shut Off The Lights','Track',0,'LOSSLESS')`).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
@@ -627,6 +614,12 @@ test("upsertLibraryFile prefers selected release-group slot identity over legacy
     1,
     "test",
   );
+  // Track offer carries the recording mbid; the selected slot resolves the exact
+  // release/track (preferring the selected-release over the offer's legacy release).
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid-1', 'recording-mbid-1', 'provider-album-1', 'Shut Off The Lights', 'LOSSLESS', 'stereo')
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ReleaseGroupSlots (
       artist_mbid, release_group_mbid, slot, monitored, selected_provider,
@@ -845,18 +838,17 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
+  // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
+  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('10','1','A Night at the Opera','ALBUM',0,'LOSSLESS',1,1,0,3551)`).run();
+  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('100','1','10','Bohemian Rhapsody','Track',0,'LOSSLESS')`).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored, mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1, "release-mbid-1", "rg-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+  `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1, "track-mbid-1");
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+  `).run();
 
   const stereoRoot = configModule.Config.getMusicPath();
   const spatialRoot = configModule.Config.getSpatialPath();
