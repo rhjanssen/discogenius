@@ -459,11 +459,12 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     version: 28,
     description: "ProviderItems.provider_album_id (owning provider album link for track/video offers)",
     up: () => {
-      if (hasTable("ProviderItems") && !hasColumn("ProviderItems", "provider_album_id")) {
-        db.exec("ALTER TABLE ProviderItems ADD COLUMN provider_album_id TEXT");
-        db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
-        // Backfill from the existing track offers' match_evidence, which already
-        // records the owning provider album id from the scan.
+      // The column + index are created by ensureMusicBrainzProviderSchema (which
+      // runs before migrations); this migration only backfills it. The backfill is
+      // idempotent (fills NULLs from the scan's match_evidence.albumProviderId), so
+      // it must run unconditionally — guarding on column-absence would skip it,
+      // since ensure already added the column.
+      if (hasTable("ProviderItems") && hasColumn("ProviderItems", "provider_album_id")) {
         db.exec(`
           UPDATE ProviderItems
           SET provider_album_id = json_extract(match_evidence, '$.albumProviderId')
