@@ -37,48 +37,6 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("track artist storage preserves the main credit when provider identities collapse to one canonical artist", () => {
-  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
-  const track = {
-    provider_id: "473839984",
-    artist_id: "4526830",
-    artists: [
-      { id: "4526830", name: "Bastille" },
-      { id: "provider-alias", name: "Bastille" },
-      { id: "provider-alias-2", name: "Bastille" },
-    ],
-  };
-
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(track.provider_id, artistMbid, "SAVE MY SOUL", "SINGLE", 0, "HIRES_LOSSLESS");
-
-  (refreshServiceModule.RefreshAlbumService as any).storeTrackArtists(
-    track,
-    artistMbid,
-    new Map([
-      ["provider-alias", artistMbid],
-      ["provider-alias-2", artistMbid],
-    ]),
-  );
-
-  assert.deepEqual(
-    dbModule.db.prepare(`
-      SELECT media_id, artist_id, type
-      FROM ProviderMediaArtists
-      WHERE media_id = ?
-    `).all(track.provider_id),
-    [{
-      media_id: track.provider_id,
-      artist_id: artistMbid,
-      type: "MAIN",
-    }],
-  );
-});
-
 test("artist album upsert stores allowed provider supplements on catalog album and release rows", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "11111111-1111-4111-8111-111111111111";

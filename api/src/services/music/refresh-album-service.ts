@@ -143,23 +143,9 @@ export class RefreshAlbumService {
             LIMIT 1
         `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
-        if (providerItem?.release_group_mbid || providerItem?.release_mbid) {
-            return {
-                releaseGroupMbid: providerItem.release_group_mbid || null,
-                releaseMbid: providerItem.release_mbid || null,
-            };
-        }
-
-        const legacyAlbum = db.prepare(`
-            SELECT mb_release_group_id, mbid
-            FROM ProviderAlbums
-            WHERE id = ?
-            LIMIT 1
-        `).get(albumId) as { mb_release_group_id?: string | null; mbid?: string | null } | undefined;
-
         return {
-            releaseGroupMbid: legacyAlbum?.mb_release_group_id || null,
-            releaseMbid: legacyAlbum?.mbid || null,
+            releaseGroupMbid: providerItem?.release_group_mbid || null,
+            releaseMbid: providerItem?.release_mbid || null,
         };
     }
 
@@ -333,22 +319,6 @@ export class RefreshAlbumService {
             return this.ensureMusicBrainzArtist(requestedArtistId, false);
         }
 
-        const existing = db.prepare(`
-            SELECT Artists.id, Artists.mbid, ProviderAlbums.mb_release_group_id
-            FROM ProviderAlbums
-            JOIN Artists ON Artists.id = ProviderAlbums.artist_id
-            WHERE ProviderAlbums.id = ?
-            LIMIT 1
-        `).get(albumId) as { id?: string | number | null; mbid?: string | null; mb_release_group_id?: string | null } | undefined;
-        if (existing?.mbid) {
-            return String(existing.id || existing.mbid);
-        }
-
-        const existingReleaseGroupArtistMbid = this.getArtistMbidForReleaseGroup(existing?.mb_release_group_id);
-        if (existingReleaseGroupArtistMbid) {
-            return this.ensureMusicBrainzArtist(existingReleaseGroupArtistMbid, false);
-        }
-
         const providerItem = db.prepare(`
             SELECT artist_mbid, release_group_mbid
             FROM ProviderItems
@@ -404,40 +374,46 @@ export class RefreshAlbumService {
     }
 
     static getScanLevel(albumId: string): ScanLevel {
-        const album = db.prepare(`
-            SELECT
-                a.id,
-                a.review_text,
-                a.credits,
-                COUNT(m.id) as track_count
-            FROM ProviderAlbums a
-            LEFT JOIN ProviderMedia m ON a.id = m.album_id AND m.type != 'Music Video'
-            WHERE a.id = ?
-            GROUP BY a.id
-        `).get(albumId) as {
-            id?: string;
-            review_text?: string | null;
-            credits?: string | null;
-            track_count?: number;
-        } | undefined;
+        // Scan state is read from the canonical graph + the album's ProviderItems
+        // offer now (no legacy provider catalog): the offer's existence = BASIC,
+        // Albums.review_text (homed on shallow) = SHALLOW, and per-track credits
+        // homed onto the album's Recordings (homed on deep) = DEEP.
+        const offer = db.prepare(`
+            SELECT release_group_mbid, release_mbid
+            FROM ProviderItems
+            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
-        if (!album) {
+        if (!offer) {
             return ScanLevel.NONE;
         }
 
-        if (album.credits) {
+        const hasCredits = offer.release_mbid
+            ? db.prepare(`
+                SELECT 1 FROM Tracks t
+                JOIN Recordings r ON r.mbid = t.recording_mbid
+                WHERE t.release_mbid = ? AND r.credits IS NOT NULL
+                LIMIT 1
+            `).get(offer.release_mbid)
+            : null;
+        if (hasCredits) {
             return ScanLevel.DEEP;
         }
 
-        if (album.review_text !== null && album.review_text !== undefined && Number(album.track_count || 0) > 0) {
+        const reviewText = offer.release_group_mbid
+            ? (db.prepare("SELECT review_text FROM Albums WHERE mbid = ?").get(offer.release_group_mbid) as { review_text?: string | null } | undefined)?.review_text
+            : null;
+        const trackCount = Number((db.prepare(`
+            SELECT COUNT(*) AS c FROM ProviderItems
+            WHERE entity_type = 'track' AND provider_album_id = ?
+        `).get(albumId) as { c?: number } | undefined)?.c || 0);
+        if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
             return ScanLevel.SHALLOW;
         }
 
-        if (album.id) {
-            return ScanLevel.BASIC;
-        }
-
-        return ScanLevel.NONE;
+        return ScanLevel.BASIC;
     }
 
     static async scanBasic(
@@ -449,7 +425,15 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanBasic for ${albumId}`);
 
         const monitoringConfig = getConfigSection("monitoring");
-        const existingRow = db.prepare("SELECT id, mbid, mb_release_group_id, last_scanned FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
+        // Freshness is the album offer's updated_at (the offer is the provider
+        // catalog now); the canonical link comes from release_(group_)mbid on it.
+        const existingRow = db.prepare(`
+            SELECT release_mbid AS mbid, release_group_mbid AS mb_release_group_id, updated_at AS last_scanned
+            FROM ProviderItems
+            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(albumId) as any;
         const shouldRefreshAlbum =
             !existingRow ||
             options.forceUpdate === true ||
@@ -466,94 +450,16 @@ export class RefreshAlbumService {
         const provider = this.resolveProviderForAlbum(albumId);
         const albumData = providerAlbumToAlbumMetadataRow(await provider.getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
+        void moduleOverride;
 
         const primaryArtistId = await this.resolveCanonicalArtistForProviderAlbum(provider.id, albumId, albumData, artistId);
         if (!primaryArtistId) {
             throw new Error(`provider album ${albumId} could not be linked to a MusicBrainz artist. Refresh/curate the artist before hydrating provider tracks.`);
         }
 
-        const existing = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
-        const existingModuleRow = artistId
-            ? (db.prepare("SELECT module FROM ProviderAlbumArtists WHERE album_id = ? AND artist_id = ?").get(albumId, artistId) as any)
-            : null;
-        const module = moduleOverride ?? existingModuleRow?.module ?? null;
-
-        if (!existing) {
-            db.prepare(`
-                INSERT INTO ProviderAlbums (
-                    id, artist_id, title, version, release_date, type, explicit, quality,
-                    cover, vibrant_color, video_cover,
-                    num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
-                    mb_primary, mb_secondary, monitored, last_scanned
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `).run(
-                albumId,
-                primaryArtistId,
-                albumData.title,
-                albumData.version || null,
-                albumData.release_date,
-                albumData.type || "ALBUM",
-                albumData.explicit ? 1 : 0,
-                albumData.quality,
-                albumData.cover,
-                albumData.vibrant_color || null,
-                albumData.video_cover || null,
-                albumData.num_tracks || 0,
-                albumData.num_volumes || 1,
-                albumData.num_videos || 0,
-                albumData.duration || 0,
-                albumData.popularity || null,
-                albumData.copyright || null,
-                albumData.upc || null,
-                this.getMusicBrainzPrimary(albumData.type, module, albumData.title),
-                this.getMusicBrainzSecondary(albumData.type, module, albumData.title),
-                0,
-            );
-        } else {
-            const updateSql = forceUpdate
-                ? `
-                UPDATE ProviderAlbums SET
-                    artist_id=?,
-                    title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
-                    cover=?, vibrant_color=?, video_cover=?,
-                    num_tracks=?, num_volumes=?, num_videos=?, duration=?, popularity=?, copyright=?, upc=?,
-                    mb_primary=?, mb_secondary=?, last_scanned=CURRENT_TIMESTAMP
-                WHERE id=?
-            `
-                : `
-                UPDATE ProviderAlbums SET
-                    artist_id=COALESCE(?, artist_id),
-                    title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
-                    cover=?, vibrant_color=COALESCE(?, vibrant_color), video_cover=COALESCE(?, video_cover),
-                    num_tracks=?, num_volumes=?, num_videos=?, duration=?, popularity=?, copyright=?, upc=?,
-                    mb_primary=?, mb_secondary=?, last_scanned=CURRENT_TIMESTAMP
-                WHERE id=?
-            `;
-
-            db.prepare(updateSql).run(
-                primaryArtistId ?? null,
-                albumData.title,
-                albumData.version || null,
-                albumData.release_date,
-                albumData.type || "ALBUM",
-                albumData.explicit ? 1 : 0,
-                albumData.quality,
-                albumData.cover,
-                albumData.vibrant_color || null,
-                albumData.video_cover || null,
-                albumData.num_tracks || 0,
-                albumData.num_volumes || 1,
-                albumData.num_videos || 0,
-                albumData.duration || 0,
-                albumData.popularity || null,
-                albumData.copyright || null,
-                albumData.upc || null,
-                this.getMusicBrainzPrimary(albumData.type, module, albumData.title),
-                this.getMusicBrainzSecondary(albumData.type, module, albumData.title),
-                albumId,
-            );
-        }
-
+        // No legacy ProviderAlbums row anymore — provider album facts live on the
+        // ProviderItems offer (written by the artist scan / upsertArtistAlbum), and
+        // allowed supplements are homed onto the canonical Albums/AlbumReleases rows.
         await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate });
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
@@ -561,6 +467,11 @@ export class RefreshAlbumService {
             releaseMbid: canonicalLink.releaseMbid,
             album: albumData,
         });
+        // Advance the offer freshness so isRefreshDue() sees this basic scan.
+        db.prepare(`
+            UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
+            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        `).run(albumId);
 
         const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
         const similarAlbums = includeSimilar
@@ -594,7 +505,14 @@ export class RefreshAlbumService {
         console.log(`[RefreshAlbumService] scanShallow for ${albumId}`);
 
         const monitoringConfig = getConfigSection("monitoring");
-        const existing = db.prepare(`SELECT review_text, last_scanned FROM ProviderAlbums WHERE id = ?`).get(albumId) as any;
+        const existing = db.prepare(`
+            SELECT a.review_text AS review_text, pi.updated_at AS last_scanned
+            FROM ProviderItems pi
+            LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
+            WHERE pi.entity_type = 'album' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY pi.updated_at DESC
+            LIMIT 1
+        `).get(albumId) as any;
         const shouldRefreshAlbumMeta =
             options.forceUpdate === true ||
             !existing ||
@@ -626,12 +544,8 @@ export class RefreshAlbumService {
                 const reviewText = await provider.getAlbumReview?.(albumId);
                 const reviewLastUpdated = new Date().toISOString();
 
+                // Review homes onto the canonical Albums row (no legacy provider row).
                 if (reviewText !== null && reviewText !== undefined) {
-                    db.prepare(`
-                        UPDATE ProviderAlbums
-                        SET review_text = ?, review_source = ?, review_last_updated = ?
-                        WHERE id = ?
-                    `).run(reviewText ?? "", provider.id, reviewLastUpdated, albumId);
                     const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
                     this.storeCanonicalAlbumReview({
                         releaseGroupMbid: canonicalLink.releaseGroupMbid,
@@ -640,11 +554,6 @@ export class RefreshAlbumService {
                         reviewLastUpdated,
                     });
                 } else if (options.forceUpdate === true || existing?.review_text == null) {
-                    db.prepare(`
-                        UPDATE ProviderAlbums
-                        SET review_text = ?, review_source = ?, review_last_updated = ?
-                        WHERE id = ?
-                    `).run("", provider.id, reviewLastUpdated, albumId);
                     const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
                     this.storeCanonicalAlbumReview({
                         releaseGroupMbid: canonicalLink.releaseGroupMbid,
@@ -672,29 +581,16 @@ export class RefreshAlbumService {
             await this.scanShallow(albumId, options);
         }
 
-        try {
-            const provider = this.resolveProviderForAlbum(albumId);
-            const credits = provider.getAlbumCredits
-                ? await provider.getAlbumCredits(albumId)
-                : [];
-            if (credits && credits.length > 0) {
-                db.prepare("UPDATE ProviderAlbums SET credits = ? WHERE id = ?")
-                    .run(JSON.stringify(credits), albumId);
-            }
-        } catch (error) {
-            console.warn(`[RefreshAlbumService] Failed to fetch credits for album ${albumId}:`, error);
-        }
-
+        // Album-level credits had no canonical home and nothing reads them; only
+        // per-track credits are kept (homed onto the canonical Recordings below).
         try {
             const provider = this.resolveProviderForAlbum(albumId);
             const trackCreditsMap = provider.getAlbumTrackCredits
                 ? await provider.getAlbumTrackCredits(albumId)
                 : new Map<string, any[]>();
             if (trackCreditsMap.size > 0) {
-                const updateTrackCredits = db.prepare("UPDATE ProviderMedia SET credits = ? WHERE id = ? AND album_id = ?");
                 db.transaction(() => {
                     for (const [trackId, credits] of trackCreditsMap) {
-                        updateTrackCredits.run(JSON.stringify(credits), trackId, albumId);
                         this.storeCanonicalTrackCredits(provider.id, String(trackId), credits);
                     }
                 })();
@@ -703,7 +599,11 @@ export class RefreshAlbumService {
             console.warn(`[RefreshAlbumService] Failed to fetch per-track credits for album ${albumId}:`, error);
         }
 
-        db.prepare("UPDATE ProviderAlbums SET last_scanned = CURRENT_TIMESTAMP WHERE id = ?").run(albumId);
+        // Advance offer freshness for this deep scan.
+        db.prepare(`
+            UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
+            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        `).run(albumId);
 
         console.log(`[RefreshAlbumService] scanDeep complete for ${albumId}`);
     }
@@ -721,9 +621,15 @@ export class RefreshAlbumService {
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
 
-        const album = db.prepare("SELECT id, artist_id, type, monitored FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
+        const album = db.prepare(`
+            SELECT artist_mbid AS artist_id
+            FROM ProviderItems
+            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(albumId) as any;
         if (!album) {
-            console.warn(`[RefreshAlbumService] Album ${albumId} not found, skipping tracks`);
+            console.warn(`[RefreshAlbumService] Album offer ${albumId} not found, skipping tracks`);
             return;
         }
 
@@ -776,53 +682,33 @@ export class RefreshAlbumService {
             })
         );
 
-        const trackInsert = db.prepare(`
-            INSERT INTO ProviderMedia (
-                id, artist_id, album_id, title, version, release_date, type, explicit, quality,
-                track_number, volume_number, duration, popularity,
-                bpm, key, key_scale, peak, replay_gain,
-                credits, copyright, isrc, monitored, last_scanned, downloaded
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
-        `);
-
-        const trackUpdate = db.prepare(`
-            UPDATE ProviderMedia SET
-                artist_id=?,
-                title=?, version=?, release_date=?, explicit=?, quality=?,
-                track_number=?, volume_number=?, duration=?, popularity=?,
-                bpm=?, key=?, key_scale=?, peak=?, replay_gain=?,
-                credits=?, copyright=?, last_scanned=CURRENT_TIMESTAMP
-            WHERE id=? AND album_id=?
-        `);
-
-        const selectMedia = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderMedia WHERE id = ? AND album_id = ?");
+        // Track identity is mapped by position onto the selected release's canonical
+        // Tracks/Recordings and stored as a ProviderItems track offer. The selected
+        // release comes from the album offer + its slot (no legacy ProviderAlbums).
         const selectedRelease = db.prepare(`
             SELECT
-                COALESCE(rgs.selected_release_mbid, pi.release_mbid, pa.mbid) AS release_mbid,
-                COALESCE(rgs.release_group_mbid, pi.release_group_mbid, pa.mb_release_group_id) AS release_group_mbid,
-                COALESCE(rgs.artist_mbid, pi.artist_mbid, artist.mbid) AS artist_mbid,
+                COALESCE(rgs.selected_release_mbid, pi.release_mbid) AS release_mbid,
+                COALESCE(rgs.release_group_mbid, pi.release_group_mbid) AS release_group_mbid,
+                COALESCE(rgs.artist_mbid, pi.artist_mbid) AS artist_mbid,
                 COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot,
-                COALESCE(rgs.quality, pi.quality, pa.quality) AS quality
-            FROM ProviderAlbums pa
-            LEFT JOIN ProviderItems pi
-              ON pi.provider = ?
-             AND pi.entity_type = 'album'
-             AND pi.provider_id = CAST(pa.id AS TEXT)
+                COALESCE(rgs.quality, pi.quality) AS quality
+            FROM ProviderItems pi
             LEFT JOIN ReleaseGroupSlots rgs
-              ON rgs.selected_provider = ?
+              ON rgs.selected_provider = pi.provider
              AND (
-                rgs.selected_provider_id = CAST(pa.id AS TEXT)
-                OR rgs.selected_provider_id LIKE CAST(pa.id AS TEXT) || ';%'
-                OR rgs.selected_provider_id LIKE '%;' || CAST(pa.id AS TEXT) || ';%'
-                OR rgs.selected_provider_id LIKE '%;' || CAST(pa.id AS TEXT)
+                rgs.selected_provider_id = pi.provider_id
+                OR rgs.selected_provider_id LIKE pi.provider_id || ';%'
+                OR rgs.selected_provider_id LIKE '%;' || pi.provider_id || ';%'
+                OR rgs.selected_provider_id LIKE '%;' || pi.provider_id
              )
-            LEFT JOIN Artists artist ON artist.id = pa.artist_id
-            WHERE CAST(pa.id AS TEXT) = ?
+            WHERE pi.entity_type = 'album'
+              AND pi.provider = ?
+              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY
               CASE WHEN rgs.selected_release_mbid IS NOT NULL THEN 0 ELSE 1 END,
               CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
             LIMIT 1
-        `).get(providerId, providerId, albumId) as {
+        `).get(providerId, albumId) as {
             release_mbid?: string | null;
             release_group_mbid?: string | null;
             artist_mbid?: string | null;
@@ -885,64 +771,6 @@ export class RefreshAlbumService {
             if (trackBatch.length >= 25 || track === tracks[tracks.length - 1]) {
                 db.transaction(() => {
                     for (const currentTrack of trackBatch) {
-                        const currentTrackArtistId = String(album.artist_id);
-
-                        const exists = selectMedia.get(currentTrack.provider_id, albumId) as any;
-
-                        let shouldMonitor = exists?.monitored || (album?.monitored ? 1 : 0);
-                        if (exists?.monitored_lock) {
-                            shouldMonitor = exists.monitored;
-                        }
-
-                        if (!exists) {
-                            trackInsert.run(
-                                currentTrack.provider_id,
-                                currentTrackArtistId,
-                                albumId,
-                                currentTrack.title,
-                                currentTrack.version || null,
-                                currentTrack.release_date || null,
-                                album.type,
-                                currentTrack.explicit ? 1 : 0,
-                                currentTrack.quality,
-                                currentTrack.track_number || 0,
-                                currentTrack.volume_number || 1,
-                                currentTrack.duration,
-                                currentTrack.popularity || 0,
-                                currentTrack.bpm || null,
-                                currentTrack.key || null,
-                                currentTrack.key_scale || null,
-                                currentTrack.peak || null,
-                                currentTrack.replay_gain || null,
-                                null,
-                                currentTrack.copyright || null,
-                                currentTrack.isrc || null,
-                                shouldMonitor,
-                            );
-                        } else {
-                            trackUpdate.run(
-                                currentTrackArtistId,
-                                currentTrack.title,
-                                currentTrack.version || null,
-                                currentTrack.release_date || null,
-                                currentTrack.explicit ? 1 : 0,
-                                currentTrack.quality,
-                                currentTrack.track_number || 0,
-                                currentTrack.volume_number || 1,
-                                currentTrack.duration,
-                                currentTrack.popularity || 0,
-                                currentTrack.bpm || null,
-                                currentTrack.key || null,
-                                currentTrack.key_scale || null,
-                                currentTrack.peak || null,
-                                currentTrack.replay_gain || null,
-                                null,
-                                currentTrack.copyright || null,
-                                currentTrack.provider_id,
-                                albumId,
-                            );
-                        }
-
                         const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
                         const canonicalTrack = releaseMbid
                             ? selectCanonicalTrackByPosition.get(
@@ -990,8 +818,6 @@ export class RefreshAlbumService {
                             }),
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
-
-                        this.storeTrackArtists(currentTrack, currentTrackArtistId, resolvedGuestsMap);
                     }
                 })();
                 trackBatch.length = 0;
@@ -1027,180 +853,20 @@ export class RefreshAlbumService {
             await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
-        const exists = db.prepare("SELECT id, monitored, monitored_lock FROM ProviderAlbums WHERE id = ?").get(album.provider_id) as any;
-        const shouldMonitor = exists?.monitored || 0;
-        const moduleFromPage = albumModuleMap.get(album.provider_id) || album._module || null;
-
-        if (!exists) {
-            db.prepare(`
-                INSERT INTO ProviderAlbums (
-                    id, artist_id, title, version, release_date, type, explicit, quality,
-                    cover, vibrant_color, video_cover,
-                    num_tracks, num_volumes, num_videos, duration, popularity, copyright, upc,
-                    mb_primary, mb_secondary, monitored
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-                album.provider_id,
-                primaryArtistId,
-                album.title,
-                album.version || null,
-                album.release_date,
-                album.type || "ALBUM",
-                album.explicit ? 1 : 0,
-                album.quality,
-                album.cover,
-                album.vibrant_color || null,
-                album.video_cover || null,
-                album.num_tracks || 0,
-                album.num_volumes || 1,
-                album.num_videos || 0,
-                album.duration || 0,
-                album.popularity || null,
-                album.copyright || null,
-                album.upc || null,
-                this.getMusicBrainzPrimary(album.type, moduleFromPage, album.title),
-                this.getMusicBrainzSecondary(album.type, moduleFromPage, album.title),
-                shouldMonitor,
-            );
-        } else {
-            const updateSql = forceUpdate
-                ? `
-                UPDATE ProviderAlbums SET
-                    artist_id=?,
-                    title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
-                    cover=?, vibrant_color=?, video_cover=?,
-                    num_tracks=?, num_volumes=?, num_videos=?, duration=?, popularity=?, copyright=?, upc=?,
-                    mb_primary=?, mb_secondary=?, last_scanned=CURRENT_TIMESTAMP
-                WHERE id=?
-            `
-                : `
-                UPDATE ProviderAlbums SET
-                    artist_id=COALESCE(?, artist_id),
-                    title=?, version=?, release_date=?, type=?, explicit=?, quality=?,
-                    cover=?, vibrant_color=COALESCE(?, vibrant_color), video_cover=COALESCE(?, video_cover),
-                    num_tracks=?, num_volumes=?, num_videos=?, duration=?, popularity=?, copyright=?, upc=?,
-                    mb_primary=?, mb_secondary=?, last_scanned=CURRENT_TIMESTAMP
-                WHERE id=?
-            `;
-
-            db.prepare(updateSql).run(
-                primaryArtistId ?? null,
-                album.title,
-                album.version || null,
-                album.release_date,
-                album.type || "ALBUM",
-                album.explicit ? 1 : 0,
-                album.quality,
-                album.cover,
-                album.vibrant_color || null,
-                album.video_cover || null,
-                album.num_tracks || 0,
-                album.num_volumes || 1,
-                album.num_videos || 0,
-                album.duration || 0,
-                album.popularity || null,
-                album.copyright || null,
-                album.upc || null,
-                this.getMusicBrainzPrimary(album.type, moduleFromPage, album.title),
-                this.getMusicBrainzSecondary(album.type, moduleFromPage, album.title),
-                album.provider_id,
-            );
-        }
-
-        const albumGroup = album._group_type || album._group || "ALBUMS";
-
-        const upsertScannedRelation = db.prepare(`
-            INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(artist_id, album_id) DO UPDATE SET
-                artist_name = COALESCE(excluded.artist_name, ProviderAlbumArtists.artist_name),
-                ord = COALESCE(excluded.ord, ProviderAlbumArtists.ord),
-                type = excluded.type,
-                group_type = excluded.group_type,
-                module = excluded.module
-        `);
-
-        const upsertRelatedRelation = db.prepare(`
-            INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(artist_id, album_id) DO UPDATE SET
-                artist_name = COALESCE(excluded.artist_name, ProviderAlbumArtists.artist_name),
-                ord = COALESCE(excluded.ord, ProviderAlbumArtists.ord),
-                type = excluded.type,
-                group_type = COALESCE(ProviderAlbumArtists.group_type, excluded.group_type),
-                module = COALESCE(ProviderAlbumArtists.module, excluded.module)
-        `);
-
-        const participants = new Map<string, { name: string | null; ord: number | null }>();
-        const setParticipant = (participantArtistId: string, name: string | null, ord: number | null) => {
-            if (!participantArtistId) return;
-            const key = String(participantArtistId);
-            if (!participants.has(key)) {
-                participants.set(key, { name, ord });
-                return;
-            }
-
-            const current = participants.get(key)!;
-            participants.set(key, {
-                name: current.name || name,
-                ord: current.ord ?? ord,
-            });
-        };
-
-        setParticipant(scanningArtistId, scanningArtistId === primaryArtistId ? album.artist_name || null : null, 0);
-        setParticipant(primaryArtistId, album.artist_name || null, 0);
-
-        const scanningType = primaryArtistId === scanningArtistId ? "MAIN" : "APPEARS_ON";
-        const scanningParticipant = participants.get(String(scanningArtistId));
-        upsertScannedRelation.run(
-            album.provider_id,
-            scanningArtistId,
-            scanningParticipant?.name || null,
-            scanningParticipant?.ord ?? null,
-            scanningType,
-            albumGroup,
-            moduleFromPage,
-        );
-
-        if (primaryArtistId && primaryArtistId !== scanningArtistId) {
-            const primaryParticipant = participants.get(String(primaryArtistId));
-            upsertRelatedRelation.run(
-                album.provider_id,
-                primaryArtistId,
-                primaryParticipant?.name || album.artist_name || null,
-                primaryParticipant?.ord ?? 0,
-                "MAIN",
-                null,
-                null,
-            );
-        }
+        // "New" = no album offer yet. The provider album's facts now live solely on
+        // the ProviderItems offer (written below) + canonical supplement homing; the
+        // legacy ProviderAlbums/ProviderAlbumArtists rows are gone. Album-artist
+        // relations are canonical (AlbumArtists, from Skyhook).
+        const offerExisted = db.prepare(`
+            SELECT 1 FROM ProviderItems
+            WHERE provider = 'tidal' AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            LIMIT 1
+        `).get(album.provider_id) as any;
+        void albumModuleMap;
+        void scanningArtistId;
 
         const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(releaseGroupMatch);
-
-        if (matchedReleaseGroup) {
-            db.prepare(`
-                UPDATE ProviderAlbums SET
-                    mbid = COALESCE(?, mbid),
-                    mb_release_group_id = ?,
-                    mb_primary = COALESCE(?, mb_primary),
-                    mb_secondary = COALESCE(?, mb_secondary),
-                    musicbrainz_status = CASE
-                        WHEN mbid IS NOT NULL AND musicbrainz_status = 'verified' THEN musicbrainz_status
-                        ELSE COALESCE(?, musicbrainz_status)
-                    END,
-                    musicbrainz_last_checked = CURRENT_TIMESTAMP,
-                    musicbrainz_match_method = ?
-                WHERE id = ?
-            `).run(
-                matchedReleaseMbid,
-                matchedReleaseGroup.mbid,
-                primaryTypeFromProviderMatch(releaseGroupMatch),
-                secondaryTypeFromProviderMatch(releaseGroupMatch),
-                getAlbumIdentityStatusFromProviderMatch(releaseGroupMatch),
-                releaseGroupMatch?.method || "musicbrainz-release-group-title-year-type",
-                album.provider_id,
-            );
-        }
 
         db.prepare(`
             INSERT INTO ProviderItems (
@@ -1264,21 +930,13 @@ export class RefreshAlbumService {
             album,
         });
 
-        if (options.resolveMusicBrainz === false) {
-            db.prepare(`
-                UPDATE ProviderAlbums
-                SET musicbrainz_status = COALESCE(musicbrainz_status, 'pending')
-                WHERE id = ?
-                  AND mbid IS NULL
-                  AND mb_release_group_id IS NULL
-            `).run(album.provider_id);
-        } else {
+        if (options.resolveMusicBrainz !== false) {
             await MetadataIdentityService.resolveAlbum(String(album.provider_id), {
                 force: forceUpdate,
             });
         }
 
-        return !exists;
+        return !offerExisted;
     }
 
     private static async storeSimilarAlbums(
@@ -1288,32 +946,6 @@ export class RefreshAlbumService {
         void albumId;
         void forceUpdate;
         return [];
-    }
-
-    private static storeTrackArtists(track: any, canonicalArtistId: string, resolvedGuestsMap?: Map<string, string>): void {
-        const mediaId = track?.provider_id?.toString?.() ?? String(track?.provider_id ?? "");
-        if (!mediaId) return;
-
-        db.prepare("DELETE FROM ProviderMediaArtists WHERE media_id = ?").run(mediaId);
-
-        const insertMediaArtist = db.prepare(`
-            INSERT OR IGNORE INTO ProviderMediaArtists (media_id, artist_id, type) VALUES (?, ?, ?)
-        `);
-
-        insertMediaArtist.run(mediaId, canonicalArtistId, "MAIN");
-
-        if (resolvedGuestsMap && Array.isArray(track.artists)) {
-            const storedArtistIds = new Set([canonicalArtistId]);
-            for (const a of track.artists) {
-                if (a.id && a.id !== track.artist_id) {
-                    const guestMbid = resolvedGuestsMap.get(a.id);
-                    if (guestMbid && !storedArtistIds.has(guestMbid)) {
-                        insertMediaArtist.run(mediaId, guestMbid, "CONTRIBUTOR");
-                        storedArtistIds.add(guestMbid);
-                    }
-                }
-            }
-        }
     }
 
     private static getMusicBrainzPrimary(tidalType: string | undefined, module: string | undefined, title: string = ""): string {
