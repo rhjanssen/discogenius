@@ -377,6 +377,36 @@ validation): convert `organizer`/`import`/`manual-import` reads to
 legacy writes, then Phase 5 table drop + from-scratch rebuild (Bastille +
 Bakermat).
 
+### Progress (2026-06-19, pt.3): provider-album link + organizer audio path ✓
+
+- **`ProviderItems.provider_album_id`** (schema v28) gives track/video offers a
+  queryable link back to their owning provider album — the piece the write-path
+  readers needed to retire `ProviderMedia.album_id`. Populated on the scan's
+  track-offer upsert; migration backfills from `match_evidence.albumProviderId`.
+- **`organizer` audio import path is provider-table-free.** Album + single-track
+  organize now read `ProviderItems` (offer columns + `provider_album_id`, track
+  position from `match_evidence`); track counts come from track offers. The
+  release-matched canonical path was already clean; this re-pointed the
+  release-group-only fallbacks.
+
+Remaining legacy-table SQL (the finish line), all needing container validation:
+- **Video import path** — `organizer` (~2239+) and `import-service` (~313) still
+  read/insert `ProviderMedia` rows of `type='Music Video'`. Convert to
+  `ProviderItems` video offers + canonical `Recordings(is_video=1)` (mirror what
+  `musicbrainz-video-service`/`refresh-video-service` already do). Set
+  `provider_album_id` on the video offer too.
+- **`import-service` / `manual-import-service`** — disk-import writes of
+  `ProviderMedia`/`ProviderAlbums`/`ProviderAlbumArtists`, plus the
+  `TrackFiles.media_id`/`album_id` legacy columns they populate.
+- **`refresh-album-service` writes** — `ProviderAlbums`/`ProviderMedia`/
+  `ProviderAlbumArtists`/`ProviderMediaArtists` inserts are now redundant (all
+  readers canonical) except where the scan reads its own writes (`getScanLevel`,
+  `scanBasic` freshness via `last_scanned`, `scanDeep` credits). Re-point those
+  self-reads to `ProviderItems.updated_at` / `ReleaseGroupSlots`, then delete.
+- **Phase 5** — drop the 6 legacy tables + `TrackFiles.media_id`/legacy
+  `album_id` + the FK; migrate ~100 test seeds; from-scratch rebuild (Bastille +
+  Bakermat).
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
