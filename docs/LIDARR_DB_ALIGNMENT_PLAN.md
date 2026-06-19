@@ -161,6 +161,42 @@ model. Applied so far:
 - **Top tracks**: already MB-driven (canonical `Tracks` scoped to the artist's release
   groups) → **kept**.
 
+## 3c. Cover-art / lyrics / fingerprint storage decisions (Robert, 2026-06-19, research-backed)
+
+Questions Robert raised — how to store cover art (URL vs provider UUID), lyrics
+(JSON vs identifier), whether a per-field `source` column is needed, and whether
+to embed AcoustID/fingerprint in files given known MBIDs. Resolved against how
+Lidarr/Jellyfin/Kodi/Picard actually do it (`.ref_lidarr`, web research):
+
+- **Cover art → URL list on the catalog row, binary cached + re-served locally.**
+  Lidarr stores an embedded JSON list of `{CoverType, Url, RemoteUrl, Extension}`
+  on the metadata row (`MediaCover.cs`), downloads the binary to an id-based path
+  (`MediaCover/Albums/{id}/cover.jpg`) and resizes to fixed heights, then rewrites
+  `Url` to its *own* served path (`MediaCoverService.cs`). It does **not** store a
+  provider UUID and does **not** carry a per-source column — once it's a URL the
+  origin (Cover Art Archive vs TIDAL) is irrelevant. We mirror this: catalog
+  `images` JSON holds `{type, url, [w,h]}`; TIDAL's `{uuid}/{w}x{h}` template is
+  resolved to a concrete URL **at ingest**; we cache + serve our own resolution
+  variants so the UI never touches provider URL-templating. **No `source` column.**
+- **Lyrics → file-level `.lrc` sidecar (+ optional embedded `LYRICS` tag), never a
+  catalog field.** Lidarr treats lyrics purely as sidecar extras
+  (`sidecars.download_lyrics`, `ExtraFiles file_type='lyrics'`); Jellyfin 10.9 /
+  Kodi read the `.lrc` sidecar or the embedded tag. No catalog `lyrics` column, no
+  identifier row, no source column. Keeps the catalog provider-agnostic.
+- **No per-field `source` column anywhere.** Adding one would re-introduce exactly
+  the provider/catalog entanglement this migration removes. The catalog holds the
+  best-known value; if provenance is ever needed it is derivable from the
+  `ProviderItems` offer that supplied the supplement.
+- **AcoustID/fingerprint: embed MBIDs on download, do NOT fingerprint downloads.**
+  `fpcalc` produces a Chromaprint fingerprint (~2.5 KB) + duration — **not** MBIDs;
+  MBIDs come from POSTing that fingerprint to the AcoustID web API. Same file →
+  same fingerprint deterministically, so re-fingerprinting a file whose MBIDs we
+  already know is useless. Plex/Jellyfin/Kodi match on embedded MBID tags and skip
+  fingerprinting when present. So: embed the full MBID set in tags on download
+  (already done); fingerprint **only** unknown/mistagged local imports; the
+  fingerprint/`acoustid_id` live on `TrackFiles` (file-level evidence), never the
+  catalog.
+
 ## 4. Distinguishing features to PRESERVE (do not "align away")
 
 > **Video canonical-identity wrinkle (verified on real data, 2026-06-18).**
