@@ -1001,6 +1001,12 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
+  // Defensive: this schema-ensure runs before runMigrations() on existing DBs, so
+  // guarantee the v28 column exists before indexing it (fresh DBs already have it
+  // from the base CREATE TABLE above; existing DBs get it here ahead of migration).
+  if (!hasColumn("ProviderItems", "provider_album_id")) {
+    db.exec("ALTER TABLE ProviderItems ADD COLUMN provider_album_id TEXT");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
   // The download-queue list resolves each item's metadata by provider_id (N+1
   // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
