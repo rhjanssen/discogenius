@@ -29,8 +29,6 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM AlbumReleases").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
-    dbModule.db.prepare("DELETE FROM ProviderMedia").run();
-    dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -172,8 +170,8 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(videoNfo, /<uniqueid type="tidalVideo" default="true">400<\/uniqueid>/);
     assert.match(videoNfo, /<artist>The Example Artist<\/artist>/);
     assert.match(videoNfo, /<artist>Guest Artist<\/artist>/);
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
 test("lyrics cached for a stereo provider item are shared with a spatial counterpart", async () => {
@@ -297,8 +295,8 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
         stereoLyricsPath,
     );
 
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 
     const lyrics = await metadataFilesModule.getTrackLyrics("spatial-track");
     assert.equal(lyrics?.subtitles, "[00:01.00]plain lyric");

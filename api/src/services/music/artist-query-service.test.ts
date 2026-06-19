@@ -21,10 +21,6 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ProviderMediaArtists").run();
-  db.prepare("DELETE FROM ProviderAlbumArtists").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -153,28 +149,8 @@ function seedCanonicalArtistPage() {
     )
   `).run();
 
-  db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes,
-      num_videos, duration, monitored, mb_release_group_id
-    )
-    VALUES ('stale-provider-album', 'artist-1', 'Stale provider Album', 'ALBUM', 0, 'LOSSLESS', 1, 1,
-      0, 180, 1, NULL)
-  `).run();
 
-  db.prepare(`
-    INSERT INTO ProviderAlbumArtists (album_id, artist_id, type, group_type)
-    VALUES ('stale-provider-album', 'artist-mbid-1', 'MAIN', 'ALBUMS')
-  `).run();
-
-  db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, album_id, artist_id, title, type, explicit, quality, duration, monitored
-    )
-    VALUES ('stale-provider-video', NULL, 'artist-1', 'Stale provider Video', 'Music Video', 0, 'FHD', 210, 1)
-  `).run();
-
-  return { artistId: "artist-1" };
+return { artistId: "artist-1" };
 }
 
 test("artist page uses canonical release groups, tracks, and video recordings", async () => {

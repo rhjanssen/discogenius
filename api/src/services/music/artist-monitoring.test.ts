@@ -12,6 +12,16 @@ let dbModule: typeof import("../../database.js");
 let monitoringModule: typeof import("./artist-monitoring.js");
 let refreshArtistModule: typeof import("./refresh-artist-service.js");
 
+function assertRetiredProviderCatalogTablesAbsent() {
+  const rows = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(rows, []);
+}
+
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
@@ -22,8 +32,6 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM job_queue").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
@@ -111,7 +119,7 @@ test("monitoring a named MusicBrainz search result hydrates display metadata bef
   assert.equal(job.status, "pending");
 });
 
-test("unmonitoring an artist clears canonical slots and videos without mutating provider catalog rows", () => {
+test("unmonitoring an artist clears canonical slots and videos without provider catalog rows", () => {
   const { db } = dbModule;
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "bc411157-431c-4f04-81e1-18e1c21d50ec";
@@ -143,21 +151,7 @@ test("unmonitoring an artist clears canonical slots and videos without mutating 
     VALUES (?, ?, ?, 1, 'provider_only', 1)
   `).run("video-recording-1", artistMbid, "Bastille Video");
 
-  db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    )
-    VALUES (?, ?, ?, ?, 0, 'LOSSLESS', 1, 1, 0, 180, 1)
-  `).run("legacy-provider-album", artistMbid, "Give Me the Future", "ALBUM");
-
-  db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, monitored
-    )
-    VALUES (?, ?, ?, ?, ?, 0, 'LOSSLESS', 1)
-  `).run("legacy-provider-video", artistMbid, "legacy-provider-album", "Bastille Video", "Music Video");
-
-  const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
+const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
 
   const artist = db.prepare("SELECT monitored FROM Artists WHERE id = ?").get(artistMbid) as { monitored: number };
   const slot = db.prepare("SELECT monitored, selected_provider_id FROM ReleaseGroupSlots WHERE release_group_mbid = ?").get(releaseGroupMbid) as {
@@ -165,14 +159,11 @@ test("unmonitoring an artist clears canonical slots and videos without mutating 
     selected_provider_id: string;
   };
   const recording = db.prepare("SELECT monitored FROM Recordings WHERE mbid = ?").get("video-recording-1") as { monitored: number };
-  const providerAlbum = db.prepare("SELECT monitored FROM ProviderAlbums WHERE id = ?").get("legacy-provider-album") as { monitored: number };
-  const providerVideo = db.prepare("SELECT monitored FROM ProviderMedia WHERE id = ?").get("legacy-provider-video") as { monitored: number };
 
   assert.equal(changes, 1);
   assert.equal(artist.monitored, 0);
   assert.equal(slot.monitored, 0);
   assert.equal(slot.selected_provider_id, "243864035");
   assert.equal(recording.monitored, 0);
-  assert.equal(providerAlbum.monitored, 1);
-  assert.equal(providerVideo.monitored, 1);
+  assertRetiredProviderCatalogTablesAbsent();
 });

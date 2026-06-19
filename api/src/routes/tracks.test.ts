@@ -21,8 +21,6 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -92,12 +90,8 @@ function insertCanonicalTrackFixture() {
   `).run();
 }
 
-test("POST track monitor creates canonical release-group slot and leaves provider media untouched", async () => {
+test("POST track monitor creates canonical release-group slot", async () => {
   insertCanonicalTrackFixture();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitored)
-    VALUES ('track-mbid', 'artist-id', 'Legacy Track Row', 'Track', 0, 'LOW', 0)
-  `).run();
 
   const res = createMockResponse();
   await getRouteHandler("/", "post")({ body: { id: "track-mbid" } }, res);
@@ -114,21 +108,12 @@ test("POST track monitor creates canonical release-group slot and leaves provide
   assert.equal(slot.slot, "stereo");
   assert.equal(slot.wanted, 1);
 
-  const providerMedia = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = 'track-mbid'")
-    .get() as { monitored: number };
-  assert.equal(providerMedia.monitored, 0);
+  const legacyProviderMedia = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'")
+    .get();
+  assert.equal(legacyProviderMedia, undefined);
 });
 
 test("track monitor route rejects provider-only track IDs", async () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, monitored)
-    VALUES ('artist-id', 'Legacy Artist', 1)
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality, monitored)
-    VALUES ('provider-track-only', 'artist-id', 'provider Track', 'Track', 0, 'LOSSLESS', 0)
-  `).run();
-
   const res = createMockResponse();
   getRouteHandler("/:trackId/monitor", "post")({
     params: { trackId: "provider-track-only" },
@@ -136,9 +121,6 @@ test("track monitor route rejects provider-only track IDs", async () => {
   }, res);
 
   assert.equal(res.statusCode, 404);
-  const providerMedia = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = 'provider-track-only'")
-    .get() as { monitored: number };
-  assert.equal(providerMedia.monitored, 0);
 });
 
 test("PATCH track updates canonical release-group wanted state", () => {

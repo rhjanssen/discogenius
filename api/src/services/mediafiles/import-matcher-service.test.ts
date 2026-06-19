@@ -21,7 +21,7 @@ before(async () => {
 beforeEach(() => {
   for (const table of [
     "TrackFiles", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings",
-    "AlbumReleases", "Albums", "ArtistMetadata", "Artists", "ProviderMedia", "ProviderAlbums",
+    "AlbumReleases", "Albums", "ArtistMetadata", "Artists",
   ]) {
     dbModule.db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -157,8 +157,6 @@ test("fingerprint candidates use canonical ProviderItems without legacy provider
   assert.equal(evidence.candidates.length, 1);
   assert.equal(evidence.candidates[0].provider_id, "provider-album");
   assert.deepEqual(Array.from(evidence.strongCandidateIds), ["provider-album"]);
-  const legacyMediaRows = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number };
-  const legacyAlbumRows = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number };
-  assert.equal(legacyMediaRows.count, 0);
-  assert.equal(legacyAlbumRows.count, 0);
+  assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
+  assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
 });

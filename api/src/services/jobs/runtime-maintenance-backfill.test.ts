@@ -16,7 +16,7 @@ const { backfillCanonicalTrackFiles, backfillTrackFileForeignKeys, dedupeLibrary
 function resetRows() {
   for (const table of [
     "TrackFiles", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings",
-    "AlbumReleases", "Albums", "ArtistMetadata", "Artists", "ProviderMedia", "ProviderAlbums",
+    "AlbumReleases", "Albums", "ArtistMetadata", "Artists",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -25,9 +25,9 @@ function resetRows() {
 beforeEach(resetRows);
 afterEach(resetRows);
 
-// Seed the canonical graph plus the LEGACY provider linkage (ProviderMedia /
-// ProviderAlbums) — but NO ProviderItems — so the backfill must resolve the
-// canonical ids the legacy way (the pre-canonical-columns world Phase 1 targets).
+// Seed the canonical graph plus ProviderItems. TrackFiles may still carry
+// media_id/album_id shadow ids, but those shadows now resolve through provider
+// offers rather than retired legacy provider catalog tables.
 function seedLegacyGraph() {
   db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Legacy Artist", "artist-mbid", 1);
@@ -42,13 +42,19 @@ function seedLegacyGraph() {
   db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)`).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
 
-  // Legacy provider rows: album.mbid -> AlbumReleases.mbid, media.mbid -> Tracks.mbid.
-  db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, mbid, mb_release_group_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run("provider-album-1", "artist-local", "Legacy Album", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 200, "release-1", "release-group-1");
-  db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality, mbid, track_number, volume_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run("provider-track-1", "artist-local", "provider-album-1", "Track One", "track", 0, "LOSSLESS", "track-1", 1, 1);
+  db.prepare(`
+    INSERT OR IGNORE INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, title, quality, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "album", "provider-album-1", "artist-mbid", "release-group-1", "release-1", "Legacy Album", "LOSSLESS", "stereo");
+  db.prepare(`
+    INSERT OR IGNORE INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      release_group_mbid, release_mbid, track_mbid, recording_mbid, title,
+      quality, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "track", "provider-track-1", "provider-album-1", "artist-mbid", "release-group-1", "release-1", "track-1", "recording-1", "Track One", "LOSSLESS", "stereo");
 }
 
 function seedCanonicalMonitoringGraph() {
@@ -59,14 +65,6 @@ function seedCanonicalMonitoringGraph() {
     VALUES (?, ?, ?, ?, ?)`).run("release-group-1", "artist-mbid", "Canonical Album", "album", "2024-01-01");
   db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
     VALUES (?, ?, ?, ?, ?)`).run("video-recording-1", "Canonical Video", "artist-mbid", 1, 0);
-}
-
-function ensureProviderMedia(mediaId: unknown, albumId: unknown) {
-  if (mediaId === null || mediaId === undefined) return;
-  db.prepare(`
-    INSERT OR IGNORE INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(String(mediaId), "artist-local", albumId === null || albumId === undefined ? null : String(albumId), "Track", "track", 0, "LOSSLESS");
 }
 
 function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {}) {
@@ -91,7 +89,6 @@ function insertLegacyTrackFile(overrides: Partial<Record<string, unknown>> = {})
     file_type: "track",
     ...overrides,
   };
-  ensureProviderMedia(row.media_id, row.album_id);
   const info = db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, album_id, media_id, canonical_artist_mbid, canonical_release_group_mbid,
@@ -138,7 +135,11 @@ function getCanonical(id: number) {
 function seedProviderTrackOffer() {
   // Provider availability offer the canonical-only resolver resolves mbids from.
   db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
+    INSERT OR IGNORE INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, provider_album_id, title,
+      quality, library_slot
+    )
     VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid', 'release-group-1', 'release-1', 'track-1', 'recording-1', 'provider-album-1', 'Track One', 'LOSSLESS', 'stereo')
   `).run();
 }
@@ -364,8 +365,8 @@ test("monitoring gap repair promotes installed audio slots canonically without p
   `).get("artist-mbid", "release-group-1", "stereo") as { monitored: number; monitored_lock: number };
   assert.equal(slot.monitored, 1);
   assert.equal(slot.monitored_lock, 0);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
 test("monitoring gap repair respects locked canonical audio slots", () => {
@@ -416,7 +417,7 @@ test("monitoring gap repair promotes installed canonical videos without provider
     .get("video-recording-1") as { monitored: number; monitored_at: string | null };
   assert.equal(recording.monitored, 1);
   assert.ok(recording.monitored_at);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
 test("monitoring gap repair resolves mbid-less provider video files through ProviderItems", () => {

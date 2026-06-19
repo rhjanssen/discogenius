@@ -23,9 +23,6 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
-    dbModule.db.prepare("DELETE FROM ProviderAlbumArtists").run();
-    dbModule.db.prepare("DELETE FROM ProviderMedia").run();
-    dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
     dbModule.db.prepare("DELETE FROM TrackFiles").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
 });
@@ -68,19 +65,7 @@ test("artist completion predicate uses canonical locks instead of provider catal
             ('video-locked-mbid', 'Video Locked')
     `).run();
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums (
-            id, artist_id, title, type, explicit, quality,
-            num_tracks, num_volumes, num_videos, duration, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("provider-album-1", "1", "provider Album", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
-    dbModule.db.prepare(`
-        INSERT INTO ProviderMedia (
-            id, artist_id, album_id, title, type, explicit, quality, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("provider-track-1", "1", "provider-album-1", "provider Track", "Track", 0, "LOSSLESS", 1);
-
-    dbModule.db.prepare(`
+dbModule.db.prepare(`
         INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
         VALUES (?, ?, ?, ?)
     `).run("slot-rg-mbid", "slot-locked-mbid", "Slot Album", "album");

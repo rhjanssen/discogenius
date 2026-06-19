@@ -20,7 +20,6 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ProviderMedia").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -81,14 +80,7 @@ test("video list and detail use canonical video recordings with provider offers"
 test("video list and detail ignore legacy provider-media-only video rows", () => {
   dbModule.db.prepare("INSERT INTO Artists (id, name) VALUES (?, ?)")
     .run("artist-id", "Legacy Artist");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, title, duration, type, explicit, quality
-    )
-    VALUES ('legacy-video-1', 'artist-id', 'Legacy provider Video', 200, 'Music Video', 0, 'FHD')
-  `).run();
-
-  const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
+const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
 
   assert.equal(list.total, 0);
   assert.equal(list.items.length, 0);

@@ -23,8 +23,6 @@ function resetRows() {
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
 }
 
@@ -94,6 +92,6 @@ test("download recovery resolves existing album files through canonical provider
   const recovered = getExistingLibraryMediaIds("album", "provider-album");
 
   assert.deepEqual(recovered, ["track-mbid"]);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
 });

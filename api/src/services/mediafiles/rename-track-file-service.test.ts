@@ -13,6 +13,16 @@ let configModule: typeof import("../config/config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let renameTrackFileServiceModule: typeof import("./rename-track-file-service.js");
 
+function assertRetiredProviderCatalogTablesAbsent() {
+  const rows = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(rows, []);
+}
+
 function writeTestConfig() {
   const config = configModule.readConfig();
   config.path.music_path = path.join(tempDir, "library", "music");
@@ -41,18 +51,8 @@ function seedTrackedFile() {
   // Legacy provider rows retained only to satisfy TrackFiles.album_id/media_id
   // foreign keys during the transition (dropped in Phase 5); naming now resolves
   // from the canonical graph + ProviderItems below.
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
 
-  // Canonical graph + provider availability.
+// Canonical graph + provider availability.
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
   dbModule.db.prepare(`
@@ -189,8 +189,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Artists").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
@@ -328,19 +326,7 @@ test("RenameTrackFileService keeps the stored artist path canonical until path u
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-mbid-1", "Artist One", 1);
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
-
-  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
     albumId: "10",
     mediaId: "100",
@@ -542,10 +528,7 @@ test("RenameTrackFileService replicates canonical lyrics across separated roots 
     canonicalRecordingMbid: "recording-mbid-1",
   });
 
-  const providerAlbumCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number };
-  const providerMediaCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number };
-  assert.equal(providerAlbumCount.count, 0);
-  assert.equal(providerMediaCount.count, 0);
+  assertRetiredProviderCatalogTablesAbsent();
 
   const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameArtist({ artistId: "1" });
 
@@ -595,24 +578,8 @@ test("RenameTrackFileService replicates album sidecars by ProviderItems release 
 
   // Legacy rows exist only for TrackFiles foreign keys and deliberately have
   // different titles. Replication should use ProviderItems release-group links.
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "10", "1", "Legacy Stereo Title", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1,
-    "20", "1", "Legacy Spatial Title", "ALBUM", 0, "DOLBY_ATMOS", 1, 1, 0, 180, 1,
-  );
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "100", "1", "10", "Legacy Stereo Track", "Track", 0, "LOSSLESS", 1, 1, 180, 1,
-    "200", "1", "20", "Legacy Spatial Track", "Track", 0, "DOLBY_ATMOS", 1, 1, 180, 1,
-  );
 
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
     VALUES
       ('tidal', 'album', '10', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1', '10', 'Canonical Album', 'LOSSLESS', 'stereo'),

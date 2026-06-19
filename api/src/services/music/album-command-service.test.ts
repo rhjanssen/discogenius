@@ -12,6 +12,16 @@ let dbModule: typeof import("../../database.js");
 let serviceModule: typeof import("./album-command-service.js");
 let queueModule: typeof import("../jobs/queue.js");
 
+function assertRetiredProviderCatalogTablesAbsent() {
+  const rows = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(rows, []);
+}
+
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
@@ -27,8 +37,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -49,13 +57,7 @@ function seedAlbum() {
     INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("artist-mbid-1", "release-group-mbid-1", "stereo", 0, "tidal", "provider-album-1");
-  db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-album-1", "artist-1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 0, "release-group-mbid-1");
-
-  db.prepare(`
+db.prepare(`
     INSERT INTO AlbumReleases (id, foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(201, "release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Album One", "Official", 1, 1);
@@ -90,11 +92,9 @@ test("album monitor command writes release-group slots and ignores provider albu
 
   const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
     .get("release-group-mbid-1") as { wanted: number };
-  const providerAlbum = dbModule.db.prepare("SELECT monitored FROM ProviderAlbums WHERE id = ?")
-    .get("provider-album-1") as { monitored: number };
 
   assert.equal(slot.wanted, 1);
-  assert.equal(providerAlbum.monitored, 0);
+  assertRetiredProviderCatalogTablesAbsent();
 });
 
 test("album update command stores monitor lock on release-group slots", () => {
@@ -105,11 +105,9 @@ test("album update command stores monitor lock on release-group slots", () => {
 
   const slot = dbModule.db.prepare("SELECT monitored_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
     .get("release-group-mbid-1") as { monitored_lock: number };
-  const providerAlbum = dbModule.db.prepare("SELECT monitored_lock FROM ProviderAlbums WHERE id = ?")
-    .get("provider-album-1") as { monitored_lock: number };
 
   assert.equal(slot.monitored_lock, 1);
-  assert.equal(providerAlbum.monitored_lock, 0);
+  assertRetiredProviderCatalogTablesAbsent();
 });
 
 test("track monitor command uses canonical tracks and selected provider offers", async () => {

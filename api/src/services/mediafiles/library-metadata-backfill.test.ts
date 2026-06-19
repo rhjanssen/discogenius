@@ -129,8 +129,6 @@ beforeEach(() => {
         "AlbumReleases",
         "Albums",
         "Recordings",
-        "ProviderMedia",
-        "ProviderAlbums",
         "Artists",
         "ArtistMetadata",
     ]) {
@@ -333,8 +331,8 @@ test("metadata backfill discovers album and video sidecars from canonical Provid
 
     assert.equal(result.failed, 0);
     assert.ok(result.downloaded >= 2);
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
-    assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+    assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 
     const albumNfo = dbModule.db.prepare(`
         SELECT album_id, media_id, provider, provider_entity_type, provider_id, library_slot

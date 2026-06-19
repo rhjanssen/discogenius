@@ -62,12 +62,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM LyricFiles").run();
   db.prepare("DELETE FROM MetadataFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
-  db.prepare("DELETE FROM ProviderMediaArtists").run();
-  db.prepare("DELETE FROM ProviderAlbumArtists").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -426,9 +422,8 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   // Legacy rows kept only to satisfy the transitional TrackFiles.media_id/album_id
   // FK (dropped in Phase 5); identity resolves from ProviderItems below.
-  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('10','1','A Night at the Opera','ALBUM',0,'LOSSLESS',1,1,0,3551)`).run();
-  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('100','1','10','Bohemian Rhapsody','Track',0,'LOSSLESS')`).run();
-  dbModule.db.prepare(`
+
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
   `).run();
@@ -486,19 +481,8 @@ test("upsertLibraryFile resolves canonical release group from provider item mapp
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored, mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-album-1", "artist-local", "provider Album", "2025-01-01", "SINGLE", 0, "HIRES_LOSSLESS", 1, 1, 0, 180, 1, null, null);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-track-1", "artist-local", "provider-album-1", "provider Track", 1, 1, 0, "Track", "HIRES_LOSSLESS", 180, 1, null);
-  dbModule.db.prepare(`
+
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
       release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
@@ -593,9 +577,8 @@ test("upsertLibraryFile prefers selected release-group slot identity over legacy
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("selected-track-mbid", "recording-mbid-1", "selected-release-mbid", 1, 1, "Shut Off The Lights");
   // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
-  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('provider-album-1','artist-local','Give Me The Future','ALBUM',0,'LOSSLESS',1,1,0,180)`).run();
-  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('provider-track-1','artist-local','provider-album-1','Shut Off The Lights','Track',0,'LOSSLESS')`).run();
-  dbModule.db.prepare(`
+
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
       release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
@@ -688,18 +671,8 @@ test("disk scan relinks Lidarr-style album covers and renamed lyrics to their pr
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-album-1", "artist-local", "SAVE MY SOUL", "SINGLE", 0, "LOSSLESS", 1, 1, 0, 237, 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("provider-track-1", "artist-local", "provider-album-1", "SAVE MY SOUL", "Track", 0, "LOSSLESS", 1, 1, 237, 1);
 
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("tidal", "album", "provider-album-1", "artist-local", "SAVE MY SOUL", "stereo");
@@ -748,23 +721,8 @@ test("upsertLibraryFile merges duplicate path and media identity rows during res
     INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("1", "Queen", "Queen", 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 2, 1, 0, 3551, 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "100", "1", "10", "Bohemian Rhapsody", 1, 1, 0, "Track", "LOSSLESS", 354, 1,
-    "101", "1", "10", "Love of My Life", 2, 1, 0, "Track", "LOSSLESS", 219, 1,
-  );
 
-  const root = configModule.Config.getMusicPath();
+const root = configModule.Config.getMusicPath();
   const targetPath = path.join(root, "Queen", "01 - Bohemian Rhapsody.flac");
   const stalePath = path.join(root, "Queen", "old.flac");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -839,9 +797,8 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
   // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
-  dbModule.db.prepare(`INSERT INTO ProviderAlbums (id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration) VALUES ('10','1','A Night at the Opera','ALBUM',0,'LOSSLESS',1,1,0,3551)`).run();
-  dbModule.db.prepare(`INSERT INTO ProviderMedia (id, artist_id, album_id, title, type, explicit, quality) VALUES ('100','1','10','Bohemian Rhapsody','Track',0,'LOSSLESS')`).run();
-  dbModule.db.prepare(`
+
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
   `).run();
@@ -907,17 +864,7 @@ test("upsertLibraryFile merges duplicate path and tracked asset identity rows du
     INSERT INTO Artists (id, name, path, monitored)
     VALUES (?, ?, ?, ?)
   `).run("1", "Queen", "Queen", 1);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "10", "1", "A Night at the Opera", "1975-11-21", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1,
-    "11", "1", "Sheer Heart Attack", "1974-11-08", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 3551, 1,
-  );
-
-  const root = configModule.Config.getMusicPath();
+const root = configModule.Config.getMusicPath();
   const targetPath = path.join(root, "Queen", "A Night at the Opera", "cover.jpg");
   const stalePath = path.join(root, "Queen", "old-cover.jpg");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -980,28 +927,8 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-inline-test", "Bastille", "artist-mbid-bastille", "Bastille", 1);
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, release_date, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("album-inline-test", "artist-inline-test", "Bad Blood", "2013-03-04", "ALBUM", 0, "LOSSLESS", 1, 1, 1, 200, 1);
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("track-inline-test", "artist-inline-test", "album-inline-test", "Pompeii", 1, 1, 0, "Track", "LOSSLESS", 210, 1, "track-mbid-pompeii");
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored, mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("video-inline-test", "artist-inline-test", "album-inline-test", "Pompeii Video", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1, "recording-mbid-pompeii");
-
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
   `).run("artist-mbid-bastille", "Bastille");
@@ -1139,17 +1066,8 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
   const expectedNfoPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.nfo");
   assert.equal(expectedNfo.expectedPath, expectedNfoPath);
 
-  dbModule.db.prepare("UPDATE ProviderMedia SET mbid = 'non-existent-recording' WHERE id = 'video-inline-test'").run();
-
   const expectedAlbumLinkedFallback = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
   assert.equal(expectedAlbumLinkedFallback.expectedPath, expectedInlineMonitoredPath);
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("video-inline-duplicate", "artist-inline-test", "album-inline-test", "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-dup", "Pompeii (Official Video)", "artist-mbid-bastille");
   dbModule.db.prepare(`
@@ -1179,14 +1097,7 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
     expectedDuplicate.expectedPath,
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-duplicate}.mp4"),
   );
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, track_number, volume_number,
-      explicit, type, quality, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("video-inline-unlinked", "artist-inline-test", null, "Pompeii (Official Video)", 1, 1, 0, "Music Video", "LOSSLESS", 220, 1);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
+dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
@@ -1205,7 +1116,6 @@ test("computeExpectedPath inline vs separated layouts for video files", () => {
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
   );
 
-  dbModule.db.prepare("DELETE FROM ProviderMedia WHERE id = 'track-inline-test'").run();
   const expectedCanonicalOnlyDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
     id: 1005,

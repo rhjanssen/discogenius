@@ -21,8 +21,6 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -80,7 +78,7 @@ function insertCanonicalArtist() {
   return artist;
 }
 
-test("local search returns canonical tracks and ignores legacy provider-media tracks", async () => {
+test("local search returns canonical tracks", async () => {
   insertCanonicalArtist();
 
   dbModule.db.prepare(`
@@ -115,10 +113,6 @@ test("local search returns canonical tracks and ignores legacy provider-media tr
       'track-mbid', 'recording-mbid', 'Canonical Search Track', 1, 'HIRES_LOSSLESS', 181, 'track-cover', 'verified'
     )
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (id, artist_id, title, type, explicit, quality)
-    VALUES ('legacy-track-1', 'artist-id', 'Canonical Search Track Legacy', 'Track', 0, 'LOW')
-  `).run();
 
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Canonical Search", type: "tracks", limit: "10" } }, res);
@@ -130,7 +124,7 @@ test("local search returns canonical tracks and ignores legacy provider-media tr
   assert.equal(res.body.results.tracks[0].monitored, true);
 });
 
-test("local search returns canonical videos and ignores legacy provider-media videos", async () => {
+test("local search returns canonical videos", async () => {
   const artist = insertCanonicalArtist();
   const video = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -154,12 +148,6 @@ test("local search returns canonical videos and ignores legacy provider-media vi
       'Canonical Search Video', 'FHD', 201, '2023-02-03', 'provider-cover', 'verified'
     )
   `).run(video.id);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, title, duration, type, explicit, quality, monitored
-    )
-    VALUES ('legacy-video-1', 'artist-id', 'Canonical Search Video Legacy', 200, 'Music Video', 0, 'LOW', 1)
-  `).run();
 
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Canonical Search", type: "videos", limit: "10" } }, res);

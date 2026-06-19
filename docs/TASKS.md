@@ -71,7 +71,7 @@ Docker runtime image.
   scanning do not auto-download; downloads stay tied to an explicit manual/scheduled
   monitoring cycle or download command, matching the Lidarr-style order of
   operations.
-- **Retire legacy `Provider*` tables** 🟡 — full 5-phase migration to a single
+- **Retire legacy `Provider*` tables** ✅ — full 5-phase migration to a single
   canonical graph + `ProviderItems`. See docs/LIDARR_DB_ALIGNMENT_PLAN.md.
   Phase 0 (inventory) + Phase 1 dry-run done; target model clarified (Recordings
   = canonical track/work info + standalone videos; Tracks = release↔recording map).
@@ -119,13 +119,13 @@ Docker runtime image.
   `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
   canonical-only audio/video upgrade downloads; schema v27 re-keys
   `upgrade_queue` to provider resource identity while retaining nullable legacy
-  shadow ids during the transition. **Remaining:** other read/write
-  paths still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (organizer, audio-tag MB/AcoustID write-back and legacy tag fallbacks);
-  the unique-index +
-  import-upsert canonical-identity switch is a numbered schema migration bundled
-  with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
-  progress sections.
+  shadow ids during the transition. **Phase 5 shipped:** schema v29 drops
+  `ProviderAlbums`, `ProviderMedia`, `ProviderAlbumArtists`, and
+  `ProviderMediaArtists`; fresh databases no longer create them and active tests
+  assert catalog state flows through MusicBrainz/Skyhook tables plus
+  `ProviderItems`. **Remaining cleanup:** decide whether to remove the nullable
+  `TrackFiles.album_id`/`media_id` shadow columns now or leave them until the
+  next file-import/schema cleanup batch.
 - **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
   fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider whether provider-keyed
   `upgrade_queue` should stay separate or fold into `job_queue`.

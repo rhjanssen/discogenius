@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 28;
+const CURRENT_SCHEMA_VERSION = 29;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -92,7 +92,7 @@ test("fresh database initializes with correct schema version", () => {
   assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
 
   const coreTables = [
-    "Artists", "ProviderAlbums", "ProviderMedia", "ProviderMediaArtists", "TrackFiles",
+    "Artists", "TrackFiles",
     "MetadataFiles", "LyricFiles", "ExtraFiles",
     "UnmappedFiles", "config", "job_queue", "quality_profiles",
     "upgrade_queue", "history_events",
@@ -113,6 +113,10 @@ test("fresh database initializes with correct schema version", () => {
     "provider_video_identity",
     "provider_video_items",
     "provider_ids",
+    "ProviderAlbums",
+    "ProviderMedia",
+    "ProviderAlbumArtists",
+    "ProviderMediaArtists",
   ];
   for (const tableName of supersededTables) {
     const row = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName) as { name: string } | undefined;

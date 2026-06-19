@@ -11,6 +11,16 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../../database.js");
 let tidalProviderModule: typeof import("./tidal-provider.js");
 
+function assertRetiredProviderCatalogTablesAbsent() {
+  const rows = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(rows, []);
+}
+
 before(async () => {
   dbModule = await import("../../../database.js");
   dbModule.initDatabase();
@@ -28,8 +38,6 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
-  dbModule.db.prepare("DELETE FROM ProviderMedia").run();
-  dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
 });
 
 after(() => {
@@ -99,8 +107,7 @@ test("TIDAL album download progress tracks are built from canonical release trac
       artist_name: "Canonical Artist",
     },
   ]);
-  const legacyRows = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number };
-  assert.equal(legacyRows.count, 0);
+  assertRetiredProviderCatalogTablesAbsent();
 });
 
 test("TIDAL album download progress can resolve combined selected provider offers via slots", () => {
@@ -217,8 +224,5 @@ test("TIDAL album download progress falls back to canonical provider items witho
       artist_name: "Canonical Artist",
     },
   ]);
-  const legacyMediaRows = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number };
-  const legacyAlbumRows = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number };
-  assert.equal(legacyMediaRows.count, 0);
-  assert.equal(legacyAlbumRows.count, 0);
+  assertRetiredProviderCatalogTablesAbsent();
 });

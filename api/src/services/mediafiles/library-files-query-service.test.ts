@@ -16,7 +16,7 @@ const { listLibraryFiles } = await import("./library-files-query-service.js");
 function resetRows() {
   for (const table of [
     "TrackFiles", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings",
-    "AlbumReleases", "Albums", "ArtistMetadata", "Artists", "ProviderMedia", "ProviderAlbums",
+    "AlbumReleases", "Albums", "ArtistMetadata", "Artists",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }

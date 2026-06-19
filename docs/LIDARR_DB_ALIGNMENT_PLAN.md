@@ -1,7 +1,8 @@
 # Lidarr DB Alignment — Legacy Provider Table Retirement Plan
 
-**Status:** Active implementation for 2.0.8. Phase 1 is partially shipped;
-Phase 2 read-path cutover has started.
+**Status:** Implemented for 2.0.8 through Phase 5. Schema v29 drops the retired
+legacy provider catalog tables from existing runtimes and fresh databases no
+longer create them.
 **Goal:** Collapse the legacy provider-shaped tables into the canonical
 MusicBrainz/Lidarr-aligned graph + `ProviderItems`, so the database has a single
 identity model. Deviate from Lidarr only where a distinguishing feature requires
@@ -23,7 +24,7 @@ Discogenius currently stores library identity **twice**:
 | Track↔artist credit | (via `Recordings.artist_credit`) | `ProviderMediaArtists` |
 | Similar artists/albums | Drop unless MusicBrainz/SkyHook-backed | `ProviderSimilarArtists`, `ProviderSimilarAlbums` |
 | Provider availability/offers | `ProviderItems` (keyed to mbids) | embedded in `ProviderAlbums`/`ProviderMedia` rows |
-| Local files | `TrackFiles` integer FKs to catalog rows; transitional MBID/provider ids until Phase 5 | — |
+| Local files | `TrackFiles` integer FKs to catalog rows; transitional MBID/provider ids remain as provider-resource compatibility shadows | — |
 | Spatial/stereo/video selection | `ReleaseGroupSlots` (**distinguishing feature, keep**) | — |
 
 Lidarr has **no** equivalent of `ProviderAlbums`/`ProviderMedia` — indexer
@@ -67,9 +68,11 @@ legacy `Provider*` tables.
 - Provider availability/offers: `ProviderItems` only.
 - Slot selection (stereo/spatial/video): `ReleaseGroupSlots`. (Keep — this is the
   spatial + video feature that justifies deviating from Lidarr.)
-- Local files: `TrackFiles` linked **only** by `canonical_track_mbid` /
-  `canonical_recording_mbid` / `canonical_release_group_mbid` (the columns
-  already exist); drop the `media_id` / `album_id` provider-id linkage.
+- Local files: `TrackFiles` linked to catalog rows through integer FKs plus
+  transitional MBID columns. `media_id` / `album_id` are no longer foreign keys
+  to provider catalog tables; they remain nullable provider-resource shadows for
+  file, sidecar, rename, retag, and API compatibility until that separate cleanup
+  is planned.
 - Curation/dedup: `ArtistReleaseGroupCuration`, `ReleaseGroupSlots`. (Keep.)
 
 ## 3. Migration phases (incremental, each independently shippable)
@@ -111,9 +114,10 @@ provider-catalog table just to preserve a non-core UI section.
 **Phase 5 — Drop legacy tables.**
 Once nothing reads or writes them: drop `ProviderAlbums`, `ProviderMedia`,
 `ProviderAlbumArtists`, `ProviderMediaArtists`, `ProviderSimilarArtists`,
-`ProviderSimilarAlbums`, and the now-unused `TrackFiles.media_id`/`album_id`
-columns, via a numbered schema migration (bump `user_version`). Keep a one-time
-data-migration guard so existing DBs backfill before the drop.
+`ProviderSimilarAlbums`, via a numbered schema migration (bump `user_version`).
+`TrackFiles.media_id`/`album_id` are intentionally retained as nullable
+provider-resource shadows rather than catalog foreign keys; removing them is a
+separate file/API compatibility cleanup.
 
 ## 3b. Provider-data policy (Robert, 2026-06-18) — governs every cutover decision
 
@@ -439,24 +443,15 @@ Committed + green + booted-clean on the real container:
   per-track + `ProviderAlbumArtists` legacy writes dropped.
 - `RefreshVideoService` now also sets `provider_album_id` on the video offer.
 
-**Only one legacy-coupled file remains: `refresh-album-service` (the scan).**
-It is now a *self-contained legacy island* — no other code reads its
-`ProviderAlbums`/`ProviderMedia`/`ProviderAlbumArtists`/`ProviderMediaArtists`
-writes anymore. Conversion plan (do with a real scan→curate→download cycle on
-the container — this is the path the parallel agents kept breaking, so it gets
-its own careful pass):
-- **Removing the legacy WRITES collapses most self-reads.** The track-offer +
-  canonical supplement writes already exist; the legacy `ProviderMedia`/
-  `ProviderAlbums` inserts are dead weight once their self-reads are repointed.
-- Repoint the few self-reads: freshness (`ProviderAlbums.last_scanned`) →
-  `ProviderItems(album).updated_at`; scan-level (`review_text`/`credits` +
-  track count) → `Albums.review_text` / `Recordings.credits` / `ProviderItems`
-  track-offer count; `monitored` → `ReleaseGroupSlots`; album `artist_id`/`type`
-  → the album offer's `artist_mbid` (the `selectedRelease` CTE already prefers
-  `ReleaseGroupSlots`/`ProviderItems` over the `pa` fallback).
-- Then **Phase 5**: drop the 6 legacy tables + `TrackFiles.media_id`/legacy
-  `album_id` + FK; migrate ~100 test seeds; fresh-DB rebuild (Bastille +
-  Bakermat) end-to-end.
+**Phase 5 completion (2026-06-19):** `refresh-album-service` was cut over from
+its self-contained legacy island. Album scans now write canonical catalog rows
+and `ProviderItems`; monitored state lives in `ReleaseGroupSlots`/`Albums` and
+`Recordings`; provider UPC/ISRC remain offer evidence only. Schema v29 drops
+`ProviderAlbums`, `ProviderMedia`, `ProviderAlbumArtists`, and
+`ProviderMediaArtists`, and active tests seed/assert the canonical graph plus
+`ProviderItems` instead of legacy provider catalog rows. The retained
+`TrackFiles.album_id`/`media_id` columns are provider-resource shadows, not
+catalog foreign keys.
 
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 

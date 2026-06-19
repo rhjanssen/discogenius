@@ -23,7 +23,6 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -59,15 +58,7 @@ test("library stats count videos from canonical recordings and ignore legacy pro
       ('provider-video-2', ?, 'artist-mbid', 'Unmonitored Video', 1, 'provider_only', 0),
       ('audio-recording-1', ?, 'artist-mbid', 'Audio Recording', 0, 'musicbrainz', 1)
   `).run(artistMetadata.id, artistMetadata.id, artistMetadata.id);
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, title, duration, type, explicit, quality, monitored
-    )
-    VALUES ('legacy-video-1', 'artist-id', 'Legacy provider Video', 200, 'Music Video', 0, 'FHD', 1)
-  `).run();
-
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,

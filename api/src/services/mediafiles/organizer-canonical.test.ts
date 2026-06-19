@@ -19,7 +19,6 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ProviderMedia").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
@@ -91,5 +90,5 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   assert.equal(row?.album_id, "provider-album-1");
   assert.equal(row?.track_number, 2);
   assert.equal(row?.volume_number, 1);
-  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+  assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });

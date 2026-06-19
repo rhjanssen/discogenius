@@ -35,8 +35,6 @@ afterEach(() => {
     "Albums",
     "ArtistMetadata",
     "Artists",
-    "ProviderMedia",
-    "ProviderAlbums",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -169,8 +167,8 @@ test("checkUpgrades queues canonical audio album upgrades without legacy provide
   assert.equal(result.tracks, 1);
   assert.equal(result.videos, 0);
   assert.equal(result.albums, 1);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderAlbums").get() as { count: number }).count, 0);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   const ledger = db.prepare(`
     SELECT provider, entity_type, provider_id, album_provider_id, media_id, album_id, target_quality, status
     FROM upgrade_queue
@@ -237,32 +235,8 @@ test("checkUpgrades updates migrated queue rows by legacy media shadow before in
     JSON.stringify({ albumProviderId: "album-provider-1" }),
     JSON.stringify({ albumProviderId: "album-provider-1", quality: "HIRES_LOSSLESS" }),
   );
-  db.prepare(`INSERT INTO ProviderAlbums (
-    id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    "legacy-album-1",
-    "artist-local",
-    "Canonical Album",
-    "ALBUM",
-    0,
-    "LOSSLESS",
-    1,
-    1,
-    0,
-    180,
-  );
-  db.prepare(`INSERT INTO ProviderMedia (
-    id, artist_id, album_id, title, type, explicit, quality
-  ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    "legacy-media-1",
-    "artist-local",
-    "legacy-album-1",
-    "Track One",
-    "ALBUM",
-    0,
-    "LOSSLESS",
-  );
-  insertTrackFile({
+
+insertTrackFile({
     album_id: "legacy-album-1",
     media_id: "legacy-media-1",
     canonical_artist_mbid: "artist-mbid",
@@ -348,7 +322,7 @@ test("checkUpgrades queues canonical video upgrades without legacy provider rows
   assert.equal(result.tracks, 0);
   assert.equal(result.videos, 1);
   assert.equal(result.albums, 0);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia").get() as { count: number }).count, 0);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   const ledger = db.prepare(`
     SELECT provider, entity_type, provider_id, media_id, album_id, target_quality, status
     FROM upgrade_queue

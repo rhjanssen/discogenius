@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 28;
+const BASE_SCHEMA_VERSION = 29;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -473,6 +473,23 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
             AND json_valid(match_evidence)
             AND json_extract(match_evidence, '$.albumProviderId') IS NOT NULL
         `);
+      }
+    }
+  },
+  {
+    version: 29,
+    description: "Drop retired legacy provider catalog tables",
+    up: () => {
+      db.pragma("foreign_keys = OFF");
+      try {
+        db.exec(`
+          DROP TABLE IF EXISTS ProviderMediaArtists;
+          DROP TABLE IF EXISTS ProviderAlbumArtists;
+          DROP TABLE IF EXISTS ProviderMedia;
+          DROP TABLE IF EXISTS ProviderAlbums;
+        `);
+      } finally {
+        db.pragma("foreign_keys = ON");
       }
     }
   }
@@ -1118,186 +1135,16 @@ export function initDatabase() {
   `);
 
   // ====================================================================
-  // ALBUMS TABLE
-  // ====================================================================
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderAlbums (
-      id TEXT PRIMARY KEY,               -- Temporary provider offer id until albums move fully to MB release groups
-      artist_id TEXT NOT NULL,           -- Managed artist id
-      title TEXT NOT NULL,               -- Album title
-      version TEXT,                      -- Album version (Deluxe, Remastered, etc)
-      release_date DATETIME,             -- Original release date
-      type TEXT NOT NULL,                -- Main release type: ALBUM/EP/SINGLE
-      explicit BOOLEAN NOT NULL,         -- Whether album is explicit or clean
-      quality TEXT NOT NULL,             -- Provider quality label, e.g. LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
-      user_date_added DATETIME,          -- When imported from provider favorites
-
-      -- Media
-      cover TEXT,                        -- Resolved or provider-native album cover reference
-      vibrant_color TEXT,                -- Hex color code of dominant cover color
-      video_cover TEXT,                  -- animated cover UUID
-      
-      -- Counts
-      num_tracks INT NOT NULL,           -- Number of tracks
-      num_volumes INT NOT NULL,          -- Number of volumes
-      num_videos INT NOT NULL,           -- Number of videos
-      duration INT NOT NULL,             -- Total duration in seconds
-      popularity INT,                    -- Optional provider popularity score
-      
-      -- Review
-      review_text TEXT,                  -- Full review text
-      review_source TEXT,                -- Source of review
-      review_last_updated DATETIME,      -- When review was last updated
-
-      -- Metadata
-      credits TEXT,                      -- JSON object of album credits
-      copyright TEXT,                    -- Album copyright info
-      upc TEXT,                          -- Universal Product Code (identifies specific pressing/edition)
-      mbid TEXT,                         -- MusicBrainz Release ID (specific pressing/edition; matches UPC)
-      mb_release_group_id TEXT,          -- MusicBrainz Release Group ID — cross-provider join key for the abstract
-                                         -- album concept. NOTE: MB groups Standard + Deluxe editions into the same
-                                         -- Release Group. Do NOT use this for dedup; use ISRC-set matching instead.
-      musicbrainz_status TEXT,           -- pending/verified/ambiguous/unmatched/error
-      musicbrainz_last_checked DATETIME,
-      musicbrainz_match_method TEXT,
-      
-      -- Categorization (for Plex compatibility)
-      mb_primary TEXT,                  -- MusicBrainz primary release type: album/ep/single
-      mb_secondary TEXT,                -- MusicBrainz secondary release type: live/compilation/remix (only with primary type album)
-      
-      -- Monitoring & Filtering
-      monitored BOOLEAN DEFAULT 0,        -- whether to scan and download tracks from this album, and monitor it for changes
-      monitored_at DATETIME,            -- when monitoring was enabled
-      monitored_lock BOOLEAN DEFAULT 0,   -- whether monitoring is locked (allowed to be changed during automated scanning/filtering)
-      locked_at DATETIME,               -- when lock was enabled
-      last_scanned DATETIME,            -- last time this album was scanned for changes
-      downloaded INT,                   -- number between 0 and 100 representing percentage of album's tracks downloaded
-      redundant TEXT,                   -- If redundant, points to the id of the better version
-
-      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE
-    )
-  `);
-
-  // ====================================================================
-  // MEDIA TABLE  
-  // ====================================================================
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderMedia (
-      id TEXT PRIMARY KEY,              -- Temporary provider media id until tracks/videos move fully to canonical identities
-      artist_id TEXT NOT NULL,          -- Managed artist id
-      album_id TEXT,                    -- Provider offer id for album tracks while compatibility table remains
-      title TEXT NOT NULL,              -- Track or video title
-      version TEXT,                     -- version specifier (Remastered, etc)
-      release_date DATETIME,            -- Original release date
-      type TEXT NOT NULL,               -- Main release type: ALBUM/EP/SINGLE/Music Video
-      explicit BOOLEAN NOT NULL,        -- Whether track is explicit or clean
-      quality TEXT NOT NULL,            -- Provider quality label, e.g. LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS
-      user_date_added DATETIME,         -- When imported from provider favorites
-
-      -- Media
-      cover TEXT,                       -- Cover UUID (video thumbnail; optional for tracks)
-
-      -- Positioning
-      track_number INT,                 -- Track number on album
-      volume_number INT,                -- Volume number on album
-      duration INT,                     -- Duration in seconds
-      popularity INT,                   -- Optional provider popularity score
-      
-      -- Music Theory
-      bpm INT,                          -- Beats per minute
-      key TEXT,                         -- Musical key (C, D, etc)
-      key_scale TEXT,                   -- Major/minor
-      
-      -- Audio Engineering
-      peak REAL,                        -- Peak amplitude
-      replay_gain REAL,                 -- For normalization
-      
-      -- Audio Quality Details (for replacement logic)
-      bit_depth INT,
-      sample_rate INT,
-      bitrate INT,
-      codec TEXT,
-
-      -- Metadata
-      credits TEXT,                     -- JSON object of track credits
-      copyright TEXT,
-      isrc TEXT,
-      mbid TEXT,                        -- MusicBrainz ID
-      musicbrainz_status TEXT,          -- pending/verified/ambiguous/unmatched/error
-      musicbrainz_last_checked DATETIME,
-      musicbrainz_match_method TEXT,
-      acoustid_id TEXT,                 -- AcoustID result ID
-      acoustid_fingerprint TEXT,        -- Chromaprint fingerprint written/imported for this media
-      fingerprint_duration INT,         -- Duration returned by fpcalc
-      
-      -- Monitoring & Filtering
-      monitored BOOLEAN DEFAULT 0,        -- whether to scan and download this track, and monitor it for changes
-      monitored_at DATETIME,            -- when monitoring was enabled
-      monitored_lock BOOLEAN DEFAULT 0,   -- whether monitoring is locked (allowed to be changed during automated scanning/filtering)
-      locked_at DATETIME,               -- when lock was enabled
-      last_scanned DATETIME,            -- last time this track was scanned for changes
-      downloaded BOOLEAN,               -- whether this track has been downloaded
-      redundant TEXT,                   -- If redundant, points to the id of the better version
-      
-      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
-    )
-  `);
-
-  // ====================================================================
-  // NORMALIZED METADATA TABLES
-  // ====================================================================
-
-  // Album artists relationship
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderAlbumArtists (
-      album_id TEXT NOT NULL,            -- Provider offer id while compatibility table remains
-      artist_id TEXT NOT NULL,           -- Managed artist id
-      artist_name TEXT,                  -- Cached artist name (for fast UI rendering)
-      ord INT,                           -- Ordering of artists on the release
-      type TEXT NOT NULL,                -- contribution type
-      group_type TEXT,                   -- retrieved from endpoint ALBUMS, EPSANDSINGLES, or COMPILATIONS
-      version_group_id INT,              -- Group id for related album versions (explicit/clean, qualities)
-      version_group_name TEXT,           -- Group name for related album versions ("Album Name")
-      module TEXT,                       -- derived from release type and page module ALBUM, EP, SINGLE, COMPILATIONS, LIVE, REMIX, APPEARS_ON
-      PRIMARY KEY (artist_id, album_id),
-      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
-      FOREIGN KEY (album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Media artist relationship
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ProviderMediaArtists (
-      media_id TEXT NOT NULL,            -- Provider media id while compatibility table remains
-      artist_id TEXT NOT NULL,           -- Managed artist id
-      type TEXT NOT NULL,                -- contribution type
-      PRIMARY KEY (media_id, artist_id),
-      FOREIGN KEY (media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
-      FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
-    )
-  `);
-
-  // ====================================================================
-  // SIMILAR ENTITIES JUNCTION TABLES
-  // ====================================================================
-
-  // (ProviderSimilarArtists / ProviderSimilarAlbums removed: similar-artist/album
-  // recommendations were a provider-exclusive feature with no MusicBrainz/Skyhook
-  // equivalent and no Lidarr counterpart. Retired with the legacy provider tables.)
-
-
-  // ====================================================================
   // TRACKFILES TABLE (Local file tracking; Lidarr-aligned file inventory)
   // ====================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS TrackFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT, -- Internal file ID
       
-      -- Linkage (at least artist_id required, then either media_id for tracks/videos)
+      -- Linkage
       artist_id TEXT NOT NULL,           -- Managed artist id
-      album_id TEXT,                     -- Provider offer id while compatibility table remains
-      media_id TEXT,                     -- Provider media id while compatibility table remains
+      album_id TEXT,                     -- Legacy provider album shadow id; prefer provider_id/provider_album_id + catalog FKs
+      media_id TEXT,                     -- Legacy provider media shadow id; prefer provider_id + catalog FKs
 
       -- Transitional MBID identity (migration debt; prefer integer FKs below)
       canonical_artist_mbid TEXT,
@@ -1358,9 +1205,7 @@ export function initDatabase() {
       modified_at DATETIME,              -- File system modified time
       verified_at DATETIME,              -- Last time file existence was verified
       
-      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE SET NULL,
-      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE SET NULL
+      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE
     )
   `);
 
@@ -1541,38 +1386,8 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid ON Artists(mbid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_musicbrainz_status ON Artists(musicbrainz_status)`);
 
-  // Album indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON ProviderAlbums(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitored ON ProviderAlbums(monitored)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_monitored_lock ON ProviderAlbums(monitored_lock)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_type ON ProviderAlbums(type)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_quality ON ProviderAlbums(quality)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_release_date ON ProviderAlbums(release_date)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_title ON ProviderAlbums(title)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mbid ON ProviderAlbums(mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_mb_release_group ON ProviderAlbums(mb_release_group_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_albums_musicbrainz_status ON ProviderAlbums(musicbrainz_status)`);
   db.exec(`DROP INDEX IF EXISTS idx_albums_downloaded`);
-
-  // Album artists indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_album_artists_version_group ON ProviderAlbumArtists(version_group_id)`);
-
-  // Media indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artist_id ON ProviderMedia(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_album_id ON ProviderMedia(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_isrc ON ProviderMedia(isrc)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_mbid ON ProviderMedia(mbid)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_acoustid_id ON ProviderMedia(acoustid_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_musicbrainz_status ON ProviderMedia(musicbrainz_status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitored ON ProviderMedia(monitored)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_monitored_lock ON ProviderMedia(monitored_lock)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_quality ON ProviderMedia(quality)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_type ON ProviderMedia(type)`);
   db.exec(`DROP INDEX IF EXISTS idx_media_downloaded`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_title ON ProviderMedia(title)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_release_date ON ProviderMedia(release_date)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_last_scanned ON ProviderMedia(last_scanned)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_media_artists_artist_type_media ON ProviderMediaArtists(artist_id, type, media_id)`);
 
   // Job indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON job_queue(status)`);
@@ -1634,7 +1449,6 @@ export function initDatabase() {
   // Foreign key and lookup performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON ProviderAlbumArtists(album_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_selected_release ON ReleaseGroupSlots(selected_release_mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_artists_path ON Artists(path)");
 

@@ -12,6 +12,16 @@ let dbModule: typeof import("../../database.js");
 let queueModule: typeof import("../jobs/queue.js");
 let serviceModule: typeof import("./library-bulk-actions.js");
 
+function assertRetiredProviderCatalogTablesAbsent() {
+    const rows = dbModule.db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+    `).all() as Array<{ name: string }>;
+    assert.deepEqual(rows, []);
+}
+
 before(async () => {
     dbModule = await import("../../database.js");
     dbModule.initDatabase();
@@ -35,10 +45,6 @@ beforeEach(() => {
     db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
     db.prepare("DELETE FROM ReleaseGroupSlots").run();
     db.prepare("DELETE FROM Albums").run();
-    db.prepare("DELETE FROM ProviderMediaArtists").run();
-    db.prepare("DELETE FROM ProviderAlbumArtists").run();
-    db.prepare("DELETE FROM ProviderMedia").run();
-    db.prepare("DELETE FROM ProviderAlbums").run();
     db.prepare("DELETE FROM Artists").run();
     db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -59,32 +65,9 @@ function seedLibrary() {
         VALUES (?, ?, ?, ?)
     `).run("1", "artist-mbid-1", "Artist One", 0);
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderAlbums (
-            id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration,
-            monitored, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 2, 1, 0, 360, 0, 0);
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderMedia (
-            id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration,
-            monitored, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("100", "1", "10", "Track One", "ALBUM", 0, "LOSSLESS", 1, 1, 180, 0, 0);
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderMedia (
-            id, artist_id, album_id, title, type, explicit, quality, duration, monitored, monitored_lock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("200", "1", null, "Video One", "Music Video", 0, "DOLBY_ATMOS", 200, 0, 0);
-
-    dbModule.db.prepare(`
-        INSERT INTO ProviderAlbumArtists (album_id, artist_id, artist_name, ord, type, group_type, module)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run("10", "artist-mbid-1", "Artist One", 0, "main", "ALBUMS", "ALBUM");
-
-    dbModule.db.prepare(`
+dbModule.db.prepare(`
         INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
         VALUES (?, ?, ?, ?, ?)
     `).run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album", "2024-01-01");
@@ -191,14 +174,9 @@ test("artist monitor bulk updates related rows and queues intake", async () => {
     assert.equal(result.items[0]?.status, "queued");
 
     const artist = dbModule.db.prepare("SELECT monitored FROM Artists WHERE id = ?").get("1") as { monitored: number };
-    const album = dbModule.db.prepare("SELECT monitored FROM ProviderAlbums WHERE id = ?").get("10") as { monitored: number };
-    const track = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = ?").get("100") as { monitored: number };
-    const video = dbModule.db.prepare("SELECT monitored FROM ProviderMedia WHERE id = ?").get("200") as { monitored: number };
 
     assert.equal(artist.monitored, 1);
-    assert.equal(album.monitored, 0);
-    assert.equal(track.monitored, 0);
-    assert.equal(video.monitored, 0);
+    assertRetiredProviderCatalogTablesAbsent();
 
     const queuedJob = dbModule.db.prepare(`
         SELECT type, ref_id as refId, status
@@ -225,24 +203,19 @@ test("album and video lock bulk actions write canonical state", async () => {
     assert.equal(videoLock.matched, 1);
 
     const album = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { monitor_lock: number };
-    const track = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ProviderMedia WHERE id = ?").get("100") as { monitor_lock: number };
-    const staleVideo = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ProviderMedia WHERE id = ?").get("200") as { monitor_lock: number };
     const video = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
 
     assert.equal(album.monitor_lock, 1);
-    assert.equal(track.monitor_lock, 0);
-    assert.equal(staleVideo.monitor_lock, 0);
     assert.equal(video.monitored_lock, 1);
+    assertRetiredProviderCatalogTablesAbsent();
 
     await serviceModule.LibraryBulkActionService.apply("album", "unlock", [seeded.albumId]);
     await serviceModule.LibraryBulkActionService.apply("video", "unlock", [seeded.videoId]);
 
     const unlockedAlbum = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { monitor_lock: number };
-    const unlockedTrack = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ProviderMedia WHERE id = ?").get("100") as { monitor_lock: number };
     const unlockedVideo = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
 
     assert.equal(unlockedAlbum.monitor_lock, 0);
-    assert.equal(unlockedTrack.monitor_lock, 0);
     assert.equal(unlockedVideo.monitored_lock, 0);
 });
 
@@ -254,11 +227,10 @@ test("album bulk actions reject provider album IDs as catalog identity", async (
     assert.equal(result.matched, 0);
     assert.equal(result.missing, 1);
 
-    const providerAlbum = dbModule.db.prepare("SELECT monitored AS monitor FROM ProviderAlbums WHERE id = ?").get(seeded.staleProviderAlbumId) as { monitor: number };
     const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { wanted: number };
 
-    assert.equal(providerAlbum.monitor, 0);
     assert.equal(slot.wanted, 1);
+    assertRetiredProviderCatalogTablesAbsent();
 });
 
 test("track and video monitor bulk actions write canonical state only", async () => {
@@ -273,13 +245,10 @@ test("track and video monitor bulk actions write canonical state only", async ()
         WHERE release_group_mbid = ? AND slot = 'stereo'
     `).get("release-group-mbid-1") as { wanted: number };
     const video = dbModule.db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(seeded.videoId) as { Monitor: number };
-    const staleTrack = dbModule.db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get(seeded.staleProviderTrackId) as { monitor: number };
-    const staleVideo = dbModule.db.prepare("SELECT monitored AS monitor FROM ProviderMedia WHERE id = ?").get(seeded.staleProviderVideoId) as { monitor: number };
 
     assert.equal(slot.wanted, 0);
     assert.equal(video.Monitor, 1);
-    assert.equal(staleTrack.monitor, 0);
-    assert.equal(staleVideo.monitor, 0);
+    assertRetiredProviderCatalogTablesAbsent();
 });
 
 test("bulk download queues the selected media jobs", async () => {

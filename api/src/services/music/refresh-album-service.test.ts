@@ -18,7 +18,6 @@ before(async () => {
 });
 
 beforeEach(() => {
-  dbModule.db.prepare("DELETE FROM ProviderMediaArtists").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -26,8 +25,6 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM AlbumReleaseMedia").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM ProviderMedia").run();
-  dbModule.db.prepare("DELETE FROM ProviderAlbums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -211,14 +208,7 @@ test("album track scan stores provider track offers linked to the selected canon
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, 1, 1, '1', ?)
   `).run(trackMbid, releaseMbid, recordingMbid, "Track One");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality,
-      num_tracks, num_volumes, num_videos, duration,
-      mbid, mb_release_group_id
-    ) VALUES (?, ?, ?, 'ALBUM', 0, 'LOSSLESS', 1, 1, 0, 180, ?, ?)
-  `).run("provider-album-1", artistMbid, "provider Album", releaseMbid, releaseGroupMbid);
-  dbModule.db.prepare(`
+dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, quality, artist_mbid, release_group_mbid, release_mbid, library_slot
     ) VALUES ('fake', 'album', ?, ?, 'LOSSLESS', ?, ?, ?, 'stereo')

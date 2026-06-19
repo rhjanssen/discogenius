@@ -20,7 +20,6 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ProviderMedia").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
@@ -102,7 +101,11 @@ test("provider videos create canonical recordings and link to matching audio rec
   assert.equal(relation.source, "tidal");
   assert.equal(relation.confidence, 0.95);
 
-  const legacyCount = dbModule.db.prepare("SELECT COUNT(*) AS count FROM ProviderMedia")
-    .get() as { count: number };
-  assert.equal(legacyCount.count, 0);
+  const retiredTables = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
+  `).all() as Array<{ name: string }>;
+  assert.deepEqual(retiredTables, []);
 });

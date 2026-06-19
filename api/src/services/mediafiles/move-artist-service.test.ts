@@ -43,19 +43,8 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
   `).run("1", "Artist One", "artist-one-mbid", artistPath, 1);
 
   // Legacy rows retained for TrackFiles FK during the transition (dropped Phase 5).
-  dbModule.db.prepare(`
-    INSERT INTO ProviderAlbums (
-      id, artist_id, title, type, explicit, quality, num_tracks, num_volumes, num_videos, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("10", "1", "Album One", "ALBUM", 0, "LOSSLESS", 1, 1, 0, 180, 1);
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderMedia (
-      id, artist_id, album_id, title, type, explicit, quality, track_number, volume_number, duration, monitored
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("100", "1", "10", "Track One", "Track", 0, "LOSSLESS", 1, 1, 180, 1);
-
-  // Canonical graph + provider availability (naming resolves from these).
+// Canonical graph + provider availability (naming resolves from these).
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
   dbModule.db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
@@ -103,8 +92,6 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM job_queue").run();
-  db.prepare("DELETE FROM ProviderMediaArtists").run();
-  db.prepare("DELETE FROM ProviderAlbumArtists").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
@@ -113,8 +100,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
-  db.prepare("DELETE FROM ProviderMedia").run();
-  db.prepare("DELETE FROM ProviderAlbums").run();
   db.prepare("DELETE FROM Artists").run();
 
   fs.rmSync(path.join(tempDir, "library"), { recursive: true, force: true });
