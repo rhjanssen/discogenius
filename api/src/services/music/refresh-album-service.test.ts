@@ -210,6 +210,23 @@ test("album track scan stores provider track offers linked to the selected canon
         popularity: 56,
         quality: "LOSSLESS",
         artist: { providerId: "fake-artist", name: "Bastille" },
+        // provider rows carry audio-normalization in `raw`; the scan homes it to
+        // the canonical Recording (replay_gain is negative dB, peak is a fraction).
+        raw: {
+          provider_id: "provider-track-1",
+          title: "Track One",
+          duration: 180,
+          track_number: 1,
+          volume_number: 1,
+          isrc: "USABC240001",
+          copyright: "(P) 2024 Track",
+          popularity: 56,
+          quality: "LOSSLESS",
+          replay_gain: -8.4,
+          peak: 0.97,
+          artist_id: "fake-artist",
+          artist_name: "Bastille",
+        },
       } as any];
     },
     async getAuthStatus() {
@@ -270,9 +287,11 @@ test("album track scan stores provider track offers linked to the selected canon
   assert.equal(offer.match_method, "selected-release-position");
   assert.equal(offer.isrc, "USABC240001");
 
-  const recording = dbModule.db.prepare("SELECT copyright, popularity, isrcs FROM Recordings WHERE mbid = ?")
-    .get(recordingMbid) as { copyright: string | null; popularity: number | null; isrcs: string | null };
+  const recording = dbModule.db.prepare("SELECT copyright, popularity, replay_gain, peak, isrcs FROM Recordings WHERE mbid = ?")
+    .get(recordingMbid) as { copyright: string | null; popularity: number | null; replay_gain: number | null; peak: number | null; isrcs: string | null };
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
+  assert.equal(recording.replay_gain, -8.4);
+  assert.equal(recording.peak, 0.97);
   assert.equal(recording.isrcs, null);
 });

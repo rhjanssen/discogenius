@@ -101,6 +101,17 @@ function positiveNumberOrNull(value: unknown): number | null {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+// replay_gain is typically negative dB and peak is a 0..1 fraction, so a
+// positive-only guard would drop valid values. Treat absent (null/undefined/"")
+// as "no supplement" but accept any finite number, including negatives and 0.
+function finiteNumberOrNull(value: unknown): number | null {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
     if (!match || match.status === "unmatched") {
         return null;
@@ -227,11 +238,15 @@ export class RefreshAlbumService {
             UPDATE Recordings SET
                 copyright = COALESCE(NULLIF(?, ''), copyright),
                 popularity = COALESCE(?, popularity),
+                replay_gain = COALESCE(?, replay_gain),
+                peak = COALESCE(?, peak),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `).run(
             textOrNull(track?.copyright),
             positiveNumberOrNull(track?.popularity),
+            finiteNumberOrNull(track?.replay_gain),
+            finiteNumberOrNull(track?.peak),
             recordingId,
         );
     }
