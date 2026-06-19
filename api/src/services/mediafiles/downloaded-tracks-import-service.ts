@@ -70,12 +70,22 @@ function clearUpgradeQueue(type: string, providerId: string) {
         const albumIds = providerId.split(";").filter(Boolean);
         if (albumIds.length > 0) {
             const placeholders = albumIds.map(() => '?').join(', ');
-            db.prepare(`DELETE FROM upgrade_queue WHERE album_id IN (${placeholders})`).run(...albumIds);
+            db.prepare(`
+                DELETE FROM upgrade_queue
+                WHERE album_provider_id IN (${placeholders})
+                   OR album_id IN (${placeholders})
+                   OR (entity_type = 'album' AND provider_id IN (${placeholders}))
+            `).run(...albumIds, ...albumIds, ...albumIds);
         }
         return;
     }
 
-    db.prepare(`DELETE FROM upgrade_queue WHERE media_id = ?`).run(providerId);
+    const entityType = type === "video" ? "video" : "track";
+    db.prepare(`
+        DELETE FROM upgrade_queue
+        WHERE (entity_type = ? AND provider_id = ?)
+           OR media_id = ?
+    `).run(entityType, providerId, providerId);
 }
 
 function resolveAffectedArtistId(type: string, providerId: string): string | null {

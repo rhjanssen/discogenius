@@ -116,17 +116,18 @@ Docker runtime image.
   release group.
   `CheckUpgrades` now scans `TrackFiles` canonical/provider identity +
   `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
-  canonical-only audio/video upgrade downloads; only the transitional
-  `upgrade_queue` ledger is still legacy-keyed. **Remaining:** other read/write
+  canonical-only audio/video upgrade downloads; schema v27 re-keys
+  `upgrade_queue` to provider resource identity while retaining nullable legacy
+  shadow ids during the transition. **Remaining:** other read/write
   paths still join `TrackFiles.media_id→ProviderMedia→ProviderAlbums`
-  (organizer, audio-tag MB/AcoustID write-back and legacy tag fallbacks, plus
-  file-identity fallback);
+  (organizer, audio-tag MB/AcoustID write-back and legacy tag fallbacks);
   the unique-index +
   import-upsert canonical-identity switch is a numbered schema migration bundled
   with Phase 3; then Phases 4–5. Precise next steps in the plan doc's Phase 1/2
   progress sections.
 - **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
-  fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider `upgrade_queue`→`job_queue`.
+  fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider whether provider-keyed
+  `upgrade_queue` should stay separate or fold into `job_queue`.
   See docs/LIDARR_SCHEMA_AUDIT.md.
 
 ## 2.0.9 — Multithreaded job execution

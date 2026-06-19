@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 26;
+const CURRENT_SCHEMA_VERSION = 27;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -147,6 +147,13 @@ test("fresh database initializes with correct schema version", () => {
   for (const columnName of ["id", "artist_id", "album_id", "track_file_id", "relative_path", "file_path", "canonical_recording_mbid"]) {
     assert.ok(lyricFileCols.some((column) => column.name === columnName), `Expected LyricFiles.${columnName}`);
   }
+
+  const upgradeQueueCols = dbModule.db.prepare("PRAGMA table_info(upgrade_queue)").all() as Array<{ name: string; notnull: number }>;
+  for (const columnName of ["media_id", "album_id", "provider", "entity_type", "provider_id", "album_provider_id", "track_file_id"]) {
+    assert.ok(upgradeQueueCols.some((column) => column.name === columnName), `Expected upgrade_queue.${columnName}`);
+  }
+  const mediaIdColumn = upgradeQueueCols.find((column) => column.name === "media_id");
+  assert.equal(mediaIdColumn?.notnull, 0, "Expected upgrade_queue.media_id to allow canonical-only rows without legacy media ids");
 });
 
 test.skip("migration from integer schema v1 runs pending migrations", () => {
@@ -427,8 +434,8 @@ test.skip("schema v13 repairs legacy provider-shaped Albums table collision", ()
   assert.equal(legacyMedia, undefined, "Expected legacy lowercase media table to be removed");
 
   const upgradeQueueFks = dbModule.db.prepare("PRAGMA foreign_key_list(upgrade_queue)").all() as Array<{ table: string }>;
-  assert.ok(upgradeQueueFks.some((foreignKey) => foreignKey.table === "ProviderMedia"));
-  assert.ok(upgradeQueueFks.some((foreignKey) => foreignKey.table === "ProviderAlbums"));
+  assert.equal(upgradeQueueFks.some((foreignKey) => foreignKey.table === "ProviderMedia"), false);
+  assert.equal(upgradeQueueFks.some((foreignKey) => foreignKey.table === "ProviderAlbums"), false);
 
   const releaseGroup = dbModule.db.prepare(`
     SELECT mbid, artist_mbid as artistMbid, title

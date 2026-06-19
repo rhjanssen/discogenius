@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 26;
+const BASE_SCHEMA_VERSION = 27;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -447,6 +447,13 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
         }
       }
     }
+  },
+  {
+    version: 27,
+    description: "Re-key upgrade_queue to provider resource identity",
+    up: () => {
+      ensureUpgradeQueueProviderIdentitySchema();
+    }
   }
 ];
 
@@ -492,6 +499,97 @@ function ensureTrackFileForeignKeyTriggers(): void {
     ON TrackFiles
     BEGIN ${body} END;
   `);
+}
+
+function createUpgradeQueueProviderIdentityTable(tableName = "upgrade_queue"): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ${tableName} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id TEXT,
+      album_id TEXT,
+      provider TEXT,
+      entity_type TEXT,
+      provider_id TEXT,
+      album_provider_id TEXT,
+      track_file_id INTEGER REFERENCES TrackFiles(id) ON DELETE SET NULL,
+      current_quality TEXT NOT NULL,
+      target_quality TEXT NOT NULL,
+      reason TEXT,
+      status TEXT DEFAULT 'pending',  -- pending, completed, skipped
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      processed_at DATETIME,
+      UNIQUE(provider, entity_type, provider_id),
+      UNIQUE(media_id)
+    )
+  `);
+}
+
+function ensureUpgradeQueueProviderIdentitySchema(): void {
+  if (!hasTable("upgrade_queue")) {
+    createUpgradeQueueProviderIdentityTable();
+    return;
+  }
+
+  if (hasColumn("upgrade_queue", "provider_id") && hasColumn("upgrade_queue", "entity_type")) {
+    return;
+  }
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec("DROP TABLE IF EXISTS upgrade_queue_legacy_v27");
+    db.exec("ALTER TABLE upgrade_queue RENAME TO upgrade_queue_legacy_v27");
+    createUpgradeQueueProviderIdentityTable();
+
+    if (hasTable("ProviderMedia") && hasTable("ProviderAlbums")) {
+      db.exec(`
+        INSERT OR IGNORE INTO upgrade_queue (
+          media_id, album_id, provider, entity_type, provider_id, album_provider_id,
+          current_quality, target_quality, reason, status, created_at, processed_at
+        )
+        SELECT
+          CAST(legacy.media_id AS TEXT),
+          CAST(legacy.album_id AS TEXT),
+          'tidal',
+          CASE WHEN legacy_media.type = 'Music Video' THEN 'video' ELSE 'track' END,
+          COALESCE(CAST(legacy_media.id AS TEXT), CAST(legacy.media_id AS TEXT)),
+          COALESCE(CAST(legacy_album.id AS TEXT), CAST(legacy.album_id AS TEXT)),
+          legacy.current_quality,
+          legacy.target_quality,
+          legacy.reason,
+          legacy.status,
+          legacy.created_at,
+          legacy.processed_at
+        FROM upgrade_queue_legacy_v27 legacy
+        LEFT JOIN ProviderMedia legacy_media ON CAST(legacy_media.id AS TEXT) = CAST(legacy.media_id AS TEXT)
+        LEFT JOIN ProviderAlbums legacy_album ON CAST(legacy_album.id AS TEXT) = CAST(legacy.album_id AS TEXT)
+      `);
+    } else {
+      db.exec(`
+        INSERT OR IGNORE INTO upgrade_queue (
+          media_id, album_id, provider, entity_type, provider_id, album_provider_id,
+          current_quality, target_quality, reason, status, created_at, processed_at
+        )
+        SELECT
+          CAST(media_id AS TEXT),
+          CAST(album_id AS TEXT),
+          'tidal',
+          'track',
+          CAST(media_id AS TEXT),
+          CAST(album_id AS TEXT),
+          current_quality,
+          target_quality,
+          reason,
+          status,
+          created_at,
+          processed_at
+        FROM upgrade_queue_legacy_v27
+      `);
+    }
+
+    db.exec("DROP TABLE IF EXISTS upgrade_queue_legacy_v27");
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
 }
 
 function ensureMetadataIdentitySchema(): void {
@@ -1350,22 +1448,7 @@ export function initDatabase() {
   // ====================================================================
   // UPGRADE QUEUE (Track quality upgrade candidates)
   // ====================================================================
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS upgrade_queue (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      media_id INT NOT NULL,
-      album_id INT,
-      current_quality TEXT NOT NULL,
-      target_quality TEXT NOT NULL,
-      reason TEXT,
-      status TEXT DEFAULT 'pending',  -- pending, completed, skipped
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      processed_at DATETIME,
-      UNIQUE(media_id),
-      FOREIGN KEY(media_id) REFERENCES ProviderMedia(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_id) REFERENCES ProviderAlbums(id) ON DELETE CASCADE
-    )
-  `);
+  createUpgradeQueueProviderIdentityTable();
   // ====================================================================
   // CONFIG TABLE (Application settings)
   // ====================================================================
@@ -1513,6 +1596,9 @@ export function initDatabase() {
   // Upgrade queue indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_media_id ON upgrade_queue(media_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_provider_resource ON upgrade_queue(provider, entity_type, provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_provider ON upgrade_queue(provider, album_provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_track_file ON upgrade_queue(track_file_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
 
