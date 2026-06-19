@@ -961,21 +961,6 @@ export class AudioTagService {
       }
     }
 
-    if (row.album_id) {
-      const rows = db.prepare(`
-        SELECT DISTINCT artist.name
-        FROM ProviderAlbumArtists aa
-        JOIN ArtistMetadata artist ON artist.mbid = aa.artist_id
-        WHERE aa.album_id = ?
-        ORDER BY COALESCE(aa.ord, 9999), artist.name
-      `).all(row.album_id) as Array<{ name?: string }>;
-
-      const names = rows.map((providerRow) => String(providerRow.name || "").trim()).filter(Boolean);
-      if (names.length > 0) {
-        return names;
-      }
-    }
-
     if (row.artist_mbid) {
       const artistRow = db.prepare(`
         SELECT name
