@@ -554,10 +554,16 @@ export class OrganizerService {
           ORDER BY t.medium_position, t.position, t.mbid
         `).all(context.provider, context.slot || 'stereo', context.releaseGroupMbid, context.releaseMbid) as AlbumTrackRow[]
       : db.prepare(`
-          SELECT id, title, version, track_number, volume_number, isrc
-          FROM ProviderMedia
-          WHERE album_id IN (${placeholders}) AND type != 'Music Video'
-          ORDER BY volume_number, track_number, id
+          SELECT
+            provider_id AS id,
+            title,
+            version,
+            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
+            CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number,
+            isrc
+          FROM ProviderItems
+          WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
+          ORDER BY volume_number, track_number, provider_id
         `).all(...albumIds) as AlbumTrackRow[];
 
     const remainingTracks = [...trackRows];
@@ -1351,8 +1357,19 @@ export class OrganizerService {
         await RefreshAlbumService.scanShallow(albumIdVal);
       }
 
-      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumIds[0]) as any;
-      if (!album) throw new Error(`Album ${albumIds[0]} not found in DB after scan`);
+      const album = db.prepare(`
+        SELECT
+          artist_mbid AS artist_id,
+          release_group_mbid AS mb_release_group_id,
+          release_mbid AS mbid,
+          quality,
+          NULL AS num_volumes
+        FROM ProviderItems
+        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).get(albumIds[0]) as any;
+      if (!album) throw new Error(`Album ${albumIds[0]} offer not found in ProviderItems after scan`);
 
       const canonicalContext = this.resolveCanonicalAlbumImportContext(raw, albumIds[0]);
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -1422,7 +1439,7 @@ export class OrganizerService {
           return !trackRow;
         } else {
           const placeholders = albumIds.map(() => '?').join(', ');
-          const trackRow = db.prepare(`SELECT id FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any;
+          const trackRow = db.prepare(`SELECT 1 FROM ProviderItems WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders}) LIMIT 1`).get(trackId, ...albumIds) as any;
           return !trackRow;
         }
       });
@@ -1480,7 +1497,16 @@ export class OrganizerService {
               fallbackQuality: canonicalContext.quality || album.quality || null,
             })
           : trackId
-            ? (db.prepare(`SELECT * FROM ProviderMedia WHERE id = ? AND album_id IN (${placeholders}) AND type != 'Music Video'`).get(trackId, ...albumIds) as any)
+            ? (db.prepare(`
+                SELECT
+                  provider_album_id AS album_id,
+                  quality,
+                  track_mbid AS canonical_track_mbid,
+                  recording_mbid AS canonical_recording_mbid
+                FROM ProviderItems
+                WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders})
+                LIMIT 1
+              `).get(trackId, ...albumIds) as any)
             : null;
 
         if (!trackId || !trackRow) {
@@ -1808,14 +1834,15 @@ export class OrganizerService {
         }
       }
 
-      let expectedTracks = Number(album.num_tracks || 0);
-      if (albumIds.length > 1) {
+      let expectedTracks = 0;
+      try {
         const placeholders = albumIds.map(() => '?').join(', ');
-        try {
-          expectedTracks = Number((db.prepare(`SELECT COUNT(*) as count FROM ProviderMedia WHERE album_id IN (${placeholders}) AND type != 'Music Video'`).get(...albumIds) as { count?: number } | undefined)?.count || expectedTracks);
-        } catch (error) {
-          console.warn("[Organizer] Failed to query expected track count from DB, falling back to metadata count:", error);
-        }
+        expectedTracks = Number((db.prepare(`
+          SELECT COUNT(*) as count FROM ProviderItems
+          WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
+        `).get(...albumIds) as { count?: number } | undefined)?.count || 0);
+      } catch (error) {
+        console.warn("[Organizer] Failed to query expected track count from ProviderItems:", error);
       }
 
       return {
@@ -1852,11 +1879,35 @@ export class OrganizerService {
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       await RefreshAlbumService.scanShallow(albumId);
 
-      const album = db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumId) as any;
-      if (!album) throw new Error(`Album ${albumId} not found in DB after scan`);
+      const album = db.prepare(`
+        SELECT
+          artist_mbid AS artist_id,
+          release_group_mbid AS mb_release_group_id,
+          release_mbid AS mbid,
+          quality, title, version, release_date,
+          NULL AS num_volumes, NULL AS type, NULL AS mb_primary
+        FROM ProviderItems
+        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).get(albumId) as any;
+      if (!album) throw new Error(`Album ${albumId} offer not found in ProviderItems after scan`);
 
-      const trackRow = db.prepare("SELECT * FROM ProviderMedia WHERE id = ?").get(providerId) as any;
-      if (!trackRow) throw new Error(`Track ${providerId} not found in DB after scan`);
+      const trackRow = db.prepare(`
+        SELECT
+          provider_id AS id,
+          provider_album_id AS album_id,
+          quality, title,
+          track_mbid AS mbid,
+          artist_mbid AS artist_id,
+          CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
+          CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
+        FROM ProviderItems
+        WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).get(providerId) as any;
+      if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
