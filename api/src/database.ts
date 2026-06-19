@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 25;
+const BASE_SCHEMA_VERSION = 26;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -433,6 +433,20 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     up: () => {
       ensureTrackFileForeignKeyTriggers();
     }
+  },
+  {
+    version: 26,
+    description: "Canonical Recordings replay_gain/peak supplement columns (provider-sourced audio normalization)",
+    up: () => {
+      if (hasTable("Recordings")) {
+        if (!hasColumn("Recordings", "replay_gain")) {
+          db.exec("ALTER TABLE Recordings ADD COLUMN replay_gain REAL");
+        }
+        if (!hasColumn("Recordings", "peak")) {
+          db.exec("ALTER TABLE Recordings ADD COLUMN peak REAL");
+        }
+      }
+    }
   }
 ];
 
@@ -725,6 +739,8 @@ function ensureMusicBrainzProviderSchema(): void {
       title TEXT NOT NULL,
       artist_credit TEXT,
       length_ms INT,
+      replay_gain REAL,                 -- provider-sourced audio normalization (supplement)
+      peak REAL,                        -- provider-sourced peak amplitude (supplement)
       is_video BOOLEAN NOT NULL DEFAULT 0,
       metadata_status TEXT NOT NULL DEFAULT 'musicbrainz',
       release_date DATETIME,
