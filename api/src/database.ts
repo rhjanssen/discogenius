@@ -436,7 +436,7 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
   },
   {
     version: 26,
-    description: "Canonical Recordings replay_gain/peak supplement columns (provider-sourced audio normalization)",
+    description: "Recordings replay_gain/peak supplement columns (provider-sourced audio normalization)",
     up: () => {
       if (hasTable("Recordings")) {
         if (!hasColumn("Recordings", "replay_gain")) {
@@ -451,10 +451,10 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
 ];
 
 /**
- * Production triggers that keep the TrackFiles canonical integer FKs
+ * Production triggers that keep the TrackFiles catalog integer FKs
  * (release_group_id/album_release_id/track_id/recording_id) in sync with the
- * canonical mbids on every write — so newly imported/renamed files link straight
- * to the canonical graph without waiting for the housekeeping backfill. COALESCE
+ * transitional MBID columns on every write — so newly imported/renamed files link
+ * straight to the catalog graph without waiting for the housekeeping backfill. COALESCE
  * preserves any explicitly-set FK, and recording_id falls back to the video
  * ProviderItems offer for mbid-less provider videos. The trigger bodies update
  * only the FK columns (never the mbid/provider_id columns the AFTER UPDATE trigger
@@ -1172,15 +1172,15 @@ export function initDatabase() {
       album_id TEXT,                     -- Provider offer id while compatibility table remains
       media_id TEXT,                     -- Provider media id while compatibility table remains
 
-      -- Canonical identity (MusicBrainz/Lidarr-style managed graph)
+      -- Transitional MBID identity (migration debt; prefer integer FKs below)
       canonical_artist_mbid TEXT,
       canonical_release_group_mbid TEXT,
       canonical_release_mbid TEXT,
       canonical_track_mbid TEXT,
       canonical_recording_mbid TEXT,
 
-      -- Canonical integer FKs (Lidarr-style: files link straight to the canonical
-      -- graph; recording_id covers mbid-less provider videos too)
+      -- Catalog integer FKs (Lidarr-style: files link straight to catalog rows;
+      -- recording_id covers mbid-less provider videos too)
       release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL,
       album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL,
       track_id INTEGER REFERENCES Tracks(id) ON DELETE SET NULL,

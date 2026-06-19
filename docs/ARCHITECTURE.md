@@ -185,7 +185,7 @@ MusicBrainz identity behavior:
 
 - Artist refresh resolves `Artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
 - MusicBrainz/Lidarr release-group metadata is stored in `Albums`; provider album IDs do not define album identity.
-- Track identity resolution uses MusicBrainz release tracklists, ISRC, and AcoustID/fingerprint matches where available and writes canonical MBIDs to `Tracks`/`Recordings` and imported-file provenance to `TrackFiles`.
+- Track identity resolution uses MusicBrainz release tracklists, provider UPC/ISRC evidence, and AcoustID/fingerprint matches where available. Provider UPC/ISRC stays in `ProviderItems`; normal SkyHook mode does not copy provider UPC/ISRC into catalog barcode/ISRC columns. Imported-file provenance belongs on `TrackFiles`.
 - MusicBrainz video recordings are synced into `Recordings` with `IsVideo = 1` where MusicBrainz exposes them. Provider videos are represented as provisional local recordings when they do not yet have an MBID, and provider acquisition IDs stay in `ProviderItems`/`ProviderMedia`.
 - Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside provider provenance.
 - `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
@@ -214,10 +214,10 @@ Operationally important semantics:
 - monitor_lock = manual override; automation must not flip locked state
 - redundant = why a release is filtered out of active curation selection
 - MusicBrainz/Lidarr tables are the canonical metadata graph.
-- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers and match evidence, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles`/extra-file tables store provider provenance for already imported files and sidecars.
+- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers and match evidence, including provider UPC/ISRC, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles`/extra-file tables store provider provenance for already imported files and sidecars.
 - Provider raw response blobs are not durable catalog data. Persist only normalized availability/action fields plus compact selected-offer snapshots required for queue/display behavior.
 - Provider offer rows must not create canonical artists, albums, releases, tracks, or wanted state by themselves.
-- Canonical MusicBrainz tables now carry Lidarr-style local `Id` and `Foreign*Id` columns where those entities exist in Lidarr. The existing snake_case MBID columns remain the active TypeScript read path until the remaining provider-primary compatibility surfaces are retired.
+- MusicBrainz catalog tables now carry Lidarr-style local `Id` and `Foreign*Id` columns where those entities exist in Lidarr. The existing snake_case MBID columns remain the active TypeScript read path until the remaining provider-primary compatibility surfaces are retired. Existing `canonical_*` file columns are migration debt; prefer integer FKs and neutral MBID names for new work.
 - `Recordings` is Discogenius' extension point for audio recordings, spatial/alternate mixes, MusicBrainz video recordings, and provider-only provisional video recordings. MusicBrainz videos use `IsVideo = 1`; provider-only videos use `MetadataStatus = 'provider_only'` until matched.
 - `RecordingRelations` stores MusicBrainz `music_video_for` links and Discogenius-inferred relationships such as `same_lyrical_content`.
 - Lyrics are treated as sidecar files in `LyricFiles`, like Lidarr's extra-file flow and like generated NFO/artwork sidecars in `MetadataFiles`. The lyric payload is not stored in metadata tables; `RecordingRelations` only records evidence that two recordings can share lyrical content.

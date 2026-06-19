@@ -463,15 +463,14 @@ export class SkyHookProxy {
       const insertRelease = db.prepare(`
         INSERT INTO AlbumReleases (
           mbid, release_group_mbid, artist_mbid, title, status, country,
-          date, barcode, disambiguation, media_count, track_count, data, updated_at
+          date, disambiguation, media_count, track_count, data, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           title = excluded.title,
           status = excluded.status,
           country = excluded.country,
           date = excluded.date,
-          barcode = excluded.barcode,
           disambiguation = excluded.disambiguation,
           media_count = excluded.media_count,
           track_count = excluded.track_count,
@@ -521,7 +520,6 @@ export class SkyHookProxy {
           release.Status || null,
           JSON.stringify(release.Country || []),
           release.ReleaseDate || null,
-          release.Barcode || release.barcode || null,
           release.Disambiguation || null,
           release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
           release.TrackCount ?? (release.Tracks || []).length,

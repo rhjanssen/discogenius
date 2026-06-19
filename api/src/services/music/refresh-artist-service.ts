@@ -30,7 +30,6 @@ import {
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import { queueArtistIntake } from "./artist-workflow.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -428,27 +427,6 @@ export class RefreshArtistService {
         };
     }
 
-    private static async enrichCanonicalReleaseIsrcs(releaseMbid: string): Promise<void> {
-        const url = `https://musicbrainz.org/ws/2/release/${encodeURIComponent(releaseMbid)}?fmt=json&inc=recordings+isrcs`;
-        const release = await requestMusicBrainzJson<any>(url);
-        const tracks = Array.isArray(release?.media)
-            ? release.media.flatMap((medium: any) => Array.isArray(medium?.tracks) ? medium.tracks : [])
-            : [];
-        const updateRecording = db.prepare("UPDATE Recordings SET isrcs = ? WHERE mbid = ?");
-
-        db.transaction(() => {
-            for (const track of tracks) {
-                const recordingMbid = String(track?.recording?.id || "").trim();
-                const isrcs = Array.isArray(track?.recording?.isrcs)
-                    ? track.recording.isrcs.map(this.normalizeIsrc).filter(Boolean)
-                    : [];
-                if (recordingMbid && isrcs.length > 0) {
-                    updateRecording.run(JSON.stringify(Array.from(new Set(isrcs))), recordingMbid);
-                }
-            }
-        })();
-    }
-
     private static async addSupplementalProviderOffers(
         provider: StreamingProvider,
         albums: any[],
@@ -521,12 +499,6 @@ export class RefreshArtistService {
             const largestInitialOffer = Math.max(0, ...initialAlbums.map((album) => Number(album.num_tracks || 0)));
             if (largestInitialOffer >= targetTrackCount) {
                 continue;
-            }
-
-            try {
-                await this.enrichCanonicalReleaseIsrcs(representative.mbid);
-            } catch (error) {
-                console.warn(`[RefreshArtistService] Failed to enrich canonical ISRCs for ${representative.mbid}:`, error);
             }
 
             const targets = db.prepare(`

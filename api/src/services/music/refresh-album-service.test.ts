@@ -79,7 +79,7 @@ test("track artist storage preserves the main credit when provider identities co
   );
 });
 
-test("artist album upsert stores provider supplements on canonical album and release rows", async () => {
+test("artist album upsert stores allowed provider supplements on catalog album and release rows", async () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "11111111-1111-4111-8111-111111111111";
   const releaseMbid = "22222222-2222-4222-8222-222222222222";
@@ -153,11 +153,12 @@ test("artist album upsert stores provider supplements on canonical album and rel
     barcode: string | null;
     copyright: string | null;
   };
-  assert.equal(release.barcode, "123456789012");
+  assert.equal(release.barcode, null);
   assert.equal(release.copyright, "(P) 2024 Example");
 
-  const item = dbModule.db.prepare("SELECT data FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?")
-    .get("provider-album-supplements") as { data: string };
+  const item = dbModule.db.prepare("SELECT upc, data FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?")
+    .get("provider-album-supplements") as { upc: string | null; data: string };
+  assert.equal(item.upc, "123456789012");
   const itemData = JSON.parse(item.data);
   assert.equal(itemData.video_cover, "provider-video-cover-id");
   assert.equal(itemData.copyright, "(P) 2024 Example");
@@ -230,7 +231,7 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
   dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
   dbModule.db.prepare("INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count) VALUES (?, 1, 'Digital Media', 1)").run(releaseMbid);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title, isrcs) VALUES (?, ?, ?, ?)").run(recordingMbid, artistMbid, "Track One", JSON.stringify(["USABC240001"]));
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)").run(recordingMbid, artistMbid, "Track One");
   dbModule.db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, 1, 1, '1', ?)
@@ -256,7 +257,7 @@ test("album track scan stores provider track offers linked to the selected canon
   await refreshServiceModule.RefreshAlbumService.scanTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method
+    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc
     FROM ProviderItems
     WHERE provider = 'fake' AND entity_type = 'track' AND provider_id = 'provider-track-1'
   `).get() as any;
@@ -267,9 +268,11 @@ test("album track scan stores provider track offers linked to the selected canon
   assert.equal(offer.recording_mbid, recordingMbid);
   assert.equal(offer.library_slot, "stereo");
   assert.equal(offer.match_method, "selected-release-position");
+  assert.equal(offer.isrc, "USABC240001");
 
-  const recording = dbModule.db.prepare("SELECT copyright, popularity FROM Recordings WHERE mbid = ?")
-    .get(recordingMbid) as { copyright: string | null; popularity: number | null };
+  const recording = dbModule.db.prepare("SELECT copyright, popularity, isrcs FROM Recordings WHERE mbid = ?")
+    .get(recordingMbid) as { copyright: string | null; popularity: number | null; isrcs: string | null };
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
+  assert.equal(recording.isrcs, null);
 });

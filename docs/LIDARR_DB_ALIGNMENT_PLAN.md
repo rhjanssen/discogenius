@@ -23,7 +23,7 @@ Discogenius currently stores library identity **twice**:
 | Track↔artist credit | (via `Recordings.artist_credit`) | `ProviderMediaArtists` |
 | Similar artists/albums | Drop unless MusicBrainz/SkyHook-backed | `ProviderSimilarArtists`, `ProviderSimilarAlbums` |
 | Provider availability/offers | `ProviderItems` (keyed to mbids) | embedded in `ProviderAlbums`/`ProviderMedia` rows |
-| Local files | `TrackFiles` (`canonical_*_mbid` cols) + `media_id`/`album_id` → legacy ids | — |
+| Local files | `TrackFiles` integer FKs to catalog rows; transitional MBID/provider ids until Phase 5 | — |
 | Spatial/stereo/video selection | `ReleaseGroupSlots` (**distinguishing feature, keep**) | — |
 
 Lidarr has **no** equivalent of `ProviderAlbums`/`ProviderMedia` — indexer
@@ -117,14 +117,21 @@ data-migration guard so existing DBs backfill before the drop.
 
 ## 3b. Provider-data policy (Robert, 2026-06-18) — governs every cutover decision
 
-MusicBrainz/Skyhook is the **canonical source of truth**; providers (TIDAL, future
+MusicBrainz/Skyhook is the **catalog source of truth**; providers (TIDAL, future
 Apple Music) exist for exactly two things:
 
 1. **The download capability** MusicBrainz can't offer (the core feature).
-2. **Supplementing holes in the canonical tables** — provider data may *fill columns*
-   on `Albums`/`AlbumReleases`/`Recordings`/`ArtistMetadata` that MB/Skyhook lacks
-   (e.g. cover-art ids, a video's copyright string). It populates the canonical
-   row; it does **not** get its own catalog table.
+2. **Supplementing allowed holes in the catalog tables** — provider data may *fill
+   selected columns* on `Albums`/`AlbumReleases`/`Recordings`/`ArtistMetadata` that
+   MB/Skyhook lacks (e.g. cover-art ids, copyright strings, replay gain/peak). It
+   populates the catalog row; it does **not** get its own catalog table.
+
+Provider UPC/barcode and ISRC are exceptions: they are **matching evidence**, not
+provider supplements to the catalog. In normal SkyHook mode, provider UPC/ISRC
+must stay on `ProviderItems.upc` / `ProviderItems.isrc`; do not copy provider UPC
+into `AlbumReleases.barcode` or provider ISRC into `Recordings.isrcs`. Local
+MusicBrainz-docker mode may later fill or model authoritative MB UPC/ISRC
+directly, but that is a separate mode/design decision.
 
 There are **no separate provider catalog tables** after this migration — that is the
 whole point. `ProviderItems` stays, but only as *availability/offer* rows keyed to
@@ -165,12 +172,13 @@ model. Applied so far:
   "providers never create canonical entities" rule from AGENTS.md.
 - Curation/dedup (`ArtistReleaseGroupCuration`) — Discogenius's discography
   dedup on top of Lidarr's release-type filtering.
-- Provider data may supplement holes in canonical rows where MusicBrainz/SkyHook
+- Provider data may supplement allowed holes in catalog rows where MusicBrainz/SkyHook
   lacks a field needed for a library-manager workflow (e.g. artwork asset ids,
-  video copyright, provider URLs, download availability), but the core app should
-  remain MusicBrainz/SkyHook-primary. Provider-exclusive, non-essential discovery
-  features such as similar artists/albums or top tracks should be removed rather
-  than preserved through new provider catalog tables.
+  copyright, replay gain/peak, provider URLs, download availability), but the
+  core app should remain MusicBrainz/SkyHook-primary. UPC/barcode and ISRC are
+  matching evidence and stay on `ProviderItems`. Provider-exclusive,
+  non-essential discovery features such as similar artists/albums or top tracks
+  should be removed rather than preserved through new provider catalog tables.
 
 ## 5. Risks & verification
 
@@ -191,22 +199,25 @@ Large. ~25 files per legacy table, concentrated in mediafiles. Realistically
 
 ## 6b. TrackFiles linkage = canonical integer FKs (Robert's decision, 2026-06-18)
 
-Local files link **directly to the canonical graph via integer FKs** (Lidarr-style),
+Local files link **directly to the catalog graph via integer FKs** (Lidarr-style),
 not by mbid-join and not through `ProviderItems`:
 - `TrackFiles.release_group_id → Albums.id`, `album_release_id → AlbumReleases.id`,
   `track_id → Tracks.id`, `recording_id → Recordings.id`.
 - `recording_id` cleanly covers **mbid-less provider videos** (points straight at
   their `Recordings` row), retiring the `provider_id→ProviderItems→recording_id`
   read workaround.
-- `canonical_*_mbid` columns stay as denormalized convenience (and the dedupe key);
-  legacy `media_id`/`album_id` are dropped once readers/writers are off them.
+- Existing `canonical_*_mbid` columns are transitional migration debt. Do not add
+  more of them. Phase 5 should either remove them where integer FKs are enough or
+  rename any truly necessary file-level MBID provenance to neutral names such as
+  `artist_mbid`, `release_mbid`, `track_mbid`, or `recording_mbid`. Legacy
+  `media_id`/`album_id` are dropped once readers/writers are off them.
 
 **Foundation COMPLETE + validated (2026-06-18):** v23 migration + base schema add
 the four FK columns; backfill from canonical mbids (videos from the video
 `ProviderItems` offer) via the v23 migration + `runtime-maintenance.backfillTrackFileForeignKeys`;
 and a **v25 populate-on-write trigger** (`trg_trackfiles_canonical_fks_ai/_au`)
 derives the FKs from the mbids on every INSERT/UPDATE so new imports link to the
-canonical graph immediately. Validated on a fresh Bastille+Bakermat rebuild:
+catalog graph immediately. Validated on a fresh Bastille+Bakermat rebuild:
 monitoring cycle queued 139 downloads, and post-restart imports show 100% FK
 coverage (recording_id + track_id + release_group_id). **Remaining for the pivot:**
 (1) ~~populate at write time~~ DONE (trigger); (2) convert
@@ -268,7 +279,7 @@ first, or the tag loses the value:
   `TrackFiles.acoustid_id` / `.fingerprint` / `.fingerprint_duration` (the file's
   own AcoustID, already on `TrackFiles`).
 - `m.credits` → `Recordings.credits` (homed by v24); `a.review_text` →
-  `Albums.review_text` (v24); `a.upc` → `AlbumReleases.barcode`/`ProviderItems`.
+  `Albums.review_text` (v24); `a.upc` stays on `ProviderItems.upc` only.
 This is the same `canonical_recording.replay_gain` mistake the stashed broken WIP
 made. `organizer` and `metadata-identity` have analogous re-sourcing needs (video
 provider rows, identity columns).
@@ -282,34 +293,50 @@ with `track_id`/`recording_id`) **alongside** the legacy `ProviderAlbums`/
 **except** for provider *supplement* fields the legacy tables hold that
 `ProviderItems` does not: album `cover` (already in `ProviderItems.data`),
 `popularity`, `copyright`, `vibrant_color`, `video_cover`, `num_tracks/volumes/
-videos`, `upc`, `review_text`; and per-track `copyright`/credits.
+videos`, `review_text`; and per-track `copyright`/credits. Provider UPC/ISRC
+stay in `ProviderItems` as matching evidence and are not catalog supplements.
 
 Per Robert's directive (§3b) these **supplement the canonical row**, so before the
 legacy writes can be removed:
 1. Decide each field's canonical home (add columns as needed): `cover`→`Albums`/
    `Recordings.cover_image_id` (exists), `copyright`→`AlbumReleases`/`Recordings`,
-   `popularity`/`vibrant_color`/`video_cover`/`upc`/`review_text`→ canonical column
-   or `ProviderItems.data` if purely provider-flavour.
+   `popularity`/`vibrant_color`/`video_cover`/`review_text` → catalog column
+   or `ProviderItems.data` if purely provider-flavour. UPC/ISRC stay in
+   `ProviderItems`.
 2. Write them onto the canonical row during scan (`refresh-album-service`).
 3. Point the readers (`metadata-files`, `library-metadata-backfill`, NFO/cover
    generation, `audio-tag`) at the canonical source.
 4. Only then delete the legacy `ProviderAlbums`/`ProviderMedia` INSERT/UPDATE and
    their internal SELECTs.
 
-**Progress (2026-06-18, continued):** v24 adds canonical provider-supplement
+**Progress (2026-06-18, continued):** v24 adds catalog provider-supplement
 columns (`Albums.cover_image_id`/`vibrant_color`/`video_cover`/`popularity`/
 review fields, `AlbumReleases.copyright`, `Recordings.copyright`/`popularity`/
 `credits`). `refresh-album-service` now mirrors album/release/track provider
-supplements into those canonical rows while keeping the legacy compatibility
+supplements into those catalog rows while keeping the legacy compatibility
 `ProviderAlbums`/`ProviderMedia` writes. `metadata-files`,
-`library-metadata-backfill`, and `audio-tag-service` now prefer those canonical
+`library-metadata-backfill`, and `audio-tag-service` now prefer those catalog
 supplement values before falling back to `ProviderItems.data` or legacy rows.
 Regressions cover canonical album/release supplement homing, canonical recording
 copyright/popularity, NFO review fallback from `Albums.review_text`, and audio
 tags from canonical review/copyright with zero legacy provider rows.
 
-Also still legacy-coupled: `library-file-identity` resolver fallback (convert to
-`ProviderItems`-only), the **upgrade subsystem ledger** (`upgrade_queue` stores
+**Correction (2026-06-19):** provider UPC/ISRC were reclassified as matching
+evidence, not catalog supplements. `refresh-album-service` no longer homes
+provider UPC into `AlbumReleases.barcode`; provider UPC/ISRC remain on
+`ProviderItems.upc` / `ProviderItems.isrc` and can still be embedded in tags or
+used for matching. Regression coverage asserts provider album UPC and track ISRC
+stay on `ProviderItems` while catalog barcode/ISRC fields remain untouched.
+
+**AcoustID/Lidarr research note (2026-06-19):** `fpcalc` produces a Chromaprint
+fingerprint plus duration; AcoustID lookup maps that fingerprint to an AcoustID
+and optional MusicBrainz recording IDs. Lidarr uses this only as an import-time
+identification aid (`AllowFingerprinting = Never/NewFiles/AllFiles`,
+`LocalTrack.AcoustIdResults`), not as catalog enrichment. Discogenius should
+fingerprint only unknown/mistagged local imports; downloaded files with known
+MBIDs should embed those MBIDs directly and skip fingerprinting.
+
+Also still legacy-coupled: the **upgrade subsystem ledger** (`upgrade_queue` stores
 legacy `media_id`/`album_id`; re-key to `recording_id`/canonical), and active
 import/scan/tag write paths. Runtime monitor-gap repair has been repointed to
 canonical `ReleaseGroupSlots`/`Recordings`, while `TrackFiles.media_id`/

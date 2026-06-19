@@ -182,12 +182,10 @@ export class RefreshAlbumService {
         if (releaseMbid) {
             db.prepare(`
                 UPDATE AlbumReleases SET
-                    barcode = COALESCE(NULLIF(barcode, ''), NULLIF(?, ''), barcode),
                     copyright = COALESCE(NULLIF(?, ''), copyright),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE mbid = ?
             `).run(
-                textOrNull(album.upc, album.barcode),
                 textOrNull(album.copyright),
                 releaseMbid,
             );

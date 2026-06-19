@@ -140,8 +140,8 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   db.prepare(`
     INSERT OR IGNORE INTO Recordings (
       foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-      artist_credit, length_ms, is_video, metadata_status, isrcs, data, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, ?, CURRENT_TIMESTAMP)
+      artist_credit, length_ms, is_video, metadata_status, data, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, CURRENT_TIMESTAMP)
   `).run(
     recordingMbid,
     recordingMbid,
@@ -151,7 +151,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     artistCredit(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
-    Array.isArray(recording.isrcs) ? JSON.stringify(recording.isrcs) : null,
     JSON.stringify(recording),
   );
 
@@ -165,7 +164,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
       length_ms = COALESCE(?, length_ms),
       is_video = CASE WHEN ? = 1 THEN 1 ELSE is_video END,
       metadata_status = 'musicbrainz',
-      isrcs = COALESCE(?, isrcs),
       data = COALESCE(?, data),
       updated_at = CURRENT_TIMESTAMP
     WHERE foreign_recording_id = ? OR mbid = ?
@@ -176,7 +174,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     artistCredit(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
-    Array.isArray(recording.isrcs) ? JSON.stringify(recording.isrcs) : null,
     JSON.stringify(recording),
     recordingMbid,
     recordingMbid,

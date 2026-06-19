@@ -104,7 +104,9 @@ Docker runtime image.
   canonical provider-supplement columns on `Albums`/`AlbumReleases`/`Recordings`;
   `refresh-album-service` mirrors album/release/track supplements there while
   keeping legacy compatibility writes, and NFO/audio-tag fallbacks read the
-  canonical values first. Dead legacy provider module/version repair helpers
+  catalog values first. Provider UPC/ISRC are matching evidence and stay on
+  `ProviderItems`, not catalog barcode/ISRC columns. Dead legacy provider
+  module/version repair helpers
   (`module-fixer`, `version-grouper`) were removed after verifying zero
   production imports, and `DownloadMissingForce` no longer carries an obsolete
   provider skip-flag reset. Runtime monitor-gap repair now writes canonical

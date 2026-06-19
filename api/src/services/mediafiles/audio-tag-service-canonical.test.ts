@@ -58,8 +58,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   `).run("release-group-mbid-1", "album-artist-mbid-1", 0, "Album Artist One", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, isrcs, copyright, data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, copyright, data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "recording-mbid-1",
     "recording-mbid-1",
@@ -67,7 +67,6 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "Canonical Song",
     "Artist One",
     181000,
-    "[\"TESTISRC1234\"]",
     "(P) 2024 Canonical Recording",
     JSON.stringify({
       "artist-credit": [
@@ -105,8 +104,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, album_id, title, explicit, quality, duration, library_slot
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      track_mbid, recording_mbid, album_id, title, explicit, quality, isrc, duration, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
@@ -120,6 +119,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "Canonical Song",
     1,
     "LOSSLESS",
+    "TESTISRC1234",
     181,
     "stereo",
   );

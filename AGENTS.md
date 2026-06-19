@@ -66,7 +66,7 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 
 ## Database Rules
 - Never touch the host SQLite DB directly while the container is running. For ad-hoc inspection, run `docker exec discogenius sh -c 'node /tmp/x.js'` opening better-sqlite3 with `{readonly:true, fileMustExist:true}`.
-- **MusicBrainz/Skyhook is the canonical source of truth.** Providers exist only to (1) download media and (2) *supplement* holes in canonical columns (cover-art ids, a video's copyright) — populating the `Albums`/`AlbumReleases`/`Recordings`/`ArtistMetadata` row, never a parallel catalog table. There are no provider catalog tables (the 2.0.8 migration retires the legacy `Provider*` set); `ProviderItems` is availability/offers only, keyed to canonical mbids. If a feature is populated *exclusively* from provider data, re-source it from MB/Skyhook or remove it (e.g. similar-artists was removed — no MB equivalent, not a Lidarr feature). See `docs/LIDARR_DB_ALIGNMENT_PLAN.md` §3b.
+- **MusicBrainz/Skyhook is the catalog source of truth.** Providers exist only to (1) download media and (2) *supplement* allowed holes in catalog rows (cover-art ids, copyright, replay gain/peak, provider URLs/availability), never to seed a parallel catalog table. Provider UPC/barcode and ISRC are matching evidence and must stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`; normal SkyHook mode should not populate catalog UPC/ISRC columns from provider data. There are no provider catalog tables (the 2.0.8 migration retires the legacy `Provider*` set); `ProviderItems` is availability/offers only, keyed to MBIDs or catalog integer FKs. If a feature is populated *exclusively* from provider data, re-source it from MB/Skyhook or remove it (e.g. similar-artists was removed — no MB equivalent, not a Lidarr feature). Existing `canonical_*` column names are transitional migration debt; do not add new ones. See `docs/LIDARR_DB_ALIGNMENT_PLAN.md` §3b.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).
@@ -74,7 +74,8 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 - Track stays "unknown" when `music-metadata` fails and fuzzy match of title from filename to a provider/MB recording fails.
 
 ## AcoustID & MBID Embedding
-- Fingerprinting (`fpcalc`) identifies a file. We already embed the full set of `MUSICBRAINZ_*` tags when present.
+- `fpcalc` produces a Chromaprint fingerprint plus duration; AcoustID lookup maps that fingerprint to an AcoustID and, when available, MusicBrainz recording IDs. It does not directly "return the MBIDs" without the web-service lookup.
+- Fingerprinting is for unknown/mistagged imports. We already embed the full set of `MUSICBRAINZ_*` tags when present.
 - Downloads get MBIDs embedded directly.
 - We only fingerprint files with NO mbid (imports / pre-existing library).
 - Plex matches by its own fingerprint/database, not embedded MBID tags. Jellyfin natively reads `MUSICBRAINZ_*` tags.
