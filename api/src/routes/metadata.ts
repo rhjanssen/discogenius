@@ -24,7 +24,7 @@ async function resolveEntity(entityType: MetadataIdentityEntityType, entityId: s
     return MetadataIdentityService.resolveArtist(entityId, { force });
   }
   if (entityType === "album") {
-    return MetadataIdentityService.resolveAlbum(entityId, { force, includeTracks: true });
+    return MetadataIdentityService.resolveAlbum(entityId, { force });
   }
   if (entityType === "track") {
     return MetadataIdentityService.resolveTrack(entityId, { force });

@@ -1,18 +1,6 @@
-import fs from "fs";
 import { db } from "../../database.js";
-import {
-    type AcoustIdLookupResult,
-    type MusicBrainzArtistCredit,
-    type MusicBrainzRecording,
-    generateFingerprint,
-    lookupAcoustIdMatches,
-    lookupMusicBrainzRecording,
-    lookupMusicBrainzRecordingsByIsrc,
-    requestMusicBrainzJson,
-} from "../mediafiles/fingerprint.js";
-import { getConfigSection } from "../config/config.js";
+import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
-import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 
 export type MetadataIdentityEntityType = "artist" | "album" | "track" | "video";
 export type MetadataIdentityStatus = "pending" | "verified" | "ambiguous" | "unmatched" | "error";
@@ -33,34 +21,18 @@ type ArtistRow = {
     mbid: string | null;
 };
 
-type AlbumRow = {
-    id: number;
-    artist_id: number;
-    title: string;
-    release_date: string | null;
-    upc: string | null;
-    mbid: string | null;
-    mb_release_group_id: string | null;
-    artist_name: string | null;
+type ProviderAlbumOffer = {
+    id: string;
+    release_mbid: string | null;
+    release_group_mbid: string | null;
     artist_mbid: string | null;
+    title: string | null;
 };
 
-type TrackRow = {
-    id: number;
-    artist_id: number;
-    album_id: number | null;
-    title: string;
-    duration: number | null;
-    track_number: number | null;
-    volume_number: number | null;
-    isrc: string | null;
-    mbid: string | null;
-    acoustid_id: string | null;
-    acoustid_fingerprint: string | null;
-    artist_name: string | null;
-    artist_mbid: string | null;
-    album_title: string | null;
-    album_mbid: string | null;
+type ProviderTrackOffer = {
+    id: string;
+    recording_mbid: string | null;
+    recording_id: number | null;
 };
 
 type MusicBrainzArtistCandidate = {
@@ -70,25 +42,6 @@ type MusicBrainzArtistCandidate = {
     score: number;
 };
 
-type ReleaseTrackCandidate = {
-    recordingId: string;
-    title: string;
-    mediumNumber: number | null;
-    position: number | null;
-    durationSeconds: number | null;
-    artistCredits: MusicBrainzArtistCredit[];
-    isrcs: string[];
-};
-
-type TrackResolutionEvidence = {
-    recording: MusicBrainzRecording;
-    confidence: number;
-    method: string;
-    acoustid?: AcoustIdLookupResult | null;
-    fingerprint?: string | null;
-    fingerprintDuration?: number | null;
-};
-
 function clampConfidence(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, Number(value.toFixed(3))));
@@ -96,24 +49,6 @@ function clampConfidence(value: number): number {
 
 function normalizeText(value: unknown): string {
     return normalizeComparableText(String(value || ""));
-}
-
-function durationScore(leftSeconds: number | null | undefined, rightSeconds: number | null | undefined): number {
-    const left = Number(leftSeconds);
-    const right = Number(rightSeconds);
-    if (!Number.isFinite(left) || !Number.isFinite(right) || left <= 0 || right <= 0) {
-        return 0;
-    }
-
-    const diff = Math.abs(left - right);
-    if (diff <= 3) return 1;
-    if (diff <= 8) return 0.7;
-    if (diff <= 15) return 0.35;
-    return 0;
-}
-
-function artistCreditNames(credits: MusicBrainzArtistCredit[]): string {
-    return credits.map((credit) => credit.name).filter(Boolean).join(" ");
 }
 
 function recordIdentityStatus(result: MetadataIdentityResult): void {
@@ -150,84 +85,6 @@ function updateArtistIdentityColumns(artistId: string, result: MetadataIdentityR
     `).run(mbid || null, result.status, result.method, artistId);
 }
 
-function updateAlbumIdentityColumns(
-    albumId: string,
-    result: MetadataIdentityResult,
-    release?: {
-        id: string;
-        releaseGroupId?: string | null;
-        releaseGroupPrimaryType?: string | null;
-        releaseGroupSecondaryTypes?: string[] | null;
-    } | null,
-): void {
-    const primaryType = String(release?.releaseGroupPrimaryType || "").trim().toLowerCase() || null;
-    const secondaryType = Array.isArray(release?.releaseGroupSecondaryTypes)
-        ? release.releaseGroupSecondaryTypes.map((type) => String(type || "").trim().toLowerCase()).filter(Boolean)[0] || null
-        : null;
-
-    db.prepare(`
-        UPDATE ProviderAlbums SET
-            mbid = COALESCE(?, mbid),
-            mb_release_group_id = COALESCE(?, mb_release_group_id),
-            mb_primary = COALESCE(?, mb_primary),
-            mb_secondary = COALESCE(?, mb_secondary),
-            musicbrainz_status = ?,
-            musicbrainz_last_checked = CURRENT_TIMESTAMP,
-            musicbrainz_match_method = ?
-        WHERE id = ?
-    `).run(
-        release?.id || null,
-        release?.releaseGroupId || null,
-        primaryType,
-        secondaryType,
-        result.status,
-        result.method,
-        albumId,
-    );
-}
-
-function updateTrackIdentityColumns(
-    mediaId: string,
-    result: MetadataIdentityResult,
-    options: {
-        recordingId?: string | null;
-        acoustidId?: string | null;
-        fingerprint?: string | null;
-        fingerprintDuration?: number | null;
-    } = {},
-): void {
-    db.prepare(`
-        UPDATE ProviderMedia SET
-            mbid = COALESCE(?, mbid),
-            acoustid_id = COALESCE(?, acoustid_id),
-            acoustid_fingerprint = COALESCE(?, acoustid_fingerprint),
-            fingerprint_duration = COALESCE(?, fingerprint_duration),
-            musicbrainz_status = ?,
-            musicbrainz_last_checked = CURRENT_TIMESTAMP,
-            musicbrainz_match_method = ?
-        WHERE id = ?
-    `).run(
-        options.recordingId || null,
-        options.acoustidId || null,
-        options.fingerprint || null,
-        options.fingerprintDuration || null,
-        result.status,
-        result.method,
-        mediaId,
-    );
-
-    if (options.fingerprint || options.acoustidId || options.fingerprintDuration) {
-        db.prepare(`
-            UPDATE TrackFiles SET
-                fingerprint = COALESCE(?, fingerprint),
-                acoustid_id = COALESCE(?, acoustid_id),
-                fingerprint_duration = COALESCE(?, fingerprint_duration)
-            WHERE media_id = ?
-              AND file_type = 'track'
-        `).run(options.fingerprint || null, options.acoustidId || null, options.fingerprintDuration || null, mediaId);
-    }
-}
-
 async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtistCandidate[]> {
     const normalizedName = String(name || "").trim();
     if (!normalizedName) return [];
@@ -253,87 +110,16 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
         .sort((left: MusicBrainzArtistCandidate, right: MusicBrainzArtistCandidate) => right.score - left.score);
 }
 
-async function lookupReleaseTracks(releaseId: string): Promise<ReleaseTrackCandidate[]> {
-    if (!releaseId) return [];
-    const url = `https://musicbrainz.org/ws/2/release/${encodeURIComponent(releaseId)}?fmt=json&inc=recordings+artist-credits+isrcs`;
-    const data = await requestMusicBrainzJson<any>(url);
-    const media = Array.isArray(data?.media) ? data.media : [];
-    const candidates: ReleaseTrackCandidate[] = [];
-
-    for (const medium of media) {
-        const mediumNumber = Number.isFinite(Number(medium?.position)) ? Number(medium.position) : null;
-        const tracks = Array.isArray(medium?.tracks) ? medium.tracks : [];
-        for (const track of tracks) {
-            const recording = track?.recording || {};
-            const recordingId = String(recording?.id || "").trim();
-            if (!recordingId) continue;
-
-            const artistCredits = Array.isArray(recording?.["artist-credit"])
-                ? recording["artist-credit"].map((credit: any) => ({
-                    id: String(credit?.artist?.id || "").trim(),
-                    name: String(credit?.name || credit?.artist?.name || "").trim(),
-                })).filter((credit: MusicBrainzArtistCredit) => Boolean(credit.id && credit.name))
-                : [];
-            const length = typeof recording?.length === "number" && Number.isFinite(recording.length)
-                ? Math.round(recording.length / 1000)
-                : null;
-
-            candidates.push({
-                recordingId,
-                title: String(recording?.title || track?.title || "").trim(),
-                mediumNumber,
-                position: Number.isFinite(Number(track?.position)) ? Number(track.position) : null,
-                durationSeconds: length,
-                artistCredits,
-                isrcs: Array.isArray(recording?.isrcs) ? recording.isrcs.filter(Boolean) : [],
-            });
-        }
-    }
-
-    return candidates;
-}
-
-function scoreRecording(track: TrackRow, recording: MusicBrainzRecording, method: "isrc" | "acoustid"): number {
-    const titleScore = stringSimilarity(normalizeText(track.title), normalizeText(recording.title));
-    const artistScore = stringSimilarity(normalizeText(track.artist_name), normalizeText(recording.artists.join(" ")));
-    const duration = durationScore(track.duration, recording.durationSeconds);
-    const isrcScore = track.isrc && recording.isrcs.map((isrc) => isrc.toUpperCase()).includes(track.isrc.toUpperCase()) ? 1 : 0;
-
-    if (method === "isrc") {
-        return clampConfidence((isrcScore * 0.6) + (titleScore * 0.25) + (artistScore * 0.1) + (duration * 0.05));
-    }
-
-    return clampConfidence((titleScore * 0.45) + (artistScore * 0.25) + (duration * 0.15) + (isrcScore * 0.15));
-}
-
-function scoreReleaseTrack(track: TrackRow, candidate: ReleaseTrackCandidate): number {
-    const positionScore = Number(track.track_number || 0) > 0 && Number(track.track_number) === Number(candidate.position || 0) ? 1 : 0;
-    const mediumScore = Number(track.volume_number || 1) === Number(candidate.mediumNumber || 1) ? 1 : 0;
-    const titleScore = stringSimilarity(normalizeText(track.title), normalizeText(candidate.title));
-    const artistScore = stringSimilarity(normalizeText(track.artist_name), normalizeText(artistCreditNames(candidate.artistCredits)));
-    const duration = durationScore(track.duration, candidate.durationSeconds);
-    const isrcScore = track.isrc && candidate.isrcs.map((isrc) => isrc.toUpperCase()).includes(track.isrc.toUpperCase()) ? 1 : 0;
-
-    return clampConfidence((positionScore * 0.28) + (mediumScore * 0.12) + (titleScore * 0.32) + (artistScore * 0.08) + (duration * 0.08) + (isrcScore * 0.12));
-}
-
-function getBestReleaseTrackMatch(track: TrackRow, releaseTracks: ReleaseTrackCandidate[]): ReleaseTrackCandidate | null {
-    const scored = releaseTracks
-        .map((candidate) => ({ candidate, score: scoreReleaseTrack(track, candidate) }))
-        .sort((left, right) => right.score - left.score);
-
-    if (scored.length === 0 || scored[0].score < 0.76) {
-        return null;
-    }
-
-    const second = scored[1]?.score ?? 0;
-    if (second > 0 && scored[0].score - second < 0.04) {
-        return null;
-    }
-
-    return scored[0].candidate;
-}
-
+/**
+ * Metadata identity is now resolved against the canonical MusicBrainz/Skyhook
+ * graph. Provider catalog tables are gone: an album/track's canonical link lives
+ * on its `ProviderItems` offer (release_group_mbid / release_mbid / recording_mbid /
+ * recording_id), populated by the release-group matcher and by-position mapping in
+ * RefreshAlbumService.scanTracks. This service therefore reports identity from
+ * those offers and ensures the canonical release-group row is synced; it no longer
+ * runs a bespoke per-track ISRC/AcoustID search (retired with the legacy tables —
+ * fingerprinting only matters for unknown *local* imports, a separate file path).
+ */
 export class MetadataIdentityService {
     static getStatus(entityType: MetadataIdentityEntityType, entityId: string): MetadataIdentityResult | null {
         const row = db.prepare(`
@@ -414,57 +200,53 @@ export class MetadataIdentityService {
         }
     }
 
-    static async resolveAlbum(albumId: string, options: { force?: boolean; includeTracks?: boolean } = {}): Promise<MetadataIdentityResult> {
-        const album = db.prepare(`
+    /**
+     * Reports a provider album's canonical identity from its ProviderItems offer
+     * and ensures the matched release group is present in the canonical catalog.
+     * The matching itself (provider album → release group) already happened in the
+     * scan; we no longer re-derive it or write provider catalog rows.
+     */
+    static async resolveAlbum(albumId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
+        void options;
+        const offer = db.prepare(`
             SELECT
-                a.id,
-                a.artist_id,
-                a.title,
-                a.release_date,
-                a.upc,
-                a.mbid,
-                a.mb_release_group_id,
-                ar.name AS artist_name,
-                ar.mbid AS artist_mbid
-            FROM ProviderAlbums a
-            LEFT JOIN Artists ar ON ar.id = a.artist_id
-            WHERE a.id = ?
-        `).get(albumId) as AlbumRow | undefined;
+                a.provider_id AS id,
+                a.release_mbid AS release_mbid,
+                a.release_group_mbid AS release_group_mbid,
+                a.artist_mbid AS artist_mbid,
+                a.title AS title
+            FROM ProviderItems a
+            WHERE a.entity_type = 'album' AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY a.updated_at DESC
+            LIMIT 1
+        `).get(albumId) as ProviderAlbumOffer | undefined;
 
-        if (!album) {
-            const result = this.result("album", albumId, "error", 0, "local-row", "Album is not in the Discogenius database");
+        if (!offer) {
+            const result = this.result("album", albumId, "error", 0, "local-row", "Album offer is not in the Discogenius database");
             recordIdentityStatus(result);
             return result;
         }
 
-        if (album.artist_id) {
-            await this.resolveArtist(String(album.artist_id), { force: false });
+        if (offer.artist_mbid) {
+            await this.resolveArtist(String(offer.artist_mbid), { force: false });
         }
 
-        if (album.mbid && album.mb_release_group_id) {
-            const result = this.result("album", albumId, "verified", 1, "existing-mbid", undefined, {
-                releaseId: album.mbid,
-                releaseGroupId: album.mb_release_group_id,
-            });
-            recordIdentityStatus(result);
-            updateAlbumIdentityColumns(albumId, result, { id: album.mbid, releaseGroupId: album.mb_release_group_id });
-
-            const releaseGroupId = album.mb_release_group_id;
-            if (releaseGroupId) {
-                const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(releaseGroupId);
-                if (!rgExists) {
-                    try {
-                        const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
-                        await MusicBrainzReleaseGroupReadService.getAlbum(releaseGroupId);
-                    } catch (err) {
-                        console.warn(`[MetadataIdentity] Failed to auto-sync release group ${releaseGroupId} for provider album ${albumId}:`, err);
-                    }
+        if (offer.release_group_mbid) {
+            const rgExists = db.prepare("SELECT 1 FROM Albums WHERE mbid = ?").get(offer.release_group_mbid);
+            if (!rgExists) {
+                try {
+                    const { MusicBrainzReleaseGroupReadService } = await import("./musicbrainz-release-group-read-service.js");
+                    await MusicBrainzReleaseGroupReadService.getAlbum(offer.release_group_mbid);
+                } catch (err) {
+                    console.warn(`[MetadataIdentity] Failed to auto-sync release group ${offer.release_group_mbid} for provider album ${albumId}:`, err);
                 }
             }
 
-            if (options.includeTracks) {
-                await this.resolveAlbumTracks(albumId, { force: false });
-            }
+            const result = this.result("album", albumId, "verified", 1, "provider-items-canonical-link", undefined, {
+                releaseId: offer.release_mbid,
+                releaseGroupId: offer.release_group_mbid,
+            });
+            recordIdentityStatus(result);
             return result;
         }
 
@@ -477,214 +259,70 @@ export class MetadataIdentityService {
             "provider offer has not been matched to the canonical MusicBrainz catalog",
         );
         recordIdentityStatus(result);
-        updateAlbumIdentityColumns(albumId, result);
         return result;
     }
 
-    static async resolveAlbumTracks(
-        albumId: string,
-        options: { force?: boolean; releaseId?: string | null } = {},
-    ): Promise<MetadataIdentityResult[]> {
-        const releaseId = options.releaseId
-            || (db.prepare("SELECT mbid FROM ProviderAlbums WHERE id = ?").get(albumId) as { mbid?: string | null } | undefined)?.mbid
-            || null;
-        let releaseTracks: ReleaseTrackCandidate[] = [];
-
-        if (releaseId) {
-            try {
-                releaseTracks = await lookupReleaseTracks(releaseId);
-            } catch (error) {
-                console.warn(`[MetadataIdentity] Failed to fetch MusicBrainz release tracks for ${releaseId}:`, error);
-            }
-        }
-
-        const tracks = db.prepare(`
-            SELECT id FROM ProviderMedia
-            WHERE album_id = ? AND type != 'Music Video'
-            ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0), id
-        `).all(albumId) as Array<{ id: number }>;
-
-        const results: MetadataIdentityResult[] = [];
-        for (const track of tracks) {
-            results.push(await this.resolveTrack(String(track.id), {
-                force: options.force,
-                releaseTracks,
-            }));
-        }
-        return results;
-    }
-
-    static async resolveTrack(
-        mediaId: string,
-        options: {
-            force?: boolean;
-            filePath?: string;
-            releaseTracks?: ReleaseTrackCandidate[];
-        } = {},
-    ): Promise<MetadataIdentityResult> {
-        const track = db.prepare(`
+    /**
+     * Reports a provider track's canonical identity from its ProviderItems offer.
+     * Tracks are mapped to canonical recordings by position during the scan, so
+     * there is no per-track MusicBrainz search here anymore.
+     */
+    static async resolveTrack(mediaId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
+        void options;
+        const offer = db.prepare(`
             SELECT
-                m.id,
-                m.artist_id,
-                m.album_id,
-                m.title,
-                m.duration,
-                m.track_number,
-                m.volume_number,
-                m.isrc,
-                m.mbid,
-                m.acoustid_id,
-                m.acoustid_fingerprint,
-                ar.name AS artist_name,
-                ar.mbid AS artist_mbid,
-                al.title AS album_title,
-                al.mbid AS album_mbid
-            FROM ProviderMedia m
-            LEFT JOIN Artists ar ON ar.id = m.artist_id
-            LEFT JOIN ProviderAlbums al ON al.id = m.album_id
-            WHERE m.id = ?
-        `).get(mediaId) as TrackRow | undefined;
+                a.provider_id AS id,
+                a.recording_mbid AS recording_mbid,
+                a.recording_id AS recording_id
+            FROM ProviderItems a
+            WHERE a.entity_type = 'track' AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY a.updated_at DESC
+            LIMIT 1
+        `).get(mediaId) as ProviderTrackOffer | undefined;
 
-        if (!track) {
-            const result = this.result("track", mediaId, "error", 0, "local-row", "Track is not in the Discogenius database");
+        if (!offer) {
+            const result = this.result("track", mediaId, "error", 0, "local-row", "Track offer is not in the Discogenius database");
             recordIdentityStatus(result);
             return result;
         }
 
-        if (track.mbid && !options.force) {
-            const result = this.result("track", mediaId, "verified", 1, "existing-mbid", undefined, { recordingId: track.mbid });
-            recordIdentityStatus(result);
-            updateTrackIdentityColumns(mediaId, result, { recordingId: track.mbid });
-            return result;
-        }
-
-        try {
-            const evidence: TrackResolutionEvidence[] = [];
-
-            if (track.isrc) {
-                const recordings = await lookupMusicBrainzRecordingsByIsrc(track.isrc);
-                for (const recording of recordings) {
-                    evidence.push({
-                        recording,
-                        confidence: scoreRecording(track, recording, "isrc"),
-                        method: "isrc",
-                    });
-                }
-            }
-
-            const releaseTracks = options.releaseTracks || [];
-            const releaseTrack = getBestReleaseTrackMatch(track, releaseTracks);
-            if (releaseTrack) {
-                const recording = await lookupMusicBrainzRecording(releaseTrack.recordingId);
-                if (recording) {
-                    evidence.push({
-                        recording,
-                        confidence: scoreReleaseTrack(track, releaseTrack),
-                        method: "release-tracklist",
-                    });
-                }
-            }
-
-            const tagConfig = getConfigSection("metadata");
-            const filePath = options.filePath || this.findBestTrackFile(mediaId);
-            if (tagConfig.enable_fingerprinting && filePath && fs.existsSync(filePath)) {
-                try {
-                    const fingerprint = await generateFingerprint(filePath);
-                    const acoustidMatches = await lookupAcoustIdMatches(fingerprint.fingerprint, fingerprint.duration);
-                    for (const acoustid of acoustidMatches) {
-                        for (const recordingId of acoustid.recordingIds) {
-                            const recording = await lookupMusicBrainzRecording(recordingId);
-                            if (!recording) continue;
-                            const metadataScore = scoreRecording(track, recording, "acoustid");
-                            const acoustidScore = acoustid.score ?? 0;
-                            evidence.push({
-                                recording,
-                                confidence: clampConfidence((acoustidScore * 0.6) + (metadataScore * 0.4)),
-                                method: "acoustid",
-                                acoustid,
-                                fingerprint: fingerprint.fingerprint,
-                                fingerprintDuration: fingerprint.duration,
-                            });
-                        }
-                    }
-
-                    if (acoustidMatches[0]?.id || fingerprint.fingerprint) {
-                        db.prepare(`
-                            UPDATE ProviderMedia SET
-                                acoustid_id = COALESCE(?, acoustid_id),
-                                acoustid_fingerprint = COALESCE(?, acoustid_fingerprint),
-                                fingerprint_duration = COALESCE(?, fingerprint_duration)
-                            WHERE id = ?
-                        `).run(acoustidMatches[0]?.id || null, fingerprint.fingerprint, fingerprint.duration, mediaId);
-                    }
-                } catch (error) {
-                    console.warn(`[MetadataIdentity] Failed to fingerprint ${filePath}:`, error);
-                }
-            }
-
-            const scored = evidence.sort((left, right) => right.confidence - left.confidence);
-            const best = scored[0];
-            if (!best) {
-                const result = this.result("track", mediaId, "unmatched", 0, "track-lookup", "No MusicBrainz recording candidate found");
-                recordIdentityStatus(result);
-                updateTrackIdentityColumns(mediaId, result);
-                return result;
-            }
-
-            const second = scored[1]?.confidence ?? 0;
-            if (best.confidence < 0.78 || (second > 0 && best.confidence - second < 0.04)) {
-                const result = this.result("track", mediaId, "ambiguous", best.confidence, best.method, "MusicBrainz recording match is ambiguous", {
-                    candidates: scored.slice(0, 5).map((item) => ({
-                        recordingId: item.recording.id,
-                        title: item.recording.title,
-                        confidence: item.confidence,
-                        method: item.method,
-                    })),
-                });
-                recordIdentityStatus(result);
-                updateTrackIdentityColumns(mediaId, result, {
-                    acoustidId: best.acoustid?.id || null,
-                    fingerprint: best.fingerprint || null,
-                    fingerprintDuration: best.fingerprintDuration || null,
-                });
-                return result;
-            }
-
-            const result = this.result("track", mediaId, "verified", best.confidence, best.method, undefined, {
-                recordingId: best.recording.id,
-                title: best.recording.title,
-                acoustidId: best.acoustid?.id || null,
+        if (offer.recording_mbid) {
+            const result = this.result("track", mediaId, "verified", 1, "provider-items-canonical-link", undefined, {
+                recordingId: offer.recording_mbid,
             });
             recordIdentityStatus(result);
-            updateTrackIdentityColumns(mediaId, result, {
-                recordingId: best.recording.id,
-                acoustidId: best.acoustid?.id || null,
-                fingerprint: best.fingerprint || null,
-                fingerprintDuration: best.fingerprintDuration || null,
-            });
-            return result;
-        } catch (error) {
-            const result = this.result("track", mediaId, "error", 0, "track-lookup", error instanceof Error ? error.message : String(error));
-            recordIdentityStatus(result);
-            updateTrackIdentityColumns(mediaId, result);
             return result;
         }
+
+        if (offer.recording_id) {
+            const result = this.result(
+                "track",
+                mediaId,
+                "unmatched",
+                0.7,
+                "provider-recording",
+                "track maps to a provisional local recording without a MusicBrainz ID",
+                { recordingId: offer.recording_id },
+            );
+            recordIdentityStatus(result);
+            return result;
+        }
+
+        const result = this.result("track", mediaId, "unmatched", 0, "track-lookup", "No canonical recording linked to this provider track");
+        recordIdentityStatus(result);
+        return result;
     }
 
     static markVideoKnown(videoId: string): MetadataIdentityResult {
-        const video = db.prepare(`
-            SELECT m.mbid, pi.recording_id
-            FROM ProviderMedia m
-            LEFT JOIN ProviderItems pi
-              ON pi.provider = 'tidal'
-             AND pi.entity_type = 'video'
-             AND CAST(pi.provider_id AS TEXT) = CAST(m.id AS TEXT)
-            WHERE CAST(m.id AS TEXT) = CAST(? AS TEXT)
-              AND m.type = 'Music Video'
+        const offer = db.prepare(`
+            SELECT recording_mbid, recording_id
+            FROM ProviderItems
+            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY updated_at DESC
             LIMIT 1
-        `).get(videoId) as { mbid?: string | null; recording_id?: number | null } | undefined;
+        `).get(videoId) as { recording_mbid?: string | null; recording_id?: number | null } | undefined;
 
-        const recordingMbid = String(video?.mbid || "").trim();
+        const recordingMbid = String(offer?.recording_mbid || "").trim();
         if (recordingMbid) {
             const result = this.result("video", videoId, "verified", 1, "musicbrainz-recording", undefined, {
                 recordingId: recordingMbid,
@@ -697,33 +335,15 @@ export class MetadataIdentityService {
             "video",
             videoId,
             "unmatched",
-            video?.recording_id ? 0.7 : 1,
-            video?.recording_id ? "provider-recording" : "musicbrainz-video-unmatched",
-            video?.recording_id
+            offer?.recording_id ? 0.7 : 1,
+            offer?.recording_id ? "provider-recording" : "musicbrainz-video-unmatched",
+            offer?.recording_id
                 ? "provider video is represented as a provisional local recording without a MusicBrainz ID"
                 : "No matching MusicBrainz video recording has been linked yet",
-            video?.recording_id ? { recordingId: video.recording_id } : undefined,
+            offer?.recording_id ? { recordingId: offer.recording_id } : undefined,
         );
         recordIdentityStatus(result);
         return result;
-    }
-
-    private static findBestTrackFile(mediaId: string): string | null {
-        const row = db.prepare(`
-            SELECT file_path, relative_path, library_root
-            FROM TrackFiles
-            WHERE media_id = ? AND file_type = 'track'
-            ORDER BY verified_at DESC, id DESC
-            LIMIT 1
-        `).get(mediaId) as { file_path?: string | null; relative_path?: string | null; library_root?: string | null } | undefined;
-
-        if (!row?.file_path) return null;
-
-        return resolveStoredLibraryPath({
-            filePath: row.file_path,
-            relativePath: row.relative_path,
-            libraryRoot: row.library_root,
-        });
     }
 
     private static result(

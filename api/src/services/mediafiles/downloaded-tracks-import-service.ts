@@ -323,7 +323,7 @@ export class DownloadedTracksImportService {
                     const albumIds = providerId.split(";").filter(Boolean);
                     for (const albumId of albumIds) {
                         try {
-                            await MetadataIdentityService.resolveAlbum(albumId, { includeTracks: true });
+                            await MetadataIdentityService.resolveAlbum(albumId);
                         } catch (err) {
                             console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
                         }

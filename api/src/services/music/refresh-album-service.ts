@@ -457,7 +457,7 @@ export class RefreshAlbumService {
 
         if (existingRow && !shouldRefreshAlbum) {
             if (!existingRow.mbid || !existingRow.mb_release_group_id || options.forceUpdate === true) {
-                await MetadataIdentityService.resolveAlbum(albumId, { force: options.forceUpdate === true, includeTracks: false });
+                await MetadataIdentityService.resolveAlbum(albumId, { force: options.forceUpdate === true });
             }
             console.log(`[RefreshAlbumService] scanBasic skipped for ${albumId} (fresh)`);
             return;
@@ -554,7 +554,7 @@ export class RefreshAlbumService {
             );
         }
 
-        await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, includeTracks: false });
+        await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate });
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: canonicalLink.releaseGroupMbid,
@@ -712,6 +712,10 @@ export class RefreshAlbumService {
         albumId: string,
         options: { resolveMusicBrainz?: boolean } = {},
     ): Promise<void> {
+        // `resolveMusicBrainz` previously gated a per-track MusicBrainz search pass
+        // (retired with the legacy provider tables); track identity is now mapped by
+        // position during this scan. The option is kept for call-site compatibility.
+        void options;
         const provider = this.resolveProviderForAlbum(albumId);
         const tracks = (await provider.getAlbumTracks(albumId))
             .map(providerTrackToTrackMetadataRow);
@@ -993,9 +997,10 @@ export class RefreshAlbumService {
             }
         }
 
-        if (options.resolveMusicBrainz !== false) {
-            await MetadataIdentityService.resolveAlbumTracks(albumId, { force: false });
-        }
+        // Per-track canonical identity is established above by position-mapping each
+        // provider track onto the selected release's canonical Tracks/Recordings
+        // (written into ProviderItems). The old per-track MusicBrainz search resolver
+        // was retired with the legacy provider tables, so there is nothing more to do.
     }
 
     static async upsertArtistAlbum(
@@ -1268,7 +1273,6 @@ export class RefreshAlbumService {
         } else {
             await MetadataIdentityService.resolveAlbum(String(album.provider_id), {
                 force: forceUpdate,
-                includeTracks: false,
             });
         }
 
