@@ -113,7 +113,8 @@ Docker runtime image.
   `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
   Slot identity must remain release-specific: stereo and spatial selections can
   point at different `AlbumReleases` and provider UPC/ISRC evidence inside one
-  release group.
+  release group, while an Atmos-only provider offer can intentionally fill both
+  stereo and spatial slots when no stereo offer is available.
   `CheckUpgrades` now scans `TrackFiles` canonical/provider identity +
   `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
   canonical-only audio/video upgrade downloads; schema v27 re-keys

@@ -297,6 +297,76 @@ test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz r
   );
 });
 
+test("provider slot selection links an Atmos-only release to both stereo and spatial slots", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-atmos-only";
+  const atmosReleaseMbid = "release-mbid-atmos-only";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    atmosReleaseMbid,
+    releaseGroupMbid,
+    "artist-mbid-1",
+    "A Night at the Opera (Dolby Atmos)",
+    "Official",
+    "2024-01-01",
+    12,
+    1,
+  );
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "provider-album-atmos-only",
+      title: "A Night at the Opera",
+      quality: "DOLBY_ATMOS",
+      trackCount: 12,
+      volumeCount: 1,
+    }],
+    matches: new Map([[
+      "provider-album-atmos-only",
+      {
+        ...buildMatch(releaseGroupMbid, "provider-album-atmos-only"),
+        releaseMbid: atmosReleaseMbid,
+        evidence: {
+          ...buildMatch(releaseGroupMbid, "provider-album-atmos-only").evidence,
+          availableReleaseMbids: [atmosReleaseMbid],
+        },
+      },
+    ]]),
+  });
+
+  const slots = db.prepare(`
+    SELECT slot, selected_provider_id, selected_release_mbid, quality
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ?
+    ORDER BY slot
+  `).all(releaseGroupMbid) as Array<{
+    slot: string;
+    selected_provider_id: string | null;
+    selected_release_mbid: string | null;
+    quality: string | null;
+  }>;
+
+  assert.deepEqual(slots, [
+    {
+      slot: "spatial",
+      selected_provider_id: "provider-album-atmos-only",
+      selected_release_mbid: atmosReleaseMbid,
+      quality: "DOLBY_ATMOS",
+    },
+    {
+      slot: "stereo",
+      selected_provider_id: "provider-album-atmos-only",
+      selected_release_mbid: atmosReleaseMbid,
+      quality: "DOLBY_ATMOS",
+    },
+  ]);
+});
+
 test("provider slot selection can bind stereo and Atmos to different releases and provider identifiers", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-slot-specific-atmos";

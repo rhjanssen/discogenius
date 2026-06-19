@@ -138,8 +138,11 @@ a different provider UPC/barcode from the stereo mix, and can map to a different
 MusicBrainz release with a different track/recording/ISRC set inside the same
 release group. `ReleaseGroupSlots.selected_release_mbid` therefore belongs on
 the `(release_group_mbid, slot)` row and must not be collapsed to one release per
-release group. Provider UPC/ISRC evidence remains on the selected `ProviderItems`
-album/track rows for that slot.
+release group. When the only provider offer for a release group is Dolby Atmos,
+that Atmos offer is allowed to fill both the spatial and stereo slots; if a
+separate stereo offer exists, the stereo slot should prefer that distinct offer.
+Provider UPC/ISRC evidence remains on the selected `ProviderItems` album/track
+rows for that slot.
 
 There are **no separate provider catalog tables** after this migration — that is the
 whole point. `ProviderItems` stays, but only as *availability/offer* rows keyed to
@@ -177,7 +180,8 @@ model. Applied so far:
 - `ReleaseGroupSlots` (stereo/spatial/video slot model) — core to multi-library
   + Atmos support; Lidarr has no equivalent. Preserve per-slot selected releases:
   stereo and spatial slots may point to different `AlbumReleases` with different
-  provider UPC/barcode and track ISRC evidence.
+  provider UPC/barcode and track ISRC evidence; an Atmos-only provider offer can
+  intentionally fill both audio slots when no stereo offer is available.
 - `ProviderItems` as availability-only, keyed to canonical mbids — the
   "providers never create canonical entities" rule from AGENTS.md.
 - Curation/dedup (`ArtistReleaseGroupCuration`) — Discogenius's discography
