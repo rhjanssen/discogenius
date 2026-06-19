@@ -399,12 +399,13 @@ export class RefreshVideoService {
         `);
         const upsertProviderItem = db.prepare(`
             INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, artist_mbid, recording_mbid,
+                provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
                 title, quality, duration, release_date, availability,
                 library_slot, recording_id, provider_url, asset_id,
                 match_status, match_confidence, match_method, match_evidence, data, updated_at
-            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+                provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
                 title = excluded.title,
@@ -458,6 +459,7 @@ export class RefreshVideoService {
                 upsertProviderItem.run(
                     provider,
                     String(video.provider_id),
+                    nullableText(video.album_id),
                     artistMbid,
                     recordingMbid,
                     video.title,

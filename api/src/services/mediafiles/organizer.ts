@@ -2249,69 +2249,45 @@ export class OrganizerService {
         throw new Error(`Download failed: Could not locate video file in downloaded files.`);
       }
 
-      // Ensure video exists in DB
-      let fetchedVideoData: any | null = null;
-      let video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(providerId) as any;
-      if (!video) {
-        fetchedVideoData = await this.fetchProviderVideo(providerId);
-        const videoData = fetchedVideoData;
-        const videoCoverId = videoData.image_id || null;
+      // Ensure the video is in the canonical graph: a Recordings(is_video=1) row +
+      // a ProviderItems video offer, via RefreshVideoService — no legacy ProviderMedia.
+      const videoData = await this.fetchProviderVideo(providerId);
+      let fetchedVideoData: any | null = videoData;
 
-        // Ensure artist exists
-        const videoArtistId = videoData.artist_id ? String(videoData.artist_id) : null;
-        if (!videoArtistId || !/^\d+$/.test(videoArtistId)) {
-          throw new Error(`[Organizer] Video ${providerId} missing valid artist_id`);
-        }
-
-        const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
-        if (!exists) {
-          try {
-            const a = await this.fetchProviderArtist(videoArtistId);
-            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
-              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
-                artistId: videoArtistId,
-                artistName: a.name,
-              }));
-          } catch {
-            // ignore
-          }
-        }
-
-        // Upsert video
-        db.prepare(`
-          INSERT INTO ProviderMedia (
-            id, artist_id, album_id, title, version, release_date, type,
-            explicit, quality, duration, popularity, cover,
-            monitored, downloaded
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, 0, 0)
-          ON CONFLICT(id) DO UPDATE SET
-            artist_id=excluded.artist_id,
-          album_id=excluded.album_id,
-          title=excluded.title,
-          version=excluded.version,
-          release_date=excluded.release_date,
-            explicit=excluded.explicit,
-            quality=excluded.quality,
-            duration=excluded.duration,
-            popularity=excluded.popularity,
-            cover=COALESCE(excluded.cover, cover)
-        `).run(
-          providerId,
-          videoArtistId,
-          videoData.album_id || null,
-          videoData.title,
-          null,
-          videoData.release_date || null,
-          videoData.explicit ? 1 : 0,
-          videoData.quality || null,
-          videoData.duration || null,
-          videoData.popularity || 0,
-          videoCoverId,
-        );
-
-        video = db.prepare("SELECT * FROM ProviderMedia WHERE id = ? AND type = 'Music Video'").get(providerId) as any;
+      const videoArtistId = videoData.artist_id ? String(videoData.artist_id) : null;
+      if (!videoArtistId || !/^\d+$/.test(videoArtistId)) {
+        throw new Error(`[Organizer] Video ${providerId} missing valid artist_id`);
       }
-      if (!video) throw new Error(`Video ${providerId} not found in DB after fetch`);
+
+      const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
+      if (!exists) {
+        try {
+          const a = await this.fetchProviderArtist(videoArtistId);
+          db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
+            .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
+              artistId: videoArtistId,
+              artistName: a.name,
+            }));
+        } catch {
+          // ignore
+        }
+      }
+
+      const { RefreshVideoService } = await import("../music/refresh-video-service.js");
+      RefreshVideoService.upsertArtistVideos(videoArtistId, [{
+        ...videoData,
+        provider_id: providerId,
+        provider: raw.provider || "tidal",
+      }]);
+
+      const video: any = {
+        id: providerId,
+        artist_id: videoArtistId,
+        album_id: videoData.album_id || null,
+        title: videoData.title,
+        explicit: videoData.explicit ? 1 : 0,
+        quality: videoData.quality || null,
+      };
 
       onProgress?.({
         phase: "importing",
@@ -2473,8 +2449,17 @@ export class OrganizerService {
             fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(providerId);
             coverId = fetchedVideoData?.image_id || null;
             if (coverId) {
-              db.prepare("UPDATE ProviderMedia SET cover = COALESCE(?, cover) WHERE id = ? AND type = 'Music Video'")
-                .run(coverId, providerId);
+              // Home the cover onto the canonical video Recording (via its offer's
+              // recording_id) instead of the retired ProviderMedia row.
+              db.prepare(`
+                UPDATE Recordings SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
+                WHERE id = (
+                  SELECT recording_id FROM ProviderItems
+                  WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    AND recording_id IS NOT NULL
+                  LIMIT 1
+                )
+              `).run(coverId, providerId);
               video.cover = coverId;
             }
           } catch {
