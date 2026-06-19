@@ -121,7 +121,7 @@ export function backfillArtistPaths(): number {
   return artists.length;
 }
 
-const BASE_SCHEMA_VERSION = 27;
+const BASE_SCHEMA_VERSION = 28;
 const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
@@ -453,6 +453,26 @@ const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () =>
     description: "Re-key upgrade_queue to provider resource identity",
     up: () => {
       ensureUpgradeQueueProviderIdentitySchema();
+    }
+  },
+  {
+    version: 28,
+    description: "ProviderItems.provider_album_id (owning provider album link for track/video offers)",
+    up: () => {
+      if (hasTable("ProviderItems") && !hasColumn("ProviderItems", "provider_album_id")) {
+        db.exec("ALTER TABLE ProviderItems ADD COLUMN provider_album_id TEXT");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
+        // Backfill from the existing track offers' match_evidence, which already
+        // records the owning provider album id from the scan.
+        db.exec(`
+          UPDATE ProviderItems
+          SET provider_album_id = json_extract(match_evidence, '$.albumProviderId')
+          WHERE entity_type IN ('track', 'video')
+            AND provider_album_id IS NULL
+            AND json_valid(match_evidence)
+            AND json_extract(match_evidence, '$.albumProviderId') IS NOT NULL
+        `);
+      }
     }
   }
 ];
@@ -902,6 +922,7 @@ function ensureMusicBrainzProviderSchema(): void {
       album_release_id INTEGER,
       track_id INTEGER,
       recording_id INTEGER,
+      provider_album_id TEXT,             -- owning provider album id for track/video offers (replaces ProviderMedia.album_id link)
       provider_url TEXT,
       asset_id TEXT,
       match_status TEXT,
@@ -980,6 +1001,7 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
   // The download-queue list resolves each item's metadata by provider_id (N+1
   // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
   // with `provider` (the provider *name*), so a `WHERE provider_id = ?` lookup

@@ -845,12 +845,13 @@ export class RefreshAlbumService {
         `);
         const upsertProviderTrackOffer = db.prepare(`
             INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, title, version, explicit, quality,
+                provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
                 isrc, duration, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
                 match_status, match_confidence, match_method, match_evidence, data, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+                provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
                 version = excluded.version,
                 explicit = excluded.explicit,
@@ -958,6 +959,7 @@ export class RefreshAlbumService {
                         upsertProviderTrackOffer.run(
                             providerId,
                             String(currentTrack.provider_id),
+                            String(albumId),
                             currentTrack.title || null,
                             currentTrack.version || null,
                             currentTrack.explicit ? 1 : 0,
