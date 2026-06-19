@@ -246,6 +246,33 @@ so it must NOT be rushed (that is where the parallel agents repeatedly broke
 things). The integer-FK foundation + monitoring + supplement homing are DONE and
 validated, so the app is fully functional in the meantime.
 
+### Progress (2026-06-19): `library-file-identity` resolver is ProviderItems-only ✓
+
+Done + green (committed): the core identity resolver no longer reads
+`ProviderMedia`/`ProviderAlbums` — provider ids resolve through `ProviderItems`
++ the canonical graph + `ReleaseGroupSlots`. Established the cutover pattern:
+**convert a reader → migrate its test seeds to `ProviderItems`, keeping minimal
+legacy rows only for the transitional `TrackFiles.media_id`/`album_id` FK** (the
+FK is dropped in Phase 5; until then, an upsert that sets `media_id`/`album_id`
+needs the legacy rows present).
+
+### Remaining-reader gotcha: tag-field re-sourcing (not just fallback removal)
+
+`audio-tag-service.buildTrackRowsSql` reads ~20 legacy `m.`/`a.` COALESCE
+fallbacks. Several are **only on `ProviderMedia`** and must be *re-sourced* from
+canonical, not just dropped — verify each canonical home is populated by the scan
+first, or the tag loses the value:
+- `m.replay_gain` / `m.peak` → `Recordings.replay_gain` / `Recordings.peak`
+  (confirm the scan writes them; `Recordings.peak` may need adding).
+- `m.acoustid_id` / `m.acoustid_fingerprint` / `m.fingerprint_duration` →
+  `TrackFiles.acoustid_id` / `.fingerprint` / `.fingerprint_duration` (the file's
+  own AcoustID, already on `TrackFiles`).
+- `m.credits` → `Recordings.credits` (homed by v24); `a.review_text` →
+  `Albums.review_text` (v24); `a.upc` → `AlbumReleases.barcode`/`ProviderItems`.
+This is the same `canonical_recording.replay_gain` mistake the stashed broken WIP
+made. `organizer` and `metadata-identity` have analogous re-sourcing needs (video
+provider rows, identity columns).
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
