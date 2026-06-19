@@ -407,6 +407,24 @@ Remaining legacy-table SQL (the finish line), all needing container validation:
   `album_id` + the FK; migrate ~100 test seeds; from-scratch rebuild (Bastille +
   Bakermat).
 
+### Validation (2026-06-19): reader cutover verified on the real container ✓
+
+Rebuilt the container at HEAD against the real curated DB (Bastille + Bakermat).
+The rebuild caught **two real bugs unit tests missed**, both fixed:
+1. `ensureMusicBrainzProviderSchema` (runs before `runMigrations`) indexed
+   `provider_album_id` before migration v28 added it → boot crash-loop. Fixed by
+   a guarded `ALTER` in ensure (ensure owns column+index).
+2. That ALTER then made the v28 `!hasColumn` guard false, silently skipping the
+   backfill (337 track offers had `match_evidence.albumProviderId` but
+   `provider_album_id` stayed NULL). Fixed: migration backfills unconditionally.
+
+Post-fix, on real data: schema `user_version=28`; all 337 track offers backfilled
+with `provider_album_id`; `POST /metadata/resolve` for a real album returns
+`verified / provider-items-canonical-link` with the correct release + release-group
+MBIDs; same for a track (`recording_mbid`); video query + stats 200; no server
+errors. **The resolver lynchpin + reader cutover are validated end-to-end.**
+Monitoring reports `running:true, enabled:true` (the prior-session fix holds).
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
