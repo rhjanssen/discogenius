@@ -425,6 +425,39 @@ MBIDs; same for a track (`recording_mbid`); video query + stats 200; no server
 errors. **The resolver lynchpin + reader cutover are validated end-to-end.**
 Monitoring reports `running:true, enabled:true` (the prior-session fix holds).
 
+### Progress (2026-06-19, pt.4): organizer video + both import services converted ✓
+
+Committed + green + booted-clean on the real container:
+- **organizer video import** → `RefreshVideoService` (canonical `Recordings`
+  (is_video=1) + `ProviderItems` video offer); cover homes to
+  `Recordings.cover_image_id`. organizer.ts is fully legacy-table-free.
+- **import-service + manual-import-service** → album/track reads use
+  `ProviderItems` (offer + `provider_album_id`); music videos use
+  `RefreshVideoService` (manual-import in a pre-pass, since that service opens
+  its own transaction); monitored state moved to canonical homes
+  (`ReleaseGroupSlots` + `Albums` for albums, `Recordings` for videos);
+  per-track + `ProviderAlbumArtists` legacy writes dropped.
+- `RefreshVideoService` now also sets `provider_album_id` on the video offer.
+
+**Only one legacy-coupled file remains: `refresh-album-service` (the scan).**
+It is now a *self-contained legacy island* — no other code reads its
+`ProviderAlbums`/`ProviderMedia`/`ProviderAlbumArtists`/`ProviderMediaArtists`
+writes anymore. Conversion plan (do with a real scan→curate→download cycle on
+the container — this is the path the parallel agents kept breaking, so it gets
+its own careful pass):
+- **Removing the legacy WRITES collapses most self-reads.** The track-offer +
+  canonical supplement writes already exist; the legacy `ProviderMedia`/
+  `ProviderAlbums` inserts are dead weight once their self-reads are repointed.
+- Repoint the few self-reads: freshness (`ProviderAlbums.last_scanned`) →
+  `ProviderItems(album).updated_at`; scan-level (`review_text`/`credits` +
+  track count) → `Albums.review_text` / `Recordings.credits` / `ProviderItems`
+  track-offer count; `monitored` → `ReleaseGroupSlots`; album `artist_id`/`type`
+  → the album offer's `artist_mbid` (the `selectedRelease` CTE already prefers
+  `ReleaseGroupSlots`/`ProviderItems` over the `pa` fallback).
+- Then **Phase 5**: drop the 6 legacy tables + `TrackFiles.media_id`/legacy
+  `album_id` + FK; migrate ~100 test seeds; fresh-DB rebuild (Bastille +
+  Bakermat) end-to-end.
+
 ## 6c. Write-path cutover — the real blocker is supplement-field homing (2026-06-18)
 
 The writers (`refresh-album-service` keystone, `organizer`, `metadata-identity`,
