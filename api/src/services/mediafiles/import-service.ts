@@ -309,26 +309,6 @@ export class ImportService {
                 END
         `);
 
-        const upsertVideo = db.prepare(`
-            INSERT INTO ProviderMedia (
-                id, artist_id, album_id, title, version, release_date,
-                type, explicit, quality, duration, popularity, cover, monitored
-            ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                artist_id = excluded.artist_id,
-                album_id = excluded.album_id,
-                title = excluded.title,
-                version = excluded.version,
-                release_date = excluded.release_date,
-                explicit = excluded.explicit,
-                quality = excluded.quality,
-                duration = excluded.duration,
-                popularity = excluded.popularity,
-                cover = COALESCE(excluded.cover, cover),
-                type = 'Music Video',
-                monitored = CASE WHEN monitored_lock = 0 THEN excluded.monitored ELSE monitored END
-        `);
-
         const monitorValue = monitorImported ? 1 : 0;
 
         const insertLibraryFile = db.prepare(`
@@ -539,20 +519,30 @@ export class ImportService {
                     path: artistRow?.path || resolvedArtistFolder,
                 });
 
-                upsertVideo.run(
-                    videoId,
-                    artistId,
-                    videoData.album_id || null,
-                    videoData.title || tidalVideo.title || "Unknown Video",
-                    videoData.version || null,
-                    videoData.release_date || null,
-                    videoData.explicit ? 1 : 0,
-                    videoData.quality || tidalVideo.quality || "MP4_1080P",
-                    videoData.duration || 0,
-                    videoData.popularity || 0,
-                    videoData.image_id || tidalVideo.image_id || tidalVideo.imageId || null,
-                    monitorValue
-                );
+                // Ensure the canonical video graph (Recordings(is_video=1) + a
+                // ProviderItems video offer) instead of a legacy ProviderMedia row.
+                const { RefreshVideoService } = await import("../music/refresh-video-service.js");
+                RefreshVideoService.upsertArtistVideos(artistId, [{
+                    ...videoData,
+                    provider_id: videoId,
+                    title: videoData.title || tidalVideo.title || "Unknown Video",
+                    quality: videoData.quality || tidalVideo.quality || "MP4_1080P",
+                    provider: streamingProviderManager.getDefaultStreamingProvider().id,
+                }]);
+                if (monitorValue) {
+                    db.prepare(`
+                        UPDATE Recordings
+                        SET monitored = 1,
+                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = (
+                            SELECT recording_id FROM ProviderItems
+                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                              AND recording_id IS NOT NULL
+                            LIMIT 1
+                        )
+                    `).run(videoId);
+                }
 
                 const videoTemplate = path.join(artistFolder, namingConfig.video_file);
 	                const expectedVideoRel = renderRelativePath(videoTemplate, {
@@ -623,10 +613,16 @@ export class ImportService {
                     }
 
                     db.prepare(`
-                        UPDATE ProviderMedia
-                        SET monitored = CASE WHEN monitored_lock = 0 THEN 1 ELSE monitored END,
-                            monitored_at = CASE WHEN monitored_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                        WHERE id = ?
+                        UPDATE Recordings
+                        SET monitored = 1,
+                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = (
+                            SELECT recording_id FROM ProviderItems
+                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                              AND recording_id IS NOT NULL
+                            LIMIT 1
+                        )
                     `).run(videoId);
                     updateArtistDownloadStatusFromMedia(videoId);
 
@@ -661,9 +657,11 @@ export class ImportService {
             }
 
             const albumRow = db.prepare(`
-                SELECT id, artist_id, title, version, release_date, num_volumes, explicit
-                FROM ProviderAlbums
-                WHERE id = ?
+                SELECT artist_mbid AS artist_id, release_group_mbid, release_mbid
+                FROM ProviderItems
+                WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                ORDER BY updated_at DESC
+                LIMIT 1
             `).get(albumId) as any;
 
             if (!albumRow) continue;
@@ -701,27 +699,31 @@ export class ImportService {
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE id = ?
             `).run(monitorValue, monitorValue, artistId);
-            db.prepare(`
-                UPDATE ProviderAlbums
-                SET monitored = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE id = ? AND monitored_lock = 0
-            `).run(monitorValue, monitorValue, albumId);
-            db.prepare(`
-                UPDATE ProviderMedia
-                SET monitored = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE album_id = ? AND monitored_lock = 0
-            `).run(monitorValue, monitorValue, albumId);
-            db.prepare(`
-                INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
-                VALUES (?, ?, 'MAIN', 'ALBUMS', NULL)
-            `).run(albumId, artistId);
+            // Album monitoring is canonical now: the slot (ReleaseGroupSlots) + the
+            // Albums row carry monitored state, not the retired provider catalog.
+            // Per-track monitoring is covered by the slot; AlbumArtists is canonical
+            // (Skyhook), so the legacy ProviderAlbumArtists write is dropped.
+            if (albumRow.release_group_mbid) {
+                db.prepare(`
+                    UPDATE ReleaseGroupSlots
+                    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE release_group_mbid = ? AND monitored_lock = 0
+                `).run(monitorValue, albumRow.release_group_mbid);
+                db.prepare(`
+                    UPDATE Albums
+                    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE mbid = ?
+                `).run(monitorValue, albumRow.release_group_mbid);
+            }
 
             const trackRows = db.prepare(`
-                SELECT id, title, track_number, volume_number
-                FROM ProviderMedia
-                WHERE album_id = ? AND type != 'Music Video'
+                SELECT
+                    provider_id AS id,
+                    title,
+                    CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
+                    CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
+                FROM ProviderItems
+                WHERE entity_type = 'track' AND provider_album_id = ?
             `).all(albumId) as any[];
 
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
@@ -832,14 +834,8 @@ export class ImportService {
                         importedFileIds.push(libraryFileId);
                     }
 
-                    if (matchedTrack?.id) {
-                        db.prepare(`
-                            UPDATE ProviderMedia
-                            SET monitored = CASE WHEN monitored_lock = 0 THEN 1 ELSE monitored END,
-                                monitored_at = CASE WHEN monitored_lock = 0 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                            WHERE id = ?
-                        `).run(matchedTrack.id);
-                    }
+                    // Per-track monitoring is carried by the release-group slot now;
+                    // no legacy ProviderMedia monitored write.
 
                     dirMappings.set(path.dirname(file.path), {
                         destDir: path.dirname(expectedPath),

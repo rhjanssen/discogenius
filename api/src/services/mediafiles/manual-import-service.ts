@@ -144,8 +144,15 @@ export class ManualImportService {
                     }
                 }
 
-                // Read album row for naming (may have been created by RefreshAlbumService.scanShallow)
-                const albumRow = albumId ? db.prepare("SELECT * FROM ProviderAlbums WHERE id = ?").get(albumId) as any : null;
+                // Read album offer for naming (created by RefreshAlbumService.scanShallow)
+                const albumRow = albumId ? db.prepare(`
+                    SELECT release_group_mbid AS mb_release_group_id, release_mbid AS mbid,
+                           release_date, version, explicit, NULL AS num_volumes
+                    FROM ProviderItems
+                    WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                `).get(albumId) as any : null;
 
                 // Fingerprint + filesystem stats
                 let fingerprint: string | null = null;
@@ -262,6 +269,24 @@ export class ManualImportService {
         const videoDirMappings = new Map<string, ImportedDirectoryMapping>();
         const statusUpdates: Array<{ albumId: string | null; providerId: string }> = [];
 
+        // Pre-pass (outside the transaction — RefreshVideoService opens its own):
+        // ensure each video's canonical Recordings(is_video=1) + ProviderItems offer
+        // so the in-transaction Recordings.monitored flip below has a row to hit.
+        const videoEntries = collected.filter((c) => c.isVideo);
+        if (videoEntries.length > 0) {
+            const { RefreshVideoService } = await import("../music/refresh-video-service.js");
+            for (const c of videoEntries) {
+                RefreshVideoService.upsertArtistVideos(String(c.artistId), [{
+                    ...c.trackData,
+                    provider_id: c.providerId,
+                    album_id: c.albumId || null,
+                    title: c.trackData.title || "Unknown Video",
+                    quality: c.trackData.quality || "MP4_1080P",
+                    provider: provider.id,
+                }]);
+            }
+        }
+
         db.transaction(() => {
             for (const c of collected) {
                 // Ensure artist exists
@@ -281,40 +306,41 @@ export class ManualImportService {
                     );
                 }
 
-                // Album monitor + album_artists
+                // Album monitoring is canonical: the slot + Albums row carry it.
+                // (AlbumArtists is canonical/Skyhook; the legacy provider relation
+                // write is dropped.) The video canonical graph is ensured in a
+                // pre-pass before this transaction (RefreshVideoService); here we
+                // only flip the canonical monitored flags.
                 if (c.albumId) {
-                    db.prepare(`
-                        UPDATE ProviderAlbums SET monitored = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP)
-                        WHERE id = ? AND monitored_lock = 0
-                    `).run(c.albumId);
-                    db.prepare(`
-                        INSERT OR IGNORE INTO ProviderAlbumArtists (album_id, artist_id, type, group_type, module)
-                        VALUES (?, ?, 'MAIN', 'ALBUMS', NULL)
-                    `).run(c.albumId, c.artistId);
+                    const rgMbid = db.prepare(`
+                        SELECT release_group_mbid FROM ProviderItems
+                        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                        ORDER BY updated_at DESC LIMIT 1
+                    `).get(c.albumId) as { release_group_mbid?: string | null } | undefined;
+                    if (rgMbid?.release_group_mbid) {
+                        db.prepare(`
+                            UPDATE ReleaseGroupSlots SET monitored = 1, updated_at = CURRENT_TIMESTAMP
+                            WHERE release_group_mbid = ? AND monitored_lock = 0
+                        `).run(rgMbid.release_group_mbid);
+                        db.prepare(`
+                            UPDATE Albums SET monitored = 1, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?
+                        `).run(rgMbid.release_group_mbid);
+                    }
                 }
 
-                // Video media upsert
                 if (c.isVideo) {
                     db.prepare(`
-                        INSERT INTO ProviderMedia (
-                            id, artist_id, album_id, title, version, release_date, type,
-                            explicit, quality, duration, popularity, cover, monitored
-                        ) VALUES (?, ?, ?, ?, ?, ?, 'Music Video', ?, ?, ?, ?, ?, 1)
-                        ON CONFLICT(id) DO UPDATE SET
-                            artist_id = excluded.artist_id, album_id = excluded.album_id,
-                            title = excluded.title, version = excluded.version,
-                            release_date = excluded.release_date, explicit = excluded.explicit,
-                            quality = excluded.quality, duration = excluded.duration,
-                            popularity = excluded.popularity,
-                            cover = COALESCE(excluded.cover, cover),
-                            monitored = CASE WHEN monitored_lock = 0 OR monitored_lock IS NULL THEN 1 ELSE monitored END
-                    `).run(
-                        c.providerId, c.artistId, c.albumId || null,
-                        c.trackData.title || "Unknown Video", c.trackData.version || null,
-                        c.trackData.release_date || null, c.trackData.explicit ? 1 : 0,
-                        c.trackData.quality || "MP4_1080P", c.trackData.duration || 0,
-                        c.trackData.popularity || 0, c.trackData.cover || c.trackData.image_id || null,
-                    );
+                        UPDATE Recordings
+                        SET monitored = 1,
+                            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = (
+                            SELECT recording_id FROM ProviderItems
+                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                              AND recording_id IS NOT NULL
+                            LIMIT 1
+                        )
+                    `).run(c.providerId);
                 }
 
                 // Check for existing library file
@@ -404,10 +430,8 @@ export class ManualImportService {
                     });
                 }
 
-                // Monitor media + remove from unmapped
-                db.prepare(`
-                    UPDATE ProviderMedia SET monitored = 1, monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP) WHERE id = ?
-                `).run(c.providerId);
+                // Monitoring is canonical now (slot for albums, Recordings for
+                // videos — both set above); just remove from unmapped.
                 db.prepare("DELETE FROM UnmappedFiles WHERE id = ?").run(c.id);
 
                 // Track finalization targets (outside transaction, post-commit)
