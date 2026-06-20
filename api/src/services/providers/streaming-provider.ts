@@ -1,3 +1,7 @@
+import type { ProviderQualityMapping, NeutralQuality } from "./provider-quality.js";
+
+export type { ProviderQualityMapping, NeutralQuality } from "./provider-quality.js";
+
 export interface ProviderCapabilities {
   catalogSearch: boolean;
   artistCatalog: boolean;
@@ -18,10 +22,43 @@ export interface ProviderCapabilities {
   spatialFormats?: string[];
 }
 
+/**
+ * High-level, provider-agnostic capability descriptor (DATA_MODEL_TARGET §4).
+ *
+ * The detailed `ProviderCapabilities` above drives the settings UI; this compact
+ * 7-axis descriptor is what feature-gating callers use to degrade gracefully when
+ * a provider does not support an axis (e.g. a metadata-only provider with
+ * `download: false`). Every provider must supply it — it is derived from, and
+ * must stay consistent with, the detailed capabilities.
+ */
+export interface ProviderCoreCapabilities {
+  /** Can stream/return stereo audio metadata + previews/playback. */
+  audio: boolean;
+  /** Supports any spatial format (Atmos / 360). */
+  spatialAudio: boolean;
+  /** Supports music videos (metadata and/or playback). */
+  video: boolean;
+  /** Can return lyrics. */
+  lyrics: boolean;
+  /** Has a working download backend wired in. */
+  download: boolean;
+  /** Supports catalog search. */
+  search: boolean;
+  /** Can enumerate the user's followed artists. */
+  followedArtists: boolean;
+}
+
 export interface StreamingProvider {
   readonly id: string;
   readonly name: string;
   readonly capabilities: ProviderCapabilities;
+  /** Compact universal capability descriptor — see ProviderCoreCapabilities. */
+  readonly coreCapabilities: ProviderCoreCapabilities;
+  /** Neutral <-> provider quality translation (omit only if the provider has no audio). */
+  readonly qualityMapping?: ProviderQualityMapping;
+
+  /** Translate this provider's raw quality tags into the neutral model. */
+  toNeutralQuality?(rawTags: Iterable<string | null | undefined>): NeutralQuality;
 
   isAuthenticated?(): boolean;
   search(query: string, options?: ProviderSearchOptions): Promise<ProviderSearchResults>;
@@ -70,6 +107,28 @@ export interface StreamingProvider {
   ): Promise<void>;
   syncCredentials?(): Promise<void> | void;
   syncSettings?(downloadPath?: string): Promise<void> | void;
+}
+
+/**
+ * Derive the compact universal capability descriptor from the detailed
+ * capability flags, keeping the two in sync. `hasDownloadBackend` lets a
+ * provider report `download: false` when its backend is not yet wired (e.g. a
+ * metadata-only adapter), independent of the catalog-level audio/video flags.
+ */
+export function deriveCoreCapabilities(
+  capabilities: ProviderCapabilities,
+  options: { hasDownloadBackend?: boolean } = {},
+): ProviderCoreCapabilities {
+  const downloadable = capabilities.audioDownloads || capabilities.videoDownloads;
+  return {
+    audio: capabilities.lossyStereo || capabilities.losslessStereo || capabilities.hiResStereo || capabilities.audioPreviews,
+    spatialAudio: capabilities.spatialAudio,
+    video: capabilities.musicVideos || capabilities.videoPreviews || capabilities.videoDownloads,
+    lyrics: capabilities.lyrics,
+    download: downloadable && (options.hasDownloadBackend ?? true),
+    search: capabilities.catalogSearch,
+    followedArtists: capabilities.followedArtists,
+  };
 }
 
 export interface ProviderAuthStatus {

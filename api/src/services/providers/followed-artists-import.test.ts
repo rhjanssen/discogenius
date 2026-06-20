@@ -48,6 +48,15 @@ test("followed artist import uses the requested streaming provider", async () =>
       editorialMetadata: false,
       providerIds: true,
     },
+    coreCapabilities: {
+      audio: false,
+      spatialAudio: false,
+      video: false,
+      lyrics: false,
+      download: false,
+      search: false,
+      followedArtists: true,
+    },
     isAuthenticated: () => true,
     getFollowedArtists: async () => {
       followedArtistsRequested = true;

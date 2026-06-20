@@ -179,6 +179,16 @@ export interface QualityConfig {
   extract_flac?: boolean;
 }
 
+export interface StreamingConfig {
+  /**
+   * Active/default streaming provider id (e.g. "tidal", "apple-music"). Drives
+   * `getDefaultStreamingProvider()` instead of a hardcoded value. When unset or
+   * pointing at an unregistered provider the manager falls back to the first
+   * registered provider.
+   */
+  default_provider?: string;
+}
+
 export interface DiscoGeniusConfig {
   app: AppConfig;
   monitoring: MonitoringConfig;
@@ -187,6 +197,7 @@ export interface DiscoGeniusConfig {
   naming: NamingConfig;
   metadata: MetadataConfig;
   quality: QualityConfig;
+  streaming: StreamingConfig;
   account?: AccountConfig;
 }
 
@@ -269,6 +280,9 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_replaygain: true,
     write_audio_tags_policy: "all_files",
     scrub_audio_tags: false,
+  },
+  streaming: {
+    default_provider: "tidal",
   },
   account: {}
 };
@@ -362,6 +376,7 @@ export function readConfig(): DiscoGeniusConfig {
       naming: { ...DEFAULT_CONFIG.naming, ...(parsed as any).naming },
       metadata: { ...DEFAULT_CONFIG.metadata, ...metadataFromFile },
       quality: { ...DEFAULT_CONFIG.quality, ...(parsed as any).quality },
+      streaming: { ...DEFAULT_CONFIG.streaming, ...(parsed as any).streaming },
       account: { ...DEFAULT_CONFIG.account, ...parsed.account },
     };
 
@@ -506,6 +521,10 @@ export class Config {
 
   static getQualityConfig(): QualityConfig {
     return getConfigSection("quality");
+  }
+
+  static getStreamingConfig(): StreamingConfig {
+    return getConfigSection("streaming") || {};
   }
 
   static getAccountConfig(): AccountConfig {

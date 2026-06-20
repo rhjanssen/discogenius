@@ -1,14 +1,23 @@
 import type { StreamingProvider } from "./streaming-provider.js";
 import { tidalStreamingProvider } from "./tidal/tidal-provider.js";
+import { appleMusicStreamingProvider } from "./apple-music/apple-music-provider.js";
+import { Config } from "../config/config.js";
+
+const FALLBACK_DEFAULT_PROVIDER_ID = "tidal";
 
 class StreamingProviderManager {
   private readonly providers = new Map<string, StreamingProvider>();
+  private readonly registrationOrder: string[] = [];
 
   constructor() {
     this.registerStreamingProvider(tidalStreamingProvider);
+    this.registerStreamingProvider(appleMusicStreamingProvider);
   }
 
   registerStreamingProvider(provider: StreamingProvider): void {
+    if (!this.providers.has(provider.id)) {
+      this.registrationOrder.push(provider.id);
+    }
     this.providers.set(provider.id, provider);
   }
 
@@ -40,8 +49,29 @@ class StreamingProviderManager {
     }
   }
 
+  /**
+   * Resolve the active/default provider from config (DATA_MODEL_TARGET §4),
+   * not a hardcoded id. Falls back to the legacy "tidal" default, then to the
+   * first registered provider, if the configured id is missing/unregistered.
+   */
+  getDefaultProviderId(): string {
+    let configured: string | undefined;
+    try {
+      configured = Config.getStreamingConfig().default_provider?.trim() || undefined;
+    } catch {
+      configured = undefined;
+    }
+    if (configured && this.providers.has(configured)) {
+      return configured;
+    }
+    if (this.providers.has(FALLBACK_DEFAULT_PROVIDER_ID)) {
+      return FALLBACK_DEFAULT_PROVIDER_ID;
+    }
+    return this.registrationOrder[0] ?? FALLBACK_DEFAULT_PROVIDER_ID;
+  }
+
   getDefaultStreamingProvider(): StreamingProvider {
-    return this.getStreamingProvider("tidal");
+    return this.getStreamingProvider(this.getDefaultProviderId());
   }
 }
 
