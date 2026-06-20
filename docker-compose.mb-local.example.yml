@@ -1,0 +1,53 @@
+# Dev compose snippet: stand up the MusicBrainz mirror alongside Discogenius so
+# MB-local mode (docs/DATA_MODEL_TARGET.md §3, docs/MB_LOCAL_MODE.md) can be
+# exercised later. NOT for production and NOT wired into the live app yet.
+#
+# This file ONLY adds the Discogenius side of the wiring (a shared network + the
+# MB connection env vars). The MusicBrainz services themselves live in
+# `.ref_musicbrainz-docker/` — bring those up first per its README, then run
+# Discogenius on the same Docker network.
+#
+# Usage (two compose projects, one shared external network):
+#
+#   1. Create the shared network once:
+#        docker network create musicbrainz-docker_default || true
+#      (Compose auto-creates `<project>_default`; for `.ref_musicbrainz-docker`
+#       the project name defaults to the directory, i.e. `musicbrainz-docker`.
+#       Confirm with: docker network ls | grep musicbrainz)
+#
+#   2. Start the MB mirror (Postgres :5432 + web API :5000 + Solr):
+#        cd .ref_musicbrainz-docker
+#        # follow its README to build images + load a data dump first, then:
+#        docker compose up -d
+#
+#   3. Start Discogenius joined to that network:
+#        docker compose \
+#          -f docker-compose.yml \
+#          -f docker-compose.mb-local.example.yml \
+#          up -d
+#
+# Inside the shared network, Discogenius reaches:
+#   - the MB web-service mirror at  http://musicbrainz:5000/ws/2   (:5000 path — ships first)
+#   - the MB Postgres DB at         postgres://musicbrainz:musicbrainz@db:5432/musicbrainz_db   (perf follow-up)
+#
+# (Service names `musicbrainz` and `db` come from .ref_musicbrainz-docker/docker-compose.yml.
+#  From the host instead of inside the network, use http://localhost:5000/ws/2.)
+
+services:
+  discogenius:
+    environment:
+      # --- MB-local mode (read by future LocalMusicBrainzCatalogProvider wiring) ---
+      # The :5000 web-service mirror — same JSON shape as musicbrainz.org/ws/2,
+      # but on your own instance with no 1-req/s rate limit.
+      - DISCOGENIUS_CATALOG_SOURCE=${DISCOGENIUS_CATALOG_SOURCE:-skyhook} # skyhook (default) | musicbrainz-local
+      - MB_LOCAL_WS_URL=${MB_LOCAL_WS_URL:-http://musicbrainz:5000/ws/2}
+      # Direct Postgres path (performance follow-up; leave unset until enabled):
+      - MB_LOCAL_PG_URL=${MB_LOCAL_PG_URL:-}
+    networks:
+      - musicbrainz
+
+networks:
+  # Join the network created by .ref_musicbrainz-docker's compose project.
+  musicbrainz:
+    name: ${MB_DOCKER_NETWORK:-musicbrainz-docker_default}
+    external: true
