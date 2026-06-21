@@ -13,10 +13,7 @@ import {
   ProviderAuthStatus,
   ProviderDownloadOptions,
   ProviderCapabilities,
-  ProviderCoreCapabilities,
-  deriveCoreCapabilities,
 } from "../streaming-provider.js";
-import type { NeutralQuality } from "../provider-quality.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 import {
   AppleMusicAuthToken,
@@ -64,14 +61,7 @@ export class AppleMusicProvider implements StreamingProvider {
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
   };
-  readonly coreCapabilities: ProviderCoreCapabilities = deriveCoreCapabilities(this.capabilities, {
-    hasDownloadBackend: APPLE_MUSIC_DOWNLOAD_ENABLED,
-  });
   readonly qualityMapping = appleMusicQualityMapping;
-
-  toNeutralQuality(rawTags: Iterable<string | null | undefined>): NeutralQuality {
-    return appleMusicQualityMapping.toNeutral(rawTags);
-  }
 
   private apiOptions(): AppleMusicApiOptions {
     return {};
@@ -253,7 +243,7 @@ export class AppleMusicProvider implements StreamingProvider {
   }
 
   private isSpatial(tags: string[] = []): boolean {
-    return this.toNeutralQuality(tags).spatial!.length > 0;
+    return this.qualityMapping.toNeutral(tags).spatial!.length > 0;
   }
 
   private resizeArtwork(coverUrl: string, size: number): string {

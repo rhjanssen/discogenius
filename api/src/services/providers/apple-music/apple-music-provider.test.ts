@@ -126,19 +126,13 @@ test("provider exposes core capability descriptor and conforms to interface", as
   assert.equal(typeof provider.getArtworkUrl, "function");
   assert.equal(typeof provider.getAuthStatus, "function");
 
-  // 7-axis core descriptor present with all keys.
-  const core = provider.coreCapabilities;
-  for (const key of ["audio", "spatialAudio", "video", "lyrics", "download", "search", "followedArtists"]) {
-    assert.equal(typeof (core as unknown as Record<string, unknown>)[key], "boolean", `coreCapabilities.${key} must be boolean`);
-  }
-  assert.equal(core.search, true);
-  assert.equal(core.spatialAudio, true);
-  assert.equal(core.followedArtists, false);
-  // Download is gated behind the live binary path (default off without creds).
-  assert.equal(core.download, false);
+  // Detailed capabilities feature-gate the settings UI.
+  assert.equal(provider.capabilities.catalogSearch, true);
+  assert.equal(provider.capabilities.spatialAudio, true);
+  assert.equal(provider.capabilities.followedArtists, false);
 
   // Quality mapping is wired through the provider.
-  const neutral = provider.toNeutralQuality!(["atmos", "lossless"]);
+  const neutral = provider.qualityMapping!.toNeutral(["atmos", "lossless"]);
   assert.equal(neutral.audio, "lossless");
   assert.deepEqual(neutral.spatial, ["atmos"]);
 });

@@ -13,11 +13,8 @@ import {
   ProviderDeviceLoginResult,
   ProviderDeviceLoginPollResult,
   ProviderDownloadOptions,
-  ProviderCoreCapabilities,
-  deriveCoreCapabilities,
 } from "../streaming-provider.js";
 import { tidalQualityMapping } from "./tidal-quality.js";
-import type { NeutralQuality } from "../provider-quality.js";
 import * as tidal from "./tidal.js";
 import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "./tidal-playback.js";
 import { hasSpatialAudioQuality } from "../../../utils/spatial-audio.js";
@@ -173,14 +170,7 @@ export class TidalProvider implements StreamingProvider {
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
   };
-  readonly coreCapabilities: ProviderCoreCapabilities = deriveCoreCapabilities(this.capabilities, {
-    hasDownloadBackend: true,
-  });
   readonly qualityMapping = tidalQualityMapping;
-
-  toNeutralQuality(rawTags: Iterable<string | null | undefined>): NeutralQuality {
-    return tidalQualityMapping.toNeutral(rawTags);
-  }
 
   isAuthenticated(): boolean {
     return Boolean(tidal.loadToken()?.access_token);
