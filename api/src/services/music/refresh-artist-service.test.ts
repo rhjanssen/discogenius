@@ -18,6 +18,7 @@ before(async () => {
 });
 
 beforeEach(() => {
+  dbModule.db.prepare("DELETE FROM ProviderMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -113,6 +114,28 @@ test("matched provider offers attach to the canonical MusicBrainz artist and rel
   assert.equal(row.release_group_mbid, "release-group-mbid-1");
   assert.equal(row.release_mbid, "release-mbid-1");
   assert.equal(row.match_status, "verified");
+
+  const providerMatch = dbModule.db.prepare(`
+    SELECT provider, provider_id, target_mbid, status, confidence, method
+    FROM ProviderMatches
+    WHERE provider = 'tidal'
+      AND entity_type = 'release'
+      AND provider_id = ?
+      AND target_mbid = ?
+  `).get(album.provider_id, "release-mbid-1") as {
+    provider: string;
+    provider_id: string;
+    target_mbid: string;
+    status: string;
+    confidence: number;
+    method: string;
+  } | undefined;
+
+  assert.ok(providerMatch);
+  assert.equal(providerMatch.provider, "tidal");
+  assert.equal(providerMatch.status, "verified");
+  assert.equal(providerMatch.confidence, 1);
+  assert.equal(providerMatch.method, "musicbrainz-release-upc");
 });
 
 test("matched provider offers persist the best compatible MusicBrainz release version", () => {

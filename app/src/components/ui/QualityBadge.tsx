@@ -45,6 +45,13 @@ const useStyles = makeStyles({
         textTransform: "uppercase",
         letterSpacing: "0.02em",
     },
+    textLabel: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        lineHeight: 1,
+        transform: "translateY(0.5px)",
+    },
     // Heights are intentionally NOT overridden — we let Fluent's `size` prop set
     // the badge height so a QualityBadge lines up exactly with a MediaTypeBadge
     // (and any other Fluent Badge) of the same size in a shared row. We only tune
@@ -147,7 +154,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
             className={mergeClasses(styles.base, styles.label, sizeClass, className)}
             style={{ backgroundColor, color, borderColor }}
         >
-            {badgeText}
+            <span className={styles.textLabel}>{badgeText}</span>
         </Badge>
     );
 };

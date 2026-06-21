@@ -636,6 +636,20 @@ function chooseAvailabilityForSlot(
   return release.availability.find((offer) => !isSpatialQuality(offer.quality)) ?? release.availability[0] ?? null;
 }
 
+function sortReleasesForSwitcher(
+  releases: ReleaseGroupAvailability["releases"],
+  selectedReleaseBySlot: ReleaseGroupAvailability["selectedReleaseBySlot"],
+): ReleaseGroupAvailability["releases"] {
+  return releases
+    .map((release, index) => {
+      const selected = SWITCHABLE_SLOTS.some((slot) => selectedReleaseBySlot[slot] === release.releaseMbid);
+      const available = release.availability.length > 0;
+      return { release, index, rank: selected ? 0 : available ? 1 : 2 };
+    })
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.release);
+}
+
 interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
@@ -650,7 +664,7 @@ function ReleaseSwitcher({
   onSelect,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
-  const releases = availability.releases;
+  const releases = sortReleasesForSwitcher(availability.releases, availability.selectedReleaseBySlot);
 
   if (releases.length === 0) {
     return null;

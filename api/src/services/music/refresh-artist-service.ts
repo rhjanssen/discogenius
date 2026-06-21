@@ -21,6 +21,7 @@ import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metad
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderTrack, ProviderVideo } from "../providers/streaming-provider.js";
 import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
+import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
@@ -768,6 +769,19 @@ export class RefreshArtistService {
                         tracks: album._provider_tracks || null,
                     }),
                 );
+
+                if (matchedReleaseMbid && match && match.status !== "unmatched") {
+                    upsertProviderReleaseMatch({
+                        provider: providerId,
+                        providerId: providerAlbumId,
+                        providerAlbumId,
+                        releaseMbid: matchedReleaseMbid,
+                        status: match.status,
+                        confidence: match.confidence,
+                        method: match.method,
+                        evidence: JSON.stringify(match.evidence),
+                    });
+                }
 
             }
         })();
