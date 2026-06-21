@@ -1,3 +1,7 @@
+import type { ProviderQualityMapping } from "./provider-quality.js";
+
+export type { ProviderQualityMapping, NeutralQuality } from "./provider-quality.js";
+
 export interface ProviderCapabilities {
   catalogSearch: boolean;
   artistCatalog: boolean;
@@ -22,6 +26,8 @@ export interface StreamingProvider {
   readonly id: string;
   readonly name: string;
   readonly capabilities: ProviderCapabilities;
+  /** Neutral <-> provider quality translation (omit only if the provider has no audio). */
+  readonly qualityMapping?: ProviderQualityMapping;
 
   isAuthenticated?(): boolean;
   search(query: string, options?: ProviderSearchOptions): Promise<ProviderSearchResults>;

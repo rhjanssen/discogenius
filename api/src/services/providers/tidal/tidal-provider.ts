@@ -14,6 +14,7 @@ import {
   ProviderDeviceLoginPollResult,
   ProviderDownloadOptions,
 } from "../streaming-provider.js";
+import { tidalQualityMapping } from "./tidal-quality.js";
 import * as tidal from "./tidal.js";
 import { getBrowserPlaybackInfo, getVideoPlaybackInfo } from "./tidal-playback.js";
 import { hasSpatialAudioQuality } from "../../../utils/spatial-audio.js";
@@ -169,6 +170,7 @@ export class TidalProvider implements StreamingProvider {
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
   };
+  readonly qualityMapping = tidalQualityMapping;
 
   isAuthenticated(): boolean {
     return Boolean(tidal.loadToken()?.access_token);
