@@ -4,6 +4,7 @@ import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-gro
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
 import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
+import { upsertProviderReleaseMatch } from "./provider-matches.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
 
@@ -836,6 +837,18 @@ export class ReleaseGroupSlotService {
                     JSON.stringify({ ...selection.match.evidence, score: selection.score }),
                     JSON.stringify(buildProviderOfferSnapshot(selection.album)),
                 );
+                if (selection.match.releaseMbid) {
+                    upsertProviderReleaseMatch({
+                        provider: selection.provider,
+                        providerId: selection.album.providerId,
+                        providerAlbumId: selection.album.providerId,
+                        releaseMbid: selection.match.releaseMbid,
+                        status: selection.match.status,
+                        confidence: selection.match.confidence,
+                        method: selection.match.method,
+                        evidence: JSON.stringify({ ...selection.match.evidence, score: selection.score }),
+                    });
+                }
                 counts[selection.slot] += 1;
             }
         })();

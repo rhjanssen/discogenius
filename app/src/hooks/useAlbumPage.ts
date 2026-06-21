@@ -10,12 +10,14 @@ import {
 import type {
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
+    ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
     SimilarAlbumContract as SimilarAlbum,
 } from '@contracts/media';
 
 export type {
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
+    ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
     SimilarAlbumContract as SimilarAlbum,
 } from '@contracts/media';
 
@@ -24,6 +26,7 @@ export interface AlbumPageData {
     tracks: AlbumTrack[];
     similarAlbums: SimilarAlbum[];
     otherVersions: AlbumVersion[];
+    releaseAvailability: ReleaseGroupAvailability | null;
     artistImage: string | null;
 }
 
@@ -44,10 +47,16 @@ export function useAlbumPage(albumId: string | undefined) {
                 throw new Error('Album ID is required');
             }
 
-            const response = await api.getAlbumPage(albumId, {
-                signal,
-                timeoutMs: 15_000,
-            });
+            const [response, releaseAvailability] = await Promise.all([
+                api.getAlbumPage(albumId, {
+                    signal,
+                    timeoutMs: 15_000,
+                }),
+                api.getAlbumReleaseAvailability(albumId, {
+                    signal,
+                    timeoutMs: 15_000,
+                }),
+            ]);
 
             const artistImage = response.artistPicture ?? response.artistCoverImageUrl ?? null;
 
@@ -56,6 +65,7 @@ export function useAlbumPage(albumId: string | undefined) {
                 tracks: response.tracks,
                 otherVersions: response.otherVersions,
                 similarAlbums: response.similarAlbums,
+                releaseAvailability,
                 artistImage,
             };
         },

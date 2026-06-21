@@ -1,11 +1,13 @@
 import { Fragment, useState, useCallback, useMemo, useLayoutEffect, useRef, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { formatDurationSeconds } from "@/utils/format";
 import {
   AvatarGroup,
   AvatarGroupItem,
+  Badge,
   Button,
+  Card,
   Text,
   Title1,
   Title2,
@@ -48,6 +50,7 @@ import {
   useAlbumPage,
   type AlbumPageData,
   type AlbumTrack,
+  type ReleaseGroupAvailability,
 } from "@/hooks/useAlbumPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -439,6 +442,72 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
   },
+  releaseSwitcher: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+    width: "100%",
+  },
+  releaseRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr)",
+    gap: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalM,
+    paddingRight: tokens.spacingHorizontalM,
+    paddingBottom: tokens.spacingVerticalM,
+    paddingLeft: tokens.spacingHorizontalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+    "@media (min-width: 820px)": {
+      gridTemplateColumns: "minmax(0, 1fr) auto",
+      alignItems: "center",
+      gap: tokens.spacingHorizontalL,
+    },
+  },
+  releaseMain: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+  },
+  releaseTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  releaseTitle: {
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  releaseMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+    color: tokens.colorNeutralForeground2,
+  },
+  releaseAvailability: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  releaseSlotActions: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+    "@media (min-width: 820px)": {
+      justifyContent: "flex-end",
+      flexWrap: "nowrap",
+    },
+  },
+  unavailableText: {
+    color: tokens.colorNeutralForeground3,
+  },
   lockColorRed: {
     color: tokens.colorPaletteRedForeground1,
   },
@@ -481,6 +550,196 @@ const useStyles = makeStyles({
 /* ── Album overflow helpers ─────────────────────────────────── */
 
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
+const SWITCHABLE_SLOTS = ["stereo", "spatial"] as const;
+type SwitchableSlot = (typeof SWITCHABLE_SLOTS)[number];
+
+function slotLabel(slot: SwitchableSlot): string {
+  return slot === "spatial" ? "Spatial" : "Stereo";
+}
+
+function providerDisplayName(provider?: string | null): string {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (!normalized) return "Provider";
+  if (normalized === "tidal") return "TIDAL";
+  if (normalized.startsWith("apple")) return "Apple Music";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function releaseYear(date?: string | null): string | null {
+  if (!date) return null;
+  const year = new Date(date).getFullYear();
+  return Number.isFinite(year) ? String(year) : date.slice(0, 4) || null;
+}
+
+function releaseCountryLabel(country?: string | null): string | null {
+  const text = String(country || "").trim();
+  if (!text || text === "[]") return null;
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => String(item || "").replace(/^\[|\]$/g, "").trim())
+          .filter(Boolean)
+          .join(", ") || null;
+      }
+    } catch {
+      return text;
+    }
+  }
+  return text.replace(/^\[|\]$/g, "").trim() || null;
+}
+
+function releaseDisambiguationLabel(disambiguation?: string | null): string | null {
+  const text = String(disambiguation || "").trim();
+  if (!text) return null;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function releaseCountLabel(count: number | null | undefined, singular: string, plural: string): string | null {
+  if (count == null || !Number.isFinite(count) || count <= 0) return null;
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function releaseStatusLabel(status?: string | null): string | null {
+  const text = String(status || "").trim();
+  if (!text || text.toLowerCase() === "official") return null;
+  return text;
+}
+
+function releaseMetaParts(release: ReleaseGroupAvailability["releases"][number]): string[] {
+  return [
+    releaseYear(release.date),
+    releaseCountryLabel(release.country),
+    releaseCountLabel(release.mediumCount, "medium", "media"),
+    releaseCountLabel(release.trackCount, "track", "tracks"),
+    release.format ? `[${release.format}]` : null,
+    release.duration ? formatDurationSeconds(release.duration) : null,
+    releaseStatusLabel(release.status),
+  ].filter((part): part is string => Boolean(part));
+}
+
+function isSpatialQuality(quality?: string | null): boolean {
+  const normalized = String(quality || "").toUpperCase();
+  return normalized.includes("ATMOS") || normalized.includes("SPATIAL") || normalized.includes("360");
+}
+
+function chooseAvailabilityForSlot(
+  release: ReleaseGroupAvailability["releases"][number],
+  slot: SwitchableSlot,
+): ReleaseGroupAvailability["releases"][number]["availability"][number] | null {
+  const exact = release.availability.find((offer) => String(offer.librarySlot || "").toLowerCase() === slot);
+  if (exact) return exact;
+  if (slot === "spatial") {
+    return release.availability.find((offer) => isSpatialQuality(offer.quality)) ?? null;
+  }
+  return release.availability.find((offer) => !isSpatialQuality(offer.quality)) ?? release.availability[0] ?? null;
+}
+
+interface ReleaseSwitcherProps {
+  availability: ReleaseGroupAvailability;
+  currentReleaseMbid?: string | null;
+  pendingSelectionKey?: string | null;
+  onSelect: (slot: SwitchableSlot, releaseMbid: string, offer: ReleaseGroupAvailability["releases"][number]["availability"][number]) => void;
+}
+
+function ReleaseSwitcher({
+  availability,
+  currentReleaseMbid,
+  pendingSelectionKey,
+  onSelect,
+}: ReleaseSwitcherProps) {
+  const styles = useStyles();
+  const releases = availability.releases;
+
+  if (releases.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={styles.releaseSwitcher}>
+      {releases.map((release) => {
+        const disambiguation = releaseDisambiguationLabel(release.disambiguation);
+        const metaParts = releaseMetaParts(release);
+        const selectedSlots = SWITCHABLE_SLOTS.filter((slot) => availability.selectedReleaseBySlot[slot] === release.releaseMbid);
+        const providerOffers = Array.from(release.availability.reduce((deduped, offer) => {
+          const slot = String(offer.librarySlot || "").toLowerCase();
+          if (slot !== "stereo" && slot !== "spatial") {
+            return deduped;
+          }
+          const key = `${offer.provider || ""}|${slot}|${offer.quality || ""}`;
+          if (!deduped.has(key)) {
+            deduped.set(key, {
+              slot,
+              quality: offer.quality,
+              provider: offer.provider,
+              matchStatus: offer.status,
+              providerAlbumId: offer.providerAlbumId,
+              selectedReleaseMbid: release.releaseMbid,
+            } satisfies ProviderQualityOffer);
+          }
+          return deduped;
+        }, new Map<string, ProviderQualityOffer>()).values());
+
+        return (
+          <Card key={release.releaseMbid} className={styles.releaseRow}>
+            <div className={styles.releaseMain}>
+              <div className={styles.releaseTitleRow}>
+                <Text weight="semibold" className={styles.releaseTitle}>
+                  {release.title || "Untitled release"}
+                </Text>
+                {disambiguation ? (
+                  <Badge appearance="outline" color="subtle">{disambiguation}</Badge>
+                ) : null}
+                {release.releaseMbid === currentReleaseMbid ? (
+                  <Badge appearance="outline" color="subtle">Current page</Badge>
+                ) : null}
+                {selectedSlots.map((slot) => (
+                  <Badge key={slot} appearance="tint" color="success">{slotLabel(slot)}</Badge>
+                ))}
+              </div>
+              <div className={styles.releaseMeta}>
+                {metaParts.length > 0 ? <Text size={200}>{metaParts.join(" · ")}</Text> : null}
+                <Tooltip content={release.releaseMbid} relationship="label">
+                  <Text size={100}>{release.releaseMbid}</Text>
+                </Tooltip>
+              </div>
+              <div className={styles.releaseAvailability}>
+                {providerOffers.length > 0 ? (
+                  <ProviderQualityRow offers={providerOffers} size="small" />
+                ) : (
+                  <Text size={200} className={styles.unavailableText}>No matched provider offer</Text>
+                )}
+              </div>
+            </div>
+            <div className={styles.releaseSlotActions}>
+              {SWITCHABLE_SLOTS.map((slot) => {
+                const offer = chooseAvailabilityForSlot(release, slot);
+                const selected = availability.selectedReleaseBySlot[slot] === release.releaseMbid;
+                const pending = pendingSelectionKey === `${slot}:${release.releaseMbid}`;
+                const disabled = !offer || selected || Boolean(pendingSelectionKey);
+                const providerName = providerDisplayName(offer?.provider);
+                const buttonLabel = selected ? `${slotLabel(slot)} selected` : `Use for ${slotLabel(slot)}`;
+                return (
+                  <Button
+                    key={slot}
+                    size="small"
+                    appearance={selected ? "primary" : "secondary"}
+                    disabled={disabled}
+                    onClick={() => offer ? onSelect(slot, release.releaseMbid, offer) : undefined}
+                    title={offer ? `${buttonLabel} from ${providerName}` : `No ${slotLabel(slot).toLowerCase()} offer for this release`}
+                  >
+                    {pending ? "Saving..." : buttonLabel}
+                  </Button>
+                );
+              })}
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
 
 const AlbumPage = () => {
   const styles = useStyles();
@@ -498,6 +757,7 @@ const AlbumPage = () => {
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
   const [providerCoverImageFailed, setProviderCoverImageFailed] = useState(false);
+  const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
@@ -530,6 +790,7 @@ const AlbumPage = () => {
       .map(({ item }) => item);
   }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
+  const releaseAvailability = pageData?.releaseAvailability ?? null;
   const artistImage = pageData?.artistImage ?? undefined;
   const albumArtists = album?.album_artists?.length
     ? album.album_artists
@@ -758,6 +1019,60 @@ const AlbumPage = () => {
     }));
     dispatchLibraryUpdated();
   };
+
+  const slotSelectionMutation = useMutation({
+    mutationFn: async ({
+      slot,
+      releaseMbid,
+      provider,
+      providerAlbumId,
+    }: {
+      slot: SwitchableSlot;
+      releaseMbid: string;
+      provider: string;
+      providerAlbumId: string;
+    }) => api.setAlbumSlotSelection(albumId!, slot, { releaseMbid, provider, providerAlbumId }),
+    onSuccess: async (releaseAvailability) => {
+      updateAlbumPageCache((current) => ({
+        ...current,
+        releaseAvailability,
+      }));
+      await queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) });
+      dispatchLibraryUpdated();
+      toast({
+        title: "Release selection updated",
+        description: "The selected provider offer has been switched for this library.",
+      });
+    },
+    onError: (mutationError) => {
+      toast({
+        title: "Failed to switch release",
+        description: mutationError instanceof Error ? mutationError.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setPendingSelectionKey(null);
+    },
+  });
+
+  const handleSelectReleaseForSlot = useCallback((
+    slot: SwitchableSlot,
+    releaseMbid: string,
+    offer: ReleaseGroupAvailability["releases"][number]["availability"][number],
+  ) => {
+    if (!albumId || !offer.providerAlbumId) {
+      return;
+    }
+
+    setPendingSelectionKey(`${slot}:${releaseMbid}`);
+    slotSelectionMutation.mutate({
+      slot,
+      releaseMbid,
+      provider: offer.provider,
+      providerAlbumId: offer.providerAlbumId,
+    });
+  }, [albumId, slotSelectionMutation]);
 
   const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
     if (!album || !hasAnyProviderOffer) return;
@@ -1169,29 +1484,39 @@ const AlbumPage = () => {
         })()}
 
         {/* Release Group Releases Section */}
-        {
-          otherVersions.length > 0 && (
-            <div className={styles.sectionSpacing}>
-              <div className={styles.sectionHeader}>
-                <Title2>Other releases</Title2>
-              </div>
-              <div className={styles.carousel}>
-                {otherVersions.map((version) => {
-                  const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
-                  const isSelectedEdition = Boolean(version.id) && [
-                    album.stereo_release_mbid,
-                    album.spatial_release_mbid,
-                    album.selected_release_mbid,
-                  ].includes(version.id);
-                  const subtitle = [isSelectedEdition ? 'Selected edition' : null, version.version, year]
-                    .filter(Boolean)
-                    .join(' · ');
-                  return renderMiniAlbumCard(version, subtitle, undefined, { to: null });
-                })}
-              </div>
+        {releaseAvailability && releaseAvailability.releases.length > 0 ? (
+          <div className={styles.sectionSpacing}>
+            <div className={styles.sectionHeader}>
+              <Title2>Releases</Title2>
             </div>
-          )
-        }
+            <ReleaseSwitcher
+              availability={releaseAvailability}
+              currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
+              pendingSelectionKey={pendingSelectionKey}
+              onSelect={handleSelectReleaseForSlot}
+            />
+          </div>
+        ) : otherVersions.length > 0 ? (
+          <div className={styles.sectionSpacing}>
+            <div className={styles.sectionHeader}>
+              <Title2>Other releases</Title2>
+            </div>
+            <div className={styles.carousel}>
+              {otherVersions.map((version) => {
+                const year = version.release_date ? new Date(version.release_date).getFullYear() : '';
+                const isSelectedEdition = Boolean(version.id) && [
+                  album.stereo_release_mbid,
+                  album.spatial_release_mbid,
+                  album.selected_release_mbid,
+                ].includes(version.id);
+                const subtitle = [isSelectedEdition ? 'Selected edition' : null, version.version, year]
+                  .filter(Boolean)
+                  .join(' · ');
+                return renderMiniAlbumCard(version, subtitle, undefined, { to: null });
+              })}
+            </div>
+          </div>
+        ) : null}
 
         {/* Similar Albums Section */}
         {
