@@ -108,3 +108,51 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   assert.ok(vinyl);
   assert.equal(vinyl.availability.length, 0);
 });
+
+test("setSlotSelection switches the selected release and derives the best provider", () => {
+  const { db } = dbModule;
+  seedReleaseGroup();
+  providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-stereo", releaseMbid: "rel-stereo", status: "verified", confidence: 0.95 });
+  providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-atmos", releaseMbid: "rel-atmos", status: "verified", confidence: 0.9 });
+
+  // No slot row yet -> setSlotSelection inserts one selecting rel-atmos for the stereo slot.
+  const after = providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "stereo", releaseMbid: "rel-atmos" });
+  assert.equal(after.selectedReleaseBySlot.stereo, "rel-atmos");
+
+  const slot = db.prepare(`SELECT selected_release_mbid, selected_provider, selected_provider_id, monitored FROM ReleaseGroupSlots WHERE release_group_mbid='rg-1' AND slot='stereo'`).get() as any;
+  assert.equal(slot.selected_release_mbid, "rel-atmos");
+  assert.equal(slot.selected_provider, "tidal");
+  assert.equal(slot.selected_provider_id, "prov-atmos"); // derived best match for rel-atmos
+  assert.equal(slot.monitored, 0); // selection does not change monitoring
+
+  // Switching again updates the existing row.
+  providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "stereo", releaseMbid: "rel-stereo", provider: "tidal", providerAlbumId: "prov-stereo" });
+  const slot2 = db.prepare(`SELECT selected_release_mbid, selected_provider_id FROM ReleaseGroupSlots WHERE release_group_mbid='rg-1' AND slot='stereo'`).get() as any;
+  assert.equal(slot2.selected_release_mbid, "rel-stereo");
+  assert.equal(slot2.selected_provider_id, "prov-stereo");
+});
+
+test("setSlotSelection rejects an unknown slot and a release outside the group", () => {
+  seedReleaseGroup();
+  assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "bogus", releaseMbid: "rel-stereo" }), /unknown slot/);
+  assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "stereo", releaseMbid: "rel-not-in-group" }), /not in release group/);
+});
+
+test("startup backfill derives ProviderMatches from existing matched provider album offers", () => {
+  const { db } = dbModule;
+  // Existing matched album offer with no ProviderMatches row (simulates a pre-existing library).
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid-1', 'Queen')`).run();
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES ('rg-1', 'artist-mbid-1', 'A Night at the Opera', 'album')`).run();
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title) VALUES ('rel-stereo', 'rg-1', 'artist-mbid-1', 'A Night at the Opera')`).run();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid, match_status, match_confidence)
+              VALUES ('tidal', 'album', 'prov-stereo', 'LOSSLESS', 'stereo', 'rg-1', 'rel-stereo', 'verified', 0.95)`).run();
+  assert.equal((db.prepare(`SELECT COUNT(*) AS n FROM ProviderMatches`).get() as { n: number }).n, 0);
+
+  // Re-run init -> the idempotent backfill picks up the offer.
+  dbModule.initDatabase();
+
+  const row = db.prepare(`SELECT target_mbid, status, confidence FROM ProviderMatches WHERE provider='tidal' AND provider_id='prov-stereo' AND entity_type='release'`).get() as any;
+  assert.ok(row);
+  assert.equal(row.target_mbid, "rel-stereo");
+  assert.equal(row.status, "verified");
+});

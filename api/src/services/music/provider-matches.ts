@@ -75,6 +75,74 @@ export function upsertProviderReleaseMatch(input: ProviderReleaseMatchInput): vo
   );
 }
 
+/** Library slots that can hold a selected release. */
+export const SLOTS = ["stereo", "spatial", "video"] as const;
+export type Slot = (typeof SLOTS)[number];
+
+export interface SetSlotSelectionInput {
+  releaseGroupMbid: string;
+  slot: string;
+  releaseMbid: string;
+  provider?: string | null;
+  providerAlbumId?: string | null;
+}
+
+/**
+ * Switch which MB release fills a given slot for a release group (the write half
+ * of the Lidarr-style release switcher). Selection-only: this does not change a
+ * slot's monitored / monitored_lock state — monitoring stays orthogonal. When no
+ * provider is supplied, the best (highest-confidence) matched provider offer for
+ * the chosen release is used. Returns the refreshed availability.
+ */
+export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvailability {
+  if (!(SLOTS as readonly string[]).includes(input.slot)) {
+    throw new Error(`unknown slot: ${input.slot}`);
+  }
+
+  const releaseInGroup = db.prepare(
+    `SELECT 1 FROM AlbumReleases WHERE mbid = ? AND release_group_mbid = ?`,
+  ).get(input.releaseMbid, input.releaseGroupMbid);
+  if (!releaseInGroup) {
+    throw new Error(`release ${input.releaseMbid} is not in release group ${input.releaseGroupMbid}`);
+  }
+
+  let provider = input.provider ?? null;
+  let providerAlbumId = input.providerAlbumId ?? null;
+  if (!provider || !providerAlbumId) {
+    const best = db.prepare(`
+      SELECT provider, provider_id
+      FROM ProviderMatches
+      WHERE entity_type = 'release' AND target_mbid = ?
+      ORDER BY (confidence IS NULL), confidence DESC
+      LIMIT 1
+    `).get(input.releaseMbid) as { provider?: string; provider_id?: string } | undefined;
+    provider = provider ?? best?.provider ?? null;
+    providerAlbumId = providerAlbumId ?? best?.provider_id ?? null;
+  }
+
+  const result = db.prepare(`
+    UPDATE ReleaseGroupSlots
+    SET selected_release_mbid = ?, selected_provider = ?, selected_provider_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE release_group_mbid = ? AND slot = ?
+  `).run(input.releaseMbid, provider, providerAlbumId, input.releaseGroupMbid, input.slot);
+
+  if (result.changes === 0) {
+    const artist = db.prepare(`SELECT artist_mbid FROM Albums WHERE mbid = ?`)
+      .get(input.releaseGroupMbid) as { artist_mbid?: string } | undefined;
+    if (!artist?.artist_mbid) {
+      throw new Error(`unknown release group ${input.releaseGroupMbid}`);
+    }
+    db.prepare(`
+      INSERT INTO ReleaseGroupSlots (
+        artist_mbid, release_group_mbid, slot, monitored,
+        selected_release_mbid, selected_provider, selected_provider_id
+      ) VALUES (?, ?, ?, 0, ?, ?, ?)
+    `).run(artist.artist_mbid, input.releaseGroupMbid, input.slot, input.releaseMbid, provider, providerAlbumId);
+  }
+
+  return getReleaseGroupAvailability(input.releaseGroupMbid);
+}
+
 /**
  * Read: per-release streaming availability for a MusicBrainz release group.
  * Lists every MB release in the group, with the providers that have a matched

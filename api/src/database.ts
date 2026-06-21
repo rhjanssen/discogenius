@@ -1480,6 +1480,22 @@ export function initDatabase() {
   // DEFAULT DATA
   // ====================================================================
   initializeDefaultData(migrationSummary);
+
+  // Keep the additive ProviderMatches release graph in sync with provider album
+  // offers that already carry a resolved release_mbid. Idempotent (ON CONFLICT
+  // DO NOTHING); makes existing libraries release-availability-ready without a
+  // full re-scan. New matches are written directly by the matcher.
+  db.prepare(`
+    INSERT INTO ProviderMatches (
+      provider, entity_type, provider_id, provider_album_id,
+      target_mbid, target_kind, status, confidence, method, evidence, updated_at
+    )
+    SELECT provider, 'release', provider_id, provider_id,
+           release_mbid, 'release', match_status, match_confidence, match_method, match_evidence, CURRENT_TIMESTAMP
+    FROM ProviderItems
+    WHERE entity_type = 'album' AND release_mbid IS NOT NULL AND TRIM(release_mbid) <> ''
+    ON CONFLICT(provider, entity_type, provider_id, target_mbid) DO NOTHING
+  `).run();
 }
 
 function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
