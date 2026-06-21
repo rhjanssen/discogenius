@@ -41,16 +41,16 @@ function seedReleaseGroup() {
 
 beforeEach(() => {
   const { db } = dbModule;
-  for (const t of ["ProviderMatches", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings", "AlbumReleaseMedia", "AlbumReleases", "Albums", "ArtistMetadata"]) {
+  for (const t of ["ProviderItemMatches", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings", "AlbumReleaseMedia", "AlbumReleases", "Albums", "ArtistMetadata"]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 });
 
-test("fresh database has the additive ProviderMatches table", () => {
+test("fresh database has the ProviderItemMatches table", () => {
   const row = dbModule.db.prepare(
-    `SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMatches'`,
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderItemMatches'`,
   ).get() as { name?: string } | undefined;
-  assert.equal(row?.name, "ProviderMatches");
+  assert.equal(row?.name, "ProviderItemMatches");
 });
 
 test("upsert persists candidate matches and dedupes per (source,target)", () => {
@@ -66,7 +66,7 @@ test("upsert persists candidate matches and dedupes per (source,target)", () => 
     status: "verified", confidence: 0.99, method: "upc",
   });
   const rows = db.prepare(
-    `SELECT status, confidence FROM ProviderMatches WHERE provider='tidal' AND provider_id='prov-stereo' AND target_mbid='rel-stereo'`,
+    `SELECT status, confidence FROM ProviderItemMatches WHERE provider='tidal' AND provider_item_id='prov-stereo' AND musicbrainz_release_mbid='rel-stereo'`,
   ).all() as Array<{ status: string; confidence: number }>;
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, "verified");
@@ -78,7 +78,7 @@ test("a single provider album can hold multiple candidate release matches", () =
   seedReleaseGroup();
   providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-stereo", releaseMbid: "rel-stereo", status: "verified", confidence: 0.95 });
   providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-stereo", releaseMbid: "rel-atmos", status: "candidate", confidence: 0.4 });
-  const count = (db.prepare(`SELECT COUNT(*) AS n FROM ProviderMatches WHERE provider_id='prov-stereo'`).get() as { n: number }).n;
+  const count = (db.prepare(`SELECT COUNT(*) AS n FROM ProviderItemMatches WHERE provider_item_id='prov-stereo'`).get() as { n: number }).n;
   assert.equal(count, 2);
 });
 
@@ -119,6 +119,79 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   const vinyl = withVinyl.releases.find((r) => r.releaseMbid === "rel-vinyl");
   assert.ok(vinyl);
   assert.equal(vinyl.availability.length, 0);
+});
+
+test("getReleaseGroupAvailability derives strict hybrid coverage from multiple provider albums", () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-bastille", "Bastille");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run("rg-unplugged", "artist-bastille", "Killing Me Softly With His Song (MTV Unplugged)", "single");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count)
+              VALUES (?, ?, ?, ?, 'Official', '2023-04-26', 'XW', 1, 3)`)
+    .run("rel-three-track", "rg-unplugged", "artist-bastille", "Killing Me Softly With His Song (MTV Unplugged)");
+
+  for (const [recording, track, title, position, length] of [
+    ["rec-softly", "track-softly", "Killing Me Softly With His Song (edit)", 1, 298540],
+    ["rec-pompeii", "track-pompeii", "Pompeii (edit)", 2, 268690],
+    ["rec-nirvana", "track-nirvana", "Come as You Are (edit)", 3, 231490],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms) VALUES (?, 'artist-bastille', ?, ?)`)
+      .run(recording, title, length);
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+                VALUES (?, 'rel-three-track', ?, ?, ?, 1, ?)`)
+      .run(track, recording, title, position, length);
+  }
+
+  const albumData = (tracks: Array<{ title: string; isrc: string; duration: number }>) => JSON.stringify({
+    quality: "HIRES_LOSSLESS",
+    tracks: tracks.map((track, index) => ({
+      ...track,
+      track_number: index + 1,
+      volume_number: 1,
+    })),
+  });
+
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
+    .run("290132977", "Killing Me Softly With His Song (MTV Unplugged / Edit)", albumData([
+      { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
+    .run("287367980", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
+      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
+      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
+    .run("extra-provider-album", "Pompeii / Come As You Are / Extra", albumData([
+      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
+      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
+      { title: "Extra Track", isrc: "GBUM70000000", duration: 180 },
+    ]));
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-unplugged");
+  const release = result.releases.find((item) => item.releaseMbid === "rel-three-track");
+
+  assert.ok(release);
+  assert.equal(release.availability.length, 1);
+  assert.equal(release.availability[0].matchKind, "composite");
+  assert.equal(release.availability[0].provider, "tidal");
+  assert.deepEqual(release.availability[0].providerAlbumIds, ["290132977", "287367980"]);
+  assert.equal(release.availability[0].providerAlbumId, "290132977+287367980");
+  assert.equal(release.availability[0].coverageSummary, "3/3 tracks from 2 provider albums");
+
+  const after = providerMatches.setSlotSelection({
+    releaseGroupMbid: "rg-unplugged",
+    slot: "stereo",
+    releaseMbid: "rel-three-track",
+    provider: "tidal",
+    providerAlbumId: "290132977+287367980",
+  });
+  assert.equal(after.selectedReleaseBySlot.stereo, "rel-three-track");
+  const slot = db.prepare(`SELECT selected_provider_id, match_method FROM ReleaseGroupSlots WHERE release_group_mbid='rg-unplugged' AND slot='stereo'`).get() as any;
+  assert.equal(slot.selected_provider_id, "290132977+287367980");
+  assert.equal(slot.match_method, "strict_composite_track_coverage");
 });
 
 test("setSlotSelection switches the selected release and derives the best provider", () => {

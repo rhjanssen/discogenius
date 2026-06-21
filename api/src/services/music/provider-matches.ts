@@ -1,13 +1,10 @@
 import { db } from "../../database.js";
 
 /**
- * Additive provider -> MusicBrainz match graph (the `ProviderMatches` table).
+ * Provider item -> MusicBrainz match graph (the `ProviderItemMatches` table).
  *
- * This persists candidate matches from a provider entity (today: a provider album)
- * to a canonical MusicBrainz entity (today: an MB release). Multiple candidate rows
- * per provider source are allowed, which is what lets the release-availability
- * switcher show every MB release a provider can supply. It lives alongside the
- * existing `ProviderItems` offer cache and does not replace it.
+ * ProviderItems stores provider-native offer facts. ProviderItemMatches stores
+ * only the edge from a provider item to explicit MusicBrainz identifiers.
  */
 
 export interface ProviderReleaseMatchInput {
@@ -28,10 +25,13 @@ export interface ProviderReleaseMatchInput {
 export interface ReleaseAvailabilityProvider {
   provider: string;
   providerAlbumId: string | null;
+  providerAlbumIds?: string[];
   quality: string | null;
   librarySlot: string | null;
   status: string | null;
   confidence: number | null;
+  matchKind?: "direct" | "composite";
+  coverageSummary?: string | null;
 }
 
 export interface ReleaseAvailability {
@@ -57,22 +57,45 @@ export interface ReleaseGroupAvailability {
 
 /** Additively upsert a provider-album -> MB-release match candidate. */
 export function upsertProviderReleaseMatch(input: ProviderReleaseMatchInput): void {
-  db.prepare(`
-    INSERT INTO ProviderMatches (
-      provider, entity_type, provider_id, provider_album_id,
-      target_mbid, target_kind, status, confidence, method, evidence, updated_at
-    ) VALUES (?, 'release', ?, ?, ?, 'release', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(provider, entity_type, provider_id, target_mbid) DO UPDATE SET
-      provider_album_id = excluded.provider_album_id,
-      status = excluded.status,
-      confidence = excluded.confidence,
-      method = excluded.method,
-      evidence = excluded.evidence,
+  const providerItemId = String(input.providerId);
+  const providerAlbumId = input.providerAlbumId != null ? String(input.providerAlbumId) : providerItemId;
+  const updated = db.prepare(`
+    UPDATE ProviderItemMatches
+    SET
+      provider_album_id = ?,
+      status = ?,
+      confidence = ?,
+      method = ?,
+      evidence = ?,
       updated_at = CURRENT_TIMESTAMP
+    WHERE provider = ?
+      AND provider_item_type = 'album'
+      AND provider_item_id = ?
+      AND musicbrainz_artist_mbid IS NULL
+      AND musicbrainz_release_mbid = ?
+      AND musicbrainz_track_mbid IS NULL
+      AND musicbrainz_recording_mbid IS NULL
+  `).run(
+    providerAlbumId,
+    input.status ?? null,
+    input.confidence ?? null,
+    input.method ?? null,
+    input.evidence ?? null,
+    input.provider,
+    providerItemId,
+    input.releaseMbid,
+  );
+  if (updated.changes > 0) return;
+
+  db.prepare(`
+    INSERT INTO ProviderItemMatches (
+      provider, provider_item_type, provider_item_id, provider_album_id,
+      musicbrainz_release_mbid, status, confidence, method, evidence, updated_at
+    ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).run(
     input.provider,
-    String(input.providerId),
-    input.providerAlbumId != null ? String(input.providerAlbumId) : String(input.providerId),
+    providerItemId,
+    providerAlbumId,
     input.releaseMbid,
     input.status ?? null,
     input.confidence ?? null,
@@ -95,12 +118,50 @@ export interface SetSlotSelectionInput {
 
 interface ProviderReleaseOfferRow {
   provider: string;
-  provider_id: string;
+  provider_item_id: string;
   quality: string | null;
   status: string | null;
   confidence: number | null;
   method: string | null;
   evidence: string | null;
+  data: string | null;
+}
+
+interface TargetTrackRow {
+  mbid: string;
+  recording_mbid: string | null;
+  title: string | null;
+  length_ms: number | null;
+  medium_position: number | null;
+  position: number | null;
+}
+
+interface ProviderAlbumCoverageCandidate {
+  provider: string;
+  providerAlbumId: string;
+  quality: string | null;
+  librarySlot: string | null;
+  coveredTrackMbids: Set<string>;
+  evidence: Array<{
+    targetTrackMbid: string;
+    targetRecordingMbid: string | null;
+    providerTrackTitle: string;
+    providerTrackIsrc: string | null;
+    durationDeltaSeconds: number | null;
+  }>;
+}
+
+interface ProviderTrackLike {
+  title?: unknown;
+  isrc?: unknown;
+  duration?: unknown;
+}
+
+interface ProviderAlbumRow {
+  provider: string;
+  provider_item_id: string;
+  quality: string | null;
+  library_slot: string | null;
   data: string | null;
 }
 
@@ -126,26 +187,51 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
   let provider = input.provider ?? null;
   let providerAlbumId = input.providerAlbumId ?? null;
   let offer: ProviderReleaseOfferRow | undefined;
-  if (provider && providerAlbumId) {
+  if (provider && providerAlbumId && providerAlbumId.includes("+")) {
+    const availability = getReleaseGroupAvailability(input.releaseGroupMbid);
+    const release = availability.releases.find((item) => item.releaseMbid === input.releaseMbid);
+    const composite = release?.availability.find((item) =>
+      item.matchKind === "composite"
+      && item.provider === provider
+      && item.providerAlbumId === providerAlbumId
+    );
+    if (!composite) {
+      throw new Error(`composite provider offer ${provider}:${providerAlbumId} does not cover release ${input.releaseMbid}`);
+    }
+    offer = {
+      provider,
+      provider_item_id: providerAlbumId,
+      quality: composite.quality,
+      status: composite.status,
+      confidence: composite.confidence,
+      method: "strict_composite_track_coverage",
+      evidence: JSON.stringify({
+        matchKind: "composite",
+        providerAlbumIds: composite.providerAlbumIds ?? providerAlbumId.split("+"),
+        coverageSummary: composite.coverageSummary,
+      }),
+      data: null,
+    };
+  } else if (provider && providerAlbumId) {
     offer = db.prepare(`
       SELECT
         pm.provider,
-        pm.provider_id,
+        pm.provider_item_id,
         pi.quality,
         pm.status,
         pm.confidence,
         pm.method,
         pm.evidence,
         pi.data
-      FROM ProviderMatches pm
+      FROM ProviderItemMatches pm
       LEFT JOIN ProviderItems pi
         ON pi.provider = pm.provider
        AND pi.entity_type = 'album'
-       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_id AS TEXT)
-      WHERE pm.entity_type = 'release'
-        AND pm.target_mbid = ?
+       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+      WHERE pm.provider_item_type = 'album'
+        AND pm.musicbrainz_release_mbid = ?
         AND pm.provider = ?
-        AND CAST(pm.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND CAST(pm.provider_item_id AS TEXT) = CAST(? AS TEXT)
         AND (pm.status IS NULL OR LOWER(pm.status) <> 'rejected')
       LIMIT 1
     `).get(input.releaseMbid, provider, providerAlbumId) as ProviderReleaseOfferRow | undefined;
@@ -156,26 +242,26 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
     offer = db.prepare(`
       SELECT
         pm.provider,
-        pm.provider_id,
+        pm.provider_item_id,
         pi.quality,
         pm.status,
         pm.confidence,
         pm.method,
         pm.evidence,
         pi.data
-      FROM ProviderMatches pm
+      FROM ProviderItemMatches pm
       LEFT JOIN ProviderItems pi
         ON pi.provider = pm.provider
        AND pi.entity_type = 'album'
-       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_id AS TEXT)
-      WHERE pm.entity_type = 'release'
-        AND pm.target_mbid = ?
+       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+      WHERE pm.provider_item_type = 'album'
+        AND pm.musicbrainz_release_mbid = ?
         AND (pm.status IS NULL OR LOWER(pm.status) <> 'rejected')
       ORDER BY (pm.confidence IS NULL), pm.confidence DESC, pm.updated_at DESC
       LIMIT 1
     `).get(input.releaseMbid) as ProviderReleaseOfferRow | undefined;
     provider = provider ?? offer?.provider ?? null;
-    providerAlbumId = providerAlbumId ?? offer?.provider_id ?? null;
+    providerAlbumId = providerAlbumId ?? offer?.provider_item_id ?? null;
   }
 
   const result = db.prepare(`
@@ -280,12 +366,12 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       pi.quality          AS quality,
       pi.library_slot     AS library_slot
     FROM AlbumReleases ar
-    LEFT JOIN ProviderMatches pm
-      ON pm.entity_type = 'release' AND pm.target_mbid = ar.mbid
+    LEFT JOIN ProviderItemMatches pm
+      ON pm.provider_item_type = 'album' AND pm.musicbrainz_release_mbid = ar.mbid
     LEFT JOIN ProviderItems pi
       ON pi.provider = pm.provider
      AND pi.entity_type = 'album'
-     AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_id AS TEXT)
+     AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
     WHERE ar.release_group_mbid = ?
     ORDER BY (ar.date IS NULL), ar.date, ar.mbid, pm.confidence DESC
   `).all(releaseGroupMbid) as Array<{
@@ -334,9 +420,12 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
         librarySlot: r.library_slot,
         status: r.status,
         confidence: r.confidence,
+        matchKind: "direct",
       });
     }
   }
+
+  appendStrictCompositeCoverage(releaseGroupMbid, byRelease);
 
   const slotRows = db.prepare(`
     SELECT slot, selected_release_mbid FROM ReleaseGroupSlots WHERE release_group_mbid = ?
@@ -349,4 +438,225 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     selectedReleaseBySlot,
     releases: Array.from(byRelease.values()),
   };
+}
+
+function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<string, ReleaseAvailability>): void {
+  const groupArtist = db.prepare(`
+    SELECT artist_mbid
+    FROM AlbumReleases
+    WHERE release_group_mbid = ? AND artist_mbid IS NOT NULL
+    ORDER BY date IS NULL, date, mbid
+    LIMIT 1
+  `).get(releaseGroupMbid) as { artist_mbid: string } | undefined;
+  if (!groupArtist?.artist_mbid) return;
+
+  const providerAlbums = db.prepare(`
+    SELECT provider, provider_id AS provider_item_id, quality, library_slot, data
+    FROM ProviderItems
+    WHERE entity_type = 'album'
+      AND artist_mbid = ?
+      AND data IS NOT NULL
+      AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+  `).all(groupArtist.artist_mbid) as ProviderAlbumRow[];
+
+  if (providerAlbums.length < 2) return;
+
+  for (const release of byRelease.values()) {
+    if (release.availability.some((offer) => offer.matchKind !== "composite")) {
+      continue;
+    }
+
+    const targetTracks = db.prepare(`
+      SELECT mbid, recording_mbid, title, length_ms, medium_position, position
+      FROM Tracks
+      WHERE release_mbid = ?
+      ORDER BY medium_position, position, mbid
+    `).all(release.releaseMbid) as TargetTrackRow[];
+
+    if (targetTracks.length < 2) continue;
+
+    const candidates = providerAlbums
+      .map((album) => buildProviderAlbumCoverageCandidate(album, targetTracks))
+      .filter((candidate): candidate is ProviderAlbumCoverageCandidate => Boolean(candidate));
+
+    const selected = chooseStrictComposite(candidates, targetTracks);
+    if (!selected || selected.length < 2) continue;
+
+    const orderedSelected = orderCompositeByTargetTrack(selected, targetTracks);
+    const provider = orderedSelected[0].provider;
+    const providerAlbumIds = orderedSelected.map((candidate) => candidate.providerAlbumId);
+    const qualities = orderedSelected.map((candidate) => candidate.quality).filter(Boolean) as string[];
+    const quality = chooseLowestCompositeQuality(qualities);
+    const librarySlot = orderedSelected.find((candidate) => candidate.librarySlot)?.librarySlot ?? null;
+    const evidence = orderedSelected.flatMap((candidate) => candidate.evidence);
+
+    release.availability.push({
+      provider,
+      providerAlbumId: providerAlbumIds.join("+"),
+      providerAlbumIds,
+      quality,
+      librarySlot,
+      status: "verified",
+      confidence: 1,
+      matchKind: "composite",
+      coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
+    });
+
+    // Keep the in-memory evidence reachable while debugging via the service
+    // without expanding the public contract into a large per-track payload yet.
+    void evidence;
+  }
+}
+
+function orderCompositeByTargetTrack(
+  selected: ProviderAlbumCoverageCandidate[],
+  targetTracks: TargetTrackRow[],
+): ProviderAlbumCoverageCandidate[] {
+  const positionByMbid = new Map(targetTracks.map((track, index) => [track.mbid, index]));
+  return [...selected].sort((a, b) => {
+    const firstA = Math.min(...Array.from(a.coveredTrackMbids, (mbid) => positionByMbid.get(mbid) ?? Number.MAX_SAFE_INTEGER));
+    const firstB = Math.min(...Array.from(b.coveredTrackMbids, (mbid) => positionByMbid.get(mbid) ?? Number.MAX_SAFE_INTEGER));
+    return firstA - firstB || a.providerAlbumId.localeCompare(b.providerAlbumId);
+  });
+}
+
+function buildProviderAlbumCoverageCandidate(
+  album: ProviderAlbumRow,
+  targetTracks: TargetTrackRow[],
+): ProviderAlbumCoverageCandidate | null {
+  let parsed: unknown;
+  try {
+    parsed = album.data ? JSON.parse(album.data) : null;
+  } catch {
+    return null;
+  }
+  const providerTracks = Array.isArray((parsed as { tracks?: unknown } | null)?.tracks)
+    ? ((parsed as { tracks: unknown[] }).tracks as ProviderTrackLike[])
+    : [];
+  if (providerTracks.length === 0 || providerTracks.length > targetTracks.length) return null;
+
+  const coveredTrackMbids = new Set<string>();
+  const evidence: ProviderAlbumCoverageCandidate["evidence"] = [];
+
+  for (const providerTrack of providerTracks) {
+    const matches = targetTracks.filter((target) => {
+      if (coveredTrackMbids.has(target.mbid)) return false;
+      return providerTrackMatchesTarget(providerTrack, target);
+    });
+    if (matches.length !== 1) return null;
+    const target = matches[0];
+    coveredTrackMbids.add(target.mbid);
+    const providerDuration = numericProviderDuration(providerTrack.duration);
+    evidence.push({
+      targetTrackMbid: target.mbid,
+      targetRecordingMbid: target.recording_mbid,
+      providerTrackTitle: String(providerTrack.title || ""),
+      providerTrackIsrc: typeof providerTrack.isrc === "string" ? providerTrack.isrc : null,
+      durationDeltaSeconds: providerDuration != null && target.length_ms != null
+        ? Math.abs(providerDuration - target.length_ms / 1000)
+        : null,
+    });
+  }
+
+  if (coveredTrackMbids.size === 0) return null;
+  return {
+    provider: album.provider,
+    providerAlbumId: String(album.provider_item_id),
+    quality: album.quality,
+    librarySlot: album.library_slot,
+    coveredTrackMbids,
+    evidence,
+  };
+}
+
+function providerTrackMatchesTarget(providerTrack: ProviderTrackLike, target: TargetTrackRow): boolean {
+  const providerTitle = normalizeTrackTitle(providerTrack.title);
+  const targetTitle = normalizeTrackTitle(target.title);
+  if (!providerTitle || !targetTitle || providerTitle !== targetTitle) return false;
+
+  const providerDuration = numericProviderDuration(providerTrack.duration);
+  if (providerDuration == null || target.length_ms == null) return true;
+  return Math.abs(providerDuration - target.length_ms / 1000) <= 4;
+}
+
+function normalizeTrackTitle(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\b(edit|single version|radio edit|mtv unplugged)\b/g, " ")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function numericProviderDuration(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function chooseStrictComposite(
+  candidates: ProviderAlbumCoverageCandidate[],
+  targetTracks: TargetTrackRow[],
+): ProviderAlbumCoverageCandidate[] | null {
+  const targetMbids = new Set(targetTracks.map((track) => track.mbid));
+  const byProvider = new Map<string, ProviderAlbumCoverageCandidate[]>();
+  for (const candidate of candidates) {
+    const list = byProvider.get(candidate.provider) ?? [];
+    list.push(candidate);
+    byProvider.set(candidate.provider, list);
+  }
+
+  for (const providerCandidates of byProvider.values()) {
+    const sorted = providerCandidates
+      .filter((candidate) => candidate.coveredTrackMbids.size < targetMbids.size)
+      .sort((a, b) => b.coveredTrackMbids.size - a.coveredTrackMbids.size || a.providerAlbumId.localeCompare(b.providerAlbumId));
+
+    const selected = findExactCover(sorted, targetMbids, [], new Set<string>(), 0);
+    if (selected && selected.length > 1) return selected;
+  }
+  return null;
+}
+
+function findExactCover(
+  candidates: ProviderAlbumCoverageCandidate[],
+  targetMbids: Set<string>,
+  selected: ProviderAlbumCoverageCandidate[],
+  covered: Set<string>,
+  startIndex: number,
+): ProviderAlbumCoverageCandidate[] | null {
+  if (covered.size === targetMbids.size) return [...selected];
+  if (selected.length >= 4) return null;
+
+  for (let i = startIndex; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    let overlaps = false;
+    for (const trackMbid of candidate.coveredTrackMbids) {
+      if (covered.has(trackMbid)) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (overlaps) continue;
+
+    const nextCovered = new Set(covered);
+    for (const trackMbid of candidate.coveredTrackMbids) nextCovered.add(trackMbid);
+    const result = findExactCover(candidates, targetMbids, [...selected, candidate], nextCovered, i + 1);
+    if (result) return result;
+  }
+  return null;
+}
+
+function chooseLowestCompositeQuality(qualities: string[]): string | null {
+  if (qualities.length === 0) return null;
+  const rank = (quality: string) => {
+    const q = quality.toUpperCase();
+    if (q.includes("ATMOS") || q.includes("SPATIAL")) return 4;
+    if (q.includes("HIRES")) return 3;
+    if (q.includes("LOSSLESS")) return 2;
+    if (q.includes("HIGH")) return 1;
+    return 0;
+  };
+  return [...qualities].sort((a, b) => rank(a) - rank(b))[0] ?? null;
 }

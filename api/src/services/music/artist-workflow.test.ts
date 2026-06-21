@@ -43,3 +43,17 @@ test("unmonitored artist intake reuses metadata refresh without collaborator sno
     TaskQueueService.addJob = originalAddJob;
   }
 });
+
+test("monitoring intake hydrates provider offers without queuing downloads", () => {
+  const payload = buildRefreshArtistJobPayload({
+    artistId: "artist-mbid",
+    artistName: "Bastille",
+    workflow: "monitoring-intake",
+  });
+
+  assert.equal(payload.monitorArtist, true);
+  assert.equal(payload.hydrateCatalog, true);
+  assert.equal(payload.hydrateAlbumTracks, true);
+  assert.equal(payload.monitorAlbums, true);
+  assert.equal(payload.forceDownloadQueue, false);
+});

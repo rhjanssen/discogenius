@@ -18,7 +18,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-  dbModule.db.prepare("DELETE FROM ProviderMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderItemMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -116,16 +116,16 @@ test("matched provider offers attach to the canonical MusicBrainz artist and rel
   assert.equal(row.match_status, "verified");
 
   const providerMatch = dbModule.db.prepare(`
-    SELECT provider, provider_id, target_mbid, status, confidence, method
-    FROM ProviderMatches
+    SELECT provider, provider_item_id, musicbrainz_release_mbid, status, confidence, method
+    FROM ProviderItemMatches
     WHERE provider = 'tidal'
-      AND entity_type = 'release'
-      AND provider_id = ?
-      AND target_mbid = ?
+      AND provider_item_type = 'album'
+      AND provider_item_id = ?
+      AND musicbrainz_release_mbid = ?
   `).get(album.provider_id, "release-mbid-1") as {
     provider: string;
-    provider_id: string;
-    target_mbid: string;
+    provider_item_id: string;
+    musicbrainz_release_mbid: string;
     status: string;
     confidence: number;
     method: string;

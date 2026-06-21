@@ -688,7 +688,10 @@ function ReleaseSwitcher({
               quality: offer.quality,
               provider: offer.provider,
               matchStatus: offer.status,
+              matchKind: offer.matchKind,
+              coverageSummary: offer.coverageSummary,
               providerAlbumId: offer.providerAlbumId,
+              providerAlbumIds: offer.providerAlbumIds,
               selectedReleaseMbid: release.releaseMbid,
             } satisfies ProviderQualityOffer);
           }
@@ -734,6 +737,9 @@ function ReleaseSwitcher({
                 const disabled = !offer || selected || Boolean(pendingSelectionKey);
                 const providerName = providerDisplayName(offer?.provider);
                 const buttonLabel = selected ? `${slotLabel(slot)} selected` : `Use for ${slotLabel(slot)}`;
+                const offerLabel = offer?.matchKind === "composite"
+                  ? `${buttonLabel} from ${providerName} hybrid coverage`
+                  : `${buttonLabel} from ${providerName}`;
                 return (
                   <Button
                     key={slot}
@@ -741,7 +747,7 @@ function ReleaseSwitcher({
                     appearance={selected ? "primary" : "secondary"}
                     disabled={disabled}
                     onClick={() => offer ? onSelect(slot, release.releaseMbid, offer) : undefined}
-                    title={offer ? `${buttonLabel} from ${providerName}` : `No ${slotLabel(slot).toLowerCase()} offer for this release`}
+                    title={offer ? offerLabel : `No ${slotLabel(slot).toLowerCase()} offer for this release`}
                   >
                     {pending ? "Saving..." : buttonLabel}
                   </Button>

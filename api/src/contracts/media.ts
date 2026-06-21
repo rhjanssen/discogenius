@@ -101,10 +101,13 @@ export interface AlbumVersionContract extends SimilarAlbumContract {
 export interface ReleaseAvailabilityProviderContract {
   provider: string;
   providerAlbumId: string | null;
+  providerAlbumIds?: string[];
   quality: string | null;
   librarySlot: string | null;
   status: string | null;
   confidence: number | null;
+  matchKind?: "direct" | "composite";
+  coverageSummary?: string | null;
 }
 
 export interface ReleaseAvailabilityContract {
@@ -289,10 +292,15 @@ function parseReleaseAvailabilityProviderContract(value: unknown, indexLabel: st
   return {
     provider: expectString(record.provider, `${indexLabel}.provider`),
     providerAlbumId: expectNullableString(record.providerAlbumId, `${indexLabel}.providerAlbumId`) ?? null,
+    providerAlbumIds: record.providerAlbumIds === undefined
+      ? undefined
+      : expectArray(record.providerAlbumIds, `${indexLabel}.providerAlbumIds`, (item) => String(item)),
     quality: expectNullableString(record.quality, `${indexLabel}.quality`) ?? null,
     librarySlot: expectNullableString(record.librarySlot, `${indexLabel}.librarySlot`) ?? null,
     status: expectNullableString(record.status, `${indexLabel}.status`) ?? null,
     confidence: expectOptionalNumber(record.confidence, `${indexLabel}.confidence`) ?? null,
+    matchKind: record.matchKind === undefined ? undefined : record.matchKind === "composite" ? "composite" : "direct",
+    coverageSummary: expectNullableString(record.coverageSummary, `${indexLabel}.coverageSummary`) ?? null,
   };
 }
 

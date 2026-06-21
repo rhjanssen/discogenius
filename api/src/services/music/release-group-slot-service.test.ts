@@ -478,15 +478,15 @@ test("provider slot selection can bind stereo and Atmos to different releases an
   ]);
 
   const matchRows = db.prepare(`
-    SELECT provider_id, target_mbid, status
-    FROM ProviderMatches
-    WHERE provider = 'tidal' AND entity_type = 'release'
-      AND provider_id IN ('provider-slot-atmos', 'provider-slot-stereo')
-    ORDER BY provider_id
-  `).all() as Array<{ provider_id: string; target_mbid: string; status: string }>;
+    SELECT provider_item_id, musicbrainz_release_mbid, status
+    FROM ProviderItemMatches
+    WHERE provider = 'tidal' AND provider_item_type = 'album'
+      AND provider_item_id IN ('provider-slot-atmos', 'provider-slot-stereo')
+    ORDER BY provider_item_id
+  `).all() as Array<{ provider_item_id: string; musicbrainz_release_mbid: string; status: string }>;
   assert.deepEqual(matchRows, [
-    { provider_id: "provider-slot-atmos", target_mbid: atmosReleaseMbid, status: "verified" },
-    { provider_id: "provider-slot-stereo", target_mbid: stereoReleaseMbid, status: "verified" },
+    { provider_item_id: "provider-slot-atmos", musicbrainz_release_mbid: atmosReleaseMbid, status: "verified" },
+    { provider_item_id: "provider-slot-stereo", musicbrainz_release_mbid: stereoReleaseMbid, status: "verified" },
   ]);
 
   const albumEvidence = db.prepare(`

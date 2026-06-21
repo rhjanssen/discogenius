@@ -16,7 +16,10 @@ export interface ProviderQualityOffer {
     quality?: string | null;
     provider?: string | null;
     matchStatus?: string | null;
+    matchKind?: "direct" | "composite";
+    coverageSummary?: string | null;
     providerAlbumId?: string | null;
+    providerAlbumIds?: string[];
     selectedReleaseMbid?: string | null;
 }
 
@@ -92,6 +95,13 @@ function slotDisplayName(slot: SlotName): string {
     return slot === "spatial" ? "Spatial" : "Stereo";
 }
 
+function splitProviderAlbumIds(providerAlbumId?: string | null): string[] {
+    return String(providerAlbumId || "")
+        .split(/[+;]/)
+        .map((id) => id.trim())
+        .filter(Boolean);
+}
+
 /** One release entry, after merging offers that point at the same provider release. */
 interface MergedOffer extends ProviderQualityOffer {
     /** Every library slot this single release fills (e.g. ["stereo", "spatial"]). */
@@ -133,6 +143,10 @@ function mergeOffersByRelease(offers: ProviderQualityOffer[]): MergedOffer[] {
 function statusLabel(offer: ProviderQualityOffer): string {
     const hasSelection = Boolean(String(offer.providerAlbumId || "").trim());
     if (!hasSelection) return "no provider release selected";
+    const providerAlbumIds = offer.providerAlbumIds?.length
+        ? offer.providerAlbumIds
+        : splitProviderAlbumIds(offer.providerAlbumId);
+    if (offer.matchKind === "composite" || providerAlbumIds.length > 1) return "hybrid complete match";
     const status = String(offer.matchStatus || "probable").toLowerCase();
     if (status === "verified") return "verified match";
     if (status === "ambiguous") return "ambiguous match";
@@ -230,12 +244,19 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const renderQualityBadge = (offer: MergedOffer, groupIndex: number, offerIndex: number) => {
         const providerName = providerDisplayName(offer.provider);
         const fillsBothLibraries = offer.slots.length > 1;
+        const providerAlbumIds = offer.providerAlbumIds?.length
+            ? offer.providerAlbumIds
+            : splitProviderAlbumIds(offer.providerAlbumId);
+        const isCompositeOffer = offer.matchKind === "composite" || providerAlbumIds.length > 1;
         const tooltipLines = [
             `${providerName} · ${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`,
+            offer.coverageSummary || null,
             fillsBothLibraries
                 ? "Same release fills both libraries (no separate stereo release available)"
                 : null,
-            offer.providerAlbumId ? `${providerName} ID ${offer.providerAlbumId}` : null,
+            isCompositeOffer && providerAlbumIds.length
+                ? `${providerName} IDs ${providerAlbumIds.join(", ")}`
+                : offer.providerAlbumId ? `${providerName} ID ${offer.providerAlbumId}` : null,
             offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
         ].filter(Boolean) as string[];
 
@@ -254,7 +275,11 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                     ),
                 }}
             >
-                <span style={{ display: "inline-flex" }}>
+                <span
+                    style={{ display: "inline-flex" }}
+                    title={tooltipLines.join("\n")}
+                    aria-label={tooltipLines.join(". ")}
+                >
                     <QualityBadge quality={offer.quality as string} size={size} className={styles.badge} />
                 </span>
             </Tooltip>

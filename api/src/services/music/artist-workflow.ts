@@ -102,9 +102,7 @@ export function buildRefreshArtistJobPayload(params: {
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   const hydrateCatalog = phases.refreshMetadata;
-  const hydrateAlbumTracks = params.workflow === "monitoring-intake"
-    ? false
-    : phases.curate || phases.backfillMetadata || phases.queueDownloads;
+  const hydrateAlbumTracks = phases.curate || phases.backfillMetadata || phases.queueDownloads;
   return {
     artistId: params.artistId,
     artistName: params.artistName,

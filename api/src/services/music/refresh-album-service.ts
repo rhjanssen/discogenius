@@ -926,7 +926,7 @@ export class RefreshAlbumService {
         );
 
         // Additive: also persist the provider album -> MB release match into the
-        // ProviderMatches candidate graph (powers the release-availability switcher).
+        // ProviderItemMatches candidate graph (powers the release-availability switcher).
         // The ProviderItems offer write above is unchanged.
         if (matchedReleaseMbid) {
             upsertProviderReleaseMatch({
