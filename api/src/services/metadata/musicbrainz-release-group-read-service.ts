@@ -116,7 +116,7 @@ function parseProviderData(value: unknown): any | null {
 
 function splitProviderAlbumIds(value: unknown): string[] {
     return String(value || "")
-        .split(";")
+        .split(/[;+]/)
         .map((part) => part.trim())
         .filter(Boolean);
 }

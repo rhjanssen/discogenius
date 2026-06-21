@@ -55,6 +55,27 @@ export interface ReleaseGroupAvailability {
   releases: ReleaseAvailability[];
 }
 
+const COMPOSITE_PROVIDER_ID_SEPARATOR = ";";
+
+function splitProviderAlbumIds(value: unknown): string[] {
+  return String(value || "")
+    .split(/[;+]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function joinProviderAlbumIds(values: readonly string[]): string {
+  return values.join(COMPOSITE_PROVIDER_ID_SEPARATOR);
+}
+
+function sameProviderAlbumSet(left: unknown, right: unknown): boolean {
+  const leftIds = splitProviderAlbumIds(left);
+  const rightIds = splitProviderAlbumIds(right);
+  return leftIds.length > 0
+    && leftIds.length === rightIds.length
+    && leftIds.every((id, index) => id === rightIds[index]);
+}
+
 /** Additively upsert a provider-album -> MB-release match candidate. */
 export function upsertProviderReleaseMatch(input: ProviderReleaseMatchInput): void {
   const providerItemId = String(input.providerId);
@@ -187,17 +208,21 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
   let provider = input.provider ?? null;
   let providerAlbumId = input.providerAlbumId ?? null;
   let offer: ProviderReleaseOfferRow | undefined;
-  if (provider && providerAlbumId && providerAlbumId.includes("+")) {
+  if (provider && providerAlbumId && splitProviderAlbumIds(providerAlbumId).length > 1) {
     const availability = getReleaseGroupAvailability(input.releaseGroupMbid);
     const release = availability.releases.find((item) => item.releaseMbid === input.releaseMbid);
     const composite = release?.availability.find((item) =>
       item.matchKind === "composite"
       && item.provider === provider
-      && item.providerAlbumId === providerAlbumId
+      && sameProviderAlbumSet(item.providerAlbumId, providerAlbumId)
     );
     if (!composite) {
       throw new Error(`composite provider offer ${provider}:${providerAlbumId} does not cover release ${input.releaseMbid}`);
     }
+    const providerAlbumIds = composite.providerAlbumIds?.length
+      ? composite.providerAlbumIds
+      : splitProviderAlbumIds(providerAlbumId);
+    providerAlbumId = joinProviderAlbumIds(providerAlbumIds);
     offer = {
       provider,
       provider_item_id: providerAlbumId,
@@ -207,7 +232,7 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
       method: "strict_composite_track_coverage",
       evidence: JSON.stringify({
         matchKind: "composite",
-        providerAlbumIds: composite.providerAlbumIds ?? providerAlbumId.split("+"),
+        providerAlbumIds,
         coverageSummary: composite.coverageSummary,
       }),
       data: null,
@@ -492,7 +517,7 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
 
     release.availability.push({
       provider,
-      providerAlbumId: providerAlbumIds.join("+"),
+      providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
       providerAlbumIds,
       quality,
       librarySlot,

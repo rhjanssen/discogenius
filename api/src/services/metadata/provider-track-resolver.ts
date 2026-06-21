@@ -36,7 +36,7 @@ export function looksLikeMusicBrainzMbid(value: unknown): boolean {
 
 function splitProviderAlbumIds(value: unknown): string[] {
     return String(value || "")
-        .split(";")
+        .split(/[;+]/)
         .map((part) => part.trim())
         .filter(Boolean);
 }

@@ -178,7 +178,7 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
   assert.equal(release.availability[0].matchKind, "composite");
   assert.equal(release.availability[0].provider, "tidal");
   assert.deepEqual(release.availability[0].providerAlbumIds, ["290132977", "287367980"]);
-  assert.equal(release.availability[0].providerAlbumId, "290132977+287367980");
+  assert.equal(release.availability[0].providerAlbumId, "290132977;287367980");
   assert.equal(release.availability[0].coverageSummary, "3/3 tracks from 2 provider albums");
 
   const after = providerMatches.setSlotSelection({
@@ -186,11 +186,13 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
     slot: "stereo",
     releaseMbid: "rel-three-track",
     provider: "tidal",
+    // Accept the previous API delimiter but normalize storage to the canonical
+    // semicolon format used by download and metadata queries.
     providerAlbumId: "290132977+287367980",
   });
   assert.equal(after.selectedReleaseBySlot.stereo, "rel-three-track");
   const slot = db.prepare(`SELECT selected_provider_id, match_method FROM ReleaseGroupSlots WHERE release_group_mbid='rg-unplugged' AND slot='stereo'`).get() as any;
-  assert.equal(slot.selected_provider_id, "290132977+287367980");
+  assert.equal(slot.selected_provider_id, "290132977;287367980");
   assert.equal(slot.match_method, "strict_composite_track_coverage");
 });
 

@@ -133,7 +133,7 @@ function textOrNull(...values: unknown[]): string | null {
 
 function splitProviderIds(value: string | null | undefined): string[] {
     return String(value || "")
-        .split(";")
+        .split(/[;+]/)
         .map((id) => id.trim())
         .filter(Boolean);
 }
