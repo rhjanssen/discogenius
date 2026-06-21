@@ -72,19 +72,36 @@ single `provider_album_id` parent pointer is sufficient.)
 
 ### Layer C — Persistent match graph (provider → MB, all candidates)
 
-All targets are MBIDs (+ optional cached internal id). Every row carries:
-`status` ∈ {candidate, probable, verified, manual, rejected}, `confidence` REAL,
-`method` TEXT, `evidence` JSON, `updated_at`.
+**ONE table, not four.** A simplicity audit confirmed the per-entity match tables share an
+identical shape, so collapse them into a single `ProviderMatches`:
 
-- `ProviderArtistMatches` — `(provider, provider_artist_id)` → `artist_mbid`.
-- `ProviderReleaseMatches` — `(provider, provider_album_id)` → `release_mbid`. **Many rows
-  per provider album allowed** (ambiguous candidates). Powers the release switcher. **No
-  release-group match table** — release-group availability is derived by joining matched
-  releases up to `Albums`.
-- `ProviderTrackMatches` — `(provider, provider_album_id, provider_track_id)` →
-  `recording_mbid` (+ optional `track_mbid`). Scoped through `provider_album_id`.
-- `ProviderVideoMatches` — `(provider, provider_video_id)` → `recording_mbid` (provisional
-  recording mbid when none exists yet).
+```
+ProviderMatches(
+  provider, entity_type,          -- 'artist' | 'release' | 'recording'
+  provider_id,                    -- the provider entity id (artist id / album id / track|video id)
+  provider_album_id,              -- owning provider album for track/video matches (nullable)
+  target_mbid,                    -- artist_mbid | release_mbid | recording_mbid
+  target_kind,                    -- mirrors entity_type for clarity ('artist'|'release'|'recording')
+  status,                         -- candidate | probable | verified | manual | rejected
+  confidence,                     -- REAL
+  method, evidence,               -- TEXT, JSON
+  updated_at
+)
+UNIQUE(provider, entity_type, provider_id, target_mbid)  -- multiple candidates per source allowed
+```
+
+- **Release matches** (`entity_type='release'`, `provider_id`=provider album id →
+  `release_mbid`): **many candidate rows per provider album allowed** (ambiguous candidates).
+  This is what powers the release switcher. **No release-group match** — release-group
+  availability is derived by joining matched releases up to `Albums`.
+- **Recording matches** (`entity_type='recording'`): a provider track/video → `recording_mbid`,
+  scoped by `provider_album_id` (video → provisional recording mbid when none exists yet).
+  Best-match is enough here (the switcher operates at release level); persist a single row per
+  source unless a real need for candidates appears.
+- **Artist matches** (`entity_type='artist'`): provider artist → `artist_mbid`.
+
+Targets are MBIDs (+ optional cached internal id). Index by `target_mbid` and by
+`(provider, entity_type, provider_id)`.
 
 **Matching evidence order:** exact MBID if the provider supplies it → UPC/barcode for release
 → ISRC for recording → track/medium count → title/version → date/type → position/duration →
@@ -101,20 +118,23 @@ matching is the payoff of MB-local mode (your own instance has no limit). In Sky
 provider-side UPC/ISRC that happen to align, and accept slightly weaker matching until
 MB-local is connected.
 
-### Layer D — Library overlay (policy / selection / resources split)
+### Layer D — Library overlay (two tables, not four)
 
-Generalized toward 2.2 configurable library types from day one.
+A simplicity audit confirmed there is exactly **one selection per slot**, so policy and
+selection live in the **same** row; only the "which provider offers satisfy it" part is a
+genuine 1:N child.
 
 - `LibraryTypes` (config) — `{ id, name, root, kind: audio|video, desired_quality }`, seeded
-  with stereo / spatial / video. This is what 2.2 will let users edit.
-- `LibrarySlots` (today's `ReleaseGroupSlots`, de-overloaded) = **policy** per
-  `(release_group_mbid, library_type_id)`: `monitored`, `monitored_lock`, `quality_profile`,
-  `locked_at`, `checked_at`. No selection columns.
-- `SlotReleaseSelections` = **selection** per `(release_group_mbid, library_type_id)` →
-  `selected_release_mbid`, `selection_source` (auto|manual), `selected_at`. Lidarr's
-  `AlbumRelease.Monitored` mechanism generalized to one selected release *per slot*.
-- `SlotSelectionResources` = **rows** of provider offers satisfying a selection:
-  `(slot_selection_id, provider, provider_album_id, quality, rank)`. Replaces the
+  with **3 fixed rows** (stereo / spatial / video). Introduce it now only as a stable FK
+  target replacing the hardcoded slot enum — do **not** build per-type editing/ordering/icons
+  yet (that's the 2.2 feature).
+- `LibrarySlots` = **policy + selection together**, keyed `(release_group_mbid,
+  library_type_id)`: policy (`monitored`, `monitored_lock`, `quality_profile`, `locked_at`,
+  `checked_at`) **and** the single selection (`selected_release_mbid`, `selection_source`
+  auto|manual, `selected_at`). This is Lidarr's `AlbumRelease.Monitored` mechanism generalized
+  to one selected release *per slot*.
+- `SlotResources` = **rows** of provider offers satisfying a slot:
+  `(slot_id, provider, provider_album_id, quality, rank)`. The one genuine 1:N — replaces the
   semicolon-encoded `selected_provider_id`; supports an Atmos-only album filling both
   stereo+spatial, multi-album coverage, and multi-provider.
 
