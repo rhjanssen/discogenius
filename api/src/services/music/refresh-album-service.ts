@@ -10,6 +10,7 @@ import type { ProviderAlbum, ProviderTrack } from "../providers/streaming-provid
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "../metadata/provider-artist-identity-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
+import { upsertProviderReleaseMatch } from "./provider-matches.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -923,6 +924,22 @@ export class RefreshAlbumService {
                 quality: album.quality || null,
             }),
         );
+
+        // Additive: also persist the provider album -> MB release match into the
+        // ProviderMatches candidate graph (powers the release-availability switcher).
+        // The ProviderItems offer write above is unchanged.
+        if (matchedReleaseMbid) {
+            upsertProviderReleaseMatch({
+                provider: "tidal",
+                providerId: String(album.provider_id),
+                providerAlbumId: String(album.provider_id),
+                releaseMbid: matchedReleaseMbid,
+                status: releaseGroupMatch?.status ?? null,
+                confidence: releaseGroupMatch?.confidence ?? null,
+                method: releaseGroupMatch?.method ?? null,
+                evidence: releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
+            });
+        }
 
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: matchedReleaseGroup?.mbid || null,

@@ -995,6 +995,28 @@ function ensureMusicBrainzProviderSchema(): void {
       FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
       FOREIGN KEY(selected_release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE SET NULL
     );
+
+    -- Additive provider -> MusicBrainz match graph. Persists all candidate matches
+    -- (multiple target_mbid rows per provider source) so the release-availability
+    -- switcher can show every MB release a provider can supply. Lives alongside the
+    -- existing ProviderItems offer cache; it does not replace it.
+    CREATE TABLE IF NOT EXISTS ProviderMatches (
+      provider TEXT NOT NULL,
+      entity_type TEXT NOT NULL,          -- 'artist' | 'release' | 'recording'
+      provider_id TEXT NOT NULL,
+      provider_album_id TEXT,             -- owning provider album for recording matches
+      target_mbid TEXT NOT NULL,
+      target_kind TEXT NOT NULL,          -- mirrors entity_type
+      status TEXT,                        -- candidate | probable | verified | manual | rejected
+      confidence REAL,
+      method TEXT,
+      evidence TEXT,                      -- JSON
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider, entity_type, provider_id, target_mbid)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_matches_target ON ProviderMatches(target_mbid, entity_type);
+    CREATE INDEX IF NOT EXISTS idx_provider_matches_source ON ProviderMatches(provider, entity_type, provider_id);
   `);
 
   db.exec(`

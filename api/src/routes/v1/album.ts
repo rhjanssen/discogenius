@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { AlbumQueryService } from "../../services/music/album-query-service.js";
 import { AlbumCommandService } from "../../services/music/album-command-service.js";
+import { getReleaseGroupAvailability } from "../../services/music/provider-matches.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -132,6 +133,16 @@ router.get("/:albumId/similar", (req, res) => {
 router.get("/:albumId/versions", async (req, res) => {
   try {
     res.json(await AlbumQueryService.getAlbumVersions(req.params.albumId));
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+// Per-release streaming availability for a release group (release-group MBID),
+// powering the Lidarr-style release switcher. Read-only.
+router.get("/:albumId/release-availability", (req, res) => {
+  try {
+    res.json(getReleaseGroupAvailability(req.params.albumId));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
