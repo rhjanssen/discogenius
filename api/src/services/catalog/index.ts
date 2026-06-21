@@ -21,9 +21,6 @@ export {
   createLocalMusicBrainzCatalogProvider,
 } from "./local-musicbrainz-catalog-provider.js";
 export * from "./musicbrainz-ws-mapping.js";
-export * from "./musicbrainz-postgres-queries.js";
-export { MusicBrainzPostgresCatalogReader } from "./musicbrainz-postgres-client.js";
-export type { PgPool, PgQueryResult } from "./musicbrainz-postgres-client.js";
 
 class CatalogProviderRegistry {
   private readonly providers = new Map<string, CatalogProvider>();

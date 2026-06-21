@@ -10,10 +10,10 @@
  *
  * Why the `:5000` mirror first (not direct Postgres)? It returns the exact MB
  * `/ws/2` JSON our existing MB-shaped code already consumes (see
- * `musicbrainz-video-service.ts`), so adoption is cheapest. The direct-Postgres
- * path (UUID `gid`, `artist_credit`/`artist_credit_name`, split year/month/day
- * dates) is the documented performance follow-up — see
- * `musicbrainz-postgres-queries.ts` and `docs/MB_LOCAL_MODE.md`.
+ * `musicbrainz-video-service.ts`), so adoption is cheapest. A direct-Postgres
+ * path against the MB schema is a possible future performance optimization, but
+ * it is deferred and intentionally not implemented yet — see
+ * `docs/MB_LOCAL_MODE.md`.
  *
  * On your own instance there is no 1-req/s rate limit, so full UPC/ISRC matching
  * (the payoff described in §3) is viable here.
