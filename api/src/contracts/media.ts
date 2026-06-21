@@ -98,6 +98,35 @@ export interface AlbumVersionContract extends SimilarAlbumContract {
   spatial_quality?: string | null;
 }
 
+export interface ReleaseAvailabilityProviderContract {
+  provider: string;
+  providerAlbumId: string | null;
+  quality: string | null;
+  librarySlot: string | null;
+  status: string | null;
+  confidence: number | null;
+}
+
+export interface ReleaseAvailabilityContract {
+  releaseMbid: string;
+  title: string | null;
+  disambiguation: string | null;
+  status: string | null;
+  date: string | null;
+  country: string | null;
+  format: string | null;
+  mediumCount: number | null;
+  trackCount: number | null;
+  duration: number | null;
+  availability: ReleaseAvailabilityProviderContract[];
+}
+
+export interface ReleaseGroupAvailabilityContract {
+  releaseGroupMbid: string;
+  selectedReleaseBySlot: Record<string, string | null>;
+  releases: ReleaseAvailabilityContract[];
+}
+
 export interface VideoDetailContract {
   id: string;
   title: string;
@@ -253,6 +282,52 @@ export function parseSimilarAlbumsContract(value: unknown): SimilarAlbumContract
 
 export function parseAlbumVersionsContract(value: unknown): AlbumVersionContract[] {
   return expectArray(value, "Album versions", (item, index) => parseAlbumListItemContract<AlbumVersionContract>(item, index));
+}
+
+function parseReleaseAvailabilityProviderContract(value: unknown, indexLabel: string): ReleaseAvailabilityProviderContract {
+  const record = expectRecord(value, indexLabel);
+  return {
+    provider: expectString(record.provider, `${indexLabel}.provider`),
+    providerAlbumId: expectNullableString(record.providerAlbumId, `${indexLabel}.providerAlbumId`) ?? null,
+    quality: expectNullableString(record.quality, `${indexLabel}.quality`) ?? null,
+    librarySlot: expectNullableString(record.librarySlot, `${indexLabel}.librarySlot`) ?? null,
+    status: expectNullableString(record.status, `${indexLabel}.status`) ?? null,
+    confidence: expectOptionalNumber(record.confidence, `${indexLabel}.confidence`) ?? null,
+  };
+}
+
+function parseReleaseAvailabilityContract(value: unknown, index: number): ReleaseAvailabilityContract {
+  const label = `releaseAvailability.releases[${index}]`;
+  const record = expectRecord(value, label);
+  return {
+    releaseMbid: expectString(record.releaseMbid, `${label}.releaseMbid`),
+    title: expectNullableString(record.title, `${label}.title`) ?? null,
+    disambiguation: expectNullableString(record.disambiguation, `${label}.disambiguation`) ?? null,
+    status: expectNullableString(record.status, `${label}.status`) ?? null,
+    date: expectNullableString(record.date, `${label}.date`) ?? null,
+    country: expectNullableString(record.country, `${label}.country`) ?? null,
+    format: expectNullableString(record.format, `${label}.format`) ?? null,
+    mediumCount: expectOptionalNumber(record.mediumCount, `${label}.mediumCount`) ?? null,
+    trackCount: expectOptionalNumber(record.trackCount, `${label}.trackCount`) ?? null,
+    duration: expectOptionalNumber(record.duration, `${label}.duration`) ?? null,
+    availability: expectArray(record.availability, `${label}.availability`, (item, providerIndex) =>
+      parseReleaseAvailabilityProviderContract(item, `${label}.availability[${providerIndex}]`)),
+  };
+}
+
+export function parseReleaseGroupAvailabilityContract(value: unknown): ReleaseGroupAvailabilityContract {
+  const record = expectRecord(value, "releaseAvailability");
+  const selectedRecord = expectRecord(record.selectedReleaseBySlot, "releaseAvailability.selectedReleaseBySlot");
+  const selectedReleaseBySlot: Record<string, string | null> = {};
+  for (const [slot, releaseMbid] of Object.entries(selectedRecord)) {
+    selectedReleaseBySlot[slot] = releaseMbid === null ? null : String(releaseMbid);
+  }
+
+  return {
+    releaseGroupMbid: expectString(record.releaseGroupMbid, "releaseAvailability.releaseGroupMbid"),
+    selectedReleaseBySlot,
+    releases: expectArray(record.releases, "releaseAvailability.releases", parseReleaseAvailabilityContract),
+  };
 }
 
 export function parseVideoDetailContract(value: unknown): VideoDetailContract {

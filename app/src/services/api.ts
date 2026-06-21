@@ -44,6 +44,7 @@ import type {
   AlbumTrackContract,
   AlbumVersionContract,
   LibraryFilesListResponseContract,
+  ReleaseGroupAvailabilityContract,
   SimilarAlbumContract,
   VideoDetailContract,
   VideoUpdateContract,
@@ -52,6 +53,7 @@ import {
   parseAlbumTracksContract,
   parseAlbumVersionsContract,
   parseLibraryFilesListResponseContract,
+  parseReleaseGroupAvailabilityContract,
   parseSimilarAlbumsContract,
   parseVideoDetailContract,
 } from '@contracts/media';
@@ -709,6 +711,21 @@ class ApiClient {
 
   async getAlbumVersions(albumId: string, options: RequestControlOptions = {}): Promise<AlbumVersionContract[]> {
     return this.request(`/v1/album/${albumId}/versions`, options, parseAlbumVersionsContract);
+  }
+
+  async getAlbumReleaseAvailability(albumId: string, options: RequestControlOptions = {}): Promise<ReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/release-availability`, options, parseReleaseGroupAvailabilityContract);
+  }
+
+  async setAlbumSlotSelection(albumId: string, slot: string, input: {
+    releaseMbid: string;
+    provider?: string | null;
+    providerAlbumId?: string | null;
+  }): Promise<ReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/slots/${slot}/selection`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }, parseReleaseGroupAvailabilityContract);
   }
 
   async getTracks(params?: {

@@ -37,8 +37,14 @@ export interface ReleaseAvailabilityProvider {
 export interface ReleaseAvailability {
   releaseMbid: string;
   title: string | null;
+  disambiguation: string | null;
+  status: string | null;
   date: string | null;
   country: string | null;
+  format: string | null;
+  mediumCount: number | null;
+  trackCount: number | null;
+  duration: number | null;
   availability: ReleaseAvailabilityProvider[];
 }
 
@@ -87,6 +93,17 @@ export interface SetSlotSelectionInput {
   providerAlbumId?: string | null;
 }
 
+interface ProviderReleaseOfferRow {
+  provider: string;
+  provider_id: string;
+  quality: string | null;
+  status: string | null;
+  confidence: number | null;
+  method: string | null;
+  evidence: string | null;
+  data: string | null;
+}
+
 /**
  * Switch which MB release fills a given slot for a release group (the write half
  * of the Lidarr-style release switcher). Selection-only: this does not change a
@@ -108,23 +125,85 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
 
   let provider = input.provider ?? null;
   let providerAlbumId = input.providerAlbumId ?? null;
-  if (!provider || !providerAlbumId) {
-    const best = db.prepare(`
-      SELECT provider, provider_id
-      FROM ProviderMatches
-      WHERE entity_type = 'release' AND target_mbid = ?
-      ORDER BY (confidence IS NULL), confidence DESC
+  let offer: ProviderReleaseOfferRow | undefined;
+  if (provider && providerAlbumId) {
+    offer = db.prepare(`
+      SELECT
+        pm.provider,
+        pm.provider_id,
+        pi.quality,
+        pm.status,
+        pm.confidence,
+        pm.method,
+        pm.evidence,
+        pi.data
+      FROM ProviderMatches pm
+      LEFT JOIN ProviderItems pi
+        ON pi.provider = pm.provider
+       AND pi.entity_type = 'album'
+       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_id AS TEXT)
+      WHERE pm.entity_type = 'release'
+        AND pm.target_mbid = ?
+        AND pm.provider = ?
+        AND CAST(pm.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND (pm.status IS NULL OR LOWER(pm.status) <> 'rejected')
       LIMIT 1
-    `).get(input.releaseMbid) as { provider?: string; provider_id?: string } | undefined;
-    provider = provider ?? best?.provider ?? null;
-    providerAlbumId = providerAlbumId ?? best?.provider_id ?? null;
+    `).get(input.releaseMbid, provider, providerAlbumId) as ProviderReleaseOfferRow | undefined;
+    if (!offer) {
+      throw new Error(`provider offer ${provider}:${providerAlbumId} does not match release ${input.releaseMbid}`);
+    }
+  } else {
+    offer = db.prepare(`
+      SELECT
+        pm.provider,
+        pm.provider_id,
+        pi.quality,
+        pm.status,
+        pm.confidence,
+        pm.method,
+        pm.evidence,
+        pi.data
+      FROM ProviderMatches pm
+      LEFT JOIN ProviderItems pi
+        ON pi.provider = pm.provider
+       AND pi.entity_type = 'album'
+       AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_id AS TEXT)
+      WHERE pm.entity_type = 'release'
+        AND pm.target_mbid = ?
+        AND (pm.status IS NULL OR LOWER(pm.status) <> 'rejected')
+      ORDER BY (pm.confidence IS NULL), pm.confidence DESC, pm.updated_at DESC
+      LIMIT 1
+    `).get(input.releaseMbid) as ProviderReleaseOfferRow | undefined;
+    provider = provider ?? offer?.provider ?? null;
+    providerAlbumId = providerAlbumId ?? offer?.provider_id ?? null;
   }
 
   const result = db.prepare(`
     UPDATE ReleaseGroupSlots
-    SET selected_release_mbid = ?, selected_provider = ?, selected_provider_id = ?, updated_at = CURRENT_TIMESTAMP
+    SET selected_release_mbid = ?,
+        selected_provider = ?,
+        selected_provider_id = ?,
+        quality = ?,
+        match_status = ?,
+        match_confidence = ?,
+        match_method = ?,
+        match_evidence = ?,
+        provider_data = ?,
+        updated_at = CURRENT_TIMESTAMP
     WHERE release_group_mbid = ? AND slot = ?
-  `).run(input.releaseMbid, provider, providerAlbumId, input.releaseGroupMbid, input.slot);
+  `).run(
+    input.releaseMbid,
+    provider,
+    providerAlbumId,
+    offer?.quality ?? null,
+    offer?.status ?? null,
+    offer?.confidence ?? null,
+    offer?.method ?? null,
+    offer?.evidence ?? null,
+    offer?.data ?? null,
+    input.releaseGroupMbid,
+    input.slot,
+  );
 
   if (result.changes === 0) {
     const artist = db.prepare(`SELECT artist_mbid FROM Albums WHERE mbid = ?`)
@@ -135,9 +214,23 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
     db.prepare(`
       INSERT INTO ReleaseGroupSlots (
         artist_mbid, release_group_mbid, slot, monitored,
-        selected_release_mbid, selected_provider, selected_provider_id
-      ) VALUES (?, ?, ?, 0, ?, ?, ?)
-    `).run(artist.artist_mbid, input.releaseGroupMbid, input.slot, input.releaseMbid, provider, providerAlbumId);
+        selected_release_mbid, selected_provider, selected_provider_id,
+        quality, match_status, match_confidence, match_method, match_evidence, provider_data
+      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      artist.artist_mbid,
+      input.releaseGroupMbid,
+      input.slot,
+      input.releaseMbid,
+      provider,
+      providerAlbumId,
+      offer?.quality ?? null,
+      offer?.status ?? null,
+      offer?.confidence ?? null,
+      offer?.method ?? null,
+      offer?.evidence ?? null,
+      offer?.data ?? null,
+    );
   }
 
   return getReleaseGroupAvailability(input.releaseGroupMbid);
@@ -153,8 +246,33 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     SELECT
       ar.mbid             AS release_mbid,
       ar.title            AS title,
+      ar.disambiguation   AS disambiguation,
+      ar.status           AS release_status,
       ar.date             AS date,
       ar.country          AS country,
+      ar.media_count      AS media_count,
+      ar.track_count      AS track_count,
+      (
+        SELECT GROUP_CONCAT(format_label, ', ')
+        FROM (
+          SELECT
+            CASE
+              WHEN COUNT(*) > 1 THEN CAST(COUNT(*) AS TEXT) || 'x' || COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
+              ELSE COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
+            END AS format_label,
+            MIN(position) AS first_position
+          FROM AlbumReleaseMedia
+          WHERE release_mbid = ar.mbid
+            AND position > 0
+          GROUP BY COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
+          ORDER BY first_position
+        )
+      ) AS release_format,
+      (
+        SELECT CAST(ROUND(SUM(COALESCE(length_ms, 0)) / 1000.0) AS INTEGER)
+        FROM Tracks
+        WHERE release_mbid = ar.mbid
+      ) AS duration_seconds,
       pm.provider         AS provider,
       pm.provider_album_id AS provider_album_id,
       pm.status           AS status,
@@ -173,8 +291,14 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
   `).all(releaseGroupMbid) as Array<{
     release_mbid: string;
     title: string | null;
+    disambiguation: string | null;
+    release_status: string | null;
     date: string | null;
     country: string | null;
+    release_format: string | null;
+    media_count: number | null;
+    track_count: number | null;
+    duration_seconds: number | null;
     provider: string | null;
     provider_album_id: string | null;
     status: string | null;
@@ -187,7 +311,19 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
   for (const r of rows) {
     let rel = byRelease.get(r.release_mbid);
     if (!rel) {
-      rel = { releaseMbid: r.release_mbid, title: r.title, date: r.date, country: r.country, availability: [] };
+      rel = {
+        releaseMbid: r.release_mbid,
+        title: r.title,
+        disambiguation: r.disambiguation,
+        status: r.release_status,
+        date: r.date,
+        country: r.country,
+        format: r.release_format,
+        mediumCount: r.media_count,
+        trackCount: r.track_count,
+        duration: r.duration_seconds,
+        availability: [],
+      };
       byRelease.set(r.release_mbid, rel);
     }
     if (r.provider) {

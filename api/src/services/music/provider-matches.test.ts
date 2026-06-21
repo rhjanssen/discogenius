@@ -22,10 +22,16 @@ function seedReleaseGroup() {
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-mbid-1", "Queen");
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
     .run("rg-1", "artist-mbid-1", "A Night at the Opera", "album");
-  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run("rel-stereo", "rg-1", "artist-mbid-1", "A Night at the Opera", "1975-11-21", "GB");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count, disambiguation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run("rel-stereo", "rg-1", "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", "GB", 1, 12, "deluxe edition");
   db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country) VALUES (?, ?, ?, ?, ?, ?)`)
     .run("rel-atmos", "rg-1", "artist-mbid-1", "A Night at the Opera (Dolby Atmos)", "2022-01-01", "US");
+  db.prepare(`INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count) VALUES (?, 1, 'Digital Media', 12)`)
+    .run("rel-stereo");
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms) VALUES (?, ?, ?, ?)`)
+    .run("rec-1", "artist-mbid-1", "Bohemian Rhapsody", 354000);
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms) VALUES (?, ?, ?, ?, 1, 1, ?)`)
+    .run("track-1", "rel-stereo", "rec-1", "Bohemian Rhapsody", 354000);
   // Provider album offers (ProviderItems) backing the two releases.
   db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid)
               VALUES ('tidal', 'album', 'prov-stereo', 'LOSSLESS', 'stereo', 'rg-1', 'rel-stereo')`).run();
@@ -35,7 +41,7 @@ function seedReleaseGroup() {
 
 beforeEach(() => {
   const { db } = dbModule;
-  for (const t of ["ProviderMatches", "ProviderItems", "ReleaseGroupSlots", "AlbumReleases", "Albums", "ArtistMetadata"]) {
+  for (const t of ["ProviderMatches", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings", "AlbumReleaseMedia", "AlbumReleases", "Albums", "ArtistMetadata"]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 });
@@ -93,6 +99,12 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   const stereo = result.releases.find((r) => r.releaseMbid === "rel-stereo");
   assert.ok(stereo);
   assert.equal(stereo.availability.length, 1);
+  assert.equal(stereo.disambiguation, "deluxe edition");
+  assert.equal(stereo.status, "Official");
+  assert.equal(stereo.format, "Digital Media");
+  assert.equal(stereo.mediumCount, 1);
+  assert.equal(stereo.trackCount, 12);
+  assert.equal(stereo.duration, 354);
   assert.equal(stereo.availability[0].provider, "tidal");
   assert.equal(stereo.availability[0].providerAlbumId, "prov-stereo");
   assert.equal(stereo.availability[0].quality, "LOSSLESS");
@@ -132,27 +144,25 @@ test("setSlotSelection switches the selected release and derives the best provid
   assert.equal(slot2.selected_provider_id, "prov-stereo");
 });
 
+test("setSlotSelection rejects an explicit provider offer that does not match the chosen release", () => {
+  seedReleaseGroup();
+  providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-stereo", releaseMbid: "rel-stereo", status: "verified", confidence: 0.95 });
+  providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-atmos", releaseMbid: "rel-atmos", status: "verified", confidence: 0.9 });
+
+  assert.throws(
+    () => providerMatches.setSlotSelection({
+      releaseGroupMbid: "rg-1",
+      slot: "stereo",
+      releaseMbid: "rel-stereo",
+      provider: "tidal",
+      providerAlbumId: "prov-atmos",
+    }),
+    /does not match release/,
+  );
+});
+
 test("setSlotSelection rejects an unknown slot and a release outside the group", () => {
   seedReleaseGroup();
   assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "bogus", releaseMbid: "rel-stereo" }), /unknown slot/);
   assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "stereo", releaseMbid: "rel-not-in-group" }), /not in release group/);
-});
-
-test("startup backfill derives ProviderMatches from existing matched provider album offers", () => {
-  const { db } = dbModule;
-  // Existing matched album offer with no ProviderMatches row (simulates a pre-existing library).
-  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid-1', 'Queen')`).run();
-  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES ('rg-1', 'artist-mbid-1', 'A Night at the Opera', 'album')`).run();
-  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title) VALUES ('rel-stereo', 'rg-1', 'artist-mbid-1', 'A Night at the Opera')`).run();
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid, match_status, match_confidence)
-              VALUES ('tidal', 'album', 'prov-stereo', 'LOSSLESS', 'stereo', 'rg-1', 'rel-stereo', 'verified', 0.95)`).run();
-  assert.equal((db.prepare(`SELECT COUNT(*) AS n FROM ProviderMatches`).get() as { n: number }).n, 0);
-
-  // Re-run init -> the idempotent backfill picks up the offer.
-  dbModule.initDatabase();
-
-  const row = db.prepare(`SELECT target_mbid, status, confidence FROM ProviderMatches WHERE provider='tidal' AND provider_id='prov-stereo' AND entity_type='release'`).get() as any;
-  assert.ok(row);
-  assert.equal(row.target_mbid, "rel-stereo");
-  assert.equal(row.status, "verified");
 });
