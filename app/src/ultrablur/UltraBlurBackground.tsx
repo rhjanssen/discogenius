@@ -32,7 +32,7 @@ const useStyles = makeStyles({
   // overlays only paint the vignette gradient.
   overlayDark: {
     backgroundImage:
-      `radial-gradient(circle at 50% 35%, transparent 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 32%, transparent) 70%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 55%, transparent) 100%), linear-gradient(180deg, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 16%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 42%, transparent) 100%)`,
+      `radial-gradient(circle at 50% 35%, transparent 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 36%, transparent) 70%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 60%, transparent) 100%), linear-gradient(180deg, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 20%, transparent) 0%, color-mix(in srgb, ${tokens.colorNeutralForegroundInverted} 48%, transparent) 100%)`,
   },
   overlayLight: {
     backgroundImage:
@@ -94,7 +94,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   // image (a plain `filter`, rasterised once — NOT a backdrop-filter). The blur
   // smooths the upscaled low-res gradient into a soft wash.
   const layerFilter = props.isDarkMode
-    ? "blur(24px) saturate(0.9) brightness(0.8) contrast(1.06)"
+    ? "blur(24px) saturate(0.98) brightness(0.74) contrast(1.1)"
     : "blur(24px) saturate(0.75) brightness(1.05) contrast(0.98)";
   const imageUrl = useMemo(() => {
     const params = new URLSearchParams({
