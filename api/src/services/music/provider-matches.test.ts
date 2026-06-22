@@ -121,6 +121,33 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   assert.equal(vinyl.availability.length, 0);
 });
 
+test("getReleaseGroupAvailability hides stale direct match edges after rematching a provider album", () => {
+  seedReleaseGroup();
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "tidal",
+    providerId: "prov-atmos",
+    releaseMbid: "rel-stereo",
+    status: "probable",
+    confidence: 0.8,
+  });
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "tidal",
+    providerId: "prov-atmos",
+    releaseMbid: "rel-atmos",
+    status: "verified",
+    confidence: 0.99,
+  });
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-1");
+  const stereo = result.releases.find((r) => r.releaseMbid === "rel-stereo");
+  const atmos = result.releases.find((r) => r.releaseMbid === "rel-atmos");
+
+  assert.ok(stereo);
+  assert.ok(atmos);
+  assert.equal(stereo.availability.some((offer) => offer.providerAlbumId === "prov-atmos"), false);
+  assert.equal(atmos.availability.some((offer) => offer.providerAlbumId === "prov-atmos"), true);
+});
+
 test("getReleaseGroupAvailability returns a stable slot and quality order for offers", () => {
   const { db } = dbModule;
   seedReleaseGroup();

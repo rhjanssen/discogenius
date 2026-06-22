@@ -18,8 +18,10 @@ import {
     chooseCachedProviderArtwork,
     parseJsonObject,
     registerMediaCoverProxyUrl,
+    resolveAlbumArtwork,
     resolveMediaCoverProxyUrl,
 } from "../metadata/media-cover-service.js";
+import { skyHookProxy } from "../metadata/skyhook-proxy.js";
 import { getConfigSection } from "../config/config.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -255,6 +257,44 @@ function parseJsonStringArray(value: unknown): string[] {
     }
 }
 
+function rowHasCanonicalArtwork(row: Record<string, any>): boolean {
+    const images = parseJsonObject(row.images);
+    if (!Array.isArray(images)) return false;
+    return images.some((image) => {
+        if (!image || typeof image !== "object") return false;
+        const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
+        const url = (image as any).url || (image as any).Url || (image as any).remoteUrl || (image as any).RemoteUrl;
+        return Boolean(url) && source !== "provider-fallback";
+    });
+}
+
+function rowHasProviderFallbackArtwork(row: Record<string, any>): boolean {
+    const images = parseJsonObject(row.images);
+    if (!Array.isArray(images)) return false;
+    return images.some((image) => {
+        if (!image || typeof image !== "object") return false;
+        const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
+        const url = (image as any).url || (image as any).Url || (image as any).remoteUrl || (image as any).RemoteUrl;
+        return Boolean(url) && source === "provider-fallback";
+    });
+}
+
+async function hydrateReleaseGroupArtworkIfNeeded(row: Record<string, any>): Promise<void> {
+    if (rowHasCanonicalArtwork(row)) return;
+    if (!rowHasProviderFallbackArtwork(row)) return;
+    if (albumProviderArtworkCandidatesFromRow(row).length === 0) return;
+
+    const releaseGroupMbid = String(row.mbid || "").trim();
+    const artistMbid = String(row.artist_mbid || "").trim();
+    if (!releaseGroupMbid || !artistMbid) return;
+
+    try {
+        await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
+    } catch (error) {
+        console.warn(`[ArtistQueryService] Failed to hydrate artwork for release group ${releaseGroupMbid}:`, error);
+    }
+}
+
 function normalizeReleaseGroupPrimaryType(value: unknown): string {
     const normalized = String(value || "Album").trim().toUpperCase();
     if (normalized === "EP") return "EP";
@@ -344,6 +384,32 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
         module: bucketKey,
         source: "musicbrainz",
+    };
+}
+
+async function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
+    artistId: string;
+    artistName: string;
+    includeSpatial: boolean;
+    downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
+}): Promise<any> {
+    const card = mapReleaseGroupCard(row, options);
+    await hydrateReleaseGroupArtworkIfNeeded(row);
+    const providerCandidates = albumProviderArtworkCandidatesFromRow(row);
+    const resolvedCoverUrl = await resolveAlbumArtwork({
+        albumMbid: row.mbid,
+        skyHookData: parseJsonObject(row.data),
+        providerCandidates,
+    });
+    const coverUrl = resolvedCoverUrl
+        ? registerMediaCoverProxyUrl(resolvedCoverUrl) || resolvedCoverUrl
+        : card.cover_art_url;
+
+    return {
+        ...card,
+        cover: coverUrl,
+        cover_id: coverUrl,
+        cover_art_url: coverUrl,
     };
 }
 
@@ -995,12 +1061,12 @@ export class ArtistQueryService {
         // Exclude raw provider albums from modules to restrict discography entirely to MusicBrainz release groups.
 
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        const releaseGroupCards = musicBrainzReleaseGroups.map((row) => mapReleaseGroupCard(row, {
+        const releaseGroupCards = await Promise.all(musicBrainzReleaseGroups.map((row) => mapReleaseGroupCardForArtistPage(row, {
             artistId: String(artist.id),
             artistName: String(artist.name || "Unknown Artist"),
             includeSpatial,
             downloadStats: releaseGroupDownloadStats.get(String(row.mbid)),
-        }));
+        })));
 
         for (const releaseGroup of releaseGroupCards) {
             const bucket = RELEASE_GROUP_BUCKETS[releaseGroup.module as keyof typeof RELEASE_GROUP_BUCKETS] || "ARTIST_ALBUMS";

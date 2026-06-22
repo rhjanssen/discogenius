@@ -11,12 +11,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let artistQueryModule: typeof import("./artist-query-service.js");
 let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
+let skyHookProxyModule: typeof import("../metadata/skyhook-proxy.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   artistQueryModule = await import("./artist-query-service.js");
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
+  skyHookProxyModule = await import("../metadata/skyhook-proxy.js");
 });
 
 beforeEach(() => {
@@ -237,6 +239,69 @@ test("artist page album cards prefer cached SkyHook artwork over provider fallba
   const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
   assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
   assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+});
+
+test("artist page album cards resolve SkyHook artwork before provider fallback on first load", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/first-load.jpg";
+
+  db.prepare(`UPDATE Albums SET data = ?, images = NULL WHERE mbid = ?`)
+    .run(
+      JSON.stringify({ images: [{ coverType: "Cover", url: skyHookUrl, width: 1200, height: 1200 }] }),
+      "release-group-mbid-1",
+    );
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+  const albums = (page?.rows || [])
+    .flatMap((row: any) => row.modules || [])
+    .find((module: any) => module.title === "Albums")?.items || [];
+
+  assert.equal(albums.length, 1);
+  const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+});
+
+test("artist page hydrates missing release-group artwork before using provider fallback", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/hydrated.jpg";
+  const originalSync = skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+
+  db.prepare(`UPDATE Albums SET data = NULL, images = ? WHERE mbid = ?`)
+    .run(
+      JSON.stringify([{
+        coverType: "Cover",
+        url: "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg",
+        source: "provider-fallback",
+      }]),
+      "release-group-mbid-1",
+    );
+
+  skyHookProxyModule.skyHookProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
+    assert.equal(releaseGroupMbid, "release-group-mbid-1");
+    assert.equal(artistMbid, "artist-mbid-1");
+    db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
+      .run(
+        JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+        "release-group-mbid-1",
+      );
+  }) as typeof skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+
+  try {
+    const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+    const albums = (page?.rows || [])
+      .flatMap((row: any) => row.modules || [])
+      .find((module: any) => module.title === "Albums")?.items || [];
+
+    assert.equal(albums.length, 1);
+    const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
+    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+    assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+  } finally {
+    skyHookProxyModule.skyHookProxy.syncReleaseGroup = originalSync;
+  }
 });
 
 test("artist activity tracks canonical queued work and ignores provider catalog refs", () => {

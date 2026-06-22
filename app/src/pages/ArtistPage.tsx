@@ -887,9 +887,9 @@ const ArtistPage = () => {
     const skyHookImageUrl = item.cover_art_url || null;
     const providerImageUrl = getAlbumCover(item.provider_cover_id, "medium");
     const storedImageUrl = getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
-    
-    const imageUrl = skyHookImageUrl || providerImageUrl || storedImageUrl;
-    const fallbackImageUrl = skyHookImageUrl ? (providerImageUrl || storedImageUrl) : storedImageUrl;
+
+    const imageUrl = skyHookImageUrl || storedImageUrl || providerImageUrl;
+    const fallbackImageUrl = imageUrl === providerImageUrl ? null : providerImageUrl;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
