@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { JobTypes, TaskQueueService } from "../jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
 import { baseComparableTitle } from "../mediafiles/import-matching-utils.js";
@@ -494,8 +494,8 @@ export class CurationService {
         const hasActiveJob = (types: string[], refId: string) => {
             const placeholders = types.map(() => '?').join(', ');
             const existing = db.prepare(`
-                SELECT id FROM job_queue
-                WHERE type IN (${placeholders}) AND ref_id = ? AND status IN ('pending', 'processing')
+                SELECT id FROM commands
+                WHERE name IN (${placeholders}) AND ref_id = ? AND status IN ('queued', 'started')
             `).get(...types, refId);
             return Boolean(existing);
         };
@@ -505,7 +505,7 @@ export class CurationService {
             if (albumIds.length === 0) return false;
 
             for (const id of albumIds) {
-                if (hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], id)) {
+                if (hasActiveJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], id)) {
                     return true;
                 }
             }
@@ -565,7 +565,7 @@ export class CurationService {
                 !albumId
                 || albumQueuedAsAlbum.has(queueRefId)
                 || hasActiveAlbumWork(albumId)
-                || hasActiveJob([JobTypes.DownloadAlbum, JobTypes.ImportDownload], queueRefId)
+                || hasActiveJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], queueRefId)
             ) {
                 return false;
             }
@@ -573,7 +573,7 @@ export class CurationService {
             const albumTitleFull = formatAlbumTitle(album.title, album.version);
             const artistName = album.artist_name || artistNames[0] || 'Unknown';
             const provider = album.provider || "tidal";
-            TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+            CommandQueueService.addJob(CommandNames.DownloadAlbum, {
                 url: buildStreamingMediaUrl("album", albumId, provider as any),
                 type: 'album',
                 provider,
@@ -792,7 +792,7 @@ export class CurationService {
                 const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
                 if (!recordingId || !providerId || queuedRecordings.has(recordingId)) continue;
                 if (queuedGroups.has(groupKey) || importedVideoGroups.has(groupKey)) continue;
-                if (hasActiveJob([JobTypes.DownloadVideo, JobTypes.ImportDownload], queueRefId)) {
+                if (hasActiveJob([CommandNames.DownloadVideo, CommandNames.ImportDownload], queueRefId)) {
                     // An in-flight job already covers this song.
                     queuedGroups.add(groupKey);
                     continue;
@@ -802,7 +802,7 @@ export class CurationService {
                 const title = video.video_title || 'Unknown Video';
                 const provider = video.provider || "tidal";
 
-                TaskQueueService.addJob(JobTypes.DownloadVideo, {
+                CommandQueueService.addJob(CommandNames.DownloadVideo, {
                     url: buildStreamingMediaUrl("video", providerId, provider as any),
                     type: 'video',
                     provider,

@@ -1,13 +1,14 @@
+import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import express, { Request, Response, Router } from 'express';
 import {
-  DOWNLOAD_JOB_TYPES,
-  NON_DOWNLOAD_JOB_TYPES,
-  JobTypes,
-  TaskQueueService,
-  JobType,
-  AnyJobPayload,
-  JobStatus,
-} from '../../services/jobs/queue.js';
+  DOWNLOAD_COMMAND_NAMES,
+  NON_DOWNLOAD_COMMAND_NAMES,
+  CommandNames,
+  CommandQueueService,
+  CommandName,
+  AnyCommandBody,
+  CommandStatus,
+} from '../../services/commands/command-queue.js';
 import { downloadProcessor } from '../../services/download/download-processor.js';
 import { downloadEvents } from '../../services/download/download-events.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -16,8 +17,8 @@ import { shouldQueueRedownloadForFailedImport } from '../../services/download/do
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
-import { ACTIVITY_FILTERS, getActivityPage } from '../../services/jobs/command-history.js';
-import { getCommandTypesForQueueCategory, type CommandQueueCategory } from '../../services/jobs/command-registry.js';
+import { ACTIVITY_FILTERS, getActivityPage } from '../../services/commands/command-history.js';
+import { getCommandTypesForQueueCategory, type CommandQueueCategory } from '../../services/commands/command-registry.js';
 import { parseActivityFilters, parseListPagination } from '../../utils/activity-query.js';
 import {
   getObjectBody,
@@ -27,11 +28,11 @@ import {
   isRequestValidationError,
 } from '../../utils/request-validation.js';
 import type {
-  DownloadAlbumJobPayload,
-  DownloadTrackJobPayload,
-  DownloadVideoJobPayload,
-  ImportDownloadJobPayload,
-} from '../../services/jobs/job-payloads.js';
+  DownloadAlbumCommand,
+  DownloadTrackCommand,
+  DownloadVideoCommand,
+  ImportDownloadCommand,
+} from '../../services/commands/command-bodies.js';
 
 const router: Router = express.Router();
 
@@ -41,12 +42,12 @@ router.use(authMiddleware);
 // --- HELPER FUNCTIONS ---
 function buildRetryResponse(jobType: string, message?: string) {
   return {
-    action: jobType === JobTypes.ImportDownload ? 'retry-import' : 'retry-download',
-    message: message || (jobType === JobTypes.ImportDownload ? 'Import queued for retry' : 'Download queued for retry'),
+    action: jobType === CommandNames.ImportDownload ? 'retry-import' : 'retry-download',
+    message: message || (jobType === CommandNames.ImportDownload ? 'Import queued for retry' : 'Download queued for retry'),
   };
 }
 
-function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPayload, priority: number, trigger: number) {
+function queueRedownloadForImport(jobId: number, payload: ImportDownloadCommand, priority: number, trigger: number) {
   const mediaType = payload.type;
   const providerId = payload.providerId;
   if (!mediaType || !providerId) {
@@ -57,13 +58,13 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
   }
 
   const url = buildStreamingMediaUrl(mediaType, providerId);
-  const existingJob = TaskQueueService.getByRefId(
+  const existingJob = CommandQueueService.getByRefId(
     providerId,
     mediaType === 'video'
-      ? JobTypes.DownloadVideo
+      ? CommandNames.DownloadVideo
       : mediaType === 'album'
-        ? JobTypes.DownloadAlbum
-        : JobTypes.DownloadTrack,
+        ? CommandNames.DownloadAlbum
+        : CommandNames.DownloadTrack,
   );
 
   let queuedJobId = existingJob?.id;
@@ -71,7 +72,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
   if (queuedJobId === undefined) {
     switch (mediaType) {
       case 'album': {
-        queuedJobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+        queuedJobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
           providerId,
           url,
           type: mediaType,
@@ -82,11 +83,11 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
           artist_id: payload.artist_id ?? payload.artistId,
           quality: payload.quality ?? null,
           qualityProfile: payload.qualityProfile,
-        } satisfies DownloadAlbumJobPayload, providerId, priority, trigger);
+        } satisfies DownloadAlbumCommand, providerId, priority, trigger);
         break;
       }
       case 'video': {
-        queuedJobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
+        queuedJobId = CommandQueueService.addJob(CommandNames.DownloadVideo, {
           providerId,
           url,
           type: mediaType,
@@ -97,12 +98,12 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
           artist_id: payload.artist_id ?? payload.artistId,
           quality: payload.quality ?? null,
           qualityProfile: payload.qualityProfile,
-        } satisfies DownloadVideoJobPayload, providerId, priority, trigger);
+        } satisfies DownloadVideoCommand, providerId, priority, trigger);
         break;
       }
       case 'track':
       default: {
-        queuedJobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
+        queuedJobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
           providerId,
           url,
           type: mediaType,
@@ -113,7 +114,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
           artist_id: payload.artist_id ?? payload.artistId,
           quality: payload.quality ?? null,
           qualityProfile: payload.qualityProfile,
-        } satisfies DownloadTrackJobPayload, providerId, priority, trigger);
+        } satisfies DownloadTrackCommand, providerId, priority, trigger);
         break;
       }
     }
@@ -130,7 +131,7 @@ function queueRedownloadForImport(jobId: number, payload: ImportDownloadJobPaylo
   return {
     action: 'queue-redownload',
     message: existingJob
-      ? (existingJob.status === 'processing' ? 'Download already in progress for this item' : 'Download already queued for this item')
+      ? (existingJob.status === 'started' ? 'Download already in progress for this item' : 'Download already queued for this item')
       : 'Re-download queued to recover the failed import',
     jobId: queuedJobId,
     sourceJobId: jobId,
@@ -269,20 +270,20 @@ router.post('/', async (req: Request, res: Response) => {
       : resolvedProviderId;
     let jobId: number;
     if (contentType === 'album') {
-      jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+      jobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
         ...payload,
         type: 'album',
-      } satisfies DownloadAlbumJobPayload, queueRefId);
+      } satisfies DownloadAlbumCommand, queueRefId);
     } else if (contentType === 'video') {
-      jobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
+      jobId = CommandQueueService.addJob(CommandNames.DownloadVideo, {
         ...payload,
         type: 'video',
-      } satisfies DownloadVideoJobPayload, queueRefId);
+      } satisfies DownloadVideoCommand, queueRefId);
     } else {
-      jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
+      jobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
         ...payload,
         type: 'track',
-      } satisfies DownloadTrackJobPayload, queueRefId);
+      } satisfies DownloadTrackCommand, queueRefId);
     }
 
     // Trigger queue processing if not already running
@@ -310,19 +311,19 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const job = TaskQueueService.getById(jobId);
+    const job = CommandQueueService.getById(jobId);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'processing' || downloadProcessor.isActivelyProcessingJob(jobId)) {
+    if (job.status === 'started' || downloadProcessor.isActivelyProcessingJob(jobId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Pause or cancel the active download before deleting this queue item',
       });
     }
 
-    TaskQueueService.deleteJob(jobId);
+    CommandQueueService.deleteJob(jobId);
     res.json({ message: 'Job deleted' });
   } catch (error: any) {
     console.error('[QUEUE-API] Error deleting job:', error);
@@ -343,12 +344,12 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid job ID' });
     }
 
-    const job = TaskQueueService.getById(jobId);
+    const job = CommandQueueService.getById(jobId);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'processing' || downloadProcessor.isActivelyProcessingJob(jobId)) {
+    if (job.status === 'started' || downloadProcessor.isActivelyProcessingJob(jobId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Wait for the active download to finish or cancel it before retrying',
@@ -356,17 +357,17 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
     }
 
     if (shouldQueueRedownloadForFailedImport(job)) {
-      return res.json(queueRedownloadForImport(job.id, job.payload as ImportDownloadJobPayload, job.priority, job.trigger ?? 0));
+      return res.json(queueRedownloadForImport(job.id, job.payload as ImportDownloadCommand, job.priority, job.trigger ?? CommandTrigger.Unspecified));
     }
 
-    TaskQueueService.retry(jobId);
+    CommandQueueService.retry(jobId);
 
     // Trigger queue processing
     downloadProcessor.processQueue().catch(err => {
       console.error('[QUEUE-API] Error triggering queue processing:', err);
     });
 
-    res.json(buildRetryResponse(job.type));
+    res.json(buildRetryResponse(job.name));
   } catch (error: any) {
     console.error('[QUEUE-API] Error retrying job:', error);
     res.status(500).json({ error: 'Failed to retry job', message: error.message });
@@ -480,10 +481,10 @@ router.post('/reorder', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid reorder request', message: 'Provide exactly one of beforeJobId or afterJobId' });
     }
 
-    TaskQueueService.reorderPendingJobs(jobIds, {
+    CommandQueueService.reorderPendingJobs(jobIds, {
       beforeJobId,
       afterJobId,
-      types: DOWNLOAD_JOB_TYPES,
+      types: DOWNLOAD_COMMAND_NAMES,
     });
 
     res.json({ message: 'Queue reordered' });
@@ -499,11 +500,11 @@ router.post('/reorder', async (req: Request, res: Response) => {
  */
 router.post('/clear-completed', async (_req: Request, res: Response) => {
   try {
-    TaskQueueService.clearFinishedByTypes([
-      JobTypes.DownloadAlbum,
-      JobTypes.DownloadTrack,
-      JobTypes.DownloadVideo,
-      JobTypes.ImportDownload,
+    CommandQueueService.clearFinishedByTypes([
+      CommandNames.DownloadAlbum,
+      CommandNames.DownloadTrack,
+      CommandNames.DownloadVideo,
+      CommandNames.ImportDownload,
     ]);
     res.json({ message: 'Finished download jobs cleared' });
   } catch (error: any) {
@@ -604,7 +605,7 @@ router.delete('/remove', async (req: Request, res: Response) => {
     }
 
     const jobId: number = id;
-    const jobExists = TaskQueueService.getById(jobId);
+    const jobExists = CommandQueueService.getById(jobId);
     if (!jobExists) {
       return res.status(404).json({ error: 'Not found', message: 'Job not found in queue' });
     }
@@ -612,12 +613,12 @@ router.delete('/remove', async (req: Request, res: Response) => {
     const status = downloadProcessor.getStatus();
     if (status.currentJobId === jobId) {
       await downloadProcessor.pause();
-      TaskQueueService.cancel(jobId);
+      CommandQueueService.cancel(jobId);
       await downloadProcessor.resume();
     } else if (downloadProcessor.isActivelyImporting(jobId)) {
-      TaskQueueService.cancel(jobId);
+      CommandQueueService.cancel(jobId);
     } else {
-      TaskQueueService.cancel(jobId);
+      CommandQueueService.cancel(jobId);
     }
 
     res.sendStatus(204);
@@ -633,7 +634,7 @@ router.delete('/remove', async (req: Request, res: Response) => {
  */
 router.delete('/remove-all', async (_req: Request, res: Response) => {
   try {
-    TaskQueueService.clearDownloadJobs();
+    CommandQueueService.clearDownloadJobs();
     res.sendStatus(204);
   } catch (error: any) {
     console.error('[QUEUE-API] Error clearing queue:', error);
@@ -647,11 +648,11 @@ router.delete('/remove-all', async (_req: Request, res: Response) => {
  */
 router.delete('/remove-finished', async (_req: Request, res: Response) => {
   try {
-    TaskQueueService.clearFinishedByTypes([
-      JobTypes.DownloadAlbum,
-      JobTypes.DownloadTrack,
-      JobTypes.DownloadVideo,
-      JobTypes.ImportDownload,
+    CommandQueueService.clearFinishedByTypes([
+      CommandNames.DownloadAlbum,
+      CommandNames.DownloadTrack,
+      CommandNames.DownloadVideo,
+      CommandNames.ImportDownload,
     ]);
     res.sendStatus(204);
   } catch (error: any) {
@@ -662,8 +663,8 @@ router.delete('/remove-finished', async (_req: Request, res: Response) => {
 
 
 // --- TASK QUEUE ENDPOINTS (NON-DOWNLOAD COMMANDS) ---
-const allowedJobTypes = new Set<string>(NON_DOWNLOAD_JOB_TYPES);
-const defaultTaskStatuses: readonly JobStatus[] = ['pending', 'processing', 'completed', 'failed', 'cancelled'];
+const allowedJobTypes = new Set<string>(NON_DOWNLOAD_COMMAND_NAMES);
+const defaultTaskStatuses: readonly CommandStatus[] = ['queued', 'started', 'completed', 'failed', 'cancelled'];
 const taskCategories: readonly CommandQueueCategory[] = ['scans', 'other'];
 
 function normalizeTaskStatusFilterValue(status: string): string {
@@ -728,7 +729,7 @@ router.post('/tasks/add', (req: Request, res: Response) => {
     const priority = getOptionalInteger(body, 'priority') ?? 0;
     const refId = getOptionalIdentifier(body, 'ref_id');
 
-    const id = TaskQueueService.addJob(type as JobType, payload as AnyJobPayload, refId, priority);
+    const id = CommandQueueService.addJob(type as CommandName, payload as AnyCommandBody, refId, priority);
     res.json({ id, message: 'Task added' });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -751,7 +752,7 @@ router.post('/tasks', (req: Request, res: Response) => {
     const priority = getOptionalInteger(body, 'priority') ?? 0;
     const refId = getOptionalIdentifier(body, 'ref_id');
 
-    const id = TaskQueueService.addJob(type as JobType, payload as AnyJobPayload, refId, priority);
+    const id = CommandQueueService.addJob(type as CommandName, payload as AnyCommandBody, refId, priority);
     res.json({ id, message: 'Task added' });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -766,7 +767,7 @@ router.post('/tasks', (req: Request, res: Response) => {
  * Clear completed non-download tasks
  */
 router.post('/tasks/clear-completed', (_req: Request, res: Response) => {
-  TaskQueueService.clearFinishedByTypes([...NON_DOWNLOAD_JOB_TYPES]);
+  CommandQueueService.clearFinishedByTypes([...NON_DOWNLOAD_COMMAND_NAMES]);
   res.json({ message: 'Completed tasks cleared' });
 });
 
@@ -781,19 +782,19 @@ router.post('/tasks/:id/retry', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Invalid job ID' });
   }
 
-  const job = TaskQueueService.getById(jobId);
+  const job = CommandQueueService.getById(jobId);
   if (!job) {
     return res.status(404).json({ error: 'Task not found' });
   }
-  if (!allowedJobTypes.has(job.type)) {
+  if (!allowedJobTypes.has(job.name)) {
     return res.status(404).json({ error: 'Task not found' });
   }
 
-  if (job.status === 'processing') {
+  if (job.status === 'started') {
     return res.status(409).json({ error: 'Task is processing' });
   }
 
-  TaskQueueService.retry(jobId);
+  CommandQueueService.retry(jobId);
   res.json({ message: 'Task retried' });
 });
 
@@ -808,19 +809,19 @@ router.delete('/tasks/:id', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Invalid job ID' });
   }
 
-  const job = TaskQueueService.getById(jobId);
+  const job = CommandQueueService.getById(jobId);
   if (!job) {
     return res.status(404).json({ error: 'Task not found' });
   }
-  if (!allowedJobTypes.has(job.type)) {
+  if (!allowedJobTypes.has(job.name)) {
     return res.status(404).json({ error: 'Task not found' });
   }
 
-  if (job.status === 'processing') {
+  if (job.status === 'started') {
     return res.status(409).json({ error: 'Task is processing' });
   }
 
-  TaskQueueService.cancel(jobId);
+  CommandQueueService.cancel(jobId);
   res.json({ message: 'Task cancelled' });
 });
 

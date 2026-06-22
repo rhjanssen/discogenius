@@ -9,16 +9,16 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.route-split.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
-let queueModule: typeof import("../services/jobs/queue.js");
-let historyEventsModule: typeof import("../services/jobs/history-events.js");
+let queueModule: typeof import("../services/commands/command-queue.js");
+let historyEventsModule: typeof import("../services/commands/history-events.js");
 let tasksRouter: typeof import("./v1/queue.js").default;
 let activityRouter: typeof import("./v1/history.js").default;
 let statusRouter: typeof import("./status.js").default;
 
 before(async () => {
     dbModule = await import("../database.js");
-    queueModule = await import("../services/jobs/queue.js");
-    historyEventsModule = await import("../services/jobs/history-events.js");
+    queueModule = await import("../services/commands/command-queue.js");
+    historyEventsModule = await import("../services/commands/history-events.js");
     tasksRouter = (await import("./v1/queue.js")).default;
     activityRouter = (await import("./v1/history.js")).default;
     statusRouter = (await import("./status.js")).default;
@@ -26,7 +26,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM job_queue").run();
+    dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
 });
 
@@ -63,17 +63,17 @@ function getGetHandler(router: any, pathName: string): (req: any, res: any) => v
     return layer.route.stack[0].handle;
 }
 
-test("/api/tasks defaults to pending+processing+completed+failed+cancelled and supports explicit status override", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
-    const processingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "library" });
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.BulkRefreshArtist, {});
-    const cancelledId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RescanAllRoots, {});
+test("/api/tasks defaults to queued+started+completed+failed+cancelled and supports explicit status override", () => {
+    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
+    const processingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshMetadata, { target: "library" });
+    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.BulkRefreshArtist, {});
+    const cancelledId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RescanAllRoots, {});
 
-    queueModule.TaskQueueService.markProcessing(processingId);
-    queueModule.TaskQueueService.complete(completedId);
-    queueModule.TaskQueueService.fail(failedId, "test failure");
-    queueModule.TaskQueueService.cancel(cancelledId);
+    queueModule.CommandQueueService.markProcessing(processingId);
+    queueModule.CommandQueueService.complete(completedId);
+    queueModule.CommandQueueService.fail(failedId, "test failure");
+    queueModule.CommandQueueService.cancel(cancelledId);
 
     const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
@@ -89,7 +89,7 @@ test("/api/tasks defaults to pending+processing+completed+failed+cancelled and s
     );
     assert.deepEqual(
         [...new Set(defaultBody.items.map((item) => item.status))].sort(),
-        ["cancelled", "completed", "failed", "pending", "running"],
+        ["cancelled", "completed", "failed", "queued", "started"],
     );
     for (const item of defaultBody.items) {
         assert.equal(typeof (item as any).description, "string");
@@ -110,7 +110,7 @@ test("/api/tasks defaults to pending+processing+completed+failed+cancelled and s
 });
 
 test("/api/tasks rejects unsupported filters", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
+    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
 
     const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
@@ -132,14 +132,14 @@ test("/api/tasks rejects unsupported filters", () => {
 });
 
 test("/api/activity defaults to completed+failed+cancelled and supports explicit status override", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ApplyCuration, { expectedArtists: 1 });
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.BulkRefreshArtist, {});
-    const cancelledId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.ConfigPrune, {});
+    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.ApplyCuration, { expectedArtists: 1 });
+    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.BulkRefreshArtist, {});
+    const cancelledId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.ConfigPrune, {});
 
-    queueModule.TaskQueueService.complete(completedId);
-    queueModule.TaskQueueService.fail(failedId, "test failure");
-    queueModule.TaskQueueService.cancel(cancelledId);
+    queueModule.CommandQueueService.complete(completedId);
+    queueModule.CommandQueueService.fail(failedId, "test failure");
+    queueModule.CommandQueueService.cancel(cancelledId);
 
     const activityHandler = getGetHandler(activityRouter as any, "/activity");
 
@@ -159,13 +159,13 @@ test("/api/activity defaults to completed+failed+cancelled and supports explicit
     );
 
     const pendingRes = createMockResponse();
-    activityHandler({ query: { status: "pending" } }, pendingRes);
+    activityHandler({ query: { status: "queued" } }, pendingRes);
 
     assert.equal(pendingRes.statusCode, 200);
     const pendingBody = pendingRes.body as { items: Array<{ id: number; status: string }>; total: number };
     assert.equal(pendingBody.total, 1);
     assert.equal(pendingBody.items[0]?.id, pendingId);
-    assert.equal(pendingBody.items[0]?.status, "pending");
+    assert.equal(pendingBody.items[0]?.status, "queued");
 
     const runningAliasRes = createMockResponse();
     activityHandler({ query: { status: "running" } }, runningAliasRes);
@@ -195,9 +195,9 @@ test("/api/activity rejects unsupported filters", () => {
 });
 
 test("/api/activity/events returns merged event log sorted newest-first with pagination metadata", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-events" }, "album-events");
-    const failedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    queueModule.TaskQueueService.fail(failedId, "health failed");
+    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-events" }, "album-events");
+    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueService.fail(failedId, "health failed");
 
     const historyInfoId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
@@ -208,8 +208,8 @@ test("/api/activity/events returns merged event log sorted newest-first with pag
         sourceTitle: "Failed Download",
     });
 
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ? WHERE id = ?").run("2024-01-01 10:00:00", pendingId);
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, started_at = ?, completed_at = ? WHERE id = ?")
+    dbModule.db.prepare("UPDATE commands SET created_at = ? WHERE id = ?").run("2024-01-01 10:00:00", pendingId);
+    dbModule.db.prepare("UPDATE commands SET created_at = ?, started_at = ?, completed_at = ? WHERE id = ?")
         .run("2024-01-02 10:00:00", "2024-01-02 10:05:00", "2024-01-02 10:10:00", failedId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-01-03 12:00:00", historyInfoId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-01-04 12:00:00", historyErrorId);

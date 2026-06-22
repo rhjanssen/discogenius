@@ -22,7 +22,7 @@ export interface LocalGroup {
         album?: string;
         year?: number;
     };
-    status: "pending" | "imported" | "manual_required";
+    status: "queued" | "imported" | "manual_required";
 }
 
 export interface ImportCandidate {

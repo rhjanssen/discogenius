@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
 import { db } from "../../database.js";
 import {
@@ -215,7 +216,7 @@ router.post("/:artistId/monitor", async (req, res) => {
       artistName: getOptionalString(getObjectBody(req.body), "name"),
       monitored: parseOptionalMonitored((req.body as any)?.monitored),
       priority: 1,
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
 
     if (!result) {
@@ -401,7 +402,7 @@ router.patch("/:artistId", async (req, res) => {
       artistId,
       monitored,
       priority: 1,
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
     if (!result) {
       return res.status(404).json({ detail: "Artist not found" });
@@ -457,7 +458,7 @@ router.put("/:artistId", async (req, res) => {
       artistId,
       monitored: Boolean(monitored),
       priority: 1,
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
     if (!result) {
       return res.status(404).json({ detail: "Artist not found" });
@@ -487,7 +488,7 @@ router.post("/:artistId/curate", async (req, res) => {
       artistName,
       workflow: "curation",
       priority: 1,
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
 
     res.json({
@@ -515,7 +516,7 @@ router.post("/", async (req, res) => {
       artistId,
       artistName,
       priority: 1,
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
 
     res.json({

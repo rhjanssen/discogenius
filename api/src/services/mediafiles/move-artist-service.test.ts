@@ -12,7 +12,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let moveArtistServiceModule: typeof import("./move-artist-service.js");
-let queueModule: typeof import("../jobs/queue.js");
+let queueModule: typeof import("../commands/command-queue.js");
 let validationModule: typeof import("../../utils/request-validation.js");
 
 function writeTestConfig() {
@@ -83,7 +83,7 @@ before(async () => {
   configModule = await import("../config/config.js");
   libraryFilesModule = await import("./library-files.js");
   moveArtistServiceModule = await import("./move-artist-service.js");
-  queueModule = await import("../jobs/queue.js");
+  queueModule = await import("../commands/command-queue.js");
   validationModule = await import("../../utils/request-validation.js");
 
   writeTestConfig();
@@ -91,7 +91,7 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM job_queue").run();
+  db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
@@ -152,12 +152,12 @@ test("moveArtist queues MoveArtist when moveFiles is requested", () => {
   assert.ok(result?.jobId);
 
   const job = dbModule.db.prepare(`
-    SELECT type, ref_id as refId
-    FROM job_queue
+    SELECT name, ref_id as refId
+    FROM commands
     WHERE id = ?
-  `).get(result?.jobId) as { type: string; refId: string };
+  `).get(result?.jobId) as { name: string; refId: string };
 
-  assert.equal(job.type, queueModule.JobTypes.MoveArtist);
+  assert.equal(job.name, queueModule.CommandNames.MoveArtist);
   assert.equal(job.refId, "1");
 });
 

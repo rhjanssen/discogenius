@@ -6,7 +6,7 @@ import { findArtistPathConflict, normalizeArtistFolderInput } from "../music/art
 import { ArtistPathBuilder } from "../music/artist-path-builder.js";
 import { Config } from "../config/config.js";
 import { LibraryFilesService, removeEmptyParents, type RenameStatusSummary } from "./library-files.js";
-import { JobTypes, TaskQueueService } from "../jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import { RenameTrackFileService } from "./rename-track-file-service.js";
 
 type ArtistPathRow = {
@@ -137,8 +137,8 @@ export class MoveArtistService {
     let jobId: number | null = null;
     const shouldQueueMove = options.moveFiles === true && changed && Boolean(currentPath) && renameStatus.renameNeeded > 0;
     if (shouldQueueMove) {
-      const queuedJobId = TaskQueueService.addJob(
-        JobTypes.MoveArtist,
+      const queuedJobId = CommandQueueService.addJob(
+        CommandNames.MoveArtist,
         {
           artistId: options.artistId,
           sourcePath: currentPath,

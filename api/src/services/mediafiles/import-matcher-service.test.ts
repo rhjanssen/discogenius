@@ -115,7 +115,7 @@ function makeGroup(): LocalGroup {
       artist: "Canonical Artist",
       album: "Canonical Album",
     },
-    status: "pending",
+    status: "queued",
     files: [
       {
         path: "C:/Import/Canonical Artist/Canonical Album/Canonical Track.flac",

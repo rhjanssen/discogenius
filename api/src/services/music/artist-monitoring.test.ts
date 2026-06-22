@@ -31,7 +31,7 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM job_queue").run();
+  db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
@@ -102,10 +102,10 @@ test("monitoring a named MusicBrainz search result hydrates display metadata bef
     musicbrainz_status: string;
   };
   const job = dbModule.db.prepare(`
-    SELECT type, ref_id, status
-    FROM job_queue
+    SELECT name, ref_id, status
+    FROM commands
     WHERE id = ?
-  `).get(result.jobId) as { type: string; ref_id: string; status: string };
+  `).get(result.jobId) as { name: string; ref_id: string; status: string };
 
   assert.equal(artist.id, artistMbid);
   assert.equal(artist.name, "Bastille");
@@ -114,9 +114,9 @@ test("monitoring a named MusicBrainz search result hydrates display metadata bef
   assert.equal(artist.cover_image_url, "https://example.invalid/bastille-fanart.jpg");
   assert.equal(artist.monitor, 1);
   assert.equal(artist.musicbrainz_status, "verified");
-  assert.equal(job.type, "RefreshArtist");
+  assert.equal(job.name, "RefreshArtist");
   assert.equal(job.ref_id, artistMbid);
-  assert.equal(job.status, "pending");
+  assert.equal(job.status, "queued");
 });
 
 test("unmonitoring an artist clears canonical slots and videos without provider catalog rows", () => {

@@ -7,15 +7,15 @@ import type {
 } from "../../contracts/status.js";
 import { downloadProcessor } from "./download-processor.js";
 import {
-  DOWNLOAD_JOB_TYPES,
-  DOWNLOAD_OR_IMPORT_JOB_TYPES,
-  JobTypes,
-  TaskQueueService,
-} from "../jobs/queue.js";
+  DOWNLOAD_COMMAND_NAMES,
+  DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+  CommandNames,
+  CommandQueueService,
+} from "../commands/command-queue.js";
 
 type QueueJobRow = {
   id: number;
-  type: string;
+  name: string;
   status: string;
   ref_id?: string | null;
   payload?: Record<string, unknown>;
@@ -48,7 +48,7 @@ type QueueMetadata = {
   quality?: string | null;
 };
 
-const ACTIVE_QUEUE_STATUSES: Array<"pending" | "processing" | "failed"> = ["pending", "processing", "failed"];
+const ACTIVE_QUEUE_STATUSES: Array<"queued" | "started" | "failed"> = ["queued", "started", "failed"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
 
 function placeholders(values: readonly unknown[]): string {
@@ -83,15 +83,15 @@ function normalizeDistinctIdentifiers(values?: readonly string[] | null): string
 }
 
 function resolveQueueItemContentType(job: QueueJobRow): QueueItemContract["type"] {
-  if (job.type === JobTypes.DownloadVideo) {
+  if (job.name === CommandNames.DownloadVideo) {
     return "video";
   }
 
-  if (job.type === JobTypes.DownloadAlbum) {
+  if (job.name === CommandNames.DownloadAlbum) {
     return "album";
   }
 
-  if (job.type === JobTypes.ImportDownload) {
+  if (job.name === CommandNames.ImportDownload) {
     const payloadType = getOptionalString(job.payload?.type);
     if (payloadType === "video" || payloadType === "album") {
       return payloadType;
@@ -443,10 +443,10 @@ function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFi
 }
 
 function buildQueuePositionById(): Map<number, number> {
-  const pendingDownloadJobs = TaskQueueService.listJobsByTypesAndStatuses(
-    DOWNLOAD_JOB_TYPES,
-    ["pending"],
-    TaskQueueService.countJobsByTypesAndStatuses(DOWNLOAD_JOB_TYPES, ["pending"]),
+  const pendingDownloadJobs = CommandQueueService.listJobsByTypesAndStatuses(
+    DOWNLOAD_COMMAND_NAMES,
+    ["queued"],
+    CommandQueueService.countJobsByTypesAndStatuses(DOWNLOAD_COMMAND_NAMES, ["queued"]),
     0,
     { orderBy: "queue_order" },
   ) as unknown as QueueJobRow[];
@@ -462,16 +462,16 @@ function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<
     return queuePositionById;
   }
 
-  const typePlaceholders = DOWNLOAD_JOB_TYPES.map(() => "?").join(",");
+  const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
   const idPlaceholders = jobIds.map(() => "?").join(",");
   const rows = db.prepare(`
     SELECT
       target.id,
       1 + (
         SELECT COUNT(*)
-        FROM job_queue candidate
-        WHERE candidate.status = 'pending'
-          AND candidate.type IN (${typePlaceholders})
+        FROM commands candidate
+        WHERE candidate.status = 'queued'
+          AND candidate.name IN (${typePlaceholders})
           AND (
             COALESCE(candidate.queue_order, 2147483647) < COALESCE(target.queue_order, 2147483647)
             OR (
@@ -485,10 +485,10 @@ function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<
             )
           )
       ) AS queuePosition
-    FROM job_queue target
-    WHERE target.status = 'pending'
+    FROM commands target
+    WHERE target.status = 'queued'
       AND target.id IN (${idPlaceholders})
-  `).all(...DOWNLOAD_JOB_TYPES, ...jobIds) as Array<{ id: number; queuePosition: number }>;
+  `).all(...DOWNLOAD_COMMAND_NAMES, ...jobIds) as Array<{ id: number; queuePosition: number }>;
 
   for (const row of rows) {
     queuePositionById.set(Number(row.id), Number(row.queuePosition));
@@ -498,30 +498,30 @@ function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<
 }
 
 function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
-  const typeSql = placeholders(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+  const typeSql = placeholders(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
   const statusSql = placeholders(QUEUE_HISTORY_STATUSES);
-  const downloadTypeSql = placeholders(DOWNLOAD_JOB_TYPES);
+  const downloadTypeSql = placeholders(DOWNLOAD_COMMAND_NAMES);
 
   return {
     whereSql: `
-      jq.type IN (${typeSql})
+      jq.name IN (${typeSql})
       AND jq.status IN (${statusSql})
       AND NOT (
-        jq.type IN (${downloadTypeSql})
+        jq.name IN (${downloadTypeSql})
         AND EXISTS (
           SELECT 1
-          FROM job_queue import_job
-          WHERE import_job.type = ?
+          FROM commands import_job
+          WHERE import_job.name = ?
             AND import_job.status IN (${statusSql})
             AND CAST(json_extract(import_job.payload, '$.originalJobId') AS INTEGER) = jq.id
         )
       )
     `,
     params: [
-      ...DOWNLOAD_OR_IMPORT_JOB_TYPES,
+      ...DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ...QUEUE_HISTORY_STATUSES,
-      ...DOWNLOAD_JOB_TYPES,
-      JobTypes.ImportDownload,
+      ...DOWNLOAD_COMMAND_NAMES,
+      CommandNames.ImportDownload,
       ...QUEUE_HISTORY_STATUSES,
     ],
   };
@@ -532,10 +532,10 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
     ?? (item.status === "failed"
       ? (item.stage === "import" ? "importFailed" : "failed")
       : item.stage === "import"
-        ? (item.status === "processing" || item.status === "downloading" ? "importing" : "importPending")
+        ? (item.status === "started" || item.status === "downloading" ? "importing" : "importPending")
         : item.status === "completed"
           ? "completed"
-          : item.status === "processing" || item.status === "downloading"
+          : item.status === "started" || item.status === "downloading"
             ? "downloading"
             : "queued");
 
@@ -549,7 +549,7 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
     item.state !== undefined ||
     (Array.isArray(item.tracks) && item.tracks.length > 0);
 
-  if (!hasPersistedState && item.progress <= 0 && item.status === "pending" && item.stage !== "import") {
+  if (!hasPersistedState && item.progress <= 0 && item.status === "queued" && item.stage !== "import") {
     return null;
   }
 
@@ -585,7 +585,7 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
 export class DownloadQueueQueryService {
   static getQueueStatus(): QueueStatusContract {
     const status = downloadProcessor.getStatus();
-    const stats = TaskQueueService.getStats() as QueueStatusContract["stats"];
+    const stats = CommandQueueService.getStats() as QueueStatusContract["stats"];
 
     return {
       ...status,
@@ -594,12 +594,12 @@ export class DownloadQueueQueryService {
   }
 
   static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    const total = TaskQueueService.countJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_JOB_TYPES,
+    const total = CommandQueueService.countJobsByTypesAndStatuses(
+      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
     );
-    const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_JOB_TYPES,
+    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       params.limit,
       params.offset,
@@ -608,7 +608,7 @@ export class DownloadQueueQueryService {
 
     const queuePositionById = getPendingDownloadQueuePositionsForIds(
       jobs
-        .filter((job) => job.status === "pending" && DOWNLOAD_JOB_TYPES.includes(job.type as typeof DOWNLOAD_JOB_TYPES[number]))
+        .filter((job) => job.status === "queued" && DOWNLOAD_COMMAND_NAMES.includes(job.name as typeof DOWNLOAD_COMMAND_NAMES[number]))
         .map((job) => job.id),
     );
     const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
@@ -626,14 +626,14 @@ export class DownloadQueueQueryService {
     const logicalHistory = buildLogicalHistoryQuery();
     const totalRow = db.prepare(`
       SELECT COUNT(*) AS count
-      FROM job_queue jq
+      FROM commands jq
       WHERE ${logicalHistory.whereSql}
     `).get(...logicalHistory.params) as { count?: number } | undefined;
     const total = Number(totalRow?.count || 0);
 
     const rows = db.prepare(`
       SELECT jq.id
-      FROM job_queue jq
+      FROM commands jq
       WHERE ${logicalHistory.whereSql}
       ORDER BY
         jq.completed_at DESC,
@@ -644,7 +644,7 @@ export class DownloadQueueQueryService {
       LIMIT ? OFFSET ?
     `).all(...logicalHistory.params, params.limit, params.offset) as Array<{ id: number }>;
     const jobs = rows
-      .map((row) => TaskQueueService.getById(row.id))
+      .map((row) => CommandQueueService.getById(row.id))
       .filter((job) => job !== null) as unknown as QueueJobRow[];
 
     return {
@@ -659,8 +659,8 @@ export class DownloadQueueQueryService {
   static getQueueDetails(filters: QueueDetailsFilters): QueueItemContract[] {
     const normalizedFilters = normalizeQueueDetailsFilters(filters);
     const queuePositionById = buildQueuePositionById();
-    const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_JOB_TYPES,
+    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       5000,
       0,
@@ -674,8 +674,8 @@ export class DownloadQueueQueryService {
 
   static getActiveProgressSnapshots(): DownloadProgressContract[] {
     const queuePositionById = buildQueuePositionById();
-    const jobs = TaskQueueService.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_JOB_TYPES,
+    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       5000,
       0,
@@ -741,7 +741,7 @@ export class DownloadQueueQueryService {
       providerId,
       type: contentType,
       status: job.status as QueueItemContract["status"],
-      stage: job.type === JobTypes.ImportDownload ? "import" : "download",
+      stage: job.name === CommandNames.ImportDownload ? "import" : "download",
       progress: (typeof downloadState.progress === "number" && Number.isFinite(downloadState.progress))
         ? downloadState.progress
         : (typeof job.progress === "number" && Number.isFinite(job.progress) ? job.progress : 0),

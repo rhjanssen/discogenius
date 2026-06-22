@@ -6,7 +6,7 @@ export const activityInFlightFeedQueryKey = ["activityInFlightFeed"] as const;
 
 const ACTIVITY_IN_FLIGHT_PAGE_SIZE = 100;
 const ACTIVITY_IN_FLIGHT_CATEGORIES = ["downloads", "scans", "other"] as const;
-const ACTIVITY_IN_FLIGHT_STATUSES = ["pending", "processing", "running"] as const;
+const ACTIVITY_IN_FLIGHT_STATUSES = ["queued", "started"] as const;
 
 type UseActivityInFlightFeedOptions = {
     enabled?: boolean;

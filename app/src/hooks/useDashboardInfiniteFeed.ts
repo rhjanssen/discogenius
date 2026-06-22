@@ -22,9 +22,9 @@ type UseDashboardInfiniteFeedOptions<TItem> = {
 };
 
 const DASHBOARD_FEED_GLOBAL_EVENTS = [
-    "job.added",
-    "job.updated",
-    "job.deleted",
+    "command.added",
+    "command.updated",
+    "command.deleted",
     "queue.cleared",
     "history.added",
     "config.updated",

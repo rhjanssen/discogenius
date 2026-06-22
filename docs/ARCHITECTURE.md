@@ -204,7 +204,7 @@ Primary persisted entities:
 - metadata_identity_status
 - history_events
 - `UnmappedFiles`
-- job_queue, scheduled_tasks, monitoring_runtime_state
+- commands, scheduled_tasks, monitoring_runtime_state
 - quality_profiles, upgrade_queue
 - config
 

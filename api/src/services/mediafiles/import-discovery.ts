@@ -119,7 +119,7 @@ export async function scanImportDirectory(
                 files,
                 sidecars,
                 commonTags: deriveCommonTags(files, dir, rootPath),
-                status: "pending",
+                status: "queued",
             });
         }
     };

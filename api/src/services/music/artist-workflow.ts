@@ -1,5 +1,6 @@
-import { ARTIST_WORKFLOW_JOB_TYPES, JobTypes, TaskQueueService } from "../jobs/queue.js";
-import type { RescanFoldersJobPayload } from "../jobs/job-payloads.js";
+import { CommandTrigger } from "../commands/command-trigger.js";
+import { ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import type { RescanFoldersCommand } from "../commands/command-bodies.js";
 import { getManagedArtists } from "./managed-artists.js";
 
 export type ArtistWorkflow =
@@ -11,9 +12,9 @@ export type ArtistWorkflow =
   | "full-monitoring";
 
 export type ArtistWorkflowEntryJobType =
-  | typeof JobTypes.RefreshArtist
-  | typeof JobTypes.RescanFolders
-  | typeof JobTypes.CurateArtist;
+  | typeof CommandNames.RefreshArtist
+  | typeof CommandNames.RescanFolders
+  | typeof CommandNames.CurateArtist;
 
 export interface ManagedArtistWorkflowProgress {
   processed: number;
@@ -92,7 +93,7 @@ export function getArtistWorkflowPhases(workflow: ArtistWorkflow): WorkflowPhase
   return WORKFLOW_PHASES[workflow];
 }
 
-export function buildRefreshArtistJobPayload(params: {
+export function buildRefreshArtistCommand(params: {
   artistId: string;
   artistName: string;
   workflow: ArtistWorkflow;
@@ -127,11 +128,11 @@ export function getArtistWorkflowEntryJobType(workflow: ArtistWorkflow): ArtistW
     case "refresh-scan":
     case "monitoring-intake":
     case "full-monitoring":
-      return JobTypes.RefreshArtist;
+      return CommandNames.RefreshArtist;
     case "library-scan":
-      return JobTypes.RescanFolders;
+      return CommandNames.RescanFolders;
     case "curation":
-      return JobTypes.CurateArtist;
+      return CommandNames.CurateArtist;
   }
 }
 
@@ -149,8 +150,8 @@ export function buildArtistWorkflowEntryJob(params: {
     case "monitoring-intake":
     case "full-monitoring":
       return {
-        type: JobTypes.RefreshArtist,
-        payload: buildRefreshArtistJobPayload({
+        type: CommandNames.RefreshArtist,
+        payload: buildRefreshArtistCommand({
           artistId: params.artistId,
           artistName: params.artistName,
           workflow: params.workflow,
@@ -161,8 +162,8 @@ export function buildArtistWorkflowEntryJob(params: {
       };
     case "library-scan":
       return {
-        type: JobTypes.RescanFolders,
-        payload: buildRescanFoldersJobPayload({
+        type: CommandNames.RescanFolders,
+        payload: buildRescanFoldersCommand({
           artistId: params.artistId,
           artistName: params.artistName,
           workflow: params.workflow,
@@ -170,8 +171,8 @@ export function buildArtistWorkflowEntryJob(params: {
       };
     case "curation":
       return {
-        type: JobTypes.CurateArtist,
-        payload: buildCurateArtistJobPayload({
+        type: CommandNames.CurateArtist,
+        payload: buildCurateArtistCommand({
           artistId: params.artistId,
           artistName: params.artistName,
           workflow: params.workflow,
@@ -191,12 +192,12 @@ export function queueArtistWorkflow(params: {
   trigger?: number;
 }) {
   const { type, payload } = buildArtistWorkflowEntryJob(params);
-  return TaskQueueService.addJob(
+  return CommandQueueService.addJob(
     type,
     payload,
     params.artistId,
     params.priority ?? 0,
-    params.trigger ?? 0,
+    params.trigger ?? CommandTrigger.Unspecified,
   );
 }
 
@@ -230,17 +231,17 @@ export function queueLibraryRescan(options: {
   artistIds?: string[];
   addNewArtists?: boolean;
 } = {}) {
-  return TaskQueueService.addJob(
-    JobTypes.RescanFolders,
+  return CommandQueueService.addJob(
+    CommandNames.RescanFolders,
     {
       addNewArtists: options.addNewArtists ?? false,
       artistIds: options.artistIds,
       monitorArtist: options.monitorArtist ?? true,
       fullProcessing: options.fullProcessing ?? false,
-    } satisfies Partial<RescanFoldersJobPayload>,
+    } satisfies Partial<RescanFoldersCommand>,
     "rescan-folders",
     options.priority ?? 0,
-    options.trigger ?? 0,
+    options.trigger ?? CommandTrigger.Unspecified,
   );
 }
 
@@ -255,7 +256,7 @@ export function queueManagedArtistsWorkflow(
   } = {},
 ): { queued: number; artists: number; libraryRescanQueued: boolean } {
   const artists = getManagedArtists({ orderByLastScanned: true, artistIds: options.artistIds });
-  const trigger = options.trigger ?? 0;
+  const trigger = options.trigger ?? CommandTrigger.Unspecified;
   const priority = options.priority ?? 0;
 
   let libraryRescanQueued = false;
@@ -309,11 +310,11 @@ export function queueManagedArtistsWorkflow(
   };
 }
 
-export function buildRescanFoldersJobPayload(params: {
+export function buildRescanFoldersCommand(params: {
   artistId: string;
   artistName: string;
   workflow: Extract<ArtistWorkflow, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
-  monitoringCycle?: RescanFoldersJobPayload["monitoringCycle"];
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
@@ -328,11 +329,11 @@ export function buildRescanFoldersJobPayload(params: {
   };
 }
 
-export function buildCurateArtistJobPayload(params: {
+export function buildCurateArtistCommand(params: {
   artistId: string;
   artistName: string;
   workflow: Extract<ArtistWorkflow, "curation" | "monitoring-intake" | "full-monitoring">;
-  monitoringCycle?: RescanFoldersJobPayload["monitoringCycle"];
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {

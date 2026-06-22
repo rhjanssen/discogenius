@@ -13,7 +13,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let curationServiceModule: typeof import("./curation-service.js");
 let albumQueryServiceModule: typeof import("./album-query-service.js");
-let queueModule: typeof import("../jobs/queue.js");
+let queueModule: typeof import("../commands/command-queue.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -54,14 +54,14 @@ before(async () => {
   configModule = await import("../config/config.js");
   curationServiceModule = await import("./curation-service.js");
   albumQueryServiceModule = await import("./album-query-service.js");
-  queueModule = await import("../jobs/queue.js");
+  queueModule = await import("../commands/command-queue.js");
 
   writeTestConfig();
 });
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM job_queue").run();
+  db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -208,10 +208,10 @@ const queued = await curationServiceModule.CurationService.queueMonitoredItems("
   assert.equal(queued.videos, 1);
 
   const job = db.prepare(`
-    SELECT type, ref_id AS refId, payload
-    FROM job_queue
-    WHERE type = ?
-  `).get(queueModule.JobTypes.DownloadVideo) as { type: string; refId: string; payload: string } | undefined;
+    SELECT name, ref_id AS refId, payload
+    FROM commands
+    WHERE name = ?
+  `).get(queueModule.CommandNames.DownloadVideo) as { name: string; refId: string; payload: string } | undefined;
 
   assert.ok(job);
   assert.equal(job?.refId, "recording:501:video");
@@ -307,9 +307,9 @@ test("CurationService queues spatial slot when only the stereo selected release 
   assert.equal(queued.albums, 1);
   const jobs = db.prepare(`
     SELECT ref_id AS refId, payload
-    FROM job_queue
-    WHERE type = ?
-  `).all(queueModule.JobTypes.DownloadAlbum) as Array<{ refId: string; payload: string }>;
+    FROM commands
+    WHERE name = ?
+  `).all(queueModule.CommandNames.DownloadAlbum) as Array<{ refId: string; payload: string }>;
 
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0]?.refId, "rg-mbid-1:spatial");

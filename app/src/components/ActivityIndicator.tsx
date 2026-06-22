@@ -51,19 +51,19 @@ export const ActivityIndicator = () => {
     } = useStatusOverview();
 
     const downloadingCount =
-        Number(commandStats.downloads?.processing || 0) ||
+        Number(commandStats.downloads?.started || 0) ||
         taskQueueStats
-            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "processing")
+            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "started")
             .reduce((acc, curr) => acc + curr.count, 0);
 
     const queuedCount =
-        Number(commandStats.downloads?.pending || 0) ||
+        Number(commandStats.downloads?.queued || 0) ||
         taskQueueStats
-            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "pending")
+            .filter((s) => ((s.type?.startsWith("Download") || s.type === "ImportDownload")) && s.status === "queued")
             .reduce((acc, curr) => acc + curr.count, 0);
 
-    const backgroundProcessing = Number(status?.activity?.processing || 0);
-    const backgroundPending = Number(status?.activity?.pending || 0);
+    const backgroundProcessing = Number(status?.activity?.started || 0);
+    const backgroundPending = Number(status?.activity?.queued || 0);
 
     if (isStatusInitialLoading && !hasStatusData) return null;
 

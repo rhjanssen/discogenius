@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
-import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../jobs/history-events.js";
+import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
   LibraryFilesService,

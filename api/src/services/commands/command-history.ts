@@ -1,3 +1,4 @@
+import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import {
     getCommandTypesForQueueCategory,
@@ -10,16 +11,16 @@ import {
     type HistoryEventFeedItem,
     type HistoryEventType,
 } from "./history-events.js";
-import { Job, JobType, JobTypes, TaskQueueService } from "./queue.js";
+import { CommandModel, CommandName, CommandNames, CommandQueueService } from "./command-queue.js";
 
-const ALL_ACTIVITY_STATUSES = ["pending", "processing", "completed", "failed", "cancelled"] as const;
+const ALL_ACTIVITY_STATUSES = ["queued", "started", "completed", "failed", "cancelled"] as const;
 type ActivityStatus = typeof ALL_ACTIVITY_STATUSES[number];
 
 const DEFAULT_ACTIVITY_CATEGORIES: readonly CommandQueueCategory[] = ["downloads", "scans", "other"];
 
 function normalizeStatusFilterValue(status: string): ActivityStatus | null {
     if (status === "running") {
-        return "processing";
+        return "started";
     }
 
     return (ALL_ACTIVITY_STATUSES as readonly string[]).includes(status)
@@ -28,8 +29,8 @@ function normalizeStatusFilterValue(status: string): ActivityStatus | null {
 }
 
 function getActivityTypesByCategories(categories: readonly CommandQueueCategory[]) {
-    const seen = new Set<JobType>();
-    const ordered: JobType[] = [];
+    const seen = new Set<CommandName>();
+    const ordered: CommandName[] = [];
 
     for (const category of categories) {
         const types = getCommandTypesForQueueCategory(category);
@@ -269,7 +270,7 @@ function loadMissingVideos(ids: readonly string[], context: DescriptionLookupCon
 }
 
 function collectDescriptionLookupIds(
-    jobs: ReadonlyArray<Pick<Job, "type" | "ref_id" | "payload">>,
+    jobs: ReadonlyArray<Pick<CommandModel, "name" | "ref_id" | "payload">>,
 ): {
     artistIds: string[];
     albumIds: string[];
@@ -299,25 +300,25 @@ function collectDescriptionLookupIds(
         }
 
         if (
-            job.type === JobTypes.RefreshArtist
-            || job.type === JobTypes.CurateArtist
-            || job.type === JobTypes.RescanFolders
-            || job.type === JobTypes.MoveArtist
-            || job.type === JobTypes.RenameArtist
-            || job.type === JobTypes.RetagArtist
+            job.name === CommandNames.RefreshArtist
+            || job.name === CommandNames.CurateArtist
+            || job.name === CommandNames.RescanFolders
+            || job.name === CommandNames.MoveArtist
+            || job.name === CommandNames.RenameArtist
+            || job.name === CommandNames.RetagArtist
         ) {
             artistIds.add(refId);
         }
 
-        if (job.type === JobTypes.RefreshAlbum || job.type === JobTypes.DownloadAlbum) {
+        if (job.name === CommandNames.RefreshAlbum || job.name === CommandNames.DownloadAlbum) {
             albumIds.add(refId);
         }
 
-        if (job.type === JobTypes.DownloadTrack) {
+        if (job.name === CommandNames.DownloadTrack) {
             trackIds.add(refId);
         }
 
-        if (job.type === JobTypes.DownloadVideo) {
+        if (job.name === CommandNames.DownloadVideo) {
             videoIds.add(refId);
         }
     }
@@ -331,7 +332,7 @@ function collectDescriptionLookupIds(
 }
 
 function preloadDescriptionLookups(
-    jobs: ReadonlyArray<Pick<Job, "type" | "ref_id" | "payload">>,
+    jobs: ReadonlyArray<Pick<CommandModel, "name" | "ref_id" | "payload">>,
     context: DescriptionLookupContext,
 ): void {
     const ids = collectDescriptionLookupIds(jobs);
@@ -381,9 +382,9 @@ export const formatTrackTitle = (title: string, version?: string | null) => {
     return `${base} (${normalizedVersion})`;
 };
 
-export const buildDescription = (job: Job, context?: DescriptionLookupContext): string => {
+export const buildDescription = (job: CommandModel, context?: DescriptionLookupContext): string => {
     const payload = job.payload || {};
-    const jobType = String(job.type || "");
+    const jobType = String(job.name || "");
     if (payload.description) return payload.description;
 
     const providerId = job.ref_id || payload?.providerId || payload?.artistId || payload?.albumId || null;
@@ -496,11 +497,11 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         return "Check Health";
     }
 
-    if (job.type === "Housekeeping") {
+    if (job.name === "Housekeeping") {
         return "Housekeeping";
     }
 
-    if (job.type === "ImportDownload") {
+    if (job.name === "ImportDownload") {
         const resolved = payload?.resolved || {};
         const itemType = payload?.type || null;
         const title = resolved?.title || payload?.title || "Unknown";
@@ -527,27 +528,27 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         }
     }
 
-    if (job.type === "DownloadAlbum" && payload.title && payload.artist) {
+    if (job.name === "DownloadAlbum" && payload.title && payload.artist) {
         return `${payload.title} by ${payload.artist}`;
     }
-    if (job.type === "DownloadTrack" && payload.title && payload.artist && (payload.albumTitle || payload.album)) {
+    if (job.name === "DownloadTrack" && payload.title && payload.artist && (payload.albumTitle || payload.album)) {
         return `${payload.title} on ${payload.albumTitle || payload.album} by ${payload.artist}`;
     }
-    if (job.type === "DownloadVideo" && payload.title && payload.artist) {
+    if (job.name === "DownloadVideo" && payload.title && payload.artist) {
         return `${payload.title} by ${payload.artist}`;
     }
 
-    if (!providerId) return payload.title || job.type;
+    if (!providerId) return payload.title || job.name;
 
     try {
-        if (job.type === "DownloadAlbum") {
+        if (job.name === "DownloadAlbum") {
             const cached = resolveAlbumLookup(String(providerId), context);
             const albumTitle = formatAlbumTitle(cached?.title || payload.title || "Unknown", cached?.version || null);
             const artistName = cached?.artistName || payload.artist || "Unknown";
             return `${albumTitle} by ${artistName}`;
         }
 
-        if (job.type === "DownloadTrack") {
+        if (job.name === "DownloadTrack") {
             const cached = resolveTrackLookup(String(providerId), context);
             const trackTitle = cached?.trackTitle
                 ? formatTrackTitle(cached.trackTitle, cached.trackVersion || null)
@@ -559,7 +560,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
             return `${trackTitle} on ${albumTitle} by ${artistName}`;
         }
 
-        if (job.type === "DownloadVideo") {
+        if (job.name === "DownloadVideo") {
             const cached = resolveVideoLookup(String(providerId), context);
             const title = cached?.title || payload.title || "Unknown Video";
             const artistName = cached?.artistName || payload.artist || "Unknown";
@@ -569,7 +570,7 @@ export const buildDescription = (job: Job, context?: DescriptionLookupContext): 
         // ignore lookup failures
     }
 
-    return payload.title || job.type;
+    return payload.title || job.name;
 };
 
 const parseSqliteDate = (value: unknown) => {
@@ -584,7 +585,7 @@ const parseSqliteDate = (value: unknown) => {
     return undefined;
 };
 
-export const mapJob = (job: Job, options: { queuePosition?: number; descriptionContext?: DescriptionLookupContext } = {}) => {
+export const mapJob = (job: CommandModel, options: { queuePosition?: number; descriptionContext?: DescriptionLookupContext } = {}) => {
     const payload = job.payload && typeof job.payload === "object"
         ? {
             providerId: job.ref_id || job.payload.providerId,
@@ -608,23 +609,23 @@ export const mapJob = (job: Job, options: { queuePosition?: number; descriptionC
 
     return {
         id: job.id,
-        type: job.type,
+        type: job.name,
         description: buildDescription(job, options.descriptionContext),
         progress: Number(job.progress || 0),
         startTime: parseSqliteDate(job.started_at) ?? parseSqliteDate(job.created_at) ?? Date.now(),
         endTime: parseSqliteDate(job.completed_at),
-        status: job.status === "processing" ? "running" : job.status,
+        status: job.status,
         error: job.error,
-        trigger: job.trigger ?? 0,
+        trigger: job.trigger ?? CommandTrigger.Unspecified,
         queuePosition: options.queuePosition,
         payload,
     };
 };
 
-const sortJobsByTriggerThenTimeDesc = (jobs: Job[]) => {
+const sortJobsByTriggerThenTimeDesc = (jobs: CommandModel[]) => {
     return jobs.sort((left, right) => {
-        const leftTrigger = left.trigger ?? 0;
-        const rightTrigger = right.trigger ?? 0;
+        const leftTrigger = left.trigger ?? CommandTrigger.Unspecified;
+        const rightTrigger = right.trigger ?? CommandTrigger.Unspecified;
         if (leftTrigger !== rightTrigger) return rightTrigger - leftTrigger;
 
         const leftTime = parseSqliteDate(left.created_at) || 0;
@@ -634,14 +635,14 @@ const sortJobsByTriggerThenTimeDesc = (jobs: Job[]) => {
 };
 
 export function getActiveCommands(limit: number = 100) {
-    const activeJobs = TaskQueueService.listJobs("%", "processing", limit);
+    const activeJobs = CommandQueueService.listJobs("%", "started", limit);
     return sortJobsByTriggerThenTimeDesc(activeJobs)
         .slice(0, limit)
         .map((job) => mapJob(job));
 }
 
 export function getCommandHistory(limit: number = 50, offset: number = 0) {
-    return TaskQueueService.getHistory(limit, offset).map((job) => mapJob(job));
+    return CommandQueueService.getHistory(limit, offset).map((job) => mapJob(job));
 }
 
 export interface ActivityQuery {
@@ -661,8 +662,8 @@ export interface ActivityPage {
 }
 
 export interface ActivitySummary {
-    pending: number;
-    processing: number;
+    queued: number;
+    started: number;
     history: number;
 }
 
@@ -686,7 +687,7 @@ export interface ActivityEventsPage {
     hasMore: boolean;
 }
 
-function getPendingQueuePositionsForIds(types: readonly JobType[], pendingIds: readonly number[]): Map<number, number> {
+function getPendingQueuePositionsForIds(types: readonly CommandName[], pendingIds: readonly number[]): Map<number, number> {
     const queuePositionById = new Map<number, number>();
     if (types.length === 0 || pendingIds.length === 0) {
         return queuePositionById;
@@ -699,9 +700,9 @@ function getPendingQueuePositionsForIds(types: readonly JobType[], pendingIds: r
             target.id,
             1 + (
                 SELECT COUNT(*)
-                FROM job_queue candidate
-                WHERE candidate.status = 'pending'
-                  AND candidate.type IN (${typePlaceholders})
+                FROM commands candidate
+                WHERE candidate.status = 'queued'
+                  AND candidate.name IN (${typePlaceholders})
                   AND (
                     candidate.priority > target.priority
                     OR (
@@ -728,8 +729,8 @@ function getPendingQueuePositionsForIds(types: readonly JobType[], pendingIds: r
                     )
                   )
             ) AS queuePosition
-        FROM job_queue target
-        WHERE target.status = 'pending'
+        FROM commands target
+        WHERE target.status = 'queued'
           AND target.id IN (${idPlaceholders})
     `).all(...types, ...pendingIds) as Array<{ id: number; queuePosition: number }>;
 
@@ -742,7 +743,7 @@ function getPendingQueuePositionsForIds(types: readonly JobType[], pendingIds: r
 
 type TaskEventProjectionRow = {
     id: number;
-    type: JobType;
+    name: CommandName;
     payload: unknown;
     status: ActivityStatus;
     progress: number;
@@ -796,15 +797,15 @@ function getTaskEventLevel(status: ActivityStatus): ActivityEventLevel {
 function getTaskEventMessage(job: TaskEventProjectionRow, context?: DescriptionLookupContext): string {
     const description = buildDescription({
         ...job,
-        trigger: job.trigger ?? 0,
+        trigger: job.trigger ?? CommandTrigger.Unspecified,
         payload: parseTaskPayload(job.payload),
-    } as unknown as Job, context);
+    } as unknown as CommandModel, context);
 
-    if (job.status === "pending") {
+    if (job.status === "queued") {
         return `Queued: ${description}`;
     }
 
-    if (job.status === "processing") {
+    if (job.status === "started") {
         return `Running: ${description}`;
     }
 
@@ -873,7 +874,7 @@ function listTaskEventProjectionRows(limit: number, offset: number = 0): TaskEve
     const rows = db.prepare(`
         SELECT
             id,
-            type,
+            name,
             payload,
             status,
             progress,
@@ -883,8 +884,8 @@ function listTaskEventProjectionRows(limit: number, offset: number = 0): TaskEve
             created_at,
             started_at,
             completed_at
-        FROM job_queue
-        WHERE type IN (${typePlaceholders})
+        FROM commands
+        WHERE name IN (${typePlaceholders})
           AND status IN (${statusPlaceholders})
         ORDER BY COALESCE(completed_at, started_at, created_at) DESC, id DESC
         LIMIT ?
@@ -896,16 +897,16 @@ function listTaskEventProjectionRows(limit: number, offset: number = 0): TaskEve
 
 function mapTaskEventRows(rows: readonly TaskEventProjectionRow[], context: DescriptionLookupContext): ActivityEventLogItem[] {
     preloadDescriptionLookups(rows.map((row) => ({
-        type: row.type,
+        name: row.name,
         ref_id: row.ref_id,
         payload: parseTaskPayload(row.payload),
-    })) as Array<Pick<Job, "type" | "ref_id" | "payload">>, context);
+    })) as Array<Pick<CommandModel, "name" | "ref_id" | "payload">>, context);
 
     return rows.map((job): ActivityEventLogItem => ({
         id: `task:${job.id}`,
         time: toTaskEventTimestamp(job),
         level: getTaskEventLevel(job.status),
-        component: `task.${job.type}`,
+        component: `task.${job.name}`,
         message: getTaskEventMessage(job, context),
         source: "task",
     }));
@@ -928,7 +929,7 @@ export function getActivityEventsPage(options: { limit?: number; offset?: number
 
     const taskTypes = getActivityTypesByCategories(DEFAULT_ACTIVITY_CATEGORIES);
     const taskTotal = taskTypes.length > 0
-        ? TaskQueueService.countJobsByTypesAndStatuses(taskTypes, [...ALL_ACTIVITY_STATUSES])
+        ? CommandQueueService.countJobsByTypesAndStatuses(taskTypes, [...ALL_ACTIVITY_STATUSES])
         : 0;
     const historyTotal = countHistoryEvents();
 
@@ -1029,7 +1030,7 @@ export function getActivityPage(query: ActivityQuery = {}): ActivityPage {
         : DEFAULT_ACTIVITY_CATEGORIES;
 
     const categoryTypes = getActivityTypesByCategories(categories);
-    const filteredTypes: JobType[] = query.types && query.types.length > 0
+    const filteredTypes: CommandName[] = query.types && query.types.length > 0
         ? categoryTypes.filter((type) => query.types?.includes(type))
         : categoryTypes;
 
@@ -1043,19 +1044,19 @@ export function getActivityPage(query: ActivityQuery = {}): ActivityPage {
         };
     }
 
-    const orderBy = statuses.every((status) => status === "pending" || status === "processing")
+    const orderBy = statuses.every((status) => status === "queued" || status === "started")
         ? "live_activity"
-        : statuses.length === 1 && statuses[0] === "pending"
+        : statuses.length === 1 && statuses[0] === "queued"
             ? "execution"
             : "created_desc";
-    const total = TaskQueueService.countJobsByTypesAndStatuses(filteredTypes, statuses);
-    const jobs = TaskQueueService.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
+    const total = CommandQueueService.countJobsByTypesAndStatuses(filteredTypes, statuses);
+    const jobs = CommandQueueService.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
         orderBy,
     });
-    const pendingQueuePositionById = statuses.includes("pending")
+    const pendingQueuePositionById = statuses.includes("queued")
         ? getPendingQueuePositionsForIds(
             filteredTypes,
-            jobs.filter((job) => job.status === "pending").map((job) => job.id),
+            jobs.filter((job) => job.status === "queued").map((job) => job.id),
         )
         : new Map<number, number>();
     const descriptionContext = createDescriptionLookupContext();
@@ -1077,16 +1078,16 @@ export function getActivitySummary(categories: readonly CommandQueueCategory[] =
     const types = getActivityTypesByCategories(categories);
     if (types.length === 0) {
         return {
-            pending: 0,
-            processing: 0,
+            queued: 0,
+            started: 0,
             history: 0,
         };
     }
 
     return {
-        pending: TaskQueueService.countJobsByTypesAndStatuses(types, ["pending"]),
-        processing: TaskQueueService.countJobsByTypesAndStatuses(types, ["processing"]),
-        history: TaskQueueService.countJobsByTypesAndStatuses(types, ["completed", "failed", "cancelled"]),
+        queued: CommandQueueService.countJobsByTypesAndStatuses(types, ["queued"]),
+        started: CommandQueueService.countJobsByTypesAndStatuses(types, ["started"]),
+        history: CommandQueueService.countJobsByTypesAndStatuses(types, ["completed", "failed", "cancelled"]),
     };
 }
 

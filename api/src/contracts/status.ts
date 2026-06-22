@@ -10,7 +10,7 @@ import {
   expectString,
 } from "./runtime.js";
 
-export type QueueItemStatusContract = "pending" | "processing" | "downloading" | "completed" | "failed" | "cancelled";
+export type QueueItemStatusContract = "queued" | "started" | "downloading" | "completed" | "failed" | "cancelled";
 export type QueueStageContract = "download" | "import";
 export type DownloadTrackStatusContract = "queued" | "downloading" | "completed" | "error" | "skipped";
 export type DownloadStateContract =
@@ -156,8 +156,8 @@ export interface ActivityListResponseContract {
 }
 
 export interface CommandStatsBucketContract {
-  pending?: number;
-  processing?: number;
+  queued?: number;
+  started?: number;
   failed?: number;
 }
 
@@ -184,8 +184,8 @@ export interface RateLimitMetricsContract {
 }
 
 export interface ActivitySummaryContract {
-  pending: number;
-  processing: number;
+  queued: number;
+  started: number;
   history: number;
 }
 
@@ -290,8 +290,8 @@ function parseActivityJobContract(value: unknown, index: number, label: string):
 function parseCommandStatsBucketContract(value: unknown, label: string): CommandStatsBucketContract {
   const record = expectRecord(value, label);
   return {
-    pending: expectOptionalNumber(record.pending, `${label}.pending`),
-    processing: expectOptionalNumber(record.processing, `${label}.processing`),
+    queued: expectOptionalNumber(record.queued, `.queued`),
+    started: expectOptionalNumber(record.started, `.started`),
     failed: expectOptionalNumber(record.failed, `${label}.failed`),
   };
 }
@@ -322,8 +322,8 @@ function parseRateLimitMetricsContract(value: unknown): RateLimitMetricsContract
 function parseActivitySummaryContract(value: unknown): ActivitySummaryContract {
   const record = expectRecord(value, "activity");
   return {
-    pending: expectNumber(record.pending, "activity.pending"),
-    processing: expectNumber(record.processing, "activity.processing"),
+    queued: expectNumber(record.queued, "activity.queued"),
+    started: expectNumber(record.started, "activity.started"),
     history: expectNumber(record.history, "activity.history"),
   };
 }

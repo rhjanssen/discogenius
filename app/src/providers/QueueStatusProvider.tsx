@@ -8,7 +8,7 @@ import React, {
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
-import { useGlobalEvents, type GlobalEventPayload, type JobStatusRaw } from "@/hooks/useGlobalEvents";
+import { useGlobalEvents, type GlobalEventPayload, type CommandStatusRaw } from "@/hooks/useGlobalEvents";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import {
   QueueStatusContext,
@@ -28,7 +28,7 @@ type ProgressState = ReturnType<typeof createEmptyProgressState>;
 
 type QueueGlobalJobEventData = {
   type?: unknown;
-  status?: JobStatusRaw;
+  status?: CommandStatusRaw;
 };
 
 type QueueProgressEvent = Partial<DownloadProgress> & {
@@ -47,7 +47,7 @@ const DEFAULT_STATS: QueueStatsSummary = {
   total: 0,
 };
 
-const STRUCTURAL_QUEUE_UPDATE_STATUSES = new Set<JobStatusRaw>(["pending", "completed", "failed", "cancelled"]);
+const STRUCTURAL_QUEUE_UPDATE_STATUSES = new Set<CommandStatusRaw>(["queued", "completed", "failed", "cancelled"]);
 
 function getQueueGlobalJobEventData(data: unknown): QueueGlobalJobEventData | null {
   if (!data || typeof data !== "object") {
@@ -63,7 +63,7 @@ function isDownloadQueueJobType(value: unknown): boolean {
 }
 
 function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): boolean {
-  if (event.type === "queue.cleared" || event.type === "job.added" || event.type === "history.added") {
+  if (event.type === "queue.cleared" || event.type === "command.added" || event.type === "history.added") {
     return true;
   }
 
@@ -72,11 +72,11 @@ function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): bool
     return false;
   }
 
-  if (event.type === "job.deleted") {
+  if (event.type === "command.deleted") {
     return true;
   }
 
-  if (event.type !== "job.updated") {
+  if (event.type !== "command.updated") {
     return false;
   }
 
@@ -195,7 +195,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
     progressStateRef.current = progressState;
   }, [progressState]);
 
-  const lastGlobalEvent = useGlobalEvents(["job.added", "job.updated", "job.deleted", "queue.cleared", "history.added"]);
+  const lastGlobalEvent = useGlobalEvents(["command.added", "command.updated", "command.deleted", "queue.cleared", "history.added"]);
 
   useEffect(() => {
     if (!lastGlobalEvent) {

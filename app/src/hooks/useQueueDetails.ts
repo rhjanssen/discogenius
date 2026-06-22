@@ -38,7 +38,7 @@ export function useQueueDetails({
 
   useDebouncedQueryInvalidation({
     queryKeys: [queryKey],
-    globalEvents: ["job.added", "job.updated", "job.deleted", "queue.cleared"],
+    globalEvents: ["command.added", "command.updated", "command.deleted", "queue.cleared"],
     windowEvents: [ACTIVITY_REFRESH_EVENT],
     debounceMs: 400,
     enabled: isEnabled,

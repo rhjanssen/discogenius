@@ -4,17 +4,17 @@ import {
   HISTORY_EVENT_TYPE_VALUES,
   type HistoryEventType,
   listHistoryEvents,
-} from "../../services/jobs/history-events.js";
+} from "../../services/commands/history-events.js";
 import {
   ACTIVITY_FILTERS,
   getActivityEventsPage,
   getActivityPage,
-} from "../../services/jobs/command-history.js";
+} from "../../services/commands/command-history.js";
 import type { ActivityListResponseContract } from "../../contracts/status.js";
 import {
   getCommandTypesForQueueCategory,
   type CommandQueueCategory,
-} from "../../services/jobs/command-registry.js";
+} from "../../services/commands/command-registry.js";
 import { parseActivityFilters, parseListPagination } from "../../utils/activity-query.js";
 
 const router = Router();
@@ -113,7 +113,7 @@ const defaultActivityStatuses: readonly (typeof ACTIVITY_FILTERS.statuses)[numbe
 const defaultActivityCategories: readonly CommandQueueCategory[] = ["downloads", "scans", "other"];
 
 function normalizeStatusFilterValue(status: string): string {
-  return status === "running" ? "processing" : status;
+  return status === "running" ? "started" : status;
 }
 
 router.get("/activity", (req: Request, res: Response) => {

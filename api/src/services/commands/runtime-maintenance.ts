@@ -36,7 +36,7 @@ export interface RuntimeMaintenanceSummary {
   databaseOptimized: boolean;
   mediaIdentityIndexEnsured: boolean;
   trackedAssetIdentityIndexesEnsured: boolean;
-  /** Finished job_queue rows pruned (Lidarr-aligned: completed > 1 day) */
+  /** Finished commands rows pruned (Lidarr-aligned: completed > 1 day) */
   historyJobsPruned: number;
   /** TrackFiles rows whose canonical_*_mbid columns were back-filled from legacy ids (Phase 1 DB-alignment) */
   canonicalTrackFilesBackfilled: number;
@@ -507,10 +507,10 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   refreshDownloadState(summary);
 
-  // Prune finished job_queue rows older than 1 day (Lidarr keeps completed commands
+  // Prune finished commands rows older than 1 day (Lidarr keeps completed commands
   // 5 min in-memory and trims DB records older than 1 day via CommandRepository.Trim())
   const pruneResult = db.prepare(`
-    DELETE FROM job_queue
+    DELETE FROM commands
     WHERE status IN ('completed', 'failed', 'cancelled')
       AND COALESCE(completed_at, updated_at) < datetime('now', '-1 day')
   `).run();

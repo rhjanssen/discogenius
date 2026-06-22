@@ -1,8 +1,9 @@
+import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { CurationService } from "../music/curation-service.js";
 import { RefreshArtistService } from "../music/refresh-artist-service.js";
-import { JobTypes, TaskQueueService, type Job } from "./queue.js";
+import { CommandNames, CommandQueueService, type CommandModel } from "./command-queue.js";
 import { getManagedArtists, getManagedArtistsDueForRefresh } from "../music/managed-artists.js";
 import { readIntEnv } from "../../utils/env.js";
 import {
@@ -45,7 +46,7 @@ export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
     name: string;
-    taskName: typeof JobTypes.RefreshMetadata | typeof JobTypes.RescanFolders | typeof JobTypes.Housekeeping;
+    taskName: typeof CommandNames.RefreshMetadata | typeof CommandNames.RescanFolders | typeof CommandNames.Housekeeping;
     intervalMinutes: number;
     enabled: boolean;
 }
@@ -111,10 +112,10 @@ function getActiveMonitoringDownloadPassStmt() {
         if (!activeMonitoringDownloadPassStmt) {
                 activeMonitoringDownloadPassStmt = db.prepare(`
             SELECT 1
-            FROM job_queue
-            WHERE type = ?
+            FROM commands
+            WHERE name = ?
                 AND json_extract(payload, '$.monitoringCycle') IS NOT NULL
-                AND status IN ('pending', 'processing')
+                AND status IN ('queued', 'started')
             LIMIT 1
         `);
         }
@@ -207,8 +208,8 @@ export function queueMetadataRefreshPass(options: {
     const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
     const refId = monitoringCycle ? `metadata-refresh:${monitoringCycle}` : "metadata-refresh";
-    const jobId = TaskQueueService.addJob(
-        JobTypes.RefreshMetadata,
+    const jobId = CommandQueueService.addJob(
+        CommandNames.RefreshMetadata,
         {
             title: "Refreshing metadata",
             description: queuedArtists.length > 0
@@ -222,7 +223,7 @@ export function queueMetadataRefreshPass(options: {
         },
         refId,
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 
     return jobId;
@@ -247,8 +248,8 @@ export function queueRescanFoldersPass(options: {
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const refId = monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders";
-    const jobId = TaskQueueService.addJob(
-        JobTypes.RescanFolders,
+    const jobId = CommandQueueService.addJob(
+        CommandNames.RescanFolders,
         {
             addNewArtists: options.addNewArtists ?? false,
             artistIds: normalizeArtistIds(options.artistIds),
@@ -259,7 +260,7 @@ export function queueRescanFoldersPass(options: {
         },
         refId,
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 
     return jobId;
@@ -274,8 +275,8 @@ export function queueCurationPass(options: {
     const artistIds = normalizeArtistIds(options.artistIds);
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds });
     const refId = monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation";
-    return TaskQueueService.addJob(
-        JobTypes.ApplyCuration,
+    return CommandQueueService.addJob(
+        CommandNames.ApplyCuration,
         {
             title: "Applying curation",
             description: artists.length > 0
@@ -287,7 +288,7 @@ export function queueCurationPass(options: {
         },
         refId,
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
@@ -298,8 +299,8 @@ export function queueDownloadMissingPass(options: {
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const refId = monitoringCycle ? `download-missing:${monitoringCycle}` : "download-missing";
-    return TaskQueueService.addJob(
-        JobTypes.DownloadMissing,
+    return CommandQueueService.addJob(
+        CommandNames.DownloadMissing,
         {
             artistIds: normalizeArtistIds(options.artistIds),
             title: "Queueing missing downloads",
@@ -308,12 +309,12 @@ export function queueDownloadMissingPass(options: {
         },
         refId,
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 function hasActiveMonitoringCycleDownloadPass(): boolean {
-    return Boolean(getActiveMonitoringDownloadPassStmt().get(JobTypes.DownloadMissing));
+    return Boolean(getActiveMonitoringDownloadPassStmt().get(CommandNames.DownloadMissing));
 }
 
 function markMonitoringCycleCompleted() {
@@ -321,21 +322,21 @@ function markMonitoringCycleCompleted() {
     updateConfig("monitoring", { last_check: new Date().toISOString() });
 }
 
-export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "trigger">) {
+export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payload" | "trigger">) {
     const monitoringCycle = resolveMonitoringPassWorkflow(job.payload?.monitoringCycle);
     if (!monitoringCycle) {
         return;
     }
 
-    switch (job.type) {
-        case JobTypes.RefreshMetadata:
+    switch (job.name) {
+        case CommandNames.RefreshMetadata:
             // Per-artist curation is handled by the event-driven pipeline:
             // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist.
             // Only queue the library-wide root scan if full-cycle; DownloadMissing
             // is deferred until all monitoring-originated follow-up work drains.
             if (monitoringCycle === "full-cycle") {
                 queueRescanFoldersPass({
-                    trigger: job.trigger ?? 0,
+                    trigger: job.trigger ?? CommandTrigger.Unspecified,
                     fullProcessing: true,
                     trackUnmappedFiles: false,
                     monitoringCycle,
@@ -343,12 +344,12 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
                 });
             }
             break;
-        case JobTypes.RescanFolders:
+        case CommandNames.RescanFolders:
             break;
-        case JobTypes.ApplyCuration:
+        case CommandNames.ApplyCuration:
             // Monitoring-cycle curation explicitly chains to the terminal download pass.
             queueDownloadMissingPass({
-                trigger: job.trigger ?? 0,
+                trigger: job.trigger ?? CommandTrigger.Unspecified,
                 monitoringCycle,
             });
             return;
@@ -365,36 +366,36 @@ export function queueNextMonitoringPass(job: Pick<Job, "type" | "payload" | "tri
         return;
     }
 
-    if (job.type === JobTypes.DownloadMissing) {
+    if (job.name === CommandNames.DownloadMissing) {
         markMonitoringCycleCompleted();
         return;
     }
 
     if (!hasActiveMonitoringCycleDownloadPass()) {
         queueDownloadMissingPass({
-            trigger: job.trigger ?? 0,
+            trigger: job.trigger ?? CommandTrigger.Unspecified,
             monitoringCycle,
         });
     }
 }
 
 export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.CheckUpgrades,
+    return CommandQueueService.addJob(
+        CommandNames.CheckUpgrades,
         {
             title: "Checking upgrades",
             description: "Scanning the library for quality upgrades",
         },
         "check-upgrades",
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueHousekeepingPass(options: { trigger?: number } = {}) {
-    const trigger = options.trigger ?? 2;
-    const jobId = TaskQueueService.addJob(
-        JobTypes.Housekeeping,
+    const trigger = options.trigger ?? CommandTrigger.Scheduled;
+    const jobId = CommandQueueService.addJob(
+        CommandNames.Housekeeping,
         {
             title: "Running housekeeping",
             description: "Cleaning runtime state and stale library records",
@@ -417,14 +418,14 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
         {
             key: "monitoring-cycle",
             name: "Monitoring Cycle",
-            taskName: JobTypes.RescanFolders,
+            taskName: CommandNames.RescanFolders,
             intervalMinutes: refreshIntervalMinutes,
             enabled: Boolean(config.enable_active_monitoring),
         },
         {
             key: "housekeeping",
             name: "Housekeeping",
-            taskName: JobTypes.Housekeeping,
+            taskName: CommandNames.Housekeeping,
             intervalMinutes: Math.max(1, Math.round(HOUSEKEEPING_INTERVAL_MS / 60_000)),
             enabled: true,
         },
@@ -574,7 +575,7 @@ function queueDueScheduledTasks() {
             isChecking = true;
             saveMonitoringProgress(0, true);
             try {
-                const jobId = queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+                const jobId = queueMonitoringCyclePass({ trigger: CommandTrigger.Scheduled, includeRootScan: true });
                 if (jobId !== -1) {
                     // Stamp at queue time (like Lidarr measures the next run from when
                     // the task fires) so a cycle that fails to fully complete still
@@ -596,7 +597,7 @@ function queueDueScheduledTasks() {
                 continue;
             }
 
-            const jobId = queueHousekeepingPass({ trigger: 2 });
+            const jobId = queueHousekeepingPass({ trigger: CommandTrigger.Scheduled });
             if (jobId !== -1) {
                 markScheduledTaskQueued(definition.key);
                 console.log("🧹 Scheduled housekeeping queued");
@@ -686,7 +687,7 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
 }
 
 export async function queueCheckNow(): Promise<{ success: boolean; jobId?: number }> {
-    const jobId = TaskQueueService.addJob(
+    const jobId = CommandQueueService.addJob(
         "RefreshMetadata",
         {
             title: "Refreshing provider metadata",
@@ -822,81 +823,81 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
 // ============================================================================
 
 export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.BulkRefreshArtist,
+    return CommandQueueService.addJob(
+        CommandNames.BulkRefreshArtist,
         {},
         'bulk-refresh-artist',
         10,  // manual trigger boost
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.DownloadMissingForce,
+    return CommandQueueService.addJob(
+        CommandNames.DownloadMissingForce,
         {},
         'download-missing-force',
         10,  // manual trigger boost
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueRescanAllRoots(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.RescanAllRoots,
+    return CommandQueueService.addJob(
+        CommandNames.RescanAllRoots,
         { addNewArtists: false },
         'rescan-all-roots',
         10,  // manual trigger boost
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueCheckHealth(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.CheckHealth,
+    return CommandQueueService.addJob(
+        CommandNames.CheckHealth,
         {},
         'check-health',
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueCompactDatabase(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.CompactDatabase,
+    return CommandQueueService.addJob(
+        CommandNames.CompactDatabase,
         {},
         'compact-database',
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueCleanupTempFiles(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.CleanupTempFiles,
+    return CommandQueueService.addJob(
+        CommandNames.CleanupTempFiles,
         {},
         'cleanup-temp-files',
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 
 export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.UpdateLibraryMetadata,
+    return CommandQueueService.addJob(
+        CommandNames.UpdateLibraryMetadata,
         {},
         'update-library-metadata',
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 export function queueConfigPrune(options: { trigger?: number } = {}) {
-    return TaskQueueService.addJob(
-        JobTypes.ConfigPrune,
+    return CommandQueueService.addJob(
+        CommandNames.ConfigPrune,
         {},
         'config-prune',
         0,
-        options.trigger ?? 1,
+        options.trigger ?? CommandTrigger.Manual,
     );
 }
 

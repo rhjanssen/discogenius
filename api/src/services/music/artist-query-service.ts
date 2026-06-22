@@ -578,25 +578,25 @@ export class ArtistQueryService {
         const artist = loadArtistWithEffectiveMonitor(artistId);
         const artistMbid = artist?.mbid ? String(artist.mbid) : artistId;
         const directJobs = db.prepare(`
-      SELECT id, type, status, ref_id, created_at, started_at
-      FROM job_queue
-      WHERE ref_id = ? AND status IN ('pending', 'processing')
+      SELECT id, name, status, ref_id, created_at, started_at
+      FROM commands
+      WHERE ref_id = ? AND status IN ('queued', 'started')
     `).all(artistId) as any[];
 
         const releaseGroupJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
+      SELECT jq.id, jq.name, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM commands jq
       INNER JOIN Albums rg
         ON rg.mbid = jq.ref_id
         OR rg.mbid = json_extract(jq.payload, '$.releaseGroupMbid')
       WHERE rg.artist_mbid = ?
-        AND jq.type IN ('RefreshAlbum', 'ScanAlbum', 'DownloadAlbum', 'ImportDownload')
-        AND jq.status IN ('pending', 'processing')
+        AND jq.name IN ('RefreshAlbum', 'ScanAlbum', 'DownloadAlbum', 'ImportDownload')
+        AND jq.status IN ('queued', 'started')
     `).all(artistMbid) as any[];
 
         const trackDownloadJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
+      SELECT jq.id, jq.name, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM commands jq
       INNER JOIN Tracks track
         ON CAST(track.id AS TEXT) = CAST(jq.ref_id AS TEXT)
         OR track.mbid = jq.ref_id
@@ -607,13 +607,13 @@ export class ArtistQueryService {
       INNER JOIN Albums rg
         ON rg.mbid = release.release_group_mbid
       WHERE rg.artist_mbid = ?
-        AND jq.type IN ('DownloadTrack', 'ImportDownload')
-        AND jq.status IN ('pending', 'processing')
+        AND jq.name IN ('DownloadTrack', 'ImportDownload')
+        AND jq.status IN ('queued', 'started')
     `).all(artistMbid) as any[];
 
         const videoDownloadJobs = db.prepare(`
-      SELECT jq.id, jq.type, jq.status, jq.ref_id, jq.created_at, jq.started_at
-      FROM job_queue jq
+      SELECT jq.id, jq.name, jq.status, jq.ref_id, jq.created_at, jq.started_at
+      FROM commands jq
       INNER JOIN Recordings recording
         ON CAST(recording.id AS TEXT) = CAST(jq.ref_id AS TEXT)
         OR CAST(recording.id AS TEXT) = CAST(json_extract(jq.payload, '$.canonicalRecordingId') AS TEXT)
@@ -623,16 +623,16 @@ export class ArtistQueryService {
           recording.artist_mbid = ?
           OR CAST(recording.artist_metadata_id AS TEXT) = CAST(? AS TEXT)
         )
-        AND jq.type IN ('DownloadVideo', 'ImportDownload')
-        AND jq.status IN ('pending', 'processing')
+        AND jq.name IN ('DownloadVideo', 'ImportDownload')
+        AND jq.status IN ('queued', 'started')
     `).all(artistMbid, artist?.id ? String(artist.id) : artistId) as any[];
 
         const libraryRescanJob = db.prepare(`
-      SELECT id, type, status, ref_id, created_at, started_at
-      FROM job_queue
-      WHERE type = 'RescanFolders'
+      SELECT id, name, status, ref_id, created_at, started_at
+      FROM commands
+      WHERE name = 'RescanFolders'
         AND json_extract(payload, '$.addNewArtists') = 1
-        AND status IN ('pending', 'processing')
+        AND status IN ('queued', 'started')
       LIMIT 1
     `).get() as any | undefined;
 
@@ -647,12 +647,12 @@ export class ArtistQueryService {
         const jobs = Array.from(allJobs.values());
 
         return {
-            scanning: jobs.some((job) => job.type === "RefreshArtist" || job.type === "RefreshAlbum" || job.type === "ScanAlbum"),
-            curating: jobs.some((job) => job.type === "CurateArtist"),
-            downloading: jobs.some((job) => job.type.startsWith("Download") || job.type === "ImportDownload"),
-            libraryScan: jobs.some((job) => job.type === "RescanFolders"),
+            scanning: jobs.some((job) => job.name === "RefreshArtist" || job.name === "RefreshAlbum" || job.name === "ScanAlbum"),
+            curating: jobs.some((job) => job.name === "CurateArtist"),
+            downloading: jobs.some((job) => job.name.startsWith("Download") || job.name === "ImportDownload"),
+            libraryScan: jobs.some((job) => job.name === "RescanFolders"),
             totalActive: jobs.length,
-            jobs: jobs.map((job) => ({ id: job.id, type: job.type, status: job.status })),
+            jobs: jobs.map((job) => ({ id: job.id, type: job.name, status: job.status })),
         };
     }
 

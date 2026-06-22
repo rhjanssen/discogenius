@@ -303,7 +303,7 @@ test("status contract parsers validate queue and status overview payloads", () =
         url: "https://tidal.com/album/243864035",
         providerId: "243864035",
         type: "album",
-        status: "processing",
+        status: "started",
         progress: 55,
         error: null,
         created_at: "2026-03-19 12:00:00",
@@ -328,15 +328,15 @@ test("status contract parsers validate queue and status overview payloads", () =
 
   const overview = parseStatusOverviewContract({
     activity: {
-      pending: 2,
-      processing: 1,
+      queued: 2,
+      started: 1,
       history: 9,
     },
     taskQueueStats: [
-      { type: "DownloadAlbum", status: "pending", count: 2 },
+      { type: "DownloadAlbum", status: "queued", count: 2 },
     ],
     commandStats: {
-      downloads: { pending: 2, processing: 1, failed: 0 },
+      downloads: { queued: 2, started: 1, failed: 0 },
     },
     runningCommands: [
       {
@@ -356,7 +356,7 @@ test("status contract parsers validate queue and status overview payloads", () =
     },
   });
   assert.equal(overview.activity.history, 9);
-  assert.equal(overview.commandStats.downloads?.processing, 1);
+  assert.equal(overview.commandStats.downloads?.started, 1);
   assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
 
   const activity = parseActivityListResponseContract({
@@ -367,7 +367,7 @@ test("status contract parsers validate queue and status overview payloads", () =
         description: "Refresh Artist: Bastille",
         queuePosition: 1,
         startTime: Date.now(),
-        status: "pending",
+        status: "queued",
       },
     ],
     total: 1,

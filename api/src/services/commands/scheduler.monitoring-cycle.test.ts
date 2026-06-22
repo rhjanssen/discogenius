@@ -9,14 +9,14 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.task-scheduler.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let queueModule: typeof import("./queue.js");
+let queueModule: typeof import("./command-queue.js");
 let taskSchedulerModule: typeof import("./scheduler.js");
 let taskStateModule: typeof import("./task-state.js");
 let workflowModule: typeof import("../music/artist-workflow.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
-    queueModule = await import("./queue.js");
+    queueModule = await import("./command-queue.js");
     taskSchedulerModule = await import("./scheduler.js");
     taskStateModule = await import("./task-state.js");
     workflowModule = await import("../music/artist-workflow.js");
@@ -25,7 +25,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM job_queue").run();
+    dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
     dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
 });
@@ -47,32 +47,32 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     assert.ok(beforeCompletionSnapshot);
     assert.equal(beforeCompletionSnapshot.lastQueuedAt, null);
 
-    const refreshJob = queueModule.TaskQueueService.getById(refreshJobId);
+    const refreshJob = queueModule.CommandQueueService.getById(refreshJobId);
     assert.ok(refreshJob);
-    queueModule.TaskQueueService.complete(refreshJobId);
+    queueModule.CommandQueueService.complete(refreshJobId);
     taskSchedulerModule.queueNextMonitoringPass(refreshJob);
 
-    const pendingRootScans = queueModule.TaskQueueService.getTopPendingJobsByTypes(
-        [queueModule.JobTypes.RescanFolders],
+    const pendingRootScans = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.RescanFolders],
         10,
     );
     assert.equal(pendingRootScans.length, 1);
     assert.equal((pendingRootScans[0].payload as Record<string, unknown>).monitoringCycle, "full-cycle");
     assert.equal((pendingRootScans[0].payload as Record<string, unknown>).trackUnmappedFiles, false);
 
-    let pendingDownloads = queueModule.TaskQueueService.getTopPendingJobsByTypes(
-        [queueModule.JobTypes.DownloadMissing],
+    let pendingDownloads = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.DownloadMissing],
         10,
     );
     assert.equal(pendingDownloads.length, 0);
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), true);
 
     const rootScanJob = pendingRootScans[0];
-    queueModule.TaskQueueService.complete(rootScanJob.id);
+    queueModule.CommandQueueService.complete(rootScanJob.id);
     taskSchedulerModule.queueNextMonitoringPass(rootScanJob);
 
-    pendingDownloads = queueModule.TaskQueueService.getTopPendingJobsByTypes(
-        [queueModule.JobTypes.DownloadMissing],
+    pendingDownloads = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.DownloadMissing],
         10,
     );
     assert.equal(pendingDownloads.length, 1);
@@ -84,7 +84,7 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     assert.equal(midSnapshot.lastQueuedAt, null);
 
     const downloadJob = pendingDownloads[0];
-    queueModule.TaskQueueService.complete(downloadJob.id);
+    queueModule.CommandQueueService.complete(downloadJob.id);
     taskSchedulerModule.queueNextMonitoringPass(downloadJob);
 
     const finalSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
@@ -94,16 +94,16 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
 });
 
 function completeAndAdvance(jobId: number) {
-    const job = queueModule.TaskQueueService.getById(jobId);
+    const job = queueModule.CommandQueueService.getById(jobId);
     assert.ok(job);
-    queueModule.TaskQueueService.complete(jobId);
+    queueModule.CommandQueueService.complete(jobId);
     taskSchedulerModule.queueNextMonitoringPass(job);
     return job;
 }
 
 function pendingDownloadMissing() {
-    return queueModule.TaskQueueService.getTopPendingJobsByTypes(
-        [queueModule.JobTypes.DownloadMissing],
+    return queueModule.CommandQueueService.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.DownloadMissing],
         10,
     );
 }
@@ -113,8 +113,8 @@ test("standalone monitored artist workflows do not queue DownloadMissing", () =>
 
     for (const [index, workflow] of workflows.entries()) {
         const artistId = String(2001 + index);
-        const curateId = queueModule.TaskQueueService.addJob(
-            queueModule.JobTypes.CurateArtist,
+        const curateId = queueModule.CommandQueueService.addJob(
+            queueModule.CommandNames.CurateArtist,
             { artistId, artistName: `Standalone ${workflow}`, workflow },
             artistId,
         );
@@ -126,8 +126,8 @@ test("standalone monitored artist workflows do not queue DownloadMissing", () =>
 });
 
 test("manual (non-monitoring) curation does not trigger downloads", () => {
-    const curateId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
+    const curateId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.CurateArtist,
         { artistId: "4001", artistName: "Manual", workflow: "curation" },
         "4001",
     );
@@ -137,9 +137,9 @@ test("manual (non-monitoring) curation does not trigger downloads", () => {
 
 test("scheduled cycle defers its terminal DownloadMissing while artist intake is active", () => {
     // An intake RefreshArtist is in flight (pending), with no monitoringCycle tag.
-    const intakeRefreshId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.RefreshArtist,
-        workflowModule.buildRefreshArtistJobPayload({ artistId: "5002", artistName: "Intake", workflow: "monitoring-intake" }),
+    const intakeRefreshId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.RefreshArtist,
+        workflowModule.buildRefreshArtistCommand({ artistId: "5002", artistName: "Intake", workflow: "monitoring-intake" }),
         "5002",
     );
     assert.ok(intakeRefreshId > 0);
@@ -160,8 +160,8 @@ test("scheduled cycle defers its terminal DownloadMissing while artist intake is
 });
 
 test("only monitoring-tagged child jobs keep the monitoring cycle active", () => {
-    const manualCurationJobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
+    const manualCurationJobId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.CurateArtist,
         {
             artistId: "1001",
             artistName: "Manual Artist",
@@ -172,11 +172,11 @@ test("only monitoring-tagged child jobs keep the monitoring cycle active", () =>
     assert.ok(manualCurationJobId > 0);
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
 
-    queueModule.TaskQueueService.clearCompleted();
-    dbModule.db.prepare("DELETE FROM job_queue").run();
+    queueModule.CommandQueueService.clearCompleted();
+    dbModule.db.prepare("DELETE FROM commands").run();
 
-    const monitoringCurationJobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CurateArtist,
+    const monitoringCurationJobId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.CurateArtist,
         {
             artistId: "1002",
             artistName: "Scheduled Artist",

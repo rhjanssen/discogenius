@@ -1,9 +1,10 @@
-import { appEvents, AppEvent, type ArtistScannedEventPayload, type RescanCompletedEventPayload } from "../jobs/app-events.js";
-import { JobTypes, TaskQueueService } from "../jobs/queue.js";
+import { CommandTrigger } from "../commands/command-trigger.js";
+import { appEvents, AppEvent, type ArtistScannedEventPayload, type RescanCompletedEventPayload } from "../commands/app-events.js";
+import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import {
     type ArtistWorkflow,
-    buildCurateArtistJobPayload,
-    buildRescanFoldersJobPayload,
+    buildCurateArtistCommand,
+    buildRescanFoldersCommand,
     isArtistWorkflow,
 } from "./artist-workflow.js";
 
@@ -51,9 +52,9 @@ export function initCurationListeners() {
             }
 
             console.log(`[Listeners] Artist ${payload.artistId} metadata refreshed, queueing RescanFolders`);
-            TaskQueueService.addJob(
-                JobTypes.RescanFolders,
-                buildRescanFoldersJobPayload({
+            CommandQueueService.addJob(
+                CommandNames.RescanFolders,
+                buildRescanFoldersCommand({
                     artistId: payload.artistId,
                     artistName: payload.artistName,
                     workflow,
@@ -61,7 +62,7 @@ export function initCurationListeners() {
                 }),
                 payload.artistId,
                 0,
-                payload.trigger ?? 0
+                payload.trigger ?? CommandTrigger.Unspecified
             );
         }
     });
@@ -79,10 +80,10 @@ export function initCurationListeners() {
 
         console.log(`[Listeners] Artist ${payload.artistId} disk scan completed, queuing CurateArtist`);
         const workflow = resolveCurationWorkflow(payload.workflow);
-        TaskQueueService.addJob(
-            JobTypes.CurateArtist,
+        CommandQueueService.addJob(
+            CommandNames.CurateArtist,
             workflow
-                ? buildCurateArtistJobPayload({
+                ? buildCurateArtistCommand({
                     artistId: payload.artistId,
                     artistName: payload.artistName,
                     workflow,
@@ -97,7 +98,7 @@ export function initCurationListeners() {
                 },
             payload.artistId,
             0,
-            payload.trigger ?? 0
+            payload.trigger ?? CommandTrigger.Unspecified
         );
     });
 

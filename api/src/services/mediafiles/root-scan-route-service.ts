@@ -1,6 +1,7 @@
+import { CommandTrigger } from "../commands/command-trigger.js";
 import { Config } from "../config/config.js";
 import { DiskScanService, type ScanOptions, type ScanResult } from "./library-scan.js";
-import { queueRescanFoldersPass } from "../jobs/scheduler.js";
+import { queueRescanFoldersPass } from "../commands/scheduler.js";
 
 export type RootScanSsePayload =
     | { type: "progress"; message: string }
@@ -42,7 +43,7 @@ export function createRootScanRouteService(deps: RootScanRouteServiceDeps) {
     return {
         queueRootScan(input: QueueRootScanInput = {}) {
             return deps.queueRootScanPass({
-                trigger: input.trigger ?? 1,
+                trigger: input.trigger ?? CommandTrigger.Manual,
                 fullProcessing: input.fullProcessing === true,
                 addNewArtists: true,
                 monitorArtist: coerceOptionalBoolean(input.monitorArtist),

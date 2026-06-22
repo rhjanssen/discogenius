@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { JobTypes, TaskQueueService } from "../jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -206,7 +206,7 @@ export class AlbumCommandService {
                 ? `${title} (${version})`
                 : title;
             const artistName = track.artist_name || "Unknown";
-            jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
+            jobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
                 url: buildStreamingMediaUrl("track", trackProviderId, provider as any),
                 type: 'track',
                 provider,
@@ -257,7 +257,7 @@ export class AlbumCommandService {
                 const providerAlbumId = selection.selected_provider_id;
                 const artistName = selection.artist_name || providerData?.artist?.name || 'Unknown Artist';
                 const provider = selection.selected_provider || "tidal";
-                const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+                const jobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
                     url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
                     type: 'album',
                     provider,

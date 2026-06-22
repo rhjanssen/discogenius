@@ -12,7 +12,7 @@ import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedV
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { getDownloadWorkspacePath } from "../download/download-routing.js";
-import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../jobs/history-events.js";
+import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";

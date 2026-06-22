@@ -10,7 +10,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let serviceModule: typeof import("./album-command-service.js");
-let queueModule: typeof import("../jobs/queue.js");
+let queueModule: typeof import("../commands/command-queue.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -26,12 +26,12 @@ before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   serviceModule = await import("./album-command-service.js");
-  queueModule = await import("../jobs/queue.js");
+  queueModule = await import("../commands/command-queue.js");
 });
 
 beforeEach(() => {
   const { db } = dbModule;
-  db.prepare("DELETE FROM job_queue").run();
+  db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -125,8 +125,8 @@ test("track monitor command uses canonical tracks and selected provider offers",
     .get("release-group-mbid-1") as { wanted: number };
   assert.equal(slot.wanted, 1);
 
-  const job = dbModule.db.prepare("SELECT type, ref_id AS refId, payload FROM job_queue WHERE type = ?")
-    .get(queueModule.JobTypes.DownloadTrack) as { type: string; refId: string; payload: string } | undefined;
+  const job = dbModule.db.prepare("SELECT name, ref_id AS refId, payload FROM commands WHERE name = ?")
+    .get(queueModule.CommandNames.DownloadTrack) as { name: string; refId: string; payload: string } | undefined;
   assert.ok(job);
   assert.equal(job?.refId, "401");
   const payload = JSON.parse(job?.payload || "{}") as { providerId?: string; canonicalTrackId?: string; canonicalTrackMbid?: string };

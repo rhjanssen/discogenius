@@ -1,7 +1,7 @@
 import { db } from "../../database.js";
 import type { MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { getManagedArtists } from "../music/managed-artists.js";
-import { ARTIST_WORKFLOW_JOB_TYPES, JobTypes } from "./queue.js";
+import { ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames } from "./command-queue.js";
 
 export interface MonitoringProgress {
     lastCheckTimestamp: string | null;
@@ -38,10 +38,10 @@ function getPendingArtistJobsStmt() {
     if (!pendingArtistJobsStmt) {
         pendingArtistJobsStmt = db.prepare(`
       SELECT DISTINCT ref_id as artist_id
-      FROM job_queue
+      FROM commands
       WHERE ref_id IS NOT NULL
-        AND type IN (${ARTIST_WORKFLOW_JOB_TYPES.map(() => "?").join(", ")})
-        AND status IN ('pending', 'processing')
+        AND name IN (${ARTIST_WORKFLOW_COMMAND_NAMES.map(() => "?").join(", ")})
+        AND status IN ('queued', 'started')
     `);
     }
 
@@ -52,10 +52,10 @@ function getActiveLibraryRescanStmt() {
     if (!activeLibraryRescanStmt) {
         activeLibraryRescanStmt = db.prepare(`
       SELECT 1
-      FROM job_queue
-      WHERE type = 'RescanFolders'
+      FROM commands
+      WHERE name = 'RescanFolders'
         AND json_extract(payload, '$.addNewArtists') = 1
-        AND status IN ('pending', 'processing')
+        AND status IN ('queued', 'started')
       LIMIT 1
     `);
     }
@@ -67,9 +67,9 @@ function getActiveHousekeepingStmt() {
     if (!activeHousekeepingStmt) {
         activeHousekeepingStmt = db.prepare(`
       SELECT 1
-      FROM job_queue
-      WHERE type = 'Housekeeping'
-        AND status IN ('pending', 'processing')
+      FROM commands
+      WHERE name = 'Housekeeping'
+        AND status IN ('queued', 'started')
       LIMIT 1
     `);
     }
@@ -81,10 +81,10 @@ function getActiveMonitoringCycleStmt() {
         if (!activeMonitoringCycleStmt) {
                 activeMonitoringCycleStmt = db.prepare(`
             SELECT 1
-            FROM job_queue
-            WHERE type IN (?, ?, ?, ?, ?)
+            FROM commands
+            WHERE name IN (?, ?, ?, ?, ?)
                 AND json_extract(payload, '$.monitoringCycle') IS NOT NULL
-                AND status IN ('pending', 'processing')
+                AND status IN ('queued', 'started')
             LIMIT 1
         `);
         }
@@ -129,9 +129,9 @@ function getMonitoringStateUpsertStmt() {
 export function hasActiveTask(taskName: string): boolean {
     const row = db.prepare(`
     SELECT 1
-    FROM job_queue
-    WHERE type = ?
-      AND status IN ('pending', 'processing')
+    FROM commands
+    WHERE name = ?
+      AND status IN ('queued', 'started')
     LIMIT 1
   `).get(taskName);
 
@@ -146,9 +146,9 @@ function getActiveArtistWorkflowStmt() {
     if (!activeArtistWorkflowStmt) {
         activeArtistWorkflowStmt = db.prepare(`
             SELECT 1
-            FROM job_queue
-            WHERE type IN (${ARTIST_WORKFLOW_JOB_TYPES.map(() => "?").join(", ")})
-              AND status IN ('pending', 'processing')
+            FROM commands
+            WHERE name IN (${ARTIST_WORKFLOW_COMMAND_NAMES.map(() => "?").join(", ")})
+              AND status IN ('queued', 'started')
             LIMIT 1
         `);
     }
@@ -168,16 +168,16 @@ function getActiveArtistWorkflowStmt() {
  * without that tag, and the terminal pass used to race it and queue nothing.
  */
 export function hasActiveArtistWorkflowJobs(): boolean {
-    return Boolean(getActiveArtistWorkflowStmt().get(...ARTIST_WORKFLOW_JOB_TYPES));
+    return Boolean(getActiveArtistWorkflowStmt().get(...ARTIST_WORKFLOW_COMMAND_NAMES));
 }
 
 export function hasActiveMonitoringCycleWorkflow(): boolean {
     return Boolean(getActiveMonitoringCycleStmt().get(
-        JobTypes.RefreshMetadata,
-        JobTypes.RescanFolders,
-        JobTypes.CurateArtist,
-        JobTypes.ApplyCuration,
-        JobTypes.DownloadMissing,
+        CommandNames.RefreshMetadata,
+        CommandNames.RescanFolders,
+        CommandNames.CurateArtist,
+        CommandNames.ApplyCuration,
+        CommandNames.DownloadMissing,
     ));
 }
 
@@ -223,7 +223,7 @@ export function saveMonitoringProgress(artistIndex: number, checkInProgress: boo
 
 export function getArtistsWithPendingJobs(): Set<string> {
     try {
-        const rows = getPendingArtistJobsStmt().all(...ARTIST_WORKFLOW_JOB_TYPES) as Array<{ artist_id: string | number | null }>;
+        const rows = getPendingArtistJobsStmt().all(...ARTIST_WORKFLOW_COMMAND_NAMES) as Array<{ artist_id: string | number | null }>;
         const pending = new Set(rows.filter((row) => row.artist_id !== null).map((row) => String(row.artist_id)));
 
         const libraryRescanActive = Boolean(getActiveLibraryRescanStmt().get());
@@ -237,7 +237,7 @@ export function getArtistsWithPendingJobs(): Set<string> {
     } catch (_error) {
         if (!warnedJobQueueMissing) {
             warnedJobQueueMissing = true;
-            console.warn("[Monitoring] job_queue not ready yet; skipping pending-jobs check");
+            console.warn("[Monitoring] commands not ready yet; skipping pending-jobs check");
         }
 
         return new Set();
@@ -249,8 +249,8 @@ export function hasActiveArtistWorkflow(): boolean {
     // Per-artist downstream work (RescanFolders, CurateArtist) can overlap with new cycles.
     // This prevents the death spiral where cycles >24h block the next cycle forever.
     return (
-        hasActiveTask(JobTypes.RefreshMetadata) ||
-        hasActiveTask(JobTypes.ApplyCuration)
+        hasActiveTask(CommandNames.RefreshMetadata) ||
+        hasActiveTask(CommandNames.ApplyCuration)
     );
 }
 
