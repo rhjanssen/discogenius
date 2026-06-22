@@ -121,6 +121,33 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   assert.equal(vinyl.availability.length, 0);
 });
 
+test("getReleaseGroupAvailability hides stale direct match edges after rematching a provider album", () => {
+  seedReleaseGroup();
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "tidal",
+    providerId: "prov-atmos",
+    releaseMbid: "rel-stereo",
+    status: "probable",
+    confidence: 0.8,
+  });
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "tidal",
+    providerId: "prov-atmos",
+    releaseMbid: "rel-atmos",
+    status: "verified",
+    confidence: 0.99,
+  });
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-1");
+  const stereo = result.releases.find((r) => r.releaseMbid === "rel-stereo");
+  const atmos = result.releases.find((r) => r.releaseMbid === "rel-atmos");
+
+  assert.ok(stereo);
+  assert.ok(atmos);
+  assert.equal(stereo.availability.some((offer) => offer.providerAlbumId === "prov-atmos"), false);
+  assert.equal(atmos.availability.some((offer) => offer.providerAlbumId === "prov-atmos"), true);
+});
+
 test("getReleaseGroupAvailability returns a stable slot and quality order for offers", () => {
   const { db } = dbModule;
   seedReleaseGroup();
@@ -197,8 +224,19 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
       { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
     ]));
   db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
+    .run("290132975", "Killing Me Softly With His Song (MTV Unplugged / Edit)", albumData([
+      { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
               VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
     .run("287367980", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
+      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
+      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
+    .run("287367976", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
       { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
       { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
     ]));
@@ -210,15 +248,22 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
       { title: "Extra Track", isrc: "GBUM70000000", duration: 180 },
     ]));
 
+  providerMatches.persistCompositeReleaseMatches("rg-unplugged");
   const result = providerMatches.getReleaseGroupAvailability("rg-unplugged");
   const release = result.releases.find((item) => item.releaseMbid === "rel-three-track");
 
   assert.ok(release);
-  assert.equal(release.availability.length, 1);
+  assert.equal(release.availability.length, 2);
+  assert.deepEqual(
+    release.availability.map((offer) => `${offer.quality}:${offer.providerAlbumId}`),
+    [
+      "HIRES_LOSSLESS:290132977;287367980",
+      "LOSSLESS:290132975;287367976",
+    ],
+  );
   assert.equal(release.availability[0].matchKind, "composite");
   assert.equal(release.availability[0].provider, "tidal");
   assert.deepEqual(release.availability[0].providerAlbumIds, ["290132977", "287367980"]);
-  assert.equal(release.availability[0].providerAlbumId, "290132977;287367980");
   assert.equal(release.availability[0].coverageSummary, "3/3 tracks from 2 provider albums");
 
   const after = providerMatches.setSlotSelection({
@@ -234,6 +279,43 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
   const slot = db.prepare(`SELECT selected_provider_id, match_method FROM ReleaseGroupSlots WHERE release_group_mbid='rg-unplugged' AND slot='stereo'`).get() as any;
   assert.equal(slot.selected_provider_id, "290132977;287367980");
   assert.equal(slot.match_method, "strict_composite_track_coverage");
+});
+
+test("composite coverage matches provider tracks by ISRC even when titles differ", () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-isrc", "ISRC Artist");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'single')`)
+    .run("rg-isrc", "artist-isrc", "ISRC Composite");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count)
+              VALUES ('rel-isrc', 'rg-isrc', 'artist-isrc', 'ISRC Composite', 'Official', '2023-01-01', 'XW', 1, 2)`).run();
+
+  for (const [rec, trk, title, pos, isrc] of [
+    ["rec-a", "trk-a", "Canonical Title A", 1, "AAAA12345678"],
+    ["rec-b", "trk-b", "Canonical Title B", 2, "BBBB12345678"],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, isrcs) VALUES (?, 'artist-isrc', ?, 200000, ?)`)
+      .run(rec, title, JSON.stringify([isrc]));
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+                VALUES (?, 'rel-isrc', ?, ?, ?, 1, 200000)`).run(trk, rec, title, pos);
+  }
+
+  const albumData = (track: { title: string; isrc: string }) =>
+    JSON.stringify({ quality: "LOSSLESS", tracks: [{ ...track, track_number: 1, volume_number: 1, duration: 200 }] });
+  // Provider titles deliberately do NOT match the MB titles — only the ISRC links them.
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different A', 'LOSSLESS', ?)`)
+    .run("prov-a", albumData({ title: "Totally Different A", isrc: "AAAA12345678" }));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different B', 'LOSSLESS', ?)`)
+    .run("prov-b", albumData({ title: "Totally Different B", isrc: "BBBB12345678" }));
+
+  providerMatches.persistCompositeReleaseMatches("rg-isrc");
+  const result = providerMatches.getReleaseGroupAvailability("rg-isrc");
+  const release = result.releases.find((item) => item.releaseMbid === "rel-isrc");
+  assert.ok(release);
+  const composite = release.availability.find((offer) => offer.matchKind === "composite");
+  assert.ok(composite, "ISRC-only composite should form despite mismatched titles");
+  assert.deepEqual(composite!.providerAlbumIds, ["prov-a", "prov-b"]);
 });
 
 test("setSlotSelection switches the selected release and derives the best provider", () => {

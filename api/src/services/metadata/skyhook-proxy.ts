@@ -284,6 +284,7 @@ export class SkyHookProxy {
           r.mbid,
           r.release_group_mbid,
           r.title,
+          r.disambiguation,
           r.barcode,
           r.date,
           r.track_count,
@@ -298,6 +299,7 @@ export class SkyHookProxy {
         mbid: string;
         release_group_mbid: string;
         title: string | null;
+        disambiguation: string | null;
         barcode: string | null;
         date: string | null;
         track_count: number | null;
@@ -310,6 +312,7 @@ export class SkyHookProxy {
       releaseGroupMbid: string;
       mbid: string;
       title: string | null;
+      disambiguation: string | null;
       barcode: string | null;
       date: string | null;
       trackCount: number | null;
@@ -322,6 +325,7 @@ export class SkyHookProxy {
         releaseGroupMbid: release.release_group_mbid,
         mbid: release.mbid,
         title: release.title,
+        disambiguation: release.disambiguation,
         barcode: release.barcode,
         date: release.date,
         trackCount: release.track_count,
@@ -356,6 +360,7 @@ export class SkyHookProxy {
       list.push({
         mbid: release.mbid,
         title: release.title,
+        disambiguation: release.disambiguation,
         barcode: release.barcode,
         date: release.date,
         trackCount: release.trackCount,

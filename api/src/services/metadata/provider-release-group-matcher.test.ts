@@ -346,6 +346,43 @@ test("prefers a full release-title match over a shorter expanded-title prefix", 
     assert.notDeepEqual(match.evidence.ambiguousWith, ["mtv-unplugged-rg"]);
 });
 
+test("prefers spatial MusicBrainz release disambiguation for Dolby Atmos provider albums", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "291445075",
+        title: "MTV Unplugged",
+        releaseDate: "2023-04-22",
+        type: "ALBUM",
+        quality: "DOLBY_ATMOS",
+        qualityTags: ["DOLBY_ATMOS"],
+        trackCount: 15,
+        volumeCount: 1,
+    }, [{
+        mbid: "mtv-unplugged-rg",
+        title: "MTV Unplugged – Live in London",
+        primaryType: "Album",
+        firstReleaseDate: "2023-04-22",
+        releases: [
+            {
+                mbid: "normal-digital-release",
+                title: "MTV Unplugged – Live in London",
+                trackCount: 15,
+                mediaCount: 1,
+            },
+            {
+                mbid: "dolby-atmos-release",
+                title: "MTV Unplugged – Live in London",
+                disambiguation: "Dolby Atmos mix",
+                trackCount: 15,
+                mediaCount: 1,
+            },
+        ],
+    }]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.releaseMbid, "dolby-atmos-release");
+    assert.deepEqual(match.evidence.availableReleaseMbids, ["dolby-atmos-release"]);
+});
+
 test("matches symbolic MusicBrainz release-group titles before partial provider editions", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "394021126",

@@ -8,6 +8,8 @@ export type ProviderAlbumForReleaseGroupMatching = {
     version?: string | null;
     releaseDate?: string | null;
     type?: string | null;
+    quality?: string | null;
+    qualityTags?: string[] | null;
     upc?: string | null;
     isrcs?: string[] | null;
     trackCount?: number | null;
@@ -17,6 +19,7 @@ export type ProviderAlbumForReleaseGroupMatching = {
 export type MusicBrainzReleaseForMatching = {
     mbid: string;
     title?: string | null;
+    disambiguation?: string | null;
     externalUrls?: string[] | null;
     barcode?: string | null;
     date?: string | null;
@@ -115,6 +118,30 @@ function providerAlbumResourceIds(album: ProviderAlbumForReleaseGroupMatching): 
 
 function normalizeIsrc(value?: string | null): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function isSpatialProviderAlbum(album: ProviderAlbumForReleaseGroupMatching): boolean {
+    const values = [
+        album.quality,
+        album.version,
+        album.title,
+        ...(album.qualityTags || []),
+    ];
+    return values.some((value) => /(atmos|spatial|360)/i.test(String(value || "")));
+}
+
+function releaseSpatialScore(release: MusicBrainzReleaseForMatching): number {
+    const text = `${release.title || ""} ${release.disambiguation || ""}`.toLowerCase();
+    if (/\bdolby\s+atmos\b/.test(text)) {
+        return 3;
+    }
+    if (/\batmos\b/.test(text)) {
+        return 2;
+    }
+    if (/\bspatial\b|\b360\b/.test(text)) {
+        return 1;
+    }
+    return 0;
 }
 
 function addNormalizedCandidate(candidates: string[], value?: string | null): void {
@@ -328,6 +355,7 @@ function scoreAlbumAgainstReleaseGroup(
         return (!releaseTrackCount || !providerTrackCount || releaseTrackCount === providerTrackCount)
             && (!releaseMediaCount || !providerVolumeCount || releaseMediaCount === providerVolumeCount);
     })?.release;
+    const spatialProviderAlbum = isSpatialProviderAlbum(album);
     const releaseGroupTitleCandidates = titleCandidatesForReleaseGroup(releaseGroup);
     const titleScores = providerTitles
         .flatMap((candidateTitle) => releaseGroupTitleCandidates.map((releaseGroupTitle) => ({
@@ -371,6 +399,18 @@ function scoreAlbumAgainstReleaseGroup(
             return trackCompatible && volumeCompatible && nearestTrackCompatible && nearestVolumeCompatible;
         })
         : [];
+    const shapeCompatibleReleases = releases.filter((release) => {
+        const trackCount = Number(release.trackCount || 0);
+        const mediaCount = Number(release.mediaCount || 0);
+        return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
+            && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
+    });
+    const spatialCompatibleReleases = spatialProviderAlbum
+        ? [...(expandedCompatibleReleases.length > 0 ? expandedCompatibleReleases : shapeCompatibleReleases)]
+            .filter((release) => releaseSpatialScore(release) > 0)
+            .sort((left, right) => releaseSpatialScore(right) - releaseSpatialScore(left) || String(left.mbid).localeCompare(String(right.mbid)))
+        : [];
+    const matchedReleaseBySpatial = spatialCompatibleReleases[0];
     const availableReleases = matchedReleaseByUrl
         ? [matchedReleaseByUrl]
             : matchedReleaseByUpc
@@ -379,18 +419,16 @@ function scoreAlbumAgainstReleaseGroup(
             ? [bestIsrcRelease]
             : matchedReleaseByTitle
                 ? [matchedReleaseByTitle]
+            : matchedReleaseBySpatial
+                ? [matchedReleaseBySpatial]
             : expandedCompatibleReleases.length > 0
                 ? expandedCompatibleReleases
-                : releases.filter((release) => {
-                    const trackCount = Number(release.trackCount || 0);
-                    const mediaCount = Number(release.mediaCount || 0);
-                    return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
-                        && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
-                });
+                : shapeCompatibleReleases;
     const matchedRelease = matchedReleaseByUrl
         || matchedReleaseByUpc
         || bestIsrcRelease
         || matchedReleaseByTitle
+        || matchedReleaseBySpatial
         || (availableReleases.length === 1 ? availableReleases[0] : undefined);
     const providerYear = yearOf(album.releaseDate);
     const releaseGroupYear = yearOf(releaseGroup.firstReleaseDate);
@@ -522,9 +560,10 @@ export function matchProviderAlbumToReleaseGroup(
     // edition is as trustworthy as an exact title — promote it to verified so a
     // fully-covered EP doesn't sit at "probable".
     const verifiedTrackMatch = best.titleExpansionMatched && best.trackCountMatched;
+    const verifiedSpatialReleaseMatch = Boolean(isSpatialProviderAlbum(album) && best.matchedReleaseMbid && best.trackCountMatched && best.volumeCountMatched);
     const status: ProviderReleaseGroupMatchStatus = ambiguousWith.length > 0
         ? "ambiguous"
-        : (strongIdentityMatch || verifiedTrackMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
+        : (strongIdentityMatch || verifiedTrackMatch || verifiedSpatialReleaseMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
             ? "verified"
             : "probable";
     const method = best.providerUrlMatched
