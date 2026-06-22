@@ -50,10 +50,6 @@ const useStyles = makeStyles({
         alignItems: "center",
         justifyContent: "center",
         lineHeight: 1,
-        transform: "translateY(0.5px)",
-        "@media (hover: hover) and (pointer: fine)": {
-            transform: "none",
-        },
     },
     // Heights are intentionally NOT overridden — we let Fluent's `size` prop set
     // the badge height so a QualityBadge lines up exactly with a MediaTypeBadge

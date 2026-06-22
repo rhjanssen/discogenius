@@ -81,6 +81,9 @@ const useStyles = makeStyles({
         flexDirection: "column",
         rowGap: tokens.spacingVerticalXXS,
     },
+    tooltipContent: {
+        maxWidth: "400px",
+    },
 });
 
 function providerDisplayName(provider?: string | null): string {
@@ -228,6 +231,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                             ))}
                         </div>
                     ),
+                    className: styles.tooltipContent,
                 }}
             >
                 <span
@@ -273,6 +277,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                             ))}
                         </div>
                     ),
+                    className: styles.tooltipContent,
                 }}
             >
                 <span
