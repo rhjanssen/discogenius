@@ -196,7 +196,7 @@ export class UnmappedFilesService {
                 artist: mostCommonNonEmpty(files.map((file) => file.detected_artist)) || undefined,
                 album: mostCommonNonEmpty(files.map((file) => file.detected_album)) || undefined,
             },
-            status: "pending",
+            status: "queued",
         };
     }
 

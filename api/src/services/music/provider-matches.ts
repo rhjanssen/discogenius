@@ -398,7 +398,27 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
      AND pi.entity_type = 'album'
      AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
     WHERE ar.release_group_mbid = ?
-    ORDER BY (ar.date IS NULL), ar.date, ar.mbid, pm.confidence DESC
+    ORDER BY
+      (ar.date IS NULL),
+      ar.date,
+      ar.mbid,
+      CASE pi.library_slot
+        WHEN 'stereo' THEN 0
+        WHEN 'spatial' THEN 1
+        WHEN 'video' THEN 2
+        ELSE 9
+      END,
+      CASE
+        WHEN UPPER(COALESCE(pi.quality, '')) IN ('HIRES_LOSSLESS', 'HI_RES_LOSSLESS') THEN 100
+        WHEN UPPER(COALESCE(pi.quality, '')) = 'LOSSLESS' THEN 90
+        WHEN UPPER(COALESCE(pi.quality, '')) LIKE '%ATMOS%' THEN 80
+        WHEN UPPER(COALESCE(pi.quality, '')) LIKE '%SPATIAL%' THEN 70
+        WHEN UPPER(COALESCE(pi.quality, '')) = 'HIGH' THEN 20
+        WHEN UPPER(COALESCE(pi.quality, '')) = 'LOW' THEN 10
+        ELSE 0
+      END DESC,
+      pm.confidence DESC,
+      pm.provider_album_id ASC
   `).all(releaseGroupMbid) as Array<{
     release_mbid: string;
     title: string | null;

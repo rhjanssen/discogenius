@@ -33,7 +33,7 @@ function getJobPayload(job: JobLike): Record<string, any> | null {
 }
 
 function isActiveJob(job: JobLike): boolean {
-    return job?.status === "running" || job?.status === "processing";
+    return job?.status === "started";
 }
 
 function humanizeJobType(type: string): string {

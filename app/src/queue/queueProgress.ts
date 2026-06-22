@@ -53,8 +53,8 @@ export function deriveQueueStats(status?: QueueStatusContract | null): QueueStat
     .filter((stat) => stat.status === jobStatus)
     .reduce((sum, stat) => sum + Number(stat.count || 0), 0);
 
-  const pending = sumByStatus("pending");
-  const downloading = sumByStatus("processing");
+  const pending = sumByStatus("queued");
+  const downloading = sumByStatus("started");
   const completed = sumByStatus("completed");
   const failed = sumByStatus("failed") + sumByStatus("cancelled");
 

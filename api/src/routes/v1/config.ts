@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
 import { getConfigSection, updateConfig, CONFIG_FILE, Config } from "../../services/config/config.js";
 import { streamingProviderManager } from "../../services/providers/index.js";
@@ -21,7 +22,7 @@ import * as TOML from "@iarna/toml";
 import fs from "fs";
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
-import { queueCurationPass } from "../../services/jobs/scheduler.js";
+import { queueCurationPass } from "../../services/commands/scheduler.js";
 
 const router = Router();
 
@@ -152,7 +153,7 @@ const updateFilteringConfig = (req: any, res: any) => {
   try {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
     updateConfig("filtering", updates);
-    const jobId = queueCurationPass({ trigger: 1 });
+    const jobId = queueCurationPass({ trigger: CommandTrigger.Manual });
     res.json({ success: true, jobId });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -182,8 +183,8 @@ router.post("/metadata", async (req, res) => {
     await syncDownloadBackends();
 
     // Queue a config prune job to clean up orphaned metadata sidecars
-    import("../../services/jobs/queue.js").then(({ JobTypes, TaskQueueService }) => {
-      TaskQueueService.addJob(JobTypes.ConfigPrune, {}, 'system', 0, 1);
+    import("../../services/commands/command-queue.js").then(({ CommandNames, CommandQueueService }) => {
+      CommandQueueService.addJob(CommandNames.ConfigPrune, {}, 'system', 0, 1);
     });
 
     res.json({ success: true });

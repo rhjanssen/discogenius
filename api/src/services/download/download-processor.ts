@@ -1,5 +1,5 @@
 import { db } from '../../database.js';
-import { DOWNLOAD_JOB_TYPES, DOWNLOAD_OR_IMPORT_JOB_TYPES, JobOfType, JobTypes, TaskQueueService } from '../jobs/queue.js';
+import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandModelOf, CommandNames, CommandQueueService } from '../commands/command-queue.js';
 import { Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
 import { updateAlbumDownloadStatus } from './download-state.js';
@@ -15,19 +15,19 @@ import { MediaSeedService } from '../music/media-seed-service.js';
 import { RefreshAlbumService } from "../music/refresh-album-service.js";
 import { streamingProviderManager } from '../providers/index.js';
 import type {
-    DownloadAlbumJobPayload,
+    DownloadAlbumCommand,
     DownloadMediaType,
-    ImportDownloadJobPayload,
-    DownloadTrackJobPayload,
-    DownloadVideoJobPayload,
+    ImportDownloadCommand,
+    DownloadTrackCommand,
+    DownloadVideoCommand,
     ResolvedDownloadMetadata,
-} from '../jobs/job-payloads.js';
+} from '../commands/command-bodies.js';
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
-import { appEvents, AppEvent, type JobEventPayload } from '../jobs/app-events.js';
+import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 
-type DownloadJobPayload = DownloadTrackJobPayload | DownloadVideoJobPayload | DownloadAlbumJobPayload;
+type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
-type DownloadOrImportJobPayload = DownloadJobPayload | ImportDownloadJobPayload;
+type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
 
 type CanonicalProviderOffer = {
     provider?: string | null;
@@ -119,15 +119,15 @@ export class DownloadProcessor {
      * Fire-and-forget an import job. Runs in a dedicated import slot alongside
      * the download slot (Lidarr/Tidarr-style: 1 download + 1 import in parallel).
      */
-    private dispatchImportJob(job: ReturnType<typeof TaskQueueService.getNextJobByTypes> & {}): void {
-        const importPayload = job.payload as ImportDownloadJobPayload;
+    private dispatchImportJob(job: ReturnType<typeof CommandQueueService.getNextJobByTypes> & {}): void {
+        const importPayload = job.payload as ImportDownloadCommand;
         const providerId = String(importPayload?.providerId || job.ref_id || '');
         const rawType = String(importPayload?.type || 'track');
         const type: DownloadJobType = rawType === 'album' || rawType === 'video' ? rawType : 'track';
 
         if (!providerId || providerId === 'undefined' || providerId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid providerId: ${providerId}`);
-            TaskQueueService.fail(job.id, 'Invalid providerId - cannot import');
+            CommandQueueService.fail(job.id, 'Invalid providerId - cannot import');
             return;
         }
 
@@ -137,7 +137,7 @@ export class DownloadProcessor {
             cover: importPayload?.resolved?.cover ?? (job.payload as any)?.cover ?? null,
         };
 
-        if (!TaskQueueService.markProcessing(job.id)) {
+        if (!CommandQueueService.markProcessing(job.id)) {
             console.log(`[DOWNLOAD-PROCESSOR] Import job #${job.id} is no longer pending; skipping dispatch.`);
             return;
         }
@@ -165,11 +165,11 @@ export class DownloadProcessor {
 
         const importPromise = (async () => {
             try {
-                await DownloadedTracksImportService.process(job as JobOfType<typeof JobTypes.ImportDownload>, {
+                await DownloadedTracksImportService.process(job as CommandModelOf<typeof CommandNames.ImportDownload>, {
                     updateState: emitImportProgress,
                 });
 
-                TaskQueueService.complete(job.id);
+                CommandQueueService.complete(job.id);
                 downloadEvents.emitCompleted(job.id, {
                     providerId,
                     type,
@@ -187,7 +187,7 @@ export class DownloadProcessor {
                     statusMessage: error?.message || 'Import failed',
                     state: 'importFailed',
                 });
-                TaskQueueService.fail(job.id, error?.message || 'Unknown import error');
+                CommandQueueService.fail(job.id, error?.message || 'Unknown import error');
                 downloadEvents.emitFailed(job.id, {
                     providerId,
                     type,
@@ -232,8 +232,8 @@ export class DownloadProcessor {
             ...this.activeImports.keys(),
         ];
 
-        const recovered = TaskQueueService.requeueStaleProcessingJobsByTypes({
-            types: DOWNLOAD_OR_IMPORT_JOB_TYPES,
+        const recovered = CommandQueueService.requeueStaleProcessingJobsByTypes({
+            types: DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
             olderThanMs: STUCK_JOB_MS,
             excludeIds,
         });
@@ -325,7 +325,7 @@ export class DownloadProcessor {
     private resolveCanonicalProviderOffer(
         providerId: string,
         type: DownloadJobType,
-        payload?: DownloadJobPayload,
+        payload?: DownloadCommand,
     ): CanonicalProviderOffer | null {
         const entityType = type === 'album' ? 'album' : type === 'video' ? 'video' : 'track';
         const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid);
@@ -427,12 +427,12 @@ export class DownloadProcessor {
         return row ?? null;
     }
 
-    private hasAlbumMetadataReady(albumId: string, payload?: DownloadJobPayload): boolean {
+    private hasAlbumMetadataReady(albumId: string, payload?: DownloadCommand): boolean {
         const canonicalOffer = this.resolveCanonicalProviderOffer(albumId, 'album', payload);
         return Boolean(canonicalOffer);
     }
 
-    private hasTrackMetadataReady(trackId: string, payload?: DownloadJobPayload): boolean {
+    private hasTrackMetadataReady(trackId: string, payload?: DownloadCommand): boolean {
         const canonicalOffer = this.resolveCanonicalProviderOffer(trackId, 'track', payload);
         if (canonicalOffer) {
             return Boolean(
@@ -445,7 +445,7 @@ export class DownloadProcessor {
         return false;
     }
 
-    private hasVideoMetadataReady(videoId: string, payload?: DownloadJobPayload): boolean {
+    private hasVideoMetadataReady(videoId: string, payload?: DownloadCommand): boolean {
         const canonicalOffer = this.resolveCanonicalProviderOffer(videoId, 'video', payload);
         if (canonicalOffer) {
             return Boolean(
@@ -461,7 +461,7 @@ export class DownloadProcessor {
     private async ensureMetadataReady(
         providerId: string,
         type: 'track' | 'video' | 'album',
-        payload?: DownloadJobPayload,
+        payload?: DownloadCommand,
     ): Promise<void> {
         switch (type) {
             case 'album': {
@@ -507,7 +507,7 @@ export class DownloadProcessor {
     private resolveDownloadMetadata(
         providerId: string,
         type: DownloadJobType,
-        payload: DownloadJobPayload,
+        payload: DownloadCommand,
     ): Required<ResolvedDownloadMetadata> {
         const fallbackTitle = payload?.title;
         const fallbackArtist = payload?.artist;
@@ -561,7 +561,7 @@ export class DownloadProcessor {
     private resolveDownloadQuality(
         providerId: string,
         type: DownloadJobType,
-        payload: DownloadJobPayload,
+        payload: DownloadCommand,
     ): string | null {
         if (payload?.quality) {
             return payload.quality;
@@ -580,7 +580,7 @@ export class DownloadProcessor {
 
     private getCanonicalAlbumDownloadProgress(
         providerId: string,
-        payload: DownloadJobPayload,
+        payload: DownloadCommand,
     ): { total: number; done: number } | null {
         const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, 'album', payload);
         const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
@@ -639,7 +639,7 @@ export class DownloadProcessor {
     private isCanonicalProviderItemDownloaded(
         providerId: string,
         type: Extract<DownloadJobType, 'track' | 'video'>,
-        payload: DownloadJobPayload,
+        payload: DownloadCommand,
     ): boolean {
         const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
         if (!canonicalOffer) {
@@ -740,7 +740,7 @@ export class DownloadProcessor {
             payloadPatch.description = state.description;
         }
 
-        TaskQueueService.updateState(jobId, {
+        CommandQueueService.updateState(jobId, {
             progress: state.progress,
             payloadPatch,
         });
@@ -791,8 +791,8 @@ export class DownloadProcessor {
         }
 
         if (!this.queueEventsSubscribed) {
-            appEvents.on(AppEvent.JOB_ADDED, (event: JobEventPayload) => {
-                if (DOWNLOAD_OR_IMPORT_JOB_TYPES.includes(event.type as (typeof DOWNLOAD_OR_IMPORT_JOB_TYPES)[number])) {
+            appEvents.on(AppEvent.COMMAND_ADDED, (event: CommandEventPayload) => {
+                if (DOWNLOAD_OR_IMPORT_COMMAND_NAMES.includes(event.type as (typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES)[number])) {
                     this.scheduleNext();
                 }
             });
@@ -804,21 +804,21 @@ export class DownloadProcessor {
         try {
             // Query for jobs that were stuck in processing state (likely from crash/restart)
             const stuckJobs = db.prepare(`
-                SELECT id, type, ref_id, payload, created_at, started_at 
-                FROM job_queue 
-                WHERE status = 'processing' AND type IN (${DOWNLOAD_OR_IMPORT_JOB_TYPES.map(() => '?').join(',')})
+                SELECT id, name, ref_id, payload, created_at, started_at 
+                FROM commands 
+                WHERE status = 'started' AND name IN (${DOWNLOAD_OR_IMPORT_COMMAND_NAMES.map(() => '?').join(',')})
                 ORDER BY started_at ASC
-            `).all(...DOWNLOAD_OR_IMPORT_JOB_TYPES) as any[];
+            `).all(...DOWNLOAD_OR_IMPORT_COMMAND_NAMES) as any[];
 
             if (stuckJobs.length > 0) {
                 // Log details of what we're recovering (for diagnostic purposes)
                 console.log(`[DOWNLOAD-PROCESSOR] Found ${stuckJobs.length} interrupted download job(s) from previous crash/restart:`);
                 stuckJobs.forEach(job => {
-                    console.log(`  - [${job.id}] ${job.type} ${job.ref_id}: "${(() => { try { const parsed = typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload; return parsed?.title || "unknown"; } catch { return "unknown"; } })()}" (started ${formatQueueTimestamp(job.started_at)})`);
+                    console.log(`  - [${job.id}] ${job.name} ${job.ref_id}: "${(() => { try { const parsed = typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload; return parsed?.title || "unknown"; } catch { return "unknown"; } })()}" (started ${formatQueueTimestamp(job.started_at)})`);
                 });
 
                 // Reset to pending state - will be picked up by next processQueue() call
-                const recovered = TaskQueueService.resetProcessingJobsByTypes(DOWNLOAD_OR_IMPORT_JOB_TYPES);
+                const recovered = CommandQueueService.resetProcessingJobsByTypes(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
                 console.log(`[DOWNLOAD-PROCESSOR] Successfully re-queued ${recovered} interrupted download/import job(s) to pending state`);
             }
         } catch (error) {
@@ -846,12 +846,12 @@ export class DownloadProcessor {
         // Downloads and imports use separate slots so importing never blocks
         // the next download from starting.
         while (this.activeImports.size < MAX_CONCURRENT_IMPORTS) {
-            const importJob = TaskQueueService.getNextJobByTypes([JobTypes.ImportDownload]);
+            const importJob = CommandQueueService.getNextJobByTypes([CommandNames.ImportDownload]);
             if (!importJob) break;
 
             if (importJob.attempts >= MAX_RETRY_ATTEMPTS) {
                 console.warn(`[DOWNLOAD-PROCESSOR] Import job #${importJob.id} exceeded max retries (${importJob.attempts}/${MAX_RETRY_ATTEMPTS}), marking as permanently failed`);
-                TaskQueueService.fail(importJob.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
+                CommandQueueService.fail(importJob.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
                 continue;
             }
 
@@ -864,7 +864,7 @@ export class DownloadProcessor {
             return;
         }
 
-        const job = TaskQueueService.getNextJobByTypes(DOWNLOAD_JOB_TYPES);
+        const job = CommandQueueService.getNextJobByTypes(DOWNLOAD_COMMAND_NAMES);
 
         if (!job) {
             return;
@@ -873,7 +873,7 @@ export class DownloadProcessor {
         // Check retry limit - if job has exceeded max attempts, fail permanently
         if (job.attempts >= MAX_RETRY_ATTEMPTS) {
             console.warn(`[DOWNLOAD-PROCESSOR] Job #${job.id} exceeded max retries (${job.attempts}/${MAX_RETRY_ATTEMPTS}), marking as permanently failed`);
-            TaskQueueService.fail(job.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
+            CommandQueueService.fail(job.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
             // Continue to next job without recursive await chains.
             this.scheduleNext();
             return;
@@ -883,20 +883,20 @@ export class DownloadProcessor {
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
         const providerId = String(
-            (job.payload as DownloadJobPayload | undefined)?.providerId
+            (job.payload as DownloadCommand | undefined)?.providerId
             || job.payload?.providerId
             || job.ref_id
             || '',
         );
-        const type: DownloadJobType = job.type === JobTypes.DownloadVideo
+        const type: DownloadJobType = job.name === CommandNames.DownloadVideo
             ? 'video'
-            : job.type === JobTypes.DownloadAlbum
+            : job.name === CommandNames.DownloadAlbum
                 ? 'album'
                 : 'track';
 
         if (!type) {
-            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.type}`);
-            TaskQueueService.fail(job.id, `Invalid job type - cannot download`);
+            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.name}`);
+            CommandQueueService.fail(job.id, `Invalid job type - cannot download`);
             this.processing = false;
             this.currentJobId = undefined;
             this.scheduleNext();
@@ -906,7 +906,7 @@ export class DownloadProcessor {
         // Validate providerId before processing
         if (!providerId || providerId === 'undefined' || providerId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid providerId: ${providerId}`);
-            TaskQueueService.fail(job.id, `Invalid providerId - cannot download`);
+            CommandQueueService.fail(job.id, `Invalid providerId - cannot download`);
             this.processing = false;
             this.currentJobId = undefined;
             // Process next item
@@ -916,11 +916,11 @@ export class DownloadProcessor {
         this.currentProviderId = providerId;
         this.currentType = type;
         this.currentDownloadPath = undefined;
-        let payload = job.payload as DownloadOrImportJobPayload;
+        let payload = job.payload as DownloadOrImportCommand;
 
-        console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.type} (ref: ${providerId})`);
+        console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.name} (ref: ${providerId})`);
 
-        if (!TaskQueueService.markProcessing(job.id)) {
+        if (!CommandQueueService.markProcessing(job.id)) {
             console.log(`[DOWNLOAD-PROCESSOR] Job #${job.id} is no longer pending; skipping dispatch.`);
             this.processing = false;
             this.currentJobId = undefined;
@@ -942,18 +942,18 @@ export class DownloadProcessor {
                 statusMessage: 'Preparing metadata...',
             });
 
-            await this.ensureMetadataReady(providerId, type, payload as DownloadJobPayload);
+            await this.ensureMetadataReady(providerId, type, payload as DownloadCommand);
 
             resolved = this.resolveDownloadMetadata(providerId, type, payload);
             const resolvedQuality = this.resolveDownloadQuality(providerId, type, payload);
             payload = {
-                ...((payload as DownloadJobPayload) || {}),
+                ...((payload as DownloadCommand) || {}),
                 title: resolved.title,
                 artist: resolved.artist,
                 cover: resolved.cover,
                 quality: payload.quality ?? resolvedQuality,
             };
-            job.payload = payload as DownloadJobPayload;
+            job.payload = payload as DownloadCommand;
 
             this.persistDownloadState(job.id, {
                 progress: 0,
@@ -978,7 +978,7 @@ export class DownloadProcessor {
                 // The downloader exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
-                    const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadJobPayload);
+                    const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadCommand);
 
                     if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done > 0) {
                         // Album has at least some tracks downloaded.  The downloader
@@ -992,7 +992,7 @@ export class DownloadProcessor {
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
                         updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
 
-                        TaskQueueService.complete(job.id);
+                        CommandQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
@@ -1006,11 +1006,11 @@ export class DownloadProcessor {
                         return;
                     }
                 } else if (type === 'track' || type === 'video') {
-                    const alreadyDownloaded = this.isCanonicalProviderItemDownloaded(providerId, type, payload as DownloadJobPayload);
+                    const alreadyDownloaded = this.isCanonicalProviderItemDownloaded(providerId, type, payload as DownloadCommand);
 
                     if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
-                        TaskQueueService.complete(job.id);
+                        CommandQueueService.complete(job.id);
                         await this.cleanupDownloadSourcePath();
 
                         downloadEvents.emitCompleted(job.id, {
@@ -1033,7 +1033,7 @@ export class DownloadProcessor {
             }
 
             // Organize into library (dispatched to the import/finalization queue)
-            TaskQueueService.addJob(JobTypes.ImportDownload, {
+            CommandQueueService.addJob(CommandNames.ImportDownload, {
                 provider: payload.provider,
                 providerId: payload.providerId ?? providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
@@ -1060,7 +1060,7 @@ export class DownloadProcessor {
                 originalJobId: job.id
             }, providerId, Math.max(job.priority, 100), job.trigger, job.queue_order);
 
-            TaskQueueService.complete(job.id);
+            CommandQueueService.complete(job.id);
 
             downloadEvents.emitCompleted(job.id, {
                 providerId,
@@ -1078,22 +1078,22 @@ export class DownloadProcessor {
             console.log(`[DOWNLOAD-PROCESSOR] Successfully downloaded ${type} ${providerId} - dispatched to import queue`);
         } catch (error: any) {
             if (this.cancelCurrentDownload && this.isPaused) {
-                const current = TaskQueueService.getById(job.id);
-                if (current?.status === 'processing') {
+                const current = CommandQueueService.getById(job.id);
+                if (current?.status === 'started') {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
-                    TaskQueueService.retry(job.id);
+                    CommandQueueService.retry(job.id);
                 } else {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; keeping status=${current?.status ?? 'unknown'}`);
                 }
             } else {
                 console.error(`[DOWNLOAD-PROCESSOR] Failed to download job #${job.id}:`, error);
-                const currentJob = TaskQueueService.getById(job.id);
+                const currentJob = CommandQueueService.getById(job.id);
                 this.persistDownloadState(job.id, {
                     progress: currentJob?.progress ?? job.progress,
                     state: 'failed',
                     statusMessage: error?.message || 'Unknown download error',
                 });
-                TaskQueueService.fail(job.id, error?.message || 'Unknown download error');
+                CommandQueueService.fail(job.id, error?.message || 'Unknown download error');
 
                 // Emit failed event
                 downloadEvents.emitFailed(job.id, {
@@ -1126,7 +1126,7 @@ export class DownloadProcessor {
         jobId: number,
         id: string,
         type: DownloadJobType,
-        payload: DownloadJobPayload
+        payload: DownloadCommand
     ): Promise<void> {
         const baseDownloadPath = getDownloadWorkspacePath(type, id);
         const downloadPath = path.join(baseDownloadPath, `job_${jobId}`);

@@ -15,7 +15,7 @@ const {
   findSystemTaskDefinitionByCommandName,
   getCommandDefinition,
   getCommandTypesForQueueCategory,
-  PENDING_ACTIVITY_JOB_TYPES,
+  PENDING_ACTIVITY_COMMAND_NAMES,
 } = await import("./command-registry.js");
 
 test("command registry exposes canonical command and task metadata", () => {
@@ -29,7 +29,7 @@ test("command registry exposes canonical command and task metadata", () => {
   assert.equal(monitoringCycle?.id, "monitoring-cycle");
   assert.equal(monitoringCycle?.kind, "scheduled");
 
-  assert.ok(PENDING_ACTIVITY_JOB_TYPES.includes("RefreshArtist"));
+  assert.ok(PENDING_ACTIVITY_COMMAND_NAMES.includes("RefreshArtist"));
   assert.ok(getCommandTypesForQueueCategory("downloads").includes("ImportDownload"));
   assert.ok(getCommandTypesForQueueCategory("other").includes("CheckHealth"));
 
@@ -44,7 +44,7 @@ test("command registry exposes canonical command and task metadata", () => {
     assert.equal(downloadTypes.has(otherType), false, `other type ${otherType} must not overlap downloads`);
     assert.equal(scanTypes.has(otherType), false, `other type ${otherType} must not overlap scans`);
   }
-  for (const pendingType of PENDING_ACTIVITY_JOB_TYPES) {
+  for (const pendingType of PENDING_ACTIVITY_COMMAND_NAMES) {
     assert.equal(scanTypes.has(pendingType), true, `pending activity type ${pendingType} must be in scans category`);
   }
 });

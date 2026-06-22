@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let queueModule: typeof import("../jobs/queue.js");
+let queueModule: typeof import("../commands/command-queue.js");
 let serviceModule: typeof import("./library-bulk-actions.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
@@ -26,13 +26,13 @@ before(async () => {
     dbModule = await import("../../database.js");
     dbModule.initDatabase();
 
-    queueModule = await import("../jobs/queue.js");
+    queueModule = await import("../commands/command-queue.js");
     serviceModule = await import("./library-bulk-actions.js");
 });
 
 beforeEach(() => {
     const { db } = dbModule;
-    db.prepare("DELETE FROM job_queue").run();
+    db.prepare("DELETE FROM commands").run();
     db.prepare("DELETE FROM ProviderItems").run();
     db.prepare("DELETE FROM TrackFiles").run();
     db.prepare("DELETE FROM Tracks").run();
@@ -179,15 +179,15 @@ test("artist monitor bulk updates related rows and queues intake", async () => {
     assertRetiredProviderCatalogTablesAbsent();
 
     const queuedJob = dbModule.db.prepare(`
-        SELECT type, ref_id as refId, status
-        FROM job_queue
+        SELECT name, ref_id as refId, status
+        FROM commands
         WHERE ref_id = ?
-    `).get("1") as { type: string; refId: string; status: string } | undefined;
+    `).get("1") as { name: string; refId: string; status: string } | undefined;
 
     assert.ok(queuedJob);
-    assert.equal(queuedJob?.type, queueModule.JobTypes.RefreshArtist);
+    assert.equal(queuedJob?.name, queueModule.CommandNames.RefreshArtist);
     assert.equal(queuedJob?.refId, "1");
-    assert.equal(queuedJob?.status, "pending");
+    assert.equal(queuedJob?.status, "queued");
 });
 
 test("album and video lock bulk actions write canonical state", async () => {
@@ -271,21 +271,21 @@ test("bulk download queues the selected media jobs", async () => {
     assert.ok(videoDownload.queued > 0);
 
     const jobTypes = dbModule.db.prepare(`
-        SELECT type
-        FROM job_queue
+        SELECT name
+        FROM commands
         ORDER BY id ASC
-    `).all() as Array<{ type: string }>;
+    `).all() as Array<{ name: string }>;
 
-    assert.ok(jobTypes.some((row) => row.type === queueModule.JobTypes.DownloadAlbum));
-    assert.ok(jobTypes.some((row) => row.type === queueModule.JobTypes.DownloadTrack));
-    assert.ok(jobTypes.some((row) => row.type === queueModule.JobTypes.DownloadVideo));
+    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadAlbum));
+    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadTrack));
+    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadVideo));
 });
 
 test("artist download queues monitored items when nothing is already queued", async () => {
     seedLibrary();
 
     await serviceModule.LibraryBulkActionService.apply("artist", "monitor", ["1"]);
-    dbModule.db.prepare("DELETE FROM job_queue").run();
+    dbModule.db.prepare("DELETE FROM commands").run();
 
     const artistDownload = await serviceModule.LibraryBulkActionService.apply("artist", "download", ["1"]);
 
@@ -294,11 +294,11 @@ test("artist download queues monitored items when nothing is already queued", as
     assert.ok(artistDownload.queued > 0);
 
     const jobTypes = dbModule.db.prepare(`
-        SELECT type
-        FROM job_queue
+        SELECT name
+        FROM commands
         ORDER BY id ASC
-    `).all() as Array<{ type: string }>;
+    `).all() as Array<{ name: string }>;
 
     assert.ok(jobTypes.length > 0);
-    assert.ok(jobTypes.some((row) => row.type === queueModule.JobTypes.DownloadAlbum || row.type === queueModule.JobTypes.DownloadTrack || row.type === queueModule.JobTypes.DownloadVideo));
+    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadAlbum || row.name === queueModule.CommandNames.DownloadTrack || row.name === queueModule.CommandNames.DownloadVideo));
 });

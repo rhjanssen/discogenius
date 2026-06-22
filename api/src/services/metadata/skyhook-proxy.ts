@@ -56,6 +56,7 @@ export interface LidarrRelease {
   MediumCount?: number;
   MediaCount?: number;
   Disambiguation: string;
+  ExternalUrls?: string[];
   Tracks: LidarrTrack[];
 }
 
@@ -107,6 +108,49 @@ export function mapSkyHookImages(images?: any[] | null): MediaCover[] {
       ...(extension ? { extension } : {}),
     };
   });
+}
+
+function extractExternalUrls(rawData?: string | null): string[] {
+  if (!rawData) {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawData);
+  } catch {
+    return [];
+  }
+
+  const urls = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (/^https?:\/\//i.test(text)) {
+        urls.add(text);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (/^(resource|url|externalUrl|externalUrls|relations?)$/i.test(key)) {
+        visit(child);
+      } else if (key === "target" || key === "target-credit") {
+        continue;
+      } else if (typeof child === "object" && child !== null) {
+        visit(child);
+      }
+    }
+  };
+
+  visit(parsed);
+  return Array.from(urls);
 }
 
 export class SkyHookProxy {
@@ -244,6 +288,7 @@ export class SkyHookProxy {
           r.date,
           r.track_count,
           r.media_count,
+          r.data,
           rec.isrcs AS recording_isrcs
         FROM AlbumReleases r
         LEFT JOIN Tracks t ON t.release_mbid = r.mbid
@@ -257,6 +302,7 @@ export class SkyHookProxy {
         date: string | null;
         track_count: number | null;
         media_count: number | null;
+        data: string | null;
         recording_isrcs: string | null;
       }>;
     const releasesByReleaseGroup = new Map<string, Array<NonNullable<MusicBrainzReleaseGroupForMatching["releases"]>[number]>>();
@@ -268,6 +314,7 @@ export class SkyHookProxy {
       date: string | null;
       trackCount: number | null;
       mediaCount: number | null;
+      externalUrls: Set<string>;
       isrcs: Set<string>;
     }>();
     for (const release of releaseRows) {
@@ -279,8 +326,12 @@ export class SkyHookProxy {
         date: release.date,
         trackCount: release.track_count,
         mediaCount: release.media_count,
+        externalUrls: new Set<string>(),
         isrcs: new Set<string>(),
       };
+      for (const url of extractExternalUrls(release.data)) {
+        evidence.externalUrls.add(url);
+      }
       const rawIsrcs = String(release.recording_isrcs || "").trim();
       const values = rawIsrcs.startsWith("[") ? [rawIsrcs] : rawIsrcs.split(",");
       for (const value of values) {
@@ -309,6 +360,7 @@ export class SkyHookProxy {
         date: release.date,
         trackCount: release.trackCount,
         mediaCount: release.mediaCount,
+        externalUrls: Array.from(release.externalUrls),
         isrcs: Array.from(release.isrcs),
       });
       releasesByReleaseGroup.set(release.releaseGroupMbid, list);

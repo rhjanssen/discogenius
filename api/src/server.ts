@@ -37,15 +37,15 @@ import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./s
 import { migrateLegacyTiddlDir } from "./services/providers/tidal/tiddl.js";
 import { initCurationListeners } from "./services/music/curation.listener.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
-import { startMonitoring } from "./services/jobs/scheduler.js";
+import { startMonitoring } from "./services/commands/scheduler.js";
 import {
   getRuntimeDiagnosticsSnapshot,
   startRuntimeDiagnostics,
   trackRuntimeRequest,
-} from "./services/jobs/runtime-diagnostics.js";
-import { runRuntimeMaintenance } from "./services/jobs/runtime-maintenance.js";
-import { collectHealthDiagnosticsSnapshot } from "./services/jobs/health.js";
-import { CommandExecutor } from "./services/jobs/command-executor.js";
+} from "./services/commands/runtime-diagnostics.js";
+import { runRuntimeMaintenance } from "./services/commands/runtime-maintenance.js";
+import { collectHealthDiagnosticsSnapshot } from "./services/commands/health.js";
+import { CommandExecutor } from "./services/commands/command-executor.js";
 import { readIntEnv } from "./utils/env.js";
 
 function initializeAuthEnvironment() {

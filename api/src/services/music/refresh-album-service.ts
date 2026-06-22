@@ -613,9 +613,8 @@ export class RefreshAlbumService {
         albumId: string,
         options: { resolveMusicBrainz?: boolean } = {},
     ): Promise<void> {
-        // `resolveMusicBrainz` previously gated a per-track MusicBrainz search pass
-        // (retired with the legacy provider tables); track identity is now mapped by
-        // position during this scan. The option is kept for call-site compatibility.
+        // Track identity is mapped by position during this scan; `resolveMusicBrainz`
+        // is accepted but unused.
         void options;
         const provider = this.resolveProviderForAlbum(albumId);
         const tracks = (await provider.getAlbumTracks(albumId))

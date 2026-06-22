@@ -12,19 +12,19 @@ process.env.DISCOGENIUS_DISABLE_DOWNLOADS = "1";
 let dbModule: typeof import("../../database.js");
 let db: typeof import("../../database.js").db;
 let UpgraderService: typeof import("./upgrader.js").UpgraderService;
-let JobTypes: typeof import("../jobs/queue.js").JobTypes;
+let CommandNames: typeof import("../commands/command-queue.js").CommandNames;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   db = dbModule.db;
   ({ UpgraderService } = await import("./upgrader.js"));
-  ({ JobTypes } = await import("../jobs/queue.js"));
+  ({ CommandNames } = await import("../commands/command-queue.js"));
 });
 
 afterEach(() => {
   for (const table of [
-    "job_queue",
+    "commands",
     "upgrade_queue",
     "TrackFiles",
     "ProviderItems",
@@ -105,12 +105,12 @@ function insertTrackFile(overrides: Record<string, unknown>) {
 
 function listDownloadJobs() {
   return db.prepare(`
-    SELECT type, ref_id, payload
-    FROM job_queue
-    WHERE type IN (?, ?, ?)
+    SELECT name, ref_id, payload
+    FROM commands
+    WHERE name IN (?, ?, ?)
     ORDER BY id
-  `).all(JobTypes.DownloadAlbum, JobTypes.DownloadTrack, JobTypes.DownloadVideo) as Array<{
-    type: string;
+  `).all(CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo) as Array<{
+    name: string;
     ref_id: string | null;
     payload: string;
   }>;
@@ -195,7 +195,7 @@ test("checkUpgrades queues canonical audio album upgrades without legacy provide
 
   const jobs = listDownloadJobs();
   assert.equal(jobs.length, 1);
-  assert.equal(jobs[0].type, JobTypes.DownloadAlbum);
+  assert.equal(jobs[0].name, CommandNames.DownloadAlbum);
   assert.equal(jobs[0].ref_id, "album-provider-1");
   assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "album-provider-1", reason: "upgrade" });
 });
@@ -347,7 +347,7 @@ test("checkUpgrades queues canonical video upgrades without legacy provider rows
 
   const jobs = listDownloadJobs();
   assert.equal(jobs.length, 1);
-  assert.equal(jobs[0].type, JobTypes.DownloadVideo);
+  assert.equal(jobs[0].name, CommandNames.DownloadVideo);
   assert.equal(jobs[0].ref_id, "video-provider-1");
   assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "video-provider-1", reason: "upgrade" });
 });

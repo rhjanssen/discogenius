@@ -1,8 +1,9 @@
+import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
-import { Job, JobTypes, TaskQueueService } from "./queue.js";
+import { CommandModel, CommandNames, CommandQueueService } from "./command-queue.js";
 
 export interface SchedulerJobDescriptionUpdate {
     progress?: number;
@@ -38,27 +39,27 @@ export function formatHealthCheckDescription(snapshot: HealthDiagnosticsSnapshot
 }
 
 export async function runLowCouplingMaintenanceJob(
-    job: Job,
+    job: CommandModel,
     context: SchedulerMaintenanceHandlerContext,
 ) {
-    switch (job.type) {
-        case JobTypes.BulkRefreshArtist: {
+    switch (job.name) {
+        case CommandNames.BulkRefreshArtist: {
             context.updateJobDescription({
                 progress: 10,
                 description: 'Queueing metadata refresh for all monitored artists',
             });
             // Queue a single RefreshMetadata job that iterates all artists inline (no staleness skip)
             const { queueMetadataRefreshPass } = await import('./scheduler.js');
-            queueMetadataRefreshPass({ trigger: job.trigger ?? 1 });
+            queueMetadataRefreshPass({ trigger: job.trigger ?? CommandTrigger.Manual });
             context.updateJobDescription({
                 progress: 100,
                 description: 'Queued metadata refresh for all monitored artists',
             });
             return;
         }
-        case JobTypes.DownloadMissingForce: {
-            TaskQueueService.addJob(
-                JobTypes.DownloadMissing,
+        case CommandNames.DownloadMissingForce: {
+            CommandQueueService.addJob(
+                CommandNames.DownloadMissing,
                 {},
                 undefined,
                 10,
@@ -69,20 +70,20 @@ export async function runLowCouplingMaintenanceJob(
             });
             return;
         }
-        case JobTypes.RescanAllRoots: {
+        case CommandNames.RescanAllRoots: {
             context.updateJobDescription({
                 progress: 10,
                 description: 'Queueing library-wide folder rescan',
             });
             const { queueRescanFoldersPass } = await import('./scheduler.js');
-            queueRescanFoldersPass({ trigger: job.trigger ?? 1, addNewArtists: true });
+            queueRescanFoldersPass({ trigger: job.trigger ?? CommandTrigger.Manual, addNewArtists: true });
             context.updateJobDescription({
                 progress: 100,
                 description: 'Queued library-wide folder rescan',
             });
             return;
         }
-        case JobTypes.CheckHealth: {
+        case CommandNames.CheckHealth: {
             const snapshot = collectHealthDiagnosticsSnapshot();
             context.updateJobDescription({
                 progress: 100,
@@ -90,7 +91,7 @@ export async function runLowCouplingMaintenanceJob(
             });
             return;
         }
-        case JobTypes.CompactDatabase: {
+        case CommandNames.CompactDatabase: {
             db.prepare('VACUUM;').run();
             db.prepare('ANALYZE;').run();
             context.updateJobDescription({
@@ -99,26 +100,26 @@ export async function runLowCouplingMaintenanceJob(
             });
             return;
         }
-        case JobTypes.CleanupTempFiles: {
+        case CommandNames.CleanupTempFiles: {
             context.updateJobDescription({
                 progress: 100,
                 description: 'Temporary files cleaned',
             });
             return;
         }
-        case JobTypes.UpdateLibraryMetadata: {
+        case CommandNames.UpdateLibraryMetadata: {
             context.updateJobDescription({
                 progress: 100,
                 description: 'Library metadata updated',
             });
             return;
         }
-        case JobTypes.ConfigPrune: {
+        case CommandNames.ConfigPrune: {
             await OrganizerService.pruneDisabledMetadata();
             await DiskScanService.fillMissingMetadataFilesForLibrary();
             return;
         }
         default:
-            throw new Error(`Unsupported low-coupling maintenance job: ${job.type}`);
+            throw new Error(`Unsupported low-coupling maintenance job: ${job.name}`);
     }
 }

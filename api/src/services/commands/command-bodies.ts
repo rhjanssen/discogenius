@@ -50,7 +50,7 @@ export interface ResolvedDownloadMetadata {
   cover?: string | null;
 }
 
-export interface QueuePayloadCommon {
+export interface CommandBodyCommon {
   id?: string;
   ids?: number[];
   providerId?: string;
@@ -113,7 +113,7 @@ export interface QueuePayloadCommon {
   downloadState?: DownloadStatePayload;
 }
 
-export interface RefreshArtistJobPayload extends QueuePayloadCommon {
+export interface RefreshArtistCommand extends CommandBodyCommon {
   artistId: string;
   artistName: string;
   workflow: ArtistWorkflowValue;
@@ -132,40 +132,40 @@ export interface RefreshArtistJobPayload extends QueuePayloadCommon {
   scanDepth?: "basic" | "deep";
 }
 
-export interface RefreshAlbumJobPayload extends QueuePayloadCommon {
+export interface RefreshAlbumCommand extends CommandBodyCommon {
   albumId: string;
   forceUpdate?: boolean;
 }
 
-export interface RefreshMetadataJobPayload extends QueuePayloadCommon {
+export interface RefreshMetadataCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
 
-export interface ApplyCurationJobPayload extends QueuePayloadCommon {
+export interface ApplyCurationCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
 
-export interface DownloadMissingJobPayload extends QueuePayloadCommon {
+export interface DownloadMissingCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
 
-export type CheckUpgradesJobPayload = QueuePayloadCommon;
+export type CheckUpgradesCommand = CommandBodyCommon;
 
-export type HousekeepingJobPayload = QueuePayloadCommon;
+export type HousekeepingCommand = CommandBodyCommon;
 
-export interface DownloadTrackJobPayload extends QueuePayloadCommon {
+export interface DownloadTrackCommand extends CommandBodyCommon {
   type?: "track";
 }
 
-export interface DownloadVideoJobPayload extends QueuePayloadCommon {
+export interface DownloadVideoCommand extends CommandBodyCommon {
   type?: "video";
 }
 
-export interface DownloadAlbumJobPayload extends QueuePayloadCommon {
+export interface DownloadAlbumCommand extends CommandBodyCommon {
   type?: "album";
 }
 
-export interface CurateArtistJobPayload extends QueuePayloadCommon {
+export interface CurateArtistCommand extends CommandBodyCommon {
   artistId: string;
   artistName: string;
   workflow?: Extract<ArtistWorkflowValue, "curation" | "monitoring-intake" | "full-monitoring">;
@@ -173,7 +173,7 @@ export interface CurateArtistJobPayload extends QueuePayloadCommon {
   forceDownloadQueue?: boolean;
 }
 
-export interface RescanFoldersJobPayload extends QueuePayloadCommon {
+export interface RescanFoldersCommand extends CommandBodyCommon {
   artistId?: string;
   artistName?: string;
   workflow?: Extract<ArtistWorkflowValue, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring">;
@@ -189,23 +189,23 @@ export interface RescanFoldersJobPayload extends QueuePayloadCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
 }
 
-export interface ImportDownloadJobPayload extends QueuePayloadCommon {
+export interface ImportDownloadCommand extends CommandBodyCommon {
   type: DownloadMediaType;
   providerId: string;
   resolved?: ResolvedDownloadMetadata;
   originalJobId?: number;
 }
 
-export type ConfigPruneJobPayload = QueuePayloadCommon;
+export type ConfigPruneCommand = CommandBodyCommon;
 
-export interface MoveArtistJobPayload extends QueuePayloadCommon {
+export interface MoveArtistCommand extends CommandBodyCommon {
   artistId: string;
   sourcePath?: string | null;
   destinationPath: string;
   moveFiles: boolean;
 }
 
-export interface RenameFilesJobPayload extends QueuePayloadCommon {
+export interface RenameFilesCommand extends CommandBodyCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
@@ -214,35 +214,35 @@ export interface RenameFilesJobPayload extends QueuePayloadCommon {
   applyAll?: boolean;
 }
 
-export interface RenameArtistJobPayload extends QueuePayloadCommon {
+export interface RenameArtistCommand extends CommandBodyCommon {
   artistId?: string;
   artistIds?: string[];
 }
 
-export type BulkRefreshArtistJobPayload = QueuePayloadCommon;
+export type BulkRefreshArtistCommand = CommandBodyCommon;
 
-export type DownloadMissingForceJobPayload = QueuePayloadCommon;
+export type DownloadMissingForceCommand = CommandBodyCommon;
 
-export interface RescanAllRootsJobPayload extends QueuePayloadCommon {
+export interface RescanAllRootsCommand extends CommandBodyCommon {
   addNewArtists?: boolean;
 }
 
-export type CheckHealthJobPayload = QueuePayloadCommon;
+export type CheckHealthCommand = CommandBodyCommon;
 
-export type CompactDatabaseJobPayload = QueuePayloadCommon;
+export type CompactDatabaseCommand = CommandBodyCommon;
 
-export type CleanupTempFilesJobPayload = QueuePayloadCommon;
+export type CleanupTempFilesCommand = CommandBodyCommon;
 
-export type UpdateLibraryMetadataJobPayload = QueuePayloadCommon;
+export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 
-export interface RetagFilesJobPayload extends QueuePayloadCommon {
+export interface RetagFilesCommand extends CommandBodyCommon {
   ids?: number[];
   artistId?: string;
   albumId?: string;
   applyAll?: boolean;
 }
 
-export interface RetagArtistJobPayload extends QueuePayloadCommon {
+export interface RetagArtistCommand extends CommandBodyCommon {
   artistId?: string;
   artistIds?: string[];
 }

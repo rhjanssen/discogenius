@@ -220,13 +220,13 @@ test("artist activity tracks canonical queued work and ignores provider catalog 
   const { db } = dbModule;
 
   db.prepare(`
-    INSERT INTO job_queue (type, ref_id, payload, status)
+    INSERT INTO commands (name, ref_id, payload, status)
     VALUES
-      ('DownloadAlbum', 'release-group-mbid-1', '{"releaseGroupMbid":"release-group-mbid-1"}', 'pending'),
-      ('DownloadTrack', '401', '{"canonicalTrackId":"401","canonicalTrackMbid":"track-mbid-1"}', 'pending'),
-      ('DownloadVideo', '501', '{"canonicalRecordingId":"501"}', 'processing'),
-      ('DownloadAlbum', 'stale-provider-album', '{"providerId":"stale-provider-album"}', 'pending'),
-      ('DownloadVideo', 'stale-provider-video', '{"providerId":"stale-provider-video"}', 'pending')
+      ('DownloadAlbum', 'release-group-mbid-1', '{"releaseGroupMbid":"release-group-mbid-1"}', 'queued'),
+      ('DownloadTrack', '401', '{"canonicalTrackId":"401","canonicalTrackMbid":"track-mbid-1"}', 'queued'),
+      ('DownloadVideo', '501', '{"canonicalRecordingId":"501"}', 'started'),
+      ('DownloadAlbum', 'stale-provider-album', '{"providerId":"stale-provider-album"}', 'queued'),
+      ('DownloadVideo', 'stale-provider-video', '{"providerId":"stale-provider-video"}', 'queued')
   `).run();
 
   const activity = artistQueryModule.ArtistQueryService.getArtistActivity(artistId);

@@ -1,8 +1,9 @@
+import { CommandTrigger } from "./command-trigger.js";
 import type {
   SystemTaskCategoryContract,
   SystemTaskRiskContract,
 } from "../../contracts/system-task.js";
-import { JobTypes, type JobType } from "./queue.js";
+import { CommandNames, type CommandName } from "./command-queue.js";
 import {
   queueCleanupTempFiles,
   queueCompactDatabase,
@@ -22,7 +23,7 @@ import {
 } from "./scheduler.js";
 
 export interface CommandDefinition {
-  type: JobType;
+  type: CommandName;
   name: string;
   requiresDiskAccess: boolean;
   isTypeExclusive: boolean;
@@ -38,7 +39,7 @@ export interface SystemTaskDefinition {
   commandName: string;
   name: string;
   description: string;
-  taskName: JobType;
+  taskName: CommandName;
   category: SystemTaskCategoryContract;
   riskLevel: SystemTaskRiskContract;
   visibleInSystemTasks: boolean;
@@ -49,115 +50,115 @@ export type CommandQueueCategory = "downloads" | "scans" | "other";
 
 const COMMAND_QUEUE_CATEGORY_TYPES = {
   downloads: [
-    JobTypes.DownloadTrack,
-    JobTypes.DownloadVideo,
-    JobTypes.DownloadAlbum,
-    JobTypes.ImportDownload,
+    CommandNames.DownloadTrack,
+    CommandNames.DownloadVideo,
+    CommandNames.DownloadAlbum,
+    CommandNames.ImportDownload,
   ],
   scans: [
-    JobTypes.RefreshArtist,
-    JobTypes.RefreshAlbum,
-    JobTypes.RefreshMetadata,
-    JobTypes.ApplyCuration,
-    JobTypes.DownloadMissing,
-    JobTypes.CheckUpgrades,
-    JobTypes.CurateArtist,
-    JobTypes.RescanFolders,
-    JobTypes.Housekeeping,
-    JobTypes.ConfigPrune,
-    JobTypes.MoveArtist,
-    JobTypes.RenameFiles,
-    JobTypes.RenameArtist,
-    JobTypes.RetagFiles,
-    JobTypes.RetagArtist,
+    CommandNames.RefreshArtist,
+    CommandNames.RefreshAlbum,
+    CommandNames.RefreshMetadata,
+    CommandNames.ApplyCuration,
+    CommandNames.DownloadMissing,
+    CommandNames.CheckUpgrades,
+    CommandNames.CurateArtist,
+    CommandNames.RescanFolders,
+    CommandNames.Housekeeping,
+    CommandNames.ConfigPrune,
+    CommandNames.MoveArtist,
+    CommandNames.RenameFiles,
+    CommandNames.RenameArtist,
+    CommandNames.RetagFiles,
+    CommandNames.RetagArtist,
   ],
-} satisfies Record<Exclude<CommandQueueCategory, "other">, readonly JobType[]>;
+} satisfies Record<Exclude<CommandQueueCategory, "other">, readonly CommandName[]>;
 
-export const PENDING_ACTIVITY_JOB_TYPES = COMMAND_QUEUE_CATEGORY_TYPES.scans;
+export const PENDING_ACTIVITY_COMMAND_NAMES = COMMAND_QUEUE_CATEGORY_TYPES.scans;
 
 export const COMMAND_DEFINITIONS = {
-  [JobTypes.DownloadTrack]: {
-    type: JobTypes.DownloadTrack,
+  [CommandNames.DownloadTrack]: {
+    type: CommandNames.DownloadTrack,
     name: "Download Track",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.BulkRefreshArtist]: {
-    type: JobTypes.BulkRefreshArtist,
+  [CommandNames.BulkRefreshArtist]: {
+    type: CommandNames.BulkRefreshArtist,
     name: "Bulk Refresh Artist",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.DownloadMissingForce]: {
-    type: JobTypes.DownloadMissingForce,
+  [CommandNames.DownloadMissingForce]: {
+    type: CommandNames.DownloadMissingForce,
     name: "Download Missing (Force)",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.RescanAllRoots]: {
-    type: JobTypes.RescanAllRoots,
+  [CommandNames.RescanAllRoots]: {
+    type: CommandNames.RescanAllRoots,
     name: "Rescan All Roots",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.CheckHealth]: {
-    type: JobTypes.CheckHealth,
+  [CommandNames.CheckHealth]: {
+    type: CommandNames.CheckHealth,
     name: "Check Health",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.CompactDatabase]: {
-    type: JobTypes.CompactDatabase,
+  [CommandNames.CompactDatabase]: {
+    type: CommandNames.CompactDatabase,
     name: "Compact Database",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.CleanupTempFiles]: {
-    type: JobTypes.CleanupTempFiles,
+  [CommandNames.CleanupTempFiles]: {
+    type: CommandNames.CleanupTempFiles,
     name: "Cleanup Temporary Files",
     requiresDiskAccess: true,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.UpdateLibraryMetadata]: {
-    type: JobTypes.UpdateLibraryMetadata,
+  [CommandNames.UpdateLibraryMetadata]: {
+    type: CommandNames.UpdateLibraryMetadata,
     name: "Update Library Metadata",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.DownloadVideo]: {
-    type: JobTypes.DownloadVideo,
+  [CommandNames.DownloadVideo]: {
+    type: CommandNames.DownloadVideo,
     name: "Download Video",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.DownloadAlbum]: {
-    type: JobTypes.DownloadAlbum,
+  [CommandNames.DownloadAlbum]: {
+    type: CommandNames.DownloadAlbum,
     name: "Download Album",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.RefreshArtist]: {
-    type: JobTypes.RefreshArtist,
+  [CommandNames.RefreshArtist]: {
+    type: CommandNames.RefreshArtist,
     name: "Refresh Artist",
     requiresDiskAccess: false,
     isTypeExclusive: false,
@@ -166,56 +167,56 @@ export const COMMAND_DEFINITIONS = {
     isPerRefExclusive: true,
     maxConcurrent: 3,
   },
-  [JobTypes.RefreshAlbum]: {
-    type: JobTypes.RefreshAlbum,
+  [CommandNames.RefreshAlbum]: {
+    type: CommandNames.RefreshAlbum,
     name: "Refresh Album",
     requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.RefreshMetadata]: {
-    type: JobTypes.RefreshMetadata,
+  [CommandNames.RefreshMetadata]: {
+    type: CommandNames.RefreshMetadata,
     name: "Refresh Metadata",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.ApplyCuration]: {
-    type: JobTypes.ApplyCuration,
+  [CommandNames.ApplyCuration]: {
+    type: CommandNames.ApplyCuration,
     name: "Apply Curation",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.DownloadMissing]: {
-    type: JobTypes.DownloadMissing,
+  [CommandNames.DownloadMissing]: {
+    type: CommandNames.DownloadMissing,
     name: "Download Missing",
     requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.CheckUpgrades]: {
-    type: JobTypes.CheckUpgrades,
+  [CommandNames.CheckUpgrades]: {
+    type: CommandNames.CheckUpgrades,
     name: "Check Upgrades",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.Housekeeping]: {
-    type: JobTypes.Housekeeping,
+  [CommandNames.Housekeeping]: {
+    type: CommandNames.Housekeeping,
     name: "Housekeeping",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.CurateArtist]: {
-    type: JobTypes.CurateArtist,
+  [CommandNames.CurateArtist]: {
+    type: CommandNames.CurateArtist,
     name: "Curate Artist",
     requiresDiskAccess: false,
     isTypeExclusive: false,
@@ -224,16 +225,16 @@ export const COMMAND_DEFINITIONS = {
     isPerRefExclusive: true,
     maxConcurrent: 3,
   },
-  [JobTypes.ImportDownload]: {
-    type: JobTypes.ImportDownload,
+  [CommandNames.ImportDownload]: {
+    type: CommandNames.ImportDownload,
     name: "Import Download",
     requiresDiskAccess: true,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.RescanFolders]: {
-    type: JobTypes.RescanFolders,
+  [CommandNames.RescanFolders]: {
+    type: CommandNames.RescanFolders,
     name: "Rescan Folders",
     requiresDiskAccess: true,
     isTypeExclusive: false,
@@ -241,16 +242,16 @@ export const COMMAND_DEFINITIONS = {
     isPerRefExclusive: true,
     isLongRunning: true,
   },
-  [JobTypes.ConfigPrune]: {
-    type: JobTypes.ConfigPrune,
+  [CommandNames.ConfigPrune]: {
+    type: CommandNames.ConfigPrune,
     name: "Prune Configuration",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: false,
   },
-  [JobTypes.MoveArtist]: {
-    type: JobTypes.MoveArtist,
+  [CommandNames.MoveArtist]: {
+    type: CommandNames.MoveArtist,
     name: "Move Artist",
     requiresDiskAccess: true,
     isTypeExclusive: false,
@@ -258,32 +259,32 @@ export const COMMAND_DEFINITIONS = {
     isLongRunning: true,
     isPerRefExclusive: true,
   },
-  [JobTypes.RenameFiles]: {
-    type: JobTypes.RenameFiles,
+  [CommandNames.RenameFiles]: {
+    type: CommandNames.RenameFiles,
     name: "Rename Files",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.RenameArtist]: {
-    type: JobTypes.RenameArtist,
+  [CommandNames.RenameArtist]: {
+    type: CommandNames.RenameArtist,
     name: "Rename Artist",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.RetagFiles]: {
-    type: JobTypes.RetagFiles,
+  [CommandNames.RetagFiles]: {
+    type: CommandNames.RetagFiles,
     name: "Retag Files",
     requiresDiskAccess: true,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
   },
-  [JobTypes.RetagArtist]: {
-    type: JobTypes.RetagArtist,
+  [CommandNames.RetagArtist]: {
+    type: CommandNames.RetagArtist,
     name: "Retag Artist",
     requiresDiskAccess: true,
     isTypeExclusive: true,
@@ -299,11 +300,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "MonitoringCycle",
     name: "Monitoring Cycle",
     description: "Refresh due monitored artists and rescan library roots during the configured monitoring window.",
-    taskName: JobTypes.RescanFolders,
+    taskName: CommandNames.RescanFolders,
     category: "monitoring",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueMonitoringCyclePass({ trigger: 1, includeRootScan: true }),
+    run: () => queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true }),
   },
   {
     id: "housekeeping",
@@ -311,11 +312,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "Housekeeping",
     name: "Housekeeping",
     description: "Clean stale runtime state, repair library housekeeping records, and optimize the SQLite database.",
-    taskName: JobTypes.Housekeeping,
+    taskName: CommandNames.Housekeeping,
     category: "maintenance",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueHousekeepingPass({ trigger: 1 }),
+    run: () => queueHousekeepingPass({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "refresh-metadata",
@@ -323,11 +324,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "RefreshMetadata",
     name: "Refresh Metadata",
     description: "Queue metadata refresh work for managed artists.",
-    taskName: JobTypes.RefreshMetadata,
+    taskName: CommandNames.RefreshMetadata,
     category: "metadata",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueMetadataRefreshPass({ trigger: 1 }),
+    run: () => queueMetadataRefreshPass({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "apply-curation",
@@ -335,11 +336,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "ApplyCuration",
     name: "Apply Curation",
     description: "Queue a full curation pass for managed artists.",
-    taskName: JobTypes.ApplyCuration,
+    taskName: CommandNames.ApplyCuration,
     category: "library",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueCurationPass({ trigger: 1 }),
+    run: () => queueCurationPass({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "download-missing",
@@ -347,11 +348,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "DownloadMissing",
     name: "Download Missing",
     description: "Queue monitored missing items so download jobs can be processed by the queue.",
-    taskName: JobTypes.DownloadMissing,
+    taskName: CommandNames.DownloadMissing,
     category: "downloads",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueDownloadMissingPass({ trigger: 1 }),
+    run: () => queueDownloadMissingPass({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "check-upgrades",
@@ -359,11 +360,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "CheckUpgrades",
     name: "Check Upgrades",
     description: "Scan the library for monitored items that can be upgraded.",
-    taskName: JobTypes.CheckUpgrades,
+    taskName: CommandNames.CheckUpgrades,
     category: "downloads",
     riskLevel: "medium",
     visibleInSystemTasks: true,
-    run: () => queueCheckUpgradesPass({ trigger: 1 }),
+    run: () => queueCheckUpgradesPass({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "rescan-folders",
@@ -371,11 +372,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "RescanFolders",
     name: "Rescan Folders",
     description: "Rescan configured library roots for known artist folders.",
-    taskName: JobTypes.RescanFolders,
+    taskName: CommandNames.RescanFolders,
     category: "library",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueRescanFoldersPass({ trigger: 1, fullProcessing: false }),
+    run: () => queueRescanFoldersPass({ trigger: CommandTrigger.Manual, fullProcessing: false }),
   },
   {
     id: "refresh-all-monitored",
@@ -383,11 +384,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "BulkRefreshArtist",
     name: "Bulk Refresh Artist",
     description: "Queue a full refresh pass across all monitored artists.",
-    taskName: JobTypes.BulkRefreshArtist,
+    taskName: CommandNames.BulkRefreshArtist,
     category: "metadata",
     riskLevel: "medium",
     visibleInSystemTasks: true,
-    run: () => queueBulkRefreshArtist({ trigger: 1 }),
+    run: () => queueBulkRefreshArtist({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "download-missing-force",
@@ -395,11 +396,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "DownloadMissingForce",
     name: "Download Missing (Force)",
     description: "Force a missing-download pass across monitored items.",
-    taskName: JobTypes.DownloadMissingForce,
+    taskName: CommandNames.DownloadMissingForce,
     category: "downloads",
     riskLevel: "medium",
     visibleInSystemTasks: true,
-    run: () => queueDownloadMissingForce({ trigger: 1 }),
+    run: () => queueDownloadMissingForce({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "rescan-all-roots",
@@ -407,11 +408,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "RescanAllRoots",
     name: "Rescan All Roots",
     description: "Scan all configured library roots for new artist folders and unmanaged changes.",
-    taskName: JobTypes.RescanAllRoots,
+    taskName: CommandNames.RescanAllRoots,
     category: "library",
     riskLevel: "high",
     visibleInSystemTasks: true,
-    run: () => queueRescanAllRoots({ trigger: 1 }),
+    run: () => queueRescanAllRoots({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "health-check",
@@ -419,11 +420,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "CheckHealth",
     name: "Check Health",
     description: "Run health diagnostics across runtime paths, tools, and downloader capability checks.",
-    taskName: JobTypes.CheckHealth,
+    taskName: CommandNames.CheckHealth,
     category: "maintenance",
     riskLevel: "low",
     visibleInSystemTasks: true,
-    run: () => queueCheckHealth({ trigger: 1 }),
+    run: () => queueCheckHealth({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "compact-database",
@@ -431,11 +432,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "CompactDatabase",
     name: "Compact Database",
     description: "Run SQLite compaction and cleanup maintenance.",
-    taskName: JobTypes.CompactDatabase,
+    taskName: CommandNames.CompactDatabase,
     category: "maintenance",
     riskLevel: "high",
     visibleInSystemTasks: false,
-    run: () => queueCompactDatabase({ trigger: 1 }),
+    run: () => queueCompactDatabase({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "cleanup-temp-files",
@@ -443,11 +444,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "CleanupTempFiles",
     name: "Cleanup Temporary Files",
     description: "Delete stale temp files left behind by downloads and processing.",
-    taskName: JobTypes.CleanupTempFiles,
+    taskName: CommandNames.CleanupTempFiles,
     category: "maintenance",
     riskLevel: "medium",
     visibleInSystemTasks: true,
-    run: () => queueCleanupTempFiles({ trigger: 1 }),
+    run: () => queueCleanupTempFiles({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "update-library-metadata",
@@ -455,11 +456,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "UpdateLibraryMetadata",
     name: "Update Library Metadata",
     description: "Queue metadata refresh work for the indexed local library surface.",
-    taskName: JobTypes.UpdateLibraryMetadata,
+    taskName: CommandNames.UpdateLibraryMetadata,
     category: "metadata",
     riskLevel: "medium",
     visibleInSystemTasks: false,
-    run: () => queueUpdateLibraryMetadata({ trigger: 1 }),
+    run: () => queueUpdateLibraryMetadata({ trigger: CommandTrigger.Manual }),
   },
   {
     id: "config-prune",
@@ -467,11 +468,11 @@ const SYSTEM_TASK_DEFINITIONS = [
     commandName: "ConfigPrune",
     name: "Prune Configuration",
     description: "Remove stale config-driven queue and metadata references.",
-    taskName: JobTypes.ConfigPrune,
+    taskName: CommandNames.ConfigPrune,
     category: "maintenance",
     riskLevel: "high",
     visibleInSystemTasks: true,
-    run: () => queueConfigPrune({ trigger: 1 }),
+    run: () => queueConfigPrune({ trigger: CommandTrigger.Manual }),
   },
 ] satisfies readonly SystemTaskDefinition[];
 
@@ -486,7 +487,7 @@ export function getCommandDefinition(jobType: string): CommandDefinition {
   }
 
   return {
-    type: jobType as JobType,
+    type: jobType as CommandName,
     name: jobType,
     requiresDiskAccess: false,
     isTypeExclusive: false,
@@ -499,7 +500,7 @@ export function getCommandDefinitions(): CommandDefinition[] {
   return Object.values(COMMAND_DEFINITIONS);
 }
 
-export function getCommandTypesForQueueCategory(category: CommandQueueCategory): JobType[] {
+export function getCommandTypesForQueueCategory(category: CommandQueueCategory): CommandName[] {
   if (category === "downloads") {
     return [...COMMAND_QUEUE_CATEGORY_TYPES.downloads];
   }
@@ -508,7 +509,7 @@ export function getCommandTypesForQueueCategory(category: CommandQueueCategory):
     return [...COMMAND_QUEUE_CATEGORY_TYPES.scans];
   }
 
-  const excluded = new Set<JobType>([
+  const excluded = new Set<CommandName>([
     ...COMMAND_QUEUE_CATEGORY_TYPES.downloads,
     ...COMMAND_QUEUE_CATEGORY_TYPES.scans,
   ]);

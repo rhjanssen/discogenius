@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../commands/command-trigger.js";
 import fs from "fs";
 import path from "path";
 import { db } from "../../database.js";
@@ -280,7 +281,7 @@ export class DiskScanService {
                 {
                     monitorArtist: options.monitorNewArtists ?? true,
                     fullProcessing: options.fullProcessing ?? false,
-                    trigger: options.trigger ?? 1,
+                    trigger: options.trigger ?? CommandTrigger.Manual,
                 },
             );
         }
@@ -951,7 +952,7 @@ export class DiskScanService {
         options?: { monitorArtist?: boolean; fullProcessing?: boolean; trigger?: number },
     ): Promise<DiscoveryResult> {
         const shouldMonitor = options?.monitorArtist ?? true;
-        const trigger = options?.trigger ?? 1;
+        const trigger = options?.trigger ?? CommandTrigger.Manual;
         const result: DiscoveryResult = {
             knownFolders: 0,
             artistsAdded: [],

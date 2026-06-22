@@ -423,7 +423,7 @@ const ArtistPage = () => {
 
   useDebouncedQueryInvalidation({
     queryKeys: [['artist-activity', artistId]],
-    globalEvents: ['job.added', 'job.deleted', 'queue.cleared'],
+    globalEvents: ['command.added', 'command.deleted', 'queue.cleared'],
     windowEvents: [ACTIVITY_REFRESH_EVENT],
     enabled: Boolean(artistId),
     debounceMs: 400,

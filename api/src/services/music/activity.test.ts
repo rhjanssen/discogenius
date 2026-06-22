@@ -9,20 +9,20 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.activity.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let commandHistoryModule: typeof import("../jobs/command-history.js");
-let queueModule: typeof import("../jobs/queue.js");
-let historyEventsModule: typeof import("../jobs/history-events.js");
+let commandHistoryModule: typeof import("../commands/command-history.js");
+let queueModule: typeof import("../commands/command-queue.js");
+let historyEventsModule: typeof import("../commands/history-events.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
-    queueModule = await import("../jobs/queue.js");
-    commandHistoryModule = await import("../jobs/command-history.js");
-    historyEventsModule = await import("../jobs/history-events.js");
+    queueModule = await import("../commands/command-queue.js");
+    commandHistoryModule = await import("../commands/command-history.js");
+    historyEventsModule = await import("../commands/history-events.js");
     dbModule.initDatabase();
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM job_queue").run();
+    dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
     for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata", "Artists"]) {
         dbModule.db.prepare(`DELETE FROM ${table}`).run();
@@ -35,38 +35,38 @@ after(() => {
 });
 
 test("activity page supports pagination and category/status filters", () => {
-    const refreshAlbumId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.RefreshAlbum,
+    const refreshAlbumId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.RefreshAlbum,
         { albumId: "album-1" },
         "album-1",
     );
-    const applyCurationId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.ApplyCuration,
+    const applyCurationId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.ApplyCuration,
         { expectedArtists: 1 },
     );
-    const refreshMetadataId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.RefreshMetadata,
+    const refreshMetadataId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.RefreshMetadata,
         { target: "library" },
     );
-    const healthCheckId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.CheckHealth,
+    const healthCheckId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.CheckHealth,
         {},
     );
-    const downloadTrackId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadTrack,
+    const downloadTrackId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadTrack,
         { providerId: "t1", url: "https://listen.tidal.com/track/t1", type: "track" },
         "t1",
     );
 
-    queueModule.TaskQueueService.markProcessing(refreshMetadataId);
-    queueModule.TaskQueueService.complete(healthCheckId);
+    queueModule.CommandQueueService.markProcessing(refreshMetadataId);
+    queueModule.CommandQueueService.complete(healthCheckId);
 
     const defaultPage = commandHistoryModule.getActivityPage({ limit: 100, offset: 0 });
     assert.equal(defaultPage.total, 5);
     assert.equal(defaultPage.items.some((item) => item.id === downloadTrackId), true);
 
     const pendingScans = commandHistoryModule.getActivityPage({
-        statuses: ["pending"],
+        statuses: ["queued"],
         categories: ["scans"],
         limit: 10,
         offset: 0,
@@ -82,7 +82,7 @@ test("activity page supports pagination and category/status filters", () => {
     );
 
     const pendingScansPage2 = commandHistoryModule.getActivityPage({
-        statuses: ["pending"],
+        statuses: ["queued"],
         categories: ["scans"],
         limit: 1,
         offset: 1,
@@ -93,7 +93,7 @@ test("activity page supports pagination and category/status filters", () => {
     assert.equal(pendingScansPage2.items[0]?.queuePosition, 2);
 
     const pendingDownloads = commandHistoryModule.getActivityPage({
-        statuses: ["pending"],
+        statuses: ["queued"],
         categories: ["downloads"],
         limit: 10,
         offset: 0,
@@ -104,37 +104,37 @@ test("activity page supports pagination and category/status filters", () => {
 });
 
 test("activity summary returns command-surface counts without download queue duplication", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "album-2" }, "album-2");
+    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-2" }, "album-2");
 
-    const metadataId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshMetadata, { target: "all" });
-    queueModule.TaskQueueService.markProcessing(metadataId);
+    const metadataId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshMetadata, { target: "all" });
+    queueModule.CommandQueueService.markProcessing(metadataId);
 
-    const healthId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    queueModule.TaskQueueService.fail(healthId, "failed health check");
+    const healthId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueService.fail(healthId, "failed health check");
 
-    queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadTrack,
+    queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadTrack,
         { providerId: "t2", url: "https://listen.tidal.com/track/t2", type: "track" },
         "t2",
     );
 
     const summary = commandHistoryModule.getActivitySummary();
     assert.deepEqual(summary, {
-        pending: 2,
-        processing: 1,
+        queued: 2,
+        started: 1,
         history: 1,
     });
 });
 
 test("activity page computes absolute pending queue positions without scanning the full page set", () => {
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-1" }, "qp-1");
-    queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-2" }, "qp-2");
-    const pendingThirdId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "qp-3" }, "qp-3");
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    queueModule.TaskQueueService.complete(completedId);
+    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-1" }, "qp-1");
+    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-2" }, "qp-2");
+    const pendingThirdId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-3" }, "qp-3");
+    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueService.complete(completedId);
 
     const mixedPage = commandHistoryModule.getActivityPage({
-        statuses: ["pending", "completed"],
+        statuses: ["queued", "completed"],
         categories: ["scans", "other"],
         limit: 2,
         offset: 0,
@@ -145,38 +145,38 @@ test("activity page computes absolute pending queue positions without scanning t
     assert.equal(mixedPage.items[0]?.id, completedId);
     assert.equal(mixedPage.items[0]?.queuePosition, undefined);
     assert.equal(mixedPage.items[1]?.id, pendingThirdId);
-    assert.equal(mixedPage.items[1]?.status, "pending");
+    assert.equal(mixedPage.items[1]?.status, "queued");
     assert.equal(mixedPage.items[1]?.queuePosition, 3);
 });
 
 test("activity page prioritizes processing downloads ahead of newer pending downloads", () => {
-    const processingId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadVideo,
+    const processingId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadVideo,
         { providerId: "video-processing", url: "https://listen.tidal.com/video/video-processing", type: "video" },
         "video-processing",
     );
-    queueModule.TaskQueueService.markProcessing(processingId);
+    queueModule.CommandQueueService.markProcessing(processingId);
 
-    const pendingOneId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadVideo,
+    const pendingOneId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadVideo,
         { providerId: "video-pending-1", url: "https://listen.tidal.com/video/video-pending-1", type: "video" },
         "video-pending-1",
     );
-    const pendingTwoId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadVideo,
+    const pendingTwoId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadVideo,
         { providerId: "video-pending-2", url: "https://listen.tidal.com/video/video-pending-2", type: "video" },
         "video-pending-2",
     );
 
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, started_at = ?, updated_at = ? WHERE id = ?")
+    dbModule.db.prepare("UPDATE commands SET created_at = ?, started_at = ?, updated_at = ? WHERE id = ?")
         .run("2024-04-01 08:00:00", "2024-04-01 08:01:00", "2024-04-01 08:03:00", processingId);
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, updated_at = ? WHERE id = ?")
+    dbModule.db.prepare("UPDATE commands SET created_at = ?, updated_at = ? WHERE id = ?")
         .run("2024-04-01 08:04:00", "2024-04-01 08:04:00", pendingOneId);
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, updated_at = ? WHERE id = ?")
+    dbModule.db.prepare("UPDATE commands SET created_at = ?, updated_at = ? WHERE id = ?")
         .run("2024-04-01 08:05:00", "2024-04-01 08:05:00", pendingTwoId);
 
     const page = commandHistoryModule.getActivityPage({
-        statuses: ["pending", "processing"],
+        statuses: ["queued", "started"],
         categories: ["downloads"],
         limit: 2,
         offset: 0,
@@ -184,7 +184,7 @@ test("activity page prioritizes processing downloads ahead of newer pending down
 
     assert.equal(page.total, 3);
     assert.deepEqual(page.items.map((item) => item.id), [processingId, pendingOneId]);
-    assert.equal(page.items[0]?.status, "running");
+    assert.equal(page.items[0]?.status, "started");
     assert.equal(page.items[1]?.queuePosition, 1);
 });
 
@@ -236,24 +236,24 @@ test("activity descriptions resolve download jobs from canonical provider items 
         null, null, "video-recording-mbid", "Canonical Video", "video", "verified", 1, "test",
     );
 
-    const albumJobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadAlbum,
+    const albumJobId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadAlbum,
         { providerId: "provider-album" },
         "provider-album",
     );
-    const trackJobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadTrack,
+    const trackJobId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadTrack,
         { providerId: "provider-track" },
         "provider-track",
     );
-    const videoJobId = queueModule.TaskQueueService.addJob(
-        queueModule.JobTypes.DownloadVideo,
+    const videoJobId = queueModule.CommandQueueService.addJob(
+        queueModule.CommandNames.DownloadVideo,
         { providerId: "provider-video" },
         "provider-video",
     );
 
     const page = commandHistoryModule.getActivityPage({
-        statuses: ["pending"],
+        statuses: ["queued"],
         categories: ["downloads"],
         limit: 10,
         offset: 0,
@@ -266,9 +266,9 @@ test("activity descriptions resolve download jobs from canonical provider items 
 });
 
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {
-    const pendingId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "events-album" }, "events-album");
-    const completedId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.CheckHealth, {});
-    queueModule.TaskQueueService.complete(completedId);
+    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "events-album" }, "events-album");
+    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueService.complete(completedId);
 
     const historyImportedId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
@@ -279,8 +279,8 @@ test("activity events page merges task and history events with deterministic new
         sourceTitle: "Failed item",
     });
 
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ? WHERE id = ?").run("2024-02-01 08:00:00", pendingId);
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ?, started_at = ?, completed_at = ? WHERE id = ?")
+    dbModule.db.prepare("UPDATE commands SET created_at = ? WHERE id = ?").run("2024-02-01 08:00:00", pendingId);
+    dbModule.db.prepare("UPDATE commands SET created_at = ?, started_at = ?, completed_at = ? WHERE id = ?")
         .run("2024-02-02 08:00:00", "2024-02-02 08:01:00", "2024-02-02 08:02:00", completedId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-02-03 08:00:00", historyImportedId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-02-04 08:00:00", historyFailedId);
@@ -302,7 +302,7 @@ test("activity events page merges task and history events with deterministic new
 });
 
 test("activity events page pagination returns limit/offset/hasMore consistently", () => {
-    const taskId = queueModule.TaskQueueService.addJob(queueModule.JobTypes.RefreshAlbum, { albumId: "events-pagination" }, "events-pagination");
+    const taskId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "events-pagination" }, "events-pagination");
     const historyOneId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
         sourceTitle: "Imported A",
@@ -312,7 +312,7 @@ test("activity events page pagination returns limit/offset/hasMore consistently"
         sourceTitle: "Imported B",
     });
 
-    dbModule.db.prepare("UPDATE job_queue SET created_at = ? WHERE id = ?").run("2024-03-01 08:00:00", taskId);
+    dbModule.db.prepare("UPDATE commands SET created_at = ? WHERE id = ?").run("2024-03-01 08:00:00", taskId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-03-02 08:00:00", historyOneId);
     dbModule.db.prepare("UPDATE history_events SET date = ? WHERE id = ?").run("2024-03-03 08:00:00", historyTwoId);
 

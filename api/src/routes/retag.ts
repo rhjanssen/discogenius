@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
-import { JobTypes, TaskQueueService } from "../services/jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../services/commands/command-queue.js";
 
 const router = Router();
 
@@ -55,11 +55,11 @@ router.post("/apply", async (req, res) => {
       : undefined;
 
     const jobId = isArtistWideRetag
-      ? TaskQueueService.addJob(JobTypes.RetagArtist, {
+      ? CommandQueueService.addJob(CommandNames.RetagArtist, {
         artistId,
         artistIds: artistId ? [artistId] : undefined,
       }, refId, 1, 1)
-      : TaskQueueService.addJob(JobTypes.RetagFiles, {
+      : CommandQueueService.addJob(CommandNames.RetagFiles, {
         ids: normalizedIds,
         applyAll,
         artistId,

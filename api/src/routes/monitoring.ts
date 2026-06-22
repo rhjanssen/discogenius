@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import { db } from "../database.js";
 import { parseMonitoringConfigUpdate } from "../contracts/config-updates.js";
@@ -13,7 +14,7 @@ import {
   queueCurationPass,
   queueDownloadMissingPass,
   queueCheckUpgradesPass,
-} from "../services/jobs/scheduler.js";
+} from "../services/commands/scheduler.js";
 
 const router = Router();
 
@@ -130,7 +131,7 @@ router.post("/stop", (_, res) => {
 
 const queueCurateArtists = (_: any, res: any) => {
   try {
-    const jobId = queueCurationPass({ trigger: 1 });
+    const jobId = queueCurationPass({ trigger: CommandTrigger.Manual });
 
     res.json({
       success: true,
@@ -147,7 +148,7 @@ router.post("/curate", queueCurateArtists);
 // Trigger manual metadata refresh — metadata only, no local scan, curation, or downloads.
 router.post("/check", (_, res) => {
   try {
-    const jobId = queueMetadataRefreshPass({ trigger: 1 });
+    const jobId = queueMetadataRefreshPass({ trigger: CommandTrigger.Manual });
 
     res.json({
       success: true,
@@ -162,7 +163,7 @@ router.post("/check", (_, res) => {
 // Trigger the full metadata refresh -> local scan/import -> curation -> download workflow.
 router.post("/trigger-all", (_, res) => {
   try {
-    const jobId = queueMonitoringCyclePass({ trigger: 1, includeRootScan: true });
+    const jobId = queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true });
 
     res.json({
       success: true,
@@ -211,7 +212,7 @@ router.get("/check-stream", async (_, res) => {
 // Separate from scanning - allows user to review curation before downloading
 router.post("/download-missing", async (_, res) => {
   try {
-    const jobId = queueDownloadMissingPass({ trigger: 1 });
+    const jobId = queueDownloadMissingPass({ trigger: CommandTrigger.Manual });
     res.json({
       success: true,
       jobId,
@@ -225,7 +226,7 @@ router.post("/download-missing", async (_, res) => {
 // Scan library for files that don't meet the current quality settings and queue upgrades
 router.post("/check-upgrades", async (_, res) => {
   try {
-    const jobId = queueCheckUpgradesPass({ trigger: 1 });
+    const jobId = queueCheckUpgradesPass({ trigger: CommandTrigger.Manual });
     res.json({
       success: true,
       jobId,

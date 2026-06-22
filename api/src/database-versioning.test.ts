@@ -94,7 +94,7 @@ test("fresh database initializes with correct schema version", () => {
   const coreTables = [
     "Artists", "TrackFiles",
     "MetadataFiles", "LyricFiles", "ExtraFiles",
-    "UnmappedFiles", "config", "job_queue", "quality_profiles",
+    "UnmappedFiles", "config", "commands", "quality_profiles",
     "upgrade_queue", "history_events",
     "database_version_history", "MediaCoverProxyCache",
     "ArtistMetadata", "Albums", "AlbumReleases", "AlbumReleaseMedia",
@@ -178,9 +178,9 @@ test.skip("migration from integer schema v1 runs pending migrations", () => {
   assert.ok(artistCols.some((c) => c.name === "path"), "Expected Artists table to have 'path' column");
   assert.ok(artistCols.some((c) => c.name === "cover_image_url"), "Expected Artists table to have 'cover_image_url' column");
 
-  // v3 migration adds job_queue.queue_order
-  const jobCols = dbModule.db.prepare("PRAGMA table_info(job_queue)").all() as Array<{ name: string }>;
-  assert.ok(jobCols.some((c) => c.name === "queue_order"), "Expected job_queue table to have 'queue_order' column");
+  // v3 migration adds commands.queue_order
+  const jobCols = dbModule.db.prepare("PRAGMA table_info(commands)").all() as Array<{ name: string }>;
+  assert.ok(jobCols.some((c) => c.name === "queue_order"), "Expected commands table to have 'queue_order' column");
 });
 
 test.skip("provider compatibility rows are mirrored into ProviderItems", () => {

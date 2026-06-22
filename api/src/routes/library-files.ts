@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
@@ -7,7 +8,7 @@ import { db } from "../database.js";
 import { findLibraryFileById, findTextLibraryFileByPath, listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/mediafiles/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/mediafiles/library-paths.js";
 import { queueArtistWorkflow } from "../services/music/artist-workflow.js";
-import { JobTypes, TaskQueueService } from "../services/jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../services/commands/command-queue.js";
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService, type RootScanSsePayload } from "../services/mediafiles/root-scan-route-service.js";
@@ -105,11 +106,11 @@ router.post("/rename/apply", (req, res) => {
       : undefined;
 
     const jobId = isArtistWideRename
-      ? TaskQueueService.addJob(JobTypes.RenameArtist, {
+      ? CommandQueueService.addJob(CommandNames.RenameArtist, {
         artistId,
         artistIds: artistId ? [artistId] : undefined,
       }, refId, 1, 1)
-      : TaskQueueService.addJob(JobTypes.RenameFiles, {
+      : CommandQueueService.addJob(CommandNames.RenameFiles, {
         ids: normalizedIds,
         applyAll,
         artistId,
@@ -323,7 +324,7 @@ router.post("/scan/:artistId", (req, res) => {
       artistId,
       artistName: artist.name,
       workflow: "library-scan",
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
     });
 
     res.json({ success: true, jobId, message: `Library scan queued for ${artist.name}` });
@@ -340,7 +341,7 @@ router.post("/scan/:artistId", (req, res) => {
 router.post("/scan-roots", (req, res) => {
   try {
     const jobId = rootScanRouteService.queueRootScan({
-      trigger: 1,
+      trigger: CommandTrigger.Manual,
       fullProcessing: req.body?.fullProcessing,
       monitorArtist: req.body?.monitorArtist,
     });

@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../commands/command-trigger.js";
 import { db } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from "../download/download-state.js";
 import { buildManagedArtistPredicate } from "./managed-artists.js";
@@ -242,7 +243,7 @@ export async function queueArtistRefreshScan(artistId: string, options?: { force
         artistName: String(artist.name || "").trim(),
         workflow: "refresh-scan",
         forceUpdate: Boolean(options?.forceUpdate),
-        trigger: 1,
+        trigger: CommandTrigger.Manual,
     });
 
     return {

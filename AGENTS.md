@@ -24,7 +24,7 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 ## Architecture & Development Rules
 - TypeScript everywhere; Yarn 1.x only.
 - Keep routes thin; durable workflow logic lives in services/repositories.
-- Long-running work goes through the queue (`api/src/services/jobs/`), never inline in route handlers. Queue separation: `command-executor.ts` drains the queue, `scheduler.ts` enqueues due scheduled tasks. Use `CommandExecutor.yieldToEventLoop()` (setImmediate) in heavy inline loops.
+- Long-running work goes through the command queue (`api/src/services/commands/`), never inline in route handlers. The system mirrors Lidarr: `CommandModel`s (the `commands` table) are enqueued via `CommandQueueService`, `command-executor.ts` drains the queue and dispatches to per-command handlers in `commands/handlers/`, and `scheduler.ts` enqueues due scheduled tasks. Use `CommandExecutor.yieldToEventLoop()` (setImmediate) in heavy inline loops.
 - Validate external boundaries explicitly.
 - Respect `monitored_lock` / `monitor_lock` columns: automation must never flip user-locked monitor state.
 - **tiddl integration**: lives in `api/src/services/providers/tidal/tiddl.ts`. Auth is at `config/.tiddl`. tiddl steering = config(global) + args(per-job).

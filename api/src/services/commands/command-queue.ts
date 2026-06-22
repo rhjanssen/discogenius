@@ -1,35 +1,36 @@
+import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import type {
-    ApplyCurationJobPayload,
-    CheckUpgradesJobPayload,
-    CheckHealthJobPayload,
-    BulkRefreshArtistJobPayload,
-    CleanupTempFilesJobPayload,
-    CompactDatabaseJobPayload,
-    ConfigPruneJobPayload,
-    CurateArtistJobPayload,
-    DownloadAlbumJobPayload,
-    DownloadMissingJobPayload,
-    DownloadMissingForceJobPayload,
-    DownloadTrackJobPayload,
-    DownloadVideoJobPayload,
-    HousekeepingJobPayload,
-    ImportDownloadJobPayload,
-    MoveArtistJobPayload,
-    QueuePayloadCommon,
-    RefreshArtistJobPayload,
-    RefreshMetadataJobPayload,
-    RefreshAlbumJobPayload,
-    RenameArtistJobPayload,
-    RenameFilesJobPayload,
-    RescanFoldersJobPayload,
-    RescanAllRootsJobPayload,
-    RetagArtistJobPayload,
-    RetagFilesJobPayload,
-    UpdateLibraryMetadataJobPayload,
-} from "./job-payloads.js";
+    ApplyCurationCommand,
+    CheckUpgradesCommand,
+    CheckHealthCommand,
+    BulkRefreshArtistCommand,
+    CleanupTempFilesCommand,
+    CompactDatabaseCommand,
+    ConfigPruneCommand,
+    CurateArtistCommand,
+    DownloadAlbumCommand,
+    DownloadMissingCommand,
+    DownloadMissingForceCommand,
+    DownloadTrackCommand,
+    DownloadVideoCommand,
+    HousekeepingCommand,
+    ImportDownloadCommand,
+    MoveArtistCommand,
+    CommandBodyCommon,
+    RefreshArtistCommand,
+    RefreshMetadataCommand,
+    RefreshAlbumCommand,
+    RenameArtistCommand,
+    RenameFilesCommand,
+    RescanFoldersCommand,
+    RescanAllRootsCommand,
+    RetagArtistCommand,
+    RetagFilesCommand,
+    UpdateLibraryMetadataCommand,
+} from "./command-bodies.js";
 
-export const JobTypes = {
+export const CommandNames = {
     RefreshArtist: 'RefreshArtist',
     RefreshAlbum: 'RefreshAlbum',
     RefreshMetadata: 'RefreshMetadata',
@@ -58,100 +59,100 @@ export const JobTypes = {
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
 } as const;
 
-export type JobType = typeof JobTypes[keyof typeof JobTypes];
+export type CommandName = typeof CommandNames[keyof typeof CommandNames];
 
-export const DOWNLOAD_JOB_TYPES = [
-    JobTypes.DownloadTrack,
-    JobTypes.DownloadVideo,
-    JobTypes.DownloadAlbum,
+export const DOWNLOAD_COMMAND_NAMES = [
+    CommandNames.DownloadTrack,
+    CommandNames.DownloadVideo,
+    CommandNames.DownloadAlbum,
 ] as const;
 
-export const DOWNLOAD_OR_IMPORT_JOB_TYPES = [
-    ...DOWNLOAD_JOB_TYPES,
-    JobTypes.ImportDownload,
+export const DOWNLOAD_OR_IMPORT_COMMAND_NAMES = [
+    ...DOWNLOAD_COMMAND_NAMES,
+    CommandNames.ImportDownload,
 ] as const;
 
-export const ARTIST_WORKFLOW_JOB_TYPES = [
-    JobTypes.RefreshArtist,
-    JobTypes.RescanFolders,
-    JobTypes.CurateArtist,
+export const ARTIST_WORKFLOW_COMMAND_NAMES = [
+    CommandNames.RefreshArtist,
+    CommandNames.RescanFolders,
+    CommandNames.CurateArtist,
 ] as const;
 
 /**
  * All non-download job types processed by the Scheduler.
  * Used for global priority selection.
  */
-export const NON_DOWNLOAD_JOB_TYPES = [
-    JobTypes.RefreshArtist,
-    JobTypes.RefreshAlbum,
-    JobTypes.RefreshMetadata,
-    JobTypes.ApplyCuration,
-    JobTypes.DownloadMissing,
-    JobTypes.CheckUpgrades,
-    JobTypes.Housekeeping,
-    JobTypes.CurateArtist,
-    JobTypes.RescanFolders,
-    JobTypes.ConfigPrune,
-    JobTypes.MoveArtist,
-    JobTypes.RenameFiles,
-    JobTypes.RenameArtist,
-    JobTypes.RetagFiles,
-    JobTypes.RetagArtist,
-    JobTypes.BulkRefreshArtist,
-    JobTypes.DownloadMissingForce,
-    JobTypes.RescanAllRoots,
-    JobTypes.CheckHealth,
-    JobTypes.CompactDatabase,
-    JobTypes.CleanupTempFiles,
-    JobTypes.UpdateLibraryMetadata,
+export const NON_DOWNLOAD_COMMAND_NAMES = [
+    CommandNames.RefreshArtist,
+    CommandNames.RefreshAlbum,
+    CommandNames.RefreshMetadata,
+    CommandNames.ApplyCuration,
+    CommandNames.DownloadMissing,
+    CommandNames.CheckUpgrades,
+    CommandNames.Housekeeping,
+    CommandNames.CurateArtist,
+    CommandNames.RescanFolders,
+    CommandNames.ConfigPrune,
+    CommandNames.MoveArtist,
+    CommandNames.RenameFiles,
+    CommandNames.RenameArtist,
+    CommandNames.RetagFiles,
+    CommandNames.RetagArtist,
+    CommandNames.BulkRefreshArtist,
+    CommandNames.DownloadMissingForce,
+    CommandNames.RescanAllRoots,
+    CommandNames.CheckHealth,
+    CommandNames.CompactDatabase,
+    CommandNames.CleanupTempFiles,
+    CommandNames.UpdateLibraryMetadata,
 ] as const;
 
-export function isDownloadJobType(type: string): type is typeof DOWNLOAD_JOB_TYPES[number] {
-    return (DOWNLOAD_JOB_TYPES as readonly string[]).includes(type);
+export function isDownloadJobType(type: string): type is typeof DOWNLOAD_COMMAND_NAMES[number] {
+    return (DOWNLOAD_COMMAND_NAMES as readonly string[]).includes(type);
 }
 
-export function isDownloadOrImportJobType(type: string): type is typeof DOWNLOAD_OR_IMPORT_JOB_TYPES[number] {
-    return (DOWNLOAD_OR_IMPORT_JOB_TYPES as readonly string[]).includes(type);
+export function isDownloadOrImportJobType(type: string): type is typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES[number] {
+    return (DOWNLOAD_OR_IMPORT_COMMAND_NAMES as readonly string[]).includes(type);
 }
 
-export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export type CommandStatus = 'queued' | 'started' | 'completed' | 'failed' | 'cancelled';
 
-export interface JobPayloadMap {
-    [JobTypes.RefreshArtist]: RefreshArtistJobPayload;
-    [JobTypes.RefreshAlbum]: RefreshAlbumJobPayload;
-    [JobTypes.RefreshMetadata]: RefreshMetadataJobPayload;
-    [JobTypes.ApplyCuration]: ApplyCurationJobPayload;
-    [JobTypes.DownloadMissing]: DownloadMissingJobPayload;
-    [JobTypes.CheckUpgrades]: CheckUpgradesJobPayload;
-    [JobTypes.Housekeeping]: HousekeepingJobPayload;
-    [JobTypes.DownloadTrack]: DownloadTrackJobPayload;
-    [JobTypes.DownloadVideo]: DownloadVideoJobPayload;
-    [JobTypes.DownloadAlbum]: DownloadAlbumJobPayload;
-    [JobTypes.CurateArtist]: CurateArtistJobPayload;
-    [JobTypes.RescanFolders]: RescanFoldersJobPayload;
-    [JobTypes.ImportDownload]: ImportDownloadJobPayload;
-    [JobTypes.ConfigPrune]: ConfigPruneJobPayload;
-    [JobTypes.MoveArtist]: MoveArtistJobPayload;
-    [JobTypes.RenameFiles]: RenameFilesJobPayload;
-    [JobTypes.RenameArtist]: RenameArtistJobPayload;
-    [JobTypes.RetagFiles]: RetagFilesJobPayload;
-    [JobTypes.RetagArtist]: RetagArtistJobPayload;
-    [JobTypes.BulkRefreshArtist]: BulkRefreshArtistJobPayload;
-    [JobTypes.DownloadMissingForce]: DownloadMissingForceJobPayload;
-    [JobTypes.RescanAllRoots]: RescanAllRootsJobPayload;
-    [JobTypes.CheckHealth]: CheckHealthJobPayload;
-    [JobTypes.CompactDatabase]: CompactDatabaseJobPayload;
-    [JobTypes.CleanupTempFiles]: CleanupTempFilesJobPayload;
-    [JobTypes.UpdateLibraryMetadata]: UpdateLibraryMetadataJobPayload;
+export interface CommandBodyMap {
+    [CommandNames.RefreshArtist]: RefreshArtistCommand;
+    [CommandNames.RefreshAlbum]: RefreshAlbumCommand;
+    [CommandNames.RefreshMetadata]: RefreshMetadataCommand;
+    [CommandNames.ApplyCuration]: ApplyCurationCommand;
+    [CommandNames.DownloadMissing]: DownloadMissingCommand;
+    [CommandNames.CheckUpgrades]: CheckUpgradesCommand;
+    [CommandNames.Housekeeping]: HousekeepingCommand;
+    [CommandNames.DownloadTrack]: DownloadTrackCommand;
+    [CommandNames.DownloadVideo]: DownloadVideoCommand;
+    [CommandNames.DownloadAlbum]: DownloadAlbumCommand;
+    [CommandNames.CurateArtist]: CurateArtistCommand;
+    [CommandNames.RescanFolders]: RescanFoldersCommand;
+    [CommandNames.ImportDownload]: ImportDownloadCommand;
+    [CommandNames.ConfigPrune]: ConfigPruneCommand;
+    [CommandNames.MoveArtist]: MoveArtistCommand;
+    [CommandNames.RenameFiles]: RenameFilesCommand;
+    [CommandNames.RenameArtist]: RenameArtistCommand;
+    [CommandNames.RetagFiles]: RetagFilesCommand;
+    [CommandNames.RetagArtist]: RetagArtistCommand;
+    [CommandNames.BulkRefreshArtist]: BulkRefreshArtistCommand;
+    [CommandNames.DownloadMissingForce]: DownloadMissingForceCommand;
+    [CommandNames.RescanAllRoots]: RescanAllRootsCommand;
+    [CommandNames.CheckHealth]: CheckHealthCommand;
+    [CommandNames.CompactDatabase]: CompactDatabaseCommand;
+    [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
+    [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
 }
 
-export type AnyJobPayload = JobPayloadMap[JobType];
+export type AnyCommandBody = CommandBodyMap[CommandName];
 
-interface JobRecordBase<T extends JobType> {
+interface CommandModelRecordBase<T extends CommandName> {
     id: number;
-    type: T;
-    payload: JobPayloadMap[T];
-    status: JobStatus;
+    name: T;
+    payload: CommandBodyMap[T];
+    status: CommandStatus;
     progress: number;
     priority: number;
     trigger?: number;
@@ -165,27 +166,27 @@ interface JobRecordBase<T extends JobType> {
     updated_at?: string;
 }
 
-export type JobOfType<T extends JobType> = JobRecordBase<T>;
-export type Job = { [K in JobType]: JobOfType<K> }[JobType];
+export type CommandModelOf<T extends CommandName> = CommandModelRecordBase<T>;
+export type CommandModel = { [K in CommandName]: CommandModelOf<K> }[CommandName];
 
-import { appEvents, AppEvent, JobEventPayload } from "./app-events.js";
+import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
 
 // ---------------------------------------------------------------------------
-// Throttled JOB_UPDATED emission (Lidarr-style debounce)
+// Throttled COMMAND_UPDATED emission (Lidarr-style debounce)
 // ---------------------------------------------------------------------------
 // Structural status changes (processing, completed, failed, cancelled) emit
 // immediately. Progress / description-only updates are coalesced so that at
-// most one JOB_UPDATED is emitted per job per second.
+// most one COMMAND_UPDATED is emitted per job per second.
 const JOB_UPDATE_THROTTLE_MS = 1000;
-const jobUpdateBuffer = new Map<number, { payload: JobEventPayload; timer: ReturnType<typeof setTimeout> }>();
-const TERMINAL_JOB_STATUSES = new Set<JobStatus>(["completed", "failed", "cancelled"]);
+const jobUpdateBuffer = new Map<number, { payload: CommandEventPayload; timer: ReturnType<typeof setTimeout> }>();
+const TERMINAL_JOB_STATUSES = new Set<CommandStatus>(["completed", "failed", "cancelled"]);
 
 /**
- * Emit JOB_UPDATED for progress/description changes at most once per second
+ * Emit COMMAND_UPDATED for progress/description changes at most once per second
  * per job.  The first call for a given job emits immediately; subsequent calls
  * within the throttle window are coalesced and flushed when the timer fires.
  */
-function emitThrottledJobUpdate(payload: JobEventPayload): void {
+function emitThrottledJobUpdate(payload: CommandEventPayload): void {
     const existing = jobUpdateBuffer.get(payload.id);
     if (existing) {
         // Already have a pending timer — just update the buffered payload
@@ -194,12 +195,12 @@ function emitThrottledJobUpdate(payload: JobEventPayload): void {
     }
 
     // First call for this job — emit immediately, then start throttle window
-    appEvents.emit(AppEvent.JOB_UPDATED, payload);
+    appEvents.emit(AppEvent.COMMAND_UPDATED, payload);
     const timer = setTimeout(() => {
         const buffered = jobUpdateBuffer.get(payload.id);
         jobUpdateBuffer.delete(payload.id);
         if (buffered) {
-            appEvents.emit(AppEvent.JOB_UPDATED, buffered.payload);
+            appEvents.emit(AppEvent.COMMAND_UPDATED, buffered.payload);
         }
     }, JOB_UPDATE_THROTTLE_MS);
     if (timer.unref) timer.unref();
@@ -216,11 +217,11 @@ function clearJobUpdateThrottle(jobId: number): void {
     }
 }
 
-function isObjectPayload(value: unknown): value is QueuePayloadCommon {
+function isObjectPayload(value: unknown): value is CommandBodyCommon {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function safeParsePayload(raw: unknown, jobId?: number): QueuePayloadCommon {
+function safeParsePayload(raw: unknown, jobId?: number): CommandBodyCommon {
     if (isObjectPayload(raw)) return raw;
     if (typeof raw !== 'string') return {};
 
@@ -233,18 +234,18 @@ function safeParsePayload(raw: unknown, jobId?: number): QueuePayloadCommon {
     }
 }
 
-function getDownloadContentType(type: string, payload: QueuePayloadCommon): string | null {
-    if (type === JobTypes.DownloadTrack) return "track";
-    if (type === JobTypes.DownloadVideo) return "video";
-    if (type === JobTypes.DownloadAlbum) return "album";
-    if (type === JobTypes.ImportDownload) {
-        const payloadType = String((payload as Partial<ImportDownloadJobPayload>).type || "").trim();
+function getDownloadContentType(type: string, payload: CommandBodyCommon): string | null {
+    if (type === CommandNames.DownloadTrack) return "track";
+    if (type === CommandNames.DownloadVideo) return "video";
+    if (type === CommandNames.DownloadAlbum) return "album";
+    if (type === CommandNames.ImportDownload) {
+        const payloadType = String((payload as Partial<ImportDownloadCommand>).type || "").trim();
         return payloadType || null;
     }
     return null;
 }
 
-function findActiveImportForDownload(type: JobType, payload: QueuePayloadCommon, refId?: string): number | null {
+function findActiveImportForDownload(type: CommandName, payload: CommandBodyCommon, refId?: string): number | null {
     if (!refId || !isDownloadJobType(type)) return null;
 
     const incomingType = getDownloadContentType(type, payload);
@@ -252,14 +253,14 @@ function findActiveImportForDownload(type: JobType, payload: QueuePayloadCommon,
 
     const rows = db.prepare(`
         SELECT id, payload
-        FROM job_queue
-        WHERE type = ? AND ref_id = ? AND status IN ('pending', 'processing')
+        FROM commands
+        WHERE name = ? AND ref_id = ? AND status IN ('queued', 'started')
         ORDER BY created_at ASC, id ASC
-    `).all(JobTypes.ImportDownload, refId) as Array<{ id: number; payload: unknown }>;
+    `).all(CommandNames.ImportDownload, refId) as Array<{ id: number; payload: unknown }>;
 
     for (const row of rows) {
         const existingPayload = safeParsePayload(row.payload, row.id);
-        if (getDownloadContentType(JobTypes.ImportDownload, existingPayload) === incomingType) {
+        if (getDownloadContentType(CommandNames.ImportDownload, existingPayload) === incomingType) {
             return row.id;
         }
     }
@@ -268,8 +269,8 @@ function findActiveImportForDownload(type: JobType, payload: QueuePayloadCommon,
 }
 
 function normalizeRefreshArtistPayload(
-    payload: Partial<RefreshArtistJobPayload>,
-): RefreshArtistJobPayload {
+    payload: Partial<RefreshArtistCommand>,
+): RefreshArtistCommand {
     const hydrateAlbumTracks = Boolean(payload.hydrateAlbumTracks ?? payload.monitorAlbums);
     const hydrateCatalog = payload.hydrateCatalog ?? true;
     const scanLibrary = payload.scanLibrary
@@ -294,8 +295,8 @@ function normalizeRefreshArtistPayload(
 }
 
 function areEquivalentRefreshArtistPayloads(
-    left: RefreshArtistJobPayload,
-    right: RefreshArtistJobPayload,
+    left: RefreshArtistCommand,
+    right: RefreshArtistCommand,
 ): boolean {
     return left.artistId === right.artistId
         && left.artistName === right.artistName
@@ -311,8 +312,8 @@ function areEquivalentRefreshArtistPayloads(
         && left.expandCreditedArtists === right.expandCreditedArtists;
 }
 
-export function isJobType(value: string): value is JobType {
-    return (Object.values(JobTypes) as string[]).includes(value);
+export function isCommandName(value: string): value is CommandName {
+    return (Object.values(CommandNames) as string[]).includes(value);
 }
 
 function buildTypeInClause(types: readonly string[]): string {
@@ -378,30 +379,30 @@ function buildLiveActivityOrderClause(alias?: string): string {
 
     return `
                 CASE
-                    WHEN ${status} = 'processing' THEN 0
-                    WHEN ${status} = 'pending' THEN 1
+                    WHEN ${status} = 'started' THEN 0
+                    WHEN ${status} = 'queued' THEN 1
                     ELSE 2
                 END ASC,
                 CASE
-                    WHEN ${status} = 'processing' THEN COALESCE(${updatedAt}, ${startedAt}, ${createdAt})
+                    WHEN ${status} = 'started' THEN COALESCE(${updatedAt}, ${startedAt}, ${createdAt})
                 END DESC,
                 CASE
-                    WHEN ${status} = 'processing' THEN ${id}
+                    WHEN ${status} = 'started' THEN ${id}
                 END DESC,
                 CASE
-                    WHEN ${status} = 'pending' THEN ${priority}
+                    WHEN ${status} = 'queued' THEN ${priority}
                 END DESC,
                 CASE
-                    WHEN ${status} = 'pending' THEN ${trigger}
+                    WHEN ${status} = 'queued' THEN ${trigger}
                 END DESC,
                 CASE
-                    WHEN ${status} = 'pending' THEN COALESCE(${queueOrder}, 2147483647)
+                    WHEN ${status} = 'queued' THEN COALESCE(${queueOrder}, 2147483647)
                 END ASC,
                 CASE
-                    WHEN ${status} = 'pending' THEN ${createdAt}
+                    WHEN ${status} = 'queued' THEN ${createdAt}
                 END ASC,
                 CASE
-                    WHEN ${status} = 'pending' THEN ${id}
+                    WHEN ${status} = 'queued' THEN ${id}
                 END ASC,
                 ${id} DESC
             `;
@@ -423,26 +424,26 @@ function buildHistoryOrderClause(alias?: string): string {
             `;
 }
 
-function hydrateJobRow(row: { type: string; payload: unknown; id: number } & Record<string, unknown>): Job | null {
-    if (!isJobType(row.type)) {
-        console.warn(`[TaskQueue] Encountered unknown job type ${String(row.type)} for job ${row.id}; skipping typed hydration`);
+function hydrateJobRow(row: { name: string; payload: unknown; id: number } & Record<string, unknown>): CommandModel | null {
+    if (!isCommandName(row.name)) {
+        console.warn(`[TaskQueue] Encountered unknown job type ${String(row.name)} for job ${row.id}; skipping typed hydration`);
         return null;
     }
 
     return {
-        ...(row as Omit<JobRecordBase<JobType>, 'payload'> & { payload: unknown }),
-        type: row.type,
-        payload: safeParsePayload(row.payload, row.id) as AnyJobPayload,
-    } as Job;
+        ...(row as Omit<CommandModelRecordBase<CommandName>, 'payload'> & { payload: unknown }),
+        name: row.name,
+        payload: safeParsePayload(row.payload, row.id) as AnyCommandBody,
+    } as CommandModel;
 }
 
-export function compareJobsByExecutionOrder(left: Job, right: Job): number {
+export function compareJobsByExecutionOrder(left: CommandModel, right: CommandModel): number {
     if (left.priority !== right.priority) {
         return right.priority - left.priority;
     }
 
-    const leftTrigger = left.trigger ?? 0;
-    const rightTrigger = right.trigger ?? 0;
+    const leftTrigger = left.trigger ?? CommandTrigger.Unspecified;
+    const rightTrigger = right.trigger ?? CommandTrigger.Unspecified;
     if (leftTrigger !== rightTrigger) {
         return rightTrigger - leftTrigger;
     }
@@ -462,7 +463,7 @@ export function compareJobsByExecutionOrder(left: Job, right: Job): number {
     return left.id - right.id;
 }
 
-export function compareJobsByDurableQueueOrder(left: Job, right: Job): number {
+export function compareJobsByDurableQueueOrder(left: CommandModel, right: CommandModel): number {
     const leftQueueOrder = left.queue_order ?? Number.MAX_SAFE_INTEGER;
     const rightQueueOrder = right.queue_order ?? Number.MAX_SAFE_INTEGER;
     if (leftQueueOrder !== rightQueueOrder) {
@@ -478,20 +479,20 @@ export function compareJobsByDurableQueueOrder(left: Job, right: Job): number {
     return left.id - right.id;
 }
 
-export function sortJobsByExecutionOrder<T extends Job>(jobs: T[]): T[] {
+export function sortJobsByExecutionOrder<T extends CommandModel>(jobs: T[]): T[] {
     return jobs.sort(compareJobsByExecutionOrder);
 }
 
-export class TaskQueueService {
+export class CommandQueueService {
     /**
      * Add a job to the queue
      */
-    static addJob<T extends JobType>(
+    static addJob<T extends CommandName>(
         type: T,
-        payload: JobPayloadMap[T],
+        payload: CommandBodyMap[T],
         refId?: string,
         priority: number = 0,
-        trigger: number = 0,
+        trigger: number = CommandTrigger.Unspecified,
         queueOrder?: number | null,
     ): number {
         // Validate download jobs have valid providerId
@@ -505,23 +506,23 @@ export class TaskQueueService {
 
 	        // Enforce uniqueness for active jobs if refId is provided
 	        if (refId) {
-	            const activeImportId = findActiveImportForDownload(type, payload as QueuePayloadCommon, refId);
+	            const activeImportId = findActiveImportForDownload(type, payload as CommandBodyCommon, refId);
 	            if (activeImportId !== null) {
 	                console.log(`[TaskQueue] Import for ${type} ${refId} is already pending or processing, skipping duplicate download.`);
 	                return activeImportId;
 	            }
 
-	            if (type === JobTypes.RefreshArtist) {
-	                const incomingPayload = normalizeRefreshArtistPayload(payload as RefreshArtistJobPayload);
+	            if (type === CommandNames.RefreshArtist) {
+	                const incomingPayload = normalizeRefreshArtistPayload(payload as RefreshArtistCommand);
                 const existingRefreshJobs = db.prepare(`
-                    SELECT id, payload FROM job_queue
-                    WHERE type = ? AND ref_id = ? AND status IN('pending', 'processing')
+                    SELECT id, payload FROM commands
+                    WHERE name = ? AND ref_id = ? AND status IN('queued', 'started')
                 `).all(type, refId) as Array<{ id: number; payload: unknown }>;
 
                 // Command equality: dedupe by equivalent command body, not just artist ref.
                 for (const existing of existingRefreshJobs) {
                     const existingPayload = normalizeRefreshArtistPayload(
-                        safeParsePayload(existing.payload, existing.id) as Partial<RefreshArtistJobPayload>,
+                        safeParsePayload(existing.payload, existing.id) as Partial<RefreshArtistCommand>,
                     );
 
                     if (areEquivalentRefreshArtistPayloads(existingPayload, incomingPayload)) {
@@ -531,8 +532,8 @@ export class TaskQueueService {
                 }
             } else {
                 const existing = db.prepare(`
-                    SELECT id FROM job_queue
-                    WHERE type = ? AND ref_id = ? AND status IN('pending', 'processing')
+                    SELECT id FROM commands
+                    WHERE name = ? AND ref_id = ? AND status IN('queued', 'started')
                 `).get(type, refId) as { id: number } | undefined;
 
                 if (existing) {
@@ -543,8 +544,8 @@ export class TaskQueueService {
         }
 
         const insert = db.prepare(`
-               INSERT INTO job_queue(type, ref_id, payload, priority, trigger, queue_order, status, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               INSERT INTO commands(name, ref_id, payload, priority, trigger, queue_order, status, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `);
 
         const normalizedQueueOrder = Number.isInteger(queueOrder) && (queueOrder as number) > 0
@@ -553,12 +554,12 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         const info = insert.run(type, refId || null, JSON.stringify(payload), priority, trigger, normalizedQueueOrder);
         const newId = info.lastInsertRowid as number;
         db.prepare(`
-            UPDATE job_queue
+            UPDATE commands
             SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND queue_order IS NULL
         `).run(newId, newId);
-        appEvents.emit(AppEvent.JOB_ADDED, { id: newId, type, status: 'pending', progress: 0, payload } as JobEventPayload);
+        appEvents.emit(AppEvent.COMMAND_ADDED, { id: newId, type, status: 'queued', progress: 0, payload } as CommandEventPayload);
         return newId;
     }
 
@@ -568,7 +569,7 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         limit: number = 50,
         offset: number = 0,
         options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
-    ): Job[] {
+    ): CommandModel[] {
         const orderBy = options.orderBy === 'execution'
             ? buildExecutionOrderClause()
             : options.orderBy === 'history'
@@ -579,24 +580,24 @@ VALUES(?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ? buildDurableQueueOrderClause()
                         : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
-SELECT * FROM job_queue 
-            WHERE type LIKE ? AND status LIKE ?
+SELECT * FROM commands 
+            WHERE name LIKE ? AND status LIKE ?
             ORDER BY ${orderBy}
 LIMIT ? OFFSET ?
     `).all(typePattern, statusPattern, limit, offset) as any[];
 
         return jobs
-            .map((job) => hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>))
-            .filter((job): job is Job => job !== null);
+            .map((job) => hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .filter((job): job is CommandModel => job !== null);
     }
 
     static listJobsByTypesAndStatuses(
-        types: readonly JobType[],
-        statuses: readonly JobStatus[],
+        types: readonly CommandName[],
+        statuses: readonly CommandStatus[],
         limit: number = 200,
         offset: number = 0,
         options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'queue_order' } = {},
-    ): Job[] {
+    ): CommandModel[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
         }
@@ -613,21 +614,21 @@ LIMIT ? OFFSET ?
                         ? buildDurableQueueOrderClause()
                         : 'created_at DESC, id DESC';
         const jobs = db.prepare(`
-            SELECT * FROM job_queue
-            WHERE type IN (${typePlaceholders})
+            SELECT * FROM commands
+            WHERE name IN (${typePlaceholders})
               AND status IN (${statusPlaceholders})
             ORDER BY ${orderBy}
             LIMIT ? OFFSET ?
         `).all(...types, ...statuses, limit, offset) as any[];
 
         return jobs
-            .map((job) => hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>))
-            .filter((job): job is Job => job !== null);
+            .map((job) => hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .filter((job): job is CommandModel => job !== null);
     }
 
     static countJobsByTypesAndStatuses(
-        types: readonly JobType[],
-        statuses: readonly JobStatus[],
+        types: readonly CommandName[],
+        statuses: readonly CommandStatus[],
     ): number {
         if (types.length === 0 || statuses.length === 0) {
             return 0;
@@ -637,8 +638,8 @@ LIMIT ? OFFSET ?
         const statusPlaceholders = statuses.map(() => '?').join(',');
         const row = db.prepare(`
             SELECT COUNT(*) as count
-            FROM job_queue
-            WHERE type IN (${typePlaceholders})
+            FROM commands
+            WHERE name IN (${typePlaceholders})
               AND status IN (${statusPlaceholders})
         `).get(...types, ...statuses) as { count?: number } | undefined;
 
@@ -648,8 +649,8 @@ LIMIT ? OFFSET ?
     static countJobs(typePattern: string = '%', statusPattern: string = '%'): number {
         const result = db.prepare(`
             SELECT COUNT(*) as count
-            FROM job_queue
-            WHERE type LIKE ? AND status LIKE ?
+            FROM commands
+            WHERE name LIKE ? AND status LIKE ?
         `).get(typePattern, statusPattern) as { count?: number } | undefined;
 
         return Number(result?.count || 0);
@@ -658,28 +659,28 @@ LIMIT ? OFFSET ?
     /**
      * Get paginated job history
      */
-    static getHistory(limit: number = 50, offset: number = 0): Job[] {
+    static getHistory(limit: number = 50, offset: number = 0): CommandModel[] {
         const jobs = db.prepare(`
-            SELECT * FROM job_queue 
+            SELECT * FROM commands 
             WHERE status IN('completed', 'failed', 'cancelled')
             ORDER BY COALESCE(started_at, created_at) DESC
 LIMIT ? OFFSET ?
     `).all(limit, offset) as any[];
 
         return jobs
-            .map((job) => hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>))
-            .filter((job): job is Job => job !== null);
+            .map((job) => hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .filter((job): job is CommandModel => job !== null);
     }
 
     /**
      * Get next pending job matching a flexible type pattern.
      * e.g. 'DOWNLOAD_%' or 'SCAN_%' or exact 'RefreshArtist'
      */
-    static getNextJob(typePattern: string = '%'): Job | null {
+    static getNextJob(typePattern: string = '%'): CommandModel | null {
         // Find highest priority, oldest pending job matching type
         const job = db.prepare(`
-            SELECT * FROM job_queue 
-            WHERE status = 'pending' AND type LIKE ?
+            SELECT * FROM commands 
+            WHERE status = 'queued' AND name LIKE ?
             ORDER BY 
 ${buildExecutionOrderClause()}
             LIMIT 1
@@ -687,18 +688,18 @@ ${buildExecutionOrderClause()}
 
         if (!job) return null;
 
-        return hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>);
+        return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
     }
 
-    static getNextJobByTypes(types: readonly JobType[]): Job | null {
+    static getNextJobByTypes(types: readonly CommandName[]): CommandModel | null {
         if (types.length === 0) {
             return null;
         }
 
         const placeholders = buildTypeInClause(types);
         const job = db.prepare(`
-            SELECT * FROM job_queue
-            WHERE status = 'pending' AND type IN (${placeholders})
+            SELECT * FROM commands
+            WHERE status = 'queued' AND name IN (${placeholders})
             ORDER BY
 ${buildExecutionOrderClause()}
             LIMIT 1
@@ -706,7 +707,7 @@ ${buildExecutionOrderClause()}
 
         if (!job) return null;
 
-        return hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>);
+        return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
     }
 
     /**
@@ -714,44 +715,44 @@ ${buildExecutionOrderClause()}
      * Used by the Scheduler for CommandQueue selection:
      * the caller iterates the list and picks the first job that passes exclusivity checks.
      */
-    static getTopPendingJobsByTypes(types: readonly JobType[], limit: number = 20): Job[] {
+    static getTopPendingJobsByTypes(types: readonly CommandName[], limit: number = 20): CommandModel[] {
         if (types.length === 0) return [];
 
         const placeholders = buildTypeInClause(types);
         const rows = db.prepare(`
-            SELECT * FROM job_queue
-            WHERE status = 'pending' AND type IN (${placeholders})
+            SELECT * FROM commands
+            WHERE status = 'queued' AND name IN (${placeholders})
             ORDER BY
 ${buildExecutionOrderClause()}
             LIMIT ?
         `).all(...types, limit) as any[];
 
         return rows
-            .map((row) => hydrateJobRow(row as { type: string; payload: unknown; id: number } & Record<string, unknown>))
-            .filter((job): job is Job => job !== null);
+            .map((row) => hydrateJobRow(row as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .filter((job): job is CommandModel => job !== null);
     }
 
     static markProcessing(id: number): boolean {
         const result = db.prepare(`
-            UPDATE job_queue
-            SET status = 'processing', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'pending'
+            UPDATE commands
+            SET status = 'started', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'queued'
         `).run(id);
         if (result.changes === 0) return false;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'processing', progress: job.progress } as JobEventPayload);
+        if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'started', progress: job.progress } as CommandEventPayload);
         return true;
     }
 
     static updateProgress(id: number, progress: number) {
-        const result = db.prepare("UPDATE job_queue SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(progress, id);
+        const result = db.prepare("UPDATE commands SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(progress, id);
         if (result.changes === 0) return;
         const job = this.getById(id);
-        if (job) emitThrottledJobUpdate({ id, type: job.type, status: job.status, progress } as JobEventPayload);
+        if (job) emitThrottledJobUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
     }
 
-    static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<QueuePayloadCommon> }) {
+    static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<CommandBodyCommon> }) {
         const current = this.getById(id);
         if (!current) return null;
         if (TERMINAL_JOB_STATUSES.has(current.status)) return current;
@@ -779,47 +780,47 @@ ${buildExecutionOrderClause()}
         }
 
         params.push(id);
-        db.prepare(`UPDATE job_queue SET ${updates.join(", ")} WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`).run(...params);
+        db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`).run(...params);
 
         const updated = this.getById(id);
         if (updated) {
             emitThrottledJobUpdate({
                 id,
-                type: updated.type,
+                type: updated.name,
                 status: updated.status,
                 progress: updated.progress,
                 payload: updated.payload,
-            } as JobEventPayload);
+            } as CommandEventPayload);
         }
 
         return updated;
     }
 
     static complete(id: number) {
-        const result = db.prepare("UPDATE job_queue SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(id);
+        const result = db.prepare("UPDATE commands SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(id);
         if (result.changes === 0) return;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'completed', progress: 100 } as JobEventPayload);
+        if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'completed', progress: 100 } as CommandEventPayload);
     }
 
     static fail(id: number, error: string) {
         const result = db.prepare(`
-            UPDATE job_queue 
+            UPDATE commands 
             SET status = 'failed', error = ?, attempts = attempts + 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
             WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
     `).run(error, id);
         if (result.changes === 0) return;
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'failed', progress: job.progress, error } as JobEventPayload);
+        if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'failed', progress: job.progress, error } as CommandEventPayload);
     }
 
     static cancel(id: number) {
-        db.prepare("UPDATE job_queue SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+        db.prepare("UPDATE commands SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
         clearJobUpdateThrottle(id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'cancelled', progress: job.progress } as JobEventPayload);
+        if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'cancelled', progress: job.progress } as CommandEventPayload);
     }
 
     /**
@@ -827,13 +828,13 @@ ${buildExecutionOrderClause()}
      * Used to prevent stale queued jobs from conflicting with an inline manual scan.
      * Returns the number of jobs cancelled.
      */
-    static cancelPendingForArtist(artistId: string, types: JobType[]): number {
+    static cancelPendingForArtist(artistId: string, types: CommandName[]): number {
         if (types.length === 0) return 0;
         const placeholders = types.map(() => '?').join(',');
         const result = db.prepare(`
-            UPDATE job_queue
+            UPDATE commands
             SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE ref_id = ? AND type IN (${placeholders}) AND status = 'pending'
+            WHERE ref_id = ? AND name IN (${placeholders}) AND status = 'queued'
     `).run(artistId, ...types);
         const cancelled = (result as any).changes || 0;
         if (cancelled > 0) {
@@ -844,14 +845,14 @@ ${buildExecutionOrderClause()}
 
     static retry(id: number) {
         db.prepare(`
-            UPDATE job_queue 
-            SET status = 'pending', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
+            UPDATE commands 
+            SET status = 'queued', error = NULL, progress = 0, started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
                 attempts = 0,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE id = ?
 	    `).run(id);
         const job = this.getById(id);
-        if (job) appEvents.emit(AppEvent.JOB_UPDATED, { id, type: job.type, status: 'pending', progress: 0 } as JobEventPayload);
+        if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'queued', progress: 0 } as CommandEventPayload);
     }
 
     /**
@@ -860,26 +861,26 @@ ${buildExecutionOrderClause()}
      */
     static resetProcessingJobs(typePattern: string = '%'): number {
         const result = db.prepare(`
-            UPDATE job_queue
-            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
+            UPDATE commands
+            SET status = 'queued', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
-            WHERE status = 'processing' AND type LIKE ?
+            WHERE status = 'started' AND name LIKE ?
     `).run(typePattern);
 
         return result.changes;
     }
 
-    static resetProcessingJobsByTypes(types: readonly JobType[]): number {
+    static resetProcessingJobsByTypes(types: readonly CommandName[]): number {
         if (types.length === 0) {
             return 0;
         }
 
         const placeholders = buildTypeInClause(types);
         const result = db.prepare(`
-            UPDATE job_queue
-            SET status = 'pending', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
+            UPDATE commands
+            SET status = 'queued', started_at = NULL, progress = 0, updated_at = CURRENT_TIMESTAMP,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
-            WHERE status = 'processing' AND type IN (${placeholders})
+            WHERE status = 'started' AND name IN (${placeholders})
         `).run(...types);
 
         return result.changes;
@@ -917,17 +918,17 @@ ${buildExecutionOrderClause()}
         const params: Array<string | number> = [note, typePattern, ageModifier, ...excludeIds];
 
         const result = db.prepare(`
-            UPDATE job_queue
+            UPDATE commands
             SET
-                status = 'pending',
+                status = 'queued',
                 started_at = NULL,
                 completed_at = NULL,
                 progress = 0,
                 error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error END,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState'),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'processing'
-              AND type LIKE ?
+            WHERE status = 'started'
+              AND name LIKE ?
               AND COALESCE(started_at, updated_at, created_at) <= datetime('now', ?)
               ${excludeClause}
         `).run(...params);
@@ -936,7 +937,7 @@ ${buildExecutionOrderClause()}
     }
 
     static requeueStaleProcessingJobsByTypes(options: {
-        types: readonly JobType[];
+        types: readonly CommandName[];
         olderThanMs: number;
         note?: string;
         excludeIds?: number[];
@@ -961,17 +962,17 @@ ${buildExecutionOrderClause()}
         const params: Array<string | number> = [note, ...types, ageModifier, ...excludeIds];
 
         const result = db.prepare(`
-            UPDATE job_queue
+            UPDATE commands
             SET
-                status = 'pending',
+                status = 'queued',
                 started_at = NULL,
                 completed_at = NULL,
                 progress = 0,
                 error = CASE WHEN error IS NULL OR error = '' THEN ? ELSE error END,
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState'),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'processing'
-              AND type IN (${typeClause})
+            WHERE status = 'started'
+              AND name IN (${typeClause})
               AND COALESCE(started_at, updated_at, created_at) <= datetime('now', ?)
               ${excludeClause}
         `).run(...params);
@@ -981,21 +982,21 @@ ${buildExecutionOrderClause()}
 
     static getStats() {
         return db.prepare(`
-            SELECT type, status, COUNT(*) as count 
-            FROM job_queue 
-            GROUP BY type, status
+            SELECT name, status, COUNT(*) as count 
+            FROM commands 
+            GROUP BY name, status
     `).all();
     }
 
     static clearCompleted() {
-        db.prepare("DELETE FROM job_queue WHERE status IN ('completed', 'cancelled')").run();
+        db.prepare("DELETE FROM commands WHERE status IN ('completed', 'cancelled')").run();
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
 
     static clearFinished(typePattern: string = '%') {
         db.prepare(`
-            DELETE FROM job_queue
-            WHERE type LIKE ? AND status IN ('completed', 'failed', 'cancelled')
+            DELETE FROM commands
+            WHERE name LIKE ? AND status IN ('completed', 'failed', 'cancelled')
         `).run(typePattern);
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
@@ -1007,8 +1008,8 @@ ${buildExecutionOrderClause()}
 
         const placeholders = types.map(() => '?').join(',');
         db.prepare(`
-            DELETE FROM job_queue
-            WHERE type IN (${placeholders}) AND status IN ('completed', 'failed', 'cancelled')
+            DELETE FROM commands
+            WHERE name IN (${placeholders}) AND status IN ('completed', 'failed', 'cancelled')
         `).run(...types);
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
@@ -1018,9 +1019,9 @@ ${buildExecutionOrderClause()}
      */
     static boostToManual(typePattern: string, refId: string, priority: number = 1): number {
         const result = db.prepare(`
-            UPDATE job_queue
-            SET priority = ?, trigger = 1, updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'pending' AND type LIKE ? AND ref_id = ?
+            UPDATE commands
+            SET priority = ?, trigger = , updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'queued' AND name LIKE ? AND ref_id = ?
     `).run(priority, typePattern, refId);
 
         return result.changes;
@@ -1031,7 +1032,7 @@ ${buildExecutionOrderClause()}
         options: {
             beforeJobId?: number;
             afterJobId?: number;
-            types?: readonly JobType[];
+            types?: readonly CommandName[];
         } = {},
     ): number {
         const normalizedJobIds = jobIds.filter((jobId) => Number.isInteger(jobId) && jobId > 0);
@@ -1049,18 +1050,18 @@ ${buildExecutionOrderClause()}
             throw new Error("Queue reorder requires exactly one anchor: beforeJobId or afterJobId.");
         }
 
-        const types = options.types ?? DOWNLOAD_JOB_TYPES;
+        const types = options.types ?? DOWNLOAD_COMMAND_NAMES;
         const pendingJobs = this.listJobsByTypesAndStatuses(
             types,
-            ['pending'],
-            this.countJobsByTypesAndStatuses(types, ['pending']),
+            ['queued'],
+            this.countJobsByTypesAndStatuses(types, ['queued']),
             0,
             { orderBy: 'execution' },
         );
 
         const pendingById = new Map(pendingJobs.map((job) => [job.id, job]));
         const movingSet = new Set(distinctJobIds);
-        const movingJobs = distinctJobIds.map((jobId) => pendingById.get(jobId)).filter((job): job is Job => job != null);
+        const movingJobs = distinctJobIds.map((jobId) => pendingById.get(jobId)).filter((job): job is CommandModel => job != null);
 
         if (movingJobs.length !== distinctJobIds.length) {
             throw new Error("Only pending download queue items can be reordered.");
@@ -1089,7 +1090,7 @@ ${buildExecutionOrderClause()}
         ];
 
         const updateQueueOrder = db.prepare(`
-            UPDATE job_queue
+            UPDATE commands
             SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND (queue_order IS NULL OR queue_order != ?)
@@ -1109,43 +1110,43 @@ ${buildExecutionOrderClause()}
     /**
      * Get job by ref_id (e.g., Tidal ID)
      */
-    static getByRefId(refId: string, typePattern: string = '%'): Job | null {
+    static getByRefId(refId: string, typePattern: string = '%'): CommandModel | null {
         const job = db.prepare(`
-            SELECT * FROM job_queue 
-            WHERE ref_id = ? AND type LIKE ? AND status IN('pending', 'processing')
+            SELECT * FROM commands 
+            WHERE ref_id = ? AND name LIKE ? AND status IN('queued', 'started')
             ORDER BY created_at DESC
             LIMIT 1
         `).get(refId, typePattern) as any;
 
         if (!job) return null;
 
-        return hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>);
+        return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
     }
 
     /**
      * Get job by ID
      */
-    static getById(id: number): Job | null {
-        const job = db.prepare(`SELECT * FROM job_queue WHERE id = ? `).get(id) as any;
+    static getById(id: number): CommandModel | null {
+        const job = db.prepare(`SELECT * FROM commands WHERE id = ? `).get(id) as any;
 
         if (!job) return null;
 
-        return hydrateJobRow(job as { type: string; payload: unknown; id: number } & Record<string, unknown>);
+        return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
     }
 
     /**
      * Clear all download jobs (pending/failed)
      */
     static clearDownloadJobs() {
-        const placeholders = buildTypeInClause(DOWNLOAD_OR_IMPORT_JOB_TYPES);
-        db.prepare(`DELETE FROM job_queue WHERE type IN (${placeholders}) AND status IN ('pending', 'failed')`).run(...DOWNLOAD_OR_IMPORT_JOB_TYPES);
+        const placeholders = buildTypeInClause(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
+        db.prepare(`DELETE FROM commands WHERE name IN (${placeholders}) AND status IN ('queued', 'failed')`).run(...DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
     }
 
     /**
      * Clear all jobs of a specific type pattern
      */
     static clearByType(typePattern: string) {
-        db.prepare("DELETE FROM job_queue WHERE type LIKE ? AND status IN ('pending', 'failed', 'completed', 'cancelled')").run(typePattern);
+        db.prepare("DELETE FROM commands WHERE name LIKE ? AND status IN ('queued', 'failed', 'completed', 'cancelled')").run(typePattern);
     }
 
     /**
@@ -1153,7 +1154,7 @@ ${buildExecutionOrderClause()}
      */
     static deleteJob(id: number) {
         const job = this.getById(id);
-        db.prepare("DELETE FROM job_queue WHERE id = ?").run(id);
-        if (job) appEvents.emit(AppEvent.JOB_DELETED, { id, type: job.type, status: job.status, progress: job.progress } as JobEventPayload);
+        db.prepare("DELETE FROM commands WHERE id = ?").run(id);
+        if (job) appEvents.emit(AppEvent.COMMAND_DELETED, { id, type: job.name, status: job.status, progress: job.progress } as CommandEventPayload);
     }
 }

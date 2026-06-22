@@ -158,6 +158,31 @@ test("representative release prefers official digital worldwide releases when tr
   assert.equal(selected?.mbid, "worldwide-digital-release");
 });
 
+test("representative release prefers explicit over clean when other ranking signals tie", () => {
+  insertRelease("clean-release", 12, {
+    status: "Official",
+    country: "XW",
+    date: "2020-01-01",
+    barcode: "123",
+    format: "Digital Media",
+  });
+  dbModule.db.prepare("UPDATE AlbumReleases SET disambiguation = 'clean' WHERE mbid = 'clean-release'").run();
+
+  insertRelease("explicit-release", 12, {
+    status: "Official",
+    country: "XW",
+    date: "2020-01-01",
+    barcode: "456",
+    format: "Digital Media",
+  });
+  dbModule.db.prepare("UPDATE AlbumReleases SET disambiguation = 'explicit' WHERE mbid = 'explicit-release'").run();
+
+  const selected = selectionModule.MusicBrainzReleaseSelectionService
+    .selectRepresentativeRelease("group-mbid");
+
+  assert.equal(selected?.mbid, "explicit-release");
+});
+
 test("representative release recognizes JSON-stored worldwide country codes", () => {
   insertRelease("local-digital-release", 12, {
     status: "Official",

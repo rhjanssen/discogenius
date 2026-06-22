@@ -351,7 +351,7 @@ const Dashboard = () => {
     const hasActiveJobs = (types: string[]) =>
         taskQueueStats.some(s =>
             types.includes(s.type) &&
-            (s.status === 'pending' || s.status === 'processing') &&
+            (s.status === 'queued' || s.status === 'started') &&
             s.count > 0
         );
 

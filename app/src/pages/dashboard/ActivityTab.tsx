@@ -163,12 +163,12 @@ const ActivityTab = ({
     );
 
     const runningJobs = useMemo(
-        () => inFlightActivityItems.filter((job) => ["running", "processing"].includes(String(job.status || ""))),
+        () => inFlightActivityItems.filter((job) => ["started"].includes(String(job.status || ""))),
         [inFlightActivityItems],
     );
 
     const queuedJobs = useMemo(
-        () => inFlightActivityItems.filter((job) => String(job.status || "") === "pending"),
+        () => inFlightActivityItems.filter((job) => String(job.status || "") === "queued"),
         [inFlightActivityItems],
     );
 
@@ -195,7 +195,7 @@ const ActivityTab = ({
         if (recoveredInHistory) return true;
 
         return inFlightActivityItems.some((candidate) => {
-            if (!candidate || !["running", "processing", "pending"].includes(candidate.status || "")) return false;
+            if (!candidate || !["started", "queued"].includes(candidate.status || "")) return false;
             return getJobProviderId(candidate) === providerId && getJobMediaType(candidate) === mediaType;
         });
     }, [historyJobs, inFlightActivityItems]);

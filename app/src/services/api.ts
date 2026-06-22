@@ -1461,13 +1461,13 @@ class ApiClient {
     }
     const eventSource = createManagedEventSource(url);
 
-    // The backend emits events with names like "job.updated", "file.deleted", etc.
+    // The backend emits events with names like "command.updated", "file.deleted", etc.
     // EventSource doesn't have a wildcard listener, so we rely on the specific message events.
     // However, the standard `onmessage` doesn't fire if the server specifies an `event: customName` header.
     // Therefore we bind to the known AppEvent enum values from the backend.
 
     const knownEvents = [
-      'job.added', 'job.updated', 'job.deleted', 'queue.cleared',
+      'command.added', 'command.updated', 'command.deleted', 'queue.cleared',
       'history.added',
       'artist.scanned', 'album.scanned', 'rescan.completed', 'config.updated',
       'file.added', 'file.deleted', 'file.upgraded'

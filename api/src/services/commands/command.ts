@@ -16,14 +16,14 @@
  */
 
 import { db } from '../../database.js';
-import { Job, JobTypes, isJobType, type JobType } from './queue.js';
+import { CommandModel, CommandNames, isCommandName, type CommandName } from './command-queue.js';
 import {
     getCommandDefinition,
     getCommandTypesForQueueCategory,
     type CommandDefinition,
     type CommandQueueCategory,
 } from './command-registry.js';
-import type { QueuePayloadCommon } from './job-payloads.js';
+import type { CommandBodyCommon } from './command-bodies.js';
 
 export interface CanStartCommandOptions {
     /** Job types to ignore when evaluating running-job exclusivity (e.g. download types for the Scheduler). */
@@ -40,11 +40,11 @@ export class CommandManager {
      * When payload is provided, dynamic exclusivity overrides are applied
      * (e.g. RescanFolders with addNewArtists becomes exclusive).
      */
-    static canStartCommand(jobType: string, payload?: QueuePayloadCommon, refId?: string | null, options?: CanStartCommandOptions): { canStart: boolean; reason?: string } {
+    static canStartCommand(jobType: string, payload?: CommandBodyCommon, refId?: string | null, options?: CanStartCommandOptions): { canStart: boolean; reason?: string } {
         const definition = this.getDefinition(jobType);
 
         // Dynamic exclusivity: RescanFolders with addNewArtists behaves as exclusive + type-exclusive
-        const isLibraryWideScan = jobType === JobTypes.RescanFolders && (payload as any)?.addNewArtists === true;
+        const isLibraryWideScan = jobType === CommandNames.RescanFolders && (payload as any)?.addNewArtists === true;
         const effectiveIsExclusive = definition.isExclusive || isLibraryWideScan;
         const effectiveIsTypeExclusive = definition.isTypeExclusive || isLibraryWideScan;
 
@@ -53,10 +53,10 @@ export class CommandManager {
             ? new Set(options.excludeRunningTypes)
             : null;
         const allProcessing = db.prepare(`
-            SELECT type, ref_id, payload FROM job_queue WHERE status = 'processing'
-        `).all() as Array<{ type: string; ref_id: string | null; payload: string | null }>;
+            SELECT name, ref_id, payload FROM commands WHERE status = 'started'
+        `).all() as Array<{ name: string; ref_id: string | null; payload: string | null }>;
         const processingJobs = excludeSet
-            ? allProcessing.filter(j => !excludeSet.has(j.type))
+            ? allProcessing.filter(j => !excludeSet.has(j.name))
             : allProcessing;
 
         if (processingJobs.length === 0) {
@@ -65,10 +65,10 @@ export class CommandManager {
 
         // Check for exclusive commands currently running
         for (const running of processingJobs) {
-            const runningDef = this.getDefinition(running.type);
+            const runningDef = this.getDefinition(running.name);
             let runningIsExclusive = runningDef.isExclusive;
             // Check if a running RescanFolders job is a library-wide scan
-            if (running.type === JobTypes.RescanFolders && !runningIsExclusive) {
+            if (running.name === CommandNames.RescanFolders && !runningIsExclusive) {
                 try {
                     const runningPayload = JSON.parse(running.payload || '{}');
                     if (runningPayload.addNewArtists === true) {
@@ -94,7 +94,7 @@ export class CommandManager {
 
         // Check type exclusivity
         if (effectiveIsTypeExclusive) {
-            const sameTypeRunning = processingJobs.find(j => j.type === jobType);
+            const sameTypeRunning = processingJobs.find(j => j.name === jobType);
             if (sameTypeRunning) {
                 return {
                     canStart: false,
@@ -105,7 +105,7 @@ export class CommandManager {
 
         // Check per-ref exclusivity (e.g. only one RefreshArtist per artist at a time)
         if (definition.isPerRefExclusive && refId) {
-            const sameRefRunning = processingJobs.find(j => j.type === jobType && j.ref_id === refId);
+            const sameRefRunning = processingJobs.find(j => j.name === jobType && j.ref_id === refId);
             if (sameRefRunning) {
                 return {
                     canStart: false,
@@ -116,7 +116,7 @@ export class CommandManager {
 
         // Optional command-level max concurrency cap
         if (definition.maxConcurrent !== undefined) {
-            const runningSameTypeCount = processingJobs.filter(j => j.type === jobType).length;
+            const runningSameTypeCount = processingJobs.filter(j => j.name === jobType).length;
             if (runningSameTypeCount >= definition.maxConcurrent) {
                 return {
                     canStart: false,
@@ -128,11 +128,11 @@ export class CommandManager {
         // Check disk access exclusivity
         if (definition.requiresDiskAccess) {
             const diskAccessRunning = processingJobs.find(j => {
-                const def = this.getDefinition(j.type);
+                const def = this.getDefinition(j.name);
                 return def.requiresDiskAccess;
             });
             if (diskAccessRunning) {
-                const runningDef = this.getDefinition(diskAccessRunning.type);
+                const runningDef = this.getDefinition(diskAccessRunning.name);
                 return {
                     canStart: false,
                     reason: `Disk-intensive command "${runningDef.name}" is running`
@@ -154,35 +154,35 @@ export class CommandManager {
      * Get queue statistics grouped by category
      */
     static getTaskQueueStats(): {
-        downloads: { pending: number; processing: number; failed: number };
-        scans: { pending: number; processing: number; failed: number };
-        other: { pending: number; processing: number; failed: number };
+        downloads: { queued: number; started: number; failed: number };
+        scans: { queued: number; started: number; failed: number };
+        other: { queued: number; started: number; failed: number };
     } {
         const downloadTypes = new Set(getCommandTypesForQueueCategory('downloads'));
         const scanTypes = new Set(getCommandTypesForQueueCategory('scans'));
         const stats = db.prepare(`
             SELECT
-                type,
+                name,
                 status,
                 COUNT(*) as count
-            FROM job_queue
-            WHERE status IN ('pending', 'processing', 'failed')
-            GROUP BY type, status
-        `).all() as Array<{ type: string; status: string; count: number }>;
+            FROM commands
+            WHERE status IN ('queued', 'started', 'failed')
+            GROUP BY name, status
+        `).all() as Array<{ name: string; status: string; count: number }>;
 
         const result = {
-            downloads: { pending: 0, processing: 0, failed: 0 },
-            scans: { pending: 0, processing: 0, failed: 0 },
-            other: { pending: 0, processing: 0, failed: 0 },
+            downloads: { queued: 0, started: 0, failed: 0 },
+            scans: { queued: 0, started: 0, failed: 0 },
+            other: { queued: 0, started: 0, failed: 0 },
         };
 
         for (const stat of stats) {
-            const category: keyof typeof result = downloadTypes.has(stat.type as JobType)
+            const category: keyof typeof result = downloadTypes.has(stat.name as CommandName)
                 ? 'downloads'
-                : scanTypes.has(stat.type as JobType)
+                : scanTypes.has(stat.name as CommandName)
                     ? 'scans'
                     : 'other';
-            const status = stat.status as 'pending' | 'processing' | 'failed';
+            const status = stat.status as 'queued' | 'started' | 'failed';
             if (result[category] && result[category][status] !== undefined) {
                 result[category][status] = stat.count;
             }
@@ -194,14 +194,14 @@ export class CommandManager {
     /**
      * Get all currently running commands
      */
-    static getRunningCommands(): Array<Job & { definition: CommandDefinition }> {
+    static getRunningCommands(): Array<CommandModel & { definition: CommandDefinition }> {
         const jobs = db.prepare(`
-            SELECT * FROM job_queue WHERE status = 'processing'
+            SELECT * FROM commands WHERE status = 'started'
         `).all() as any[];
 
         return jobs.flatMap((job) => {
-            const jobType = String(job.type);
-            if (!isJobType(jobType)) {
+            const jobType = String(job.name);
+            if (!isCommandName(jobType)) {
                 return [];
             }
 
@@ -209,7 +209,7 @@ export class CommandManager {
                 ...job,
                 type: jobType,
                 payload: JSON.parse(job.payload || '{}'),
-            } as Job;
+            } as CommandModel;
 
             return [{
                 ...hydrated,
@@ -230,9 +230,9 @@ export class CommandManager {
         const placeholders = jobTypes.map(() => '?').join(', ');
 
         const result = db.prepare(`
-            UPDATE job_queue 
+            UPDATE commands 
             SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'pending' AND type IN (${placeholders})
+            WHERE status = 'queued' AND name IN (${placeholders})
         `).run(...jobTypes);
 
         return result.changes;
@@ -246,7 +246,7 @@ export class CommandManager {
         cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
 
         const result = db.prepare(`
-            DELETE FROM job_queue 
+            DELETE FROM commands 
             WHERE status IN ('completed', 'cancelled') 
             AND completed_at < ?
         `).run(cutoffDate.toISOString());
@@ -257,24 +257,24 @@ export class CommandManager {
     /**
      * Get download history (completed downloads)
      */
-    static getDownloadHistory(limit: number = 50): Job[] {
+    static getDownloadHistory(limit: number = 50): CommandModel[] {
         const jobs = db.prepare(`
-            SELECT * FROM job_queue 
-            WHERE type LIKE 'Download%' AND status IN ('completed', 'failed')
+            SELECT * FROM commands 
+            WHERE name LIKE 'Download%' AND status IN ('completed', 'failed')
             ORDER BY completed_at DESC
             LIMIT ?
         `).all(limit) as any[];
 
         return jobs.flatMap((job) => {
-            if (!isJobType(job.type)) {
+            if (!isCommandName(job.name)) {
                 return [];
             }
 
             return [{
                 ...job,
-                type: job.type,
+                type: job.name,
                 payload: JSON.parse(job.payload || '{}'),
-            } as Job];
+            } as CommandModel];
         });
     }
 }

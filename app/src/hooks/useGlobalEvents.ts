@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 
-export type JobStatusRaw = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export type CommandStatusRaw = 'queued' | 'started' | 'completed' | 'failed' | 'cancelled';
 
 export interface GlobalEventPayload {
     type: string;

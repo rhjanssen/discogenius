@@ -1,15 +1,15 @@
 import { Router } from "express";
-import { getCommandHistory, mapJob } from "../../services/jobs/command-history.js";
-import { TaskQueueService } from "../../services/jobs/queue.js";
-import { runCommandByName } from "../../services/jobs/system-task-service.js";
+import { getCommandHistory, mapJob } from "../../services/commands/command-history.js";
+import { CommandQueueService } from "../../services/commands/command-queue.js";
+import { runCommandByName } from "../../services/commands/system-task-service.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../../utils/request-validation.js";
 
 const router = Router();
 
 router.get("/", (req, res) => {
   try {
-    const active = TaskQueueService.listJobs("%", "%", 200)
-      .filter((job) => job.status === "pending" || job.status === "processing")
+    const active = CommandQueueService.listJobs("%", "%", 200)
+      .filter((job) => job.status === "queued" || job.status === "started")
       .map((job) => mapJob(job));
     const historyLimit = Math.max(0, parseInt(String(req.query.limit || "50"), 10) || 50);
     const historyOffset = Math.max(0, parseInt(String(req.query.offset || "0"), 10) || 0);
@@ -28,7 +28,7 @@ router.get("/:id", (req, res) => {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    const job = TaskQueueService.getById(jobId);
+    const job = CommandQueueService.getById(jobId);
     if (!job) {
       return res.status(404).json({ detail: "Command not found" });
     }
@@ -47,7 +47,7 @@ router.post("/", (req, res) => {
       return res.status(400).json({ detail: "Unsupported command name" });
     }
 
-    const job = TaskQueueService.getById(jobId);
+    const job = CommandQueueService.getById(jobId);
     res.status(201).json(job ? mapJob(job) : { id: jobId });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -64,7 +64,7 @@ router.delete("/:id", (req, res) => {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    TaskQueueService.cancel(jobId);
+    CommandQueueService.cancel(jobId);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

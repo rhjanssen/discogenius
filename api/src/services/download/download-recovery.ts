@@ -1,9 +1,9 @@
 import fs from "fs";
 import { db } from "../../database.js";
-import type { ImportDownloadJobPayload } from "../jobs/job-payloads.js";
+import type { ImportDownloadCommand } from "../commands/command-bodies.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { getDownloadWorkspacePath, type DownloadMediaType } from "./download-routing.js";
-import { JobTypes, type Job } from "../jobs/queue.js";
+import { CommandNames, type CommandModel } from "../commands/command-queue.js";
 
 const REDOWNLOAD_IMPORT_HINT = 're-download the item to retry import';
 
@@ -11,8 +11,8 @@ function isDownloadMediaType(value: unknown): value is DownloadMediaType {
     return value === 'album' || value === 'track' || value === 'video';
 }
 
-function isImportDownloadJob(job: Job): job is Job & { type: typeof JobTypes.ImportDownload; payload: ImportDownloadJobPayload } {
-    return job.type === JobTypes.ImportDownload;
+function isImportDownloadJob(job: CommandModel): job is CommandModel & { type: typeof CommandNames.ImportDownload; payload: ImportDownloadCommand } {
+    return job.name === CommandNames.ImportDownload;
 }
 
 export function getExistingLibraryMediaIds(
@@ -91,7 +91,7 @@ export function getExistingLibraryMediaIds(
         .filter(Boolean);
 }
 
-export function shouldQueueRedownloadForFailedImport(job: Job): boolean {
+export function shouldQueueRedownloadForFailedImport(job: CommandModel): boolean {
     if (!isImportDownloadJob(job) || job.status !== 'failed') {
         return false;
     }

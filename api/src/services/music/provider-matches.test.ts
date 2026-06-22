@@ -121,6 +121,46 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   assert.equal(vinyl.availability.length, 0);
 });
 
+test("getReleaseGroupAvailability returns a stable slot and quality order for offers", () => {
+  const { db } = dbModule;
+  seedReleaseGroup();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid)
+              VALUES ('tidal', 'album', 'prov-stereo-hires', 'HIRES_LOSSLESS', 'stereo', 'rg-1', 'rel-stereo')`).run();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid)
+              VALUES ('tidal', 'album', 'prov-stereo-low', 'HIGH', 'stereo', 'rg-1', 'rel-stereo')`).run();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, quality, library_slot, release_group_mbid, release_mbid)
+              VALUES ('tidal', 'album', 'prov-atmos-same-release', 'DOLBY_ATMOS', 'spatial', 'rg-1', 'rel-stereo')`).run();
+
+  for (const [providerId, confidence] of [
+    ["prov-atmos-same-release", 1],
+    ["prov-stereo", 1],
+    ["prov-stereo-hires", 1],
+    ["prov-stereo-low", 1],
+  ] as const) {
+    providerMatches.upsertProviderReleaseMatch({
+      provider: "tidal",
+      providerId,
+      releaseMbid: "rel-stereo",
+      status: "verified",
+      confidence,
+    });
+  }
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-1");
+  const stereo = result.releases.find((r) => r.releaseMbid === "rel-stereo");
+
+  assert.ok(stereo);
+  assert.deepEqual(
+    stereo.availability.map((offer) => `${offer.librarySlot}:${offer.quality}:${offer.providerAlbumId}`),
+    [
+      "stereo:HIRES_LOSSLESS:prov-stereo-hires",
+      "stereo:LOSSLESS:prov-stereo",
+      "stereo:HIGH:prov-stereo-low",
+      "spatial:DOLBY_ATMOS:prov-atmos-same-release",
+    ],
+  );
+});
+
 test("getReleaseGroupAvailability derives strict hybrid coverage from multiple provider albums", () => {
   const { db } = dbModule;
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-bastille", "Bastille");

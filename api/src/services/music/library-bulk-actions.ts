@@ -1,3 +1,4 @@
+import { CommandTrigger } from "../commands/command-trigger.js";
 import { db } from "../../database.js";
 import { queueArtistMonitoringIntake } from "./artist-monitoring.js";
 import {
@@ -6,7 +7,7 @@ import {
     updateArtistDownloadStatus,
 } from "../download/download-state.js";
 import { CurationService } from "./curation-service.js";
-import { JobTypes, TaskQueueService } from "../jobs/queue.js";
+import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getConfigSection } from "../config/config.js";
 
@@ -311,7 +312,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 : title;
             const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
 
-            const jobId = TaskQueueService.addJob(JobTypes.DownloadAlbum, {
+            const jobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
                 url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
                 type: "album",
                 provider,
@@ -389,7 +390,7 @@ function queueTrackDownloads(trackIds: string[]): number[] {
         const albumTitle = String(track.album_title || "Unknown Album").trim();
         const artistName = String(track.artist_name || "Unknown").trim() || "Unknown";
 
-        const jobId = TaskQueueService.addJob(JobTypes.DownloadTrack, {
+        const jobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
             url: buildStreamingMediaUrl("track", String(track.provider_id)),
             type: "track",
             provider: track.provider || "tidal",
@@ -455,7 +456,7 @@ function queueVideoDownloads(videoIds: string[]): number[] {
         const title = String(video.title || video.provider_title || "Unknown Video").trim();
         const artistName = String(video.artist_name || "Unknown").trim() || "Unknown";
 
-        const jobId = TaskQueueService.addJob(JobTypes.DownloadVideo, {
+        const jobId = CommandQueueService.addJob(CommandNames.DownloadVideo, {
             url: buildStreamingMediaUrl("video", String(video.provider_id)),
             type: "video",
             provider: video.provider || "tidal",
@@ -584,7 +585,7 @@ export class LibraryBulkActionService {
                     artistId,
                     artistName: String(row.name || "").trim() || `Artist ${artistId}`,
                     priority: 1,
-                    trigger: 1,
+                    trigger: CommandTrigger.Manual,
                 });
 
                 result.items.push({

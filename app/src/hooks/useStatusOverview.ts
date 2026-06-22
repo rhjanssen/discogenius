@@ -17,9 +17,9 @@ export function useStatusOverview() {
     useDebouncedQueryInvalidation({
         queryKeys: [statusOverviewQueryKey],
         globalEvents: [
-            "job.added",
-            "job.updated",
-            "job.deleted",
+            "command.added",
+            "command.updated",
+            "command.deleted",
             "queue.cleared",
             "config.updated",
             "file.added",

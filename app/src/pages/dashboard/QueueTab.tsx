@@ -207,7 +207,7 @@ function getMovablePendingJobIds(
     items: Array<{ id: number; status: string; stage?: string }>,
 ): number[] {
     return items
-        .filter((item) => item.status === 'pending' && item.stage !== 'import')
+        .filter((item) => item.status === 'queued' && item.stage !== 'import')
         .map((item) => item.id);
 }
 
@@ -369,7 +369,7 @@ type QueueGroup = {
     type: QueueItem['type'];
     quality: string | null;
     items: QueueItem[];
-    status: 'downloading' | 'pending' | 'failed';
+    status: 'downloading' | 'queued' | 'failed';
     sortIndex: number;
 };
 
@@ -380,9 +380,9 @@ function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"]
             return "failed";
         case "queued":
         case "importPending":
-            return "pending";
+            return "queued";
         case "importing":
-            return "processing";
+            return "started";
         case "completed":
             return "completed";
         default:
@@ -521,11 +521,11 @@ function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | unde
     }
 
     const inferredState = item.state
-        ?? (item.status === "processing"
+        ?? (item.status === "started"
             ? (item.stage === "import" ? "importing" : "downloading")
             : item.status === "downloading"
                 ? "downloading"
-                : item.status === "pending"
+                : item.status === "queued"
                     ? "queued"
                     : item.status === "failed"
                         ? "failed"
@@ -574,7 +574,7 @@ function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
 }
 
 function isPendingReorderableGroup(group: { status: string; items: ReorderableQueueItem[] }): boolean {
-    return group.status === 'pending' && getMovablePendingJobIds(group.items).length === group.items.length;
+    return group.status === 'queued' && getMovablePendingJobIds(group.items).length === group.items.length;
 }
 
 function getGroupFirstJobId(group: { items: ReorderableQueueItem[] }): number | undefined {
@@ -713,8 +713,8 @@ const QueueTab = () => {
     );
 
     const groupedDownloads = useMemo(() => {
-        const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'processing');
-        const pendingDownloads = liveQueueItems.filter(i => i.status === 'pending');
+        const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'started');
+        const pendingDownloads = liveQueueItems.filter(i => i.status === 'queued');
         const filteredQueue = [...activeDownloads, ...pendingDownloads];
 
         const albumTrackCounts = new Map<string, number>();
@@ -760,12 +760,12 @@ const QueueTab = () => {
                     type: groupType,
                     quality: item.quality ?? null,
                     items: [],
-                    status: (item.status === 'downloading' || item.status === 'processing') ? 'downloading' : item.status === 'failed' ? 'failed' : 'pending',
+                    status: (item.status === 'downloading' || item.status === 'started') ? 'downloading' : item.status === 'failed' ? 'failed' : 'queued',
                     sortIndex: index,
                 };
             }
 
-            if (item.status === 'downloading' || item.status === 'processing') {
+            if (item.status === 'downloading' || item.status === 'started') {
                 groups[groupId].status = 'downloading';
             } else if (item.status === 'failed' && groups[groupId].status !== 'downloading') {
                 groups[groupId].status = 'failed';
@@ -779,13 +779,13 @@ const QueueTab = () => {
         });
 
         return Object.values(groups).sort((a, b) => {
-            const aActiveItem = a.items.find(i => i.status === 'downloading' || i.status === 'processing');
-            const bActiveItem = b.items.find(i => i.status === 'downloading' || i.status === 'processing');
+            const aActiveItem = a.items.find(i => i.status === 'downloading' || i.status === 'started');
+            const bActiveItem = b.items.find(i => i.status === 'downloading' || i.status === 'started');
             const rankGroup = (group: QueueGroup, activeItem?: QueueItem) => {
                 if (group.status === 'downloading' && activeItem?.stage === 'import') return 0;
-                if (group.status === 'pending' && group.items[0]?.stage === 'import') return 1;
+                if (group.status === 'queued' && group.items[0]?.stage === 'import') return 1;
                 if (group.status === 'downloading') return 2;
-                if (group.status === 'pending') return 3;
+                if (group.status === 'queued') return 3;
                 return 4;
             };
             const rankDiff = rankGroup(a, aActiveItem) - rankGroup(b, bActiveItem);
@@ -1245,7 +1245,7 @@ const QueueTab = () => {
                                 const isFailed = group.status === 'failed';
                                 const groupedTrackItems = group.items.filter((item) => item.type === 'track');
 
-                                const activeItem = group.items.find(i => i.status === 'downloading' || i.status === 'processing');
+                                const activeItem = group.items.find(i => i.status === 'downloading' || i.status === 'started');
                                 const firstItem = group.items[0];
                                 const prog = activeItem
                                     ? getProgress(activeItem.id) ?? getEmbeddedQueueItemProgress(activeItem)
@@ -1527,7 +1527,7 @@ const QueueTab = () => {
                                                 ?? matchedTrack?.status
                                                 ?? (item.status === 'failed'
                                                     ? 'error'
-                                                    : item.status === 'downloading' || item.status === 'processing'
+                                                    : item.status === 'downloading' || item.status === 'started'
                                                         ? 'downloading'
                                                         : item.status === 'completed'
                                                             ? 'completed'

@@ -18,7 +18,7 @@ import {
   updateScheduledTask,
   type ScheduledTaskKey,
 } from "./scheduler.js";
-import { TaskQueueService, type JobType } from "./queue.js";
+import { CommandQueueService, type CommandName } from "./command-queue.js";
 
 function normalizeTaskId(value: string): string {
   return String(value || "").trim().toLowerCase();
@@ -27,8 +27,8 @@ function normalizeTaskId(value: string): string {
 function getRunTimes(taskName: string) {
   const row = db.prepare(`
     SELECT started_at, completed_at, created_at
-    FROM job_queue
-    WHERE type = ?
+    FROM commands
+    WHERE name = ?
     ORDER BY COALESCE(started_at, created_at) DESC, id DESC
     LIMIT 1
   `).get(taskName) as { started_at?: string | null; completed_at?: string | null; created_at?: string | null } | undefined;
@@ -40,9 +40,9 @@ function getRunTimes(taskName: string) {
 }
 
 function isTaskActive(taskName: string) {
-  return TaskQueueService.listJobsByTypesAndStatuses(
-    [taskName as JobType],
-    ["pending", "processing"],
+  return CommandQueueService.listJobsByTypesAndStatuses(
+    [taskName as CommandName],
+    ["queued", "started"],
     1,
     0,
     { orderBy: "execution" },

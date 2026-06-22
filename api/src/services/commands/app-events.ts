@@ -1,16 +1,16 @@
 import { EventEmitter } from 'events';
 import type { ArtistWorkflow } from '../music/artist-workflow.js';
-import type { MonitoringPassWorkflowValue } from './job-payloads.js';
-import type { AnyJobPayload, JobStatus, JobType } from './queue.js';
+import type { MonitoringPassWorkflowValue } from './command-bodies.js';
+import type { AnyCommandBody, CommandStatus, CommandName } from './command-queue.js';
 
 /**
  * Strongly typed events mapping
  */
 export enum AppEvent {
     // Job Queue Events
-    JOB_ADDED = 'job.added',
-    JOB_UPDATED = 'job.updated',
-    JOB_DELETED = 'job.deleted',
+    COMMAND_ADDED = 'command.added',
+    COMMAND_UPDATED = 'command.updated',
+    COMMAND_DELETED = 'command.deleted',
     QUEUE_CLEARED = 'queue.cleared',
     HISTORY_ADDED = 'history.added',
 
@@ -28,12 +28,12 @@ export enum AppEvent {
     FILE_UPGRADED = 'file.upgraded',
 }
 
-export interface JobEventPayload {
+export interface CommandEventPayload {
     id: number;
-    type: JobType;
-    status: JobStatus;
+    type: CommandName;
+    status: CommandStatus;
     progress: number;
-    payload?: AnyJobPayload;
+    payload?: AnyCommandBody;
     error?: string;
 }
 
@@ -78,9 +78,9 @@ export interface FileChangeEventPayload {
 }
 
 export interface AppEventPayloadMap {
-    [AppEvent.JOB_ADDED]: JobEventPayload;
-    [AppEvent.JOB_UPDATED]: JobEventPayload;
-    [AppEvent.JOB_DELETED]: JobEventPayload;
+    [AppEvent.COMMAND_ADDED]: CommandEventPayload;
+    [AppEvent.COMMAND_UPDATED]: CommandEventPayload;
+    [AppEvent.COMMAND_DELETED]: CommandEventPayload;
     [AppEvent.QUEUE_CLEARED]: undefined;
     [AppEvent.HISTORY_ADDED]: Record<string, unknown>;
     [AppEvent.ARTIST_SCANNED]: ArtistScannedEventPayload;

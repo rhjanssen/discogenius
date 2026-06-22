@@ -8,11 +8,11 @@ import {
 import { AudioTagService } from "./audio-tag-service.js";
 import { getDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
-import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../jobs/history-events.js";
-import { JobOfType, JobTypes } from "../jobs/queue.js";
+import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
+import { CommandModelOf, CommandNames } from "../commands/command-queue.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 
-type ImportDownloadJob = JobOfType<typeof JobTypes.ImportDownload>;
+type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
 export type ImportDownloadState = {
     progress?: number;
