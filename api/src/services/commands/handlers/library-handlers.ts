@@ -42,7 +42,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         });
 
         // Step 3: Emit completion so artist curation cascades when requested
-        appEvents.emit(AppEvent.RESCAN_COMPLETED, {
+        appEvents.emit(AppEvent.ARTIST_SCANNED, {
             artistId,
             artistName: job.payload.artistName ?? "",
             workflow: job.payload.workflow,

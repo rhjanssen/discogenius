@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { buildArtistCompletionPredicate } from "../music/managed-artists.js";
+import { forwardCacheInvalidate } from "../commands/worker/job-protocol.js";
 
 const CACHE_TTL_MS = 30_000;
 
@@ -95,12 +96,14 @@ function toArtistStats(artistId: string, totalItems: number, downloadedItems: nu
 
 export function invalidateAlbumDownloadStatus(albumId: string): void {
   if (!albumId) return;
+  forwardCacheInvalidate("album", String(albumId));
   albumStatsCache.delete(String(albumId));
   invalidateReleaseGroupDownloadStatus(String(albumId));
 }
 
 export function invalidateReleaseGroupDownloadStatus(releaseGroupMbid: string): void {
   if (!releaseGroupMbid) return;
+  forwardCacheInvalidate("releaseGroup", String(releaseGroupMbid));
   for (const key of Array.from(albumStatsCache.keys())) {
     if (key.endsWith(`:${releaseGroupMbid}`)) {
       albumStatsCache.delete(key);
@@ -110,16 +113,19 @@ export function invalidateReleaseGroupDownloadStatus(releaseGroupMbid: string): 
 
 export function invalidateArtistDownloadStatus(artistId: string): void {
   if (!artistId) return;
+  forwardCacheInvalidate("artist", String(artistId));
   artistStatsCache.delete(String(artistId));
 }
 
 export function invalidateMediaDownloadState(mediaId: string): void {
   if (!mediaId) return;
+  forwardCacheInvalidate("media", String(mediaId));
   mediaDownloadCache.delete(mediaCacheKey(String(mediaId), "track"));
   mediaDownloadCache.delete(mediaCacheKey(String(mediaId), "video"));
 }
 
 export function invalidateAllDownloadState(): void {
+  forwardCacheInvalidate("all");
   albumStatsCache.clear();
   artistStatsCache.clear();
   mediaDownloadCache.clear();
