@@ -1,6 +1,21 @@
 # Release-centric provider matching (remove the release-group constraint)
 
-Status: **planned** (approved direction; band-aid promotion step reverted)
+Status: **in progress**
+
+Done so far:
+- ISRC-first composite track coverage (title/shape fallback for SkyHook).
+- Composite matches are now **first-class persisted `ProviderItemMatches` rows**
+  (`persistCompositeReleaseMatches`), not a read-time recompute — the
+  availability layer reads them and `appendStrictCompositeCoverage` is deleted.
+- Slot selection picks the largest covered release per slot from the availability
+  graph (direct + composite), covering core + collaborative release groups.
+
+Remaining:
+- Refactor `provider-release-group-matcher` so a provider album matches an MB
+  **release** directly (release group only as a fetch container).
+- **External-link tier** (tier 1) via the local musicbrainz-docker DB.
+- Optional: only re-persist composites for groups whose provider albums changed
+  (today `persistCompositeReleaseMatchesForArtist` re-runs all groups per sync).
 
 ## The problem
 
