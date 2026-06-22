@@ -18,10 +18,9 @@ import {
     chooseCachedProviderArtwork,
     parseJsonObject,
     registerMediaCoverProxyUrl,
-    resolveAlbumArtwork,
     resolveMediaCoverProxyUrl,
 } from "../metadata/media-cover-service.js";
-import { skyHookProxy } from "../metadata/skyhook-proxy.js";
+import { resolveHydratedReleaseGroupArtwork } from "../metadata/release-group-artwork-service.js";
 import { getConfigSection } from "../config/config.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -257,44 +256,6 @@ function parseJsonStringArray(value: unknown): string[] {
     }
 }
 
-function rowHasCanonicalArtwork(row: Record<string, any>): boolean {
-    const images = parseJsonObject(row.images);
-    if (!Array.isArray(images)) return false;
-    return images.some((image) => {
-        if (!image || typeof image !== "object") return false;
-        const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
-        const url = (image as any).url || (image as any).Url || (image as any).remoteUrl || (image as any).RemoteUrl;
-        return Boolean(url) && source !== "provider-fallback";
-    });
-}
-
-function rowHasProviderFallbackArtwork(row: Record<string, any>): boolean {
-    const images = parseJsonObject(row.images);
-    if (!Array.isArray(images)) return false;
-    return images.some((image) => {
-        if (!image || typeof image !== "object") return false;
-        const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
-        const url = (image as any).url || (image as any).Url || (image as any).remoteUrl || (image as any).RemoteUrl;
-        return Boolean(url) && source === "provider-fallback";
-    });
-}
-
-async function hydrateReleaseGroupArtworkIfNeeded(row: Record<string, any>): Promise<void> {
-    if (rowHasCanonicalArtwork(row)) return;
-    if (!rowHasProviderFallbackArtwork(row)) return;
-    if (albumProviderArtworkCandidatesFromRow(row).length === 0) return;
-
-    const releaseGroupMbid = String(row.mbid || "").trim();
-    const artistMbid = String(row.artist_mbid || "").trim();
-    if (!releaseGroupMbid || !artistMbid) return;
-
-    try {
-        await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
-    } catch (error) {
-        console.warn(`[ArtistQueryService] Failed to hydrate artwork for release group ${releaseGroupMbid}:`, error);
-    }
-}
-
 function normalizeReleaseGroupPrimaryType(value: unknown): string {
     const normalized = String(value || "Album").trim().toUpperCase();
     if (normalized === "EP") return "EP";
@@ -394,16 +355,7 @@ async function mapReleaseGroupCardForArtistPage(row: Record<string, any>, option
     downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
 }): Promise<any> {
     const card = mapReleaseGroupCard(row, options);
-    await hydrateReleaseGroupArtworkIfNeeded(row);
-    const providerCandidates = albumProviderArtworkCandidatesFromRow(row);
-    const resolvedCoverUrl = await resolveAlbumArtwork({
-        albumMbid: row.mbid,
-        skyHookData: parseJsonObject(row.data),
-        providerCandidates,
-    });
-    const coverUrl = resolvedCoverUrl
-        ? registerMediaCoverProxyUrl(resolvedCoverUrl) || resolvedCoverUrl
-        : card.cover_art_url;
+    const coverUrl = await resolveHydratedReleaseGroupArtwork(row, "ArtistQueryService") || card.cover_art_url;
 
     return {
         ...card,

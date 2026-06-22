@@ -54,8 +54,11 @@ function seedCanonicalArtistPage() {
   `).run();
 
   db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
-    VALUES ('release-group-mbid-1', 'artist-mbid-1', 'Canonical Album', 'Album', '2024-01-01')
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, data)
+    VALUES (
+      'release-group-mbid-1', 'artist-mbid-1', 'Canonical Album', 'Album', '2024-01-01',
+      '{"images":[{"coverType":"Cover","url":"https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/seed.jpg"}]}'
+    )
   `).run();
 
   db.prepare(`
@@ -278,6 +281,40 @@ test("artist page hydrates missing release-group artwork before using provider f
       }]),
       "release-group-mbid-1",
     );
+
+  skyHookProxyModule.skyHookProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
+    assert.equal(releaseGroupMbid, "release-group-mbid-1");
+    assert.equal(artistMbid, "artist-mbid-1");
+    db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
+      .run(
+        JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+        "release-group-mbid-1",
+      );
+  }) as typeof skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+
+  try {
+    const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+    const albums = (page?.rows || [])
+      .flatMap((row: any) => row.modules || [])
+      .find((module: any) => module.title === "Albums")?.items || [];
+
+    assert.equal(albums.length, 1);
+    const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
+    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+    assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+  } finally {
+    skyHookProxyModule.skyHookProxy.syncReleaseGroup = originalSync;
+  }
+});
+
+test("artist page hydrates blank release-group artwork from SkyHook", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/blank-card.jpg";
+  const originalSync = skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+
+  db.prepare(`UPDATE Albums SET data = NULL, images = NULL WHERE mbid = ?`)
+    .run("release-group-mbid-1");
 
   skyHookProxyModule.skyHookProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
     assert.equal(releaseGroupMbid, "release-group-mbid-1");

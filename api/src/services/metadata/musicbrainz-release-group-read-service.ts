@@ -12,9 +12,9 @@ import {
     chooseCachedProviderArtwork,
     parseJsonObject,
     registerMediaCoverProxyUrl,
-    resolveAlbumArtwork,
     resolveMediaCoverProxyUrl,
 } from "./media-cover-service.js";
+import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-service.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
@@ -325,11 +325,7 @@ function chooseReleaseGroupProviderArtwork(releaseGroup: any): string | null {
 }
 
 async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {
-    return resolveAlbumArtwork({
-        albumMbid: releaseGroup.mbid,
-        skyHookData: parseJsonObject(releaseGroup.data),
-        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
-    });
+    return resolveHydratedReleaseGroupArtwork(releaseGroup, "MusicBrainzReleaseGroupReadService");
 }
 
 async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
