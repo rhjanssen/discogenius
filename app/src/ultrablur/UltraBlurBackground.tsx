@@ -96,13 +96,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
   const layerFilter = props.isDarkMode
     ? "blur(24px) saturate(0.9) brightness(0.8) contrast(1.06)"
     : "blur(24px) saturate(0.75) brightness(1.05) contrast(0.98)";
-  const key = useMemo(() => {
-    return `${colors.topLeft}|${colors.topRight}|${colors.bottomLeft}|${colors.bottomRight}`;
-  }, [colors]);
-
-  useEffect(() => {
-    let cancelled = false;
-
+  const imageUrl = useMemo(() => {
     const params = new URLSearchParams({
       topLeft: colors.topLeft,
       topRight: colors.topRight,
@@ -111,7 +105,11 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
       width: String(ULTRABLUR_SIZE.width),
       height: String(ULTRABLUR_SIZE.height),
     });
-    const url = `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
+    return `${getApiBaseUrl()}/services/ultrablur/image?${params.toString()}`;
+  }, [colors.bottomLeft, colors.bottomRight, colors.topLeft, colors.topRight]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     // Keep the current image on screen as the back layer until the new one is
     // decoded, so an uncached page never flashes blank.
@@ -123,14 +121,14 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     function startCrossfade() {
       if (cancelled) return;
 
-      if (previousFront && previousFront !== url) {
+      if (previousFront && previousFront !== imageUrl) {
         setBackUrl(previousFront);
       }
 
       // Place the (now-decoded) image at opacity 0 with no transition…
       setSkipTransition(true);
       setFrontVisible(false);
-      setFrontUrl(url);
+      setFrontUrl(imageUrl);
 
       // …then fade it in after two frames so the opacity-0 state commits first.
       requestAnimationFrame(() => {
@@ -152,7 +150,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
 
     const img = new Image();
     img.decoding = "async";
-    img.src = url;
+    img.src = imageUrl;
 
     if (typeof img.decode === "function") {
       img.decode().then(startCrossfade).catch(() => {
@@ -174,7 +172,7 @@ export function UltraBlurBackground(props: UltraBlurBackgroundProps) {
     return () => {
       cancelled = true;
     };
-  }, [key, transitionMs]);
+  }, [imageUrl, transitionMs]);
 
   return (
     <div className={styles.container}>
