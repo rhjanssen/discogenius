@@ -85,6 +85,7 @@ export interface MbRelease {
   date?: string | null;
   disambiguation?: string | null;
   "label-info"?: Array<{ label?: { name?: string } }>;
+  relations?: Array<{ url?: { resource?: string | null } | null }>;
   "release-group"?: MbReleaseGroupStub & { "artist-credit"?: MbArtistCreditName[] };
   media?: MbMedium[];
 }
@@ -203,6 +204,9 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     MediumCount: media.length,
     MediaCount: media.length,
     Disambiguation: release.disambiguation ?? "",
+    ExternalUrls: (release.relations || [])
+      .map((relation) => String(relation.url?.resource || "").trim())
+      .filter(Boolean),
     Tracks: tracks,
   };
 }

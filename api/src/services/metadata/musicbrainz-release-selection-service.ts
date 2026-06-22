@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
 
 export type MusicBrainzReleaseSelection = {
     mbid: string;
@@ -35,6 +36,7 @@ export class MusicBrainzReleaseSelectionService {
         const availabilityWhere = availableReleaseMbids
             ? `AND r.mbid IN (${availableReleaseMbids.map(() => "?").join(", ")})`
             : "";
+        const preferExplicit = getConfigSection("filtering").prefer_explicit !== false;
         const row = db.prepare(`
             SELECT
                 r.mbid,
@@ -63,13 +65,27 @@ export class MusicBrainzReleaseSelectionService {
                       OR UPPER(COALESCE(r.country, '')) LIKE '%"XW"%'
                     THEN 1 ELSE 0
                 END DESC,
+                CASE
+                    WHEN ? = 1 THEN
+                        CASE
+                            WHEN LOWER(COALESCE(r.disambiguation, '') || ' ' || COALESCE(r.title, '')) LIKE '%explicit%' THEN 2
+                            WHEN LOWER(COALESCE(r.disambiguation, '') || ' ' || COALESCE(r.title, '')) LIKE '%clean%' THEN 0
+                            ELSE 1
+                        END
+                    ELSE
+                        CASE
+                            WHEN LOWER(COALESCE(r.disambiguation, '') || ' ' || COALESCE(r.title, '')) LIKE '%clean%' THEN 2
+                            WHEN LOWER(COALESCE(r.disambiguation, '') || ' ' || COALESCE(r.title, '')) LIKE '%explicit%' THEN 0
+                            ELSE 1
+                        END
+                END DESC,
                 CASE WHEN r.date IS NULL OR TRIM(r.date) = '' THEN 1 ELSE 0 END ASC,
                 r.date ASC,
                 CASE WHEN r.barcode IS NULL OR TRIM(r.barcode) = '' THEN 0 ELSE 1 END DESC,
                 CASE WHEN COALESCE(r.media_count, 0) > 0 AND COALESCE(r.track_count, 0) > 0 THEN 1 ELSE 0 END DESC,
                 r.mbid ASC
             LIMIT 1
-        `).get(releaseGroupMbid, ...(availableReleaseMbids || [])) as MusicBrainzReleaseSelection | undefined;
+        `).get(releaseGroupMbid, ...(availableReleaseMbids || []), preferExplicit ? 1 : 0) as MusicBrainzReleaseSelection | undefined;
 
         return row || null;
     }

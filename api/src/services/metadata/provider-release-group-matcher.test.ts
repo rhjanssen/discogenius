@@ -211,6 +211,74 @@ test("uses UPC evidence to verify a provider album against a MusicBrainz release
     assert.equal(match.evidence.matchedReleaseMbid, "db967b8b-99c1-4adf-8d12-f0ab285390b3");
 });
 
+test("uses MusicBrainz external links before UPC and title fallback", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "287367980",
+        title: "Pompeii",
+        releaseDate: "2013-01-01",
+        type: "SINGLE",
+        upc: "000000000000",
+        trackCount: 2,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "wrong-title-rg",
+            title: "Pompeii",
+            primaryType: "Single",
+            firstReleaseDate: "2013-01-01",
+            releases: [{ mbid: "wrong-title-release", title: "Pompeii", trackCount: 2, mediaCount: 1 }],
+        },
+        {
+            mbid: "linked-rg",
+            title: "Pompeii / Come as You Are (MTV Unplugged)",
+            primaryType: "Single",
+            firstReleaseDate: "2023-04-12",
+            releases: [{
+                mbid: "linked-release",
+                title: "Pompeii / Come as You Are (MTV Unplugged)",
+                externalUrls: ["https://tidal.com/album/287367980"],
+                trackCount: 2,
+                mediaCount: 1,
+            }],
+        },
+    ]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.method, "musicbrainz-release-url");
+    assert.equal(match.releaseGroup?.mbid, "linked-rg");
+    assert.equal(match.releaseMbid, "linked-release");
+    assert.equal(match.evidence.providerUrlMatched, true);
+});
+
+test("does not treat unrelated numeric external URLs as provider release links", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "287367980",
+        title: "Different Provider Title",
+        releaseDate: "2023-04-12",
+        type: "SINGLE",
+        trackCount: 2,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "apple-linked-rg",
+            title: "Different Provider Title",
+            primaryType: "Single",
+            firstReleaseDate: "2023-04-12",
+            releases: [{
+                mbid: "apple-linked-release",
+                title: "Different Provider Title",
+                externalUrls: ["https://music.apple.com/us/album/287367980"],
+                trackCount: 2,
+                mediaCount: 1,
+            }],
+        },
+    ]);
+
+    assert.equal(match.method, "musicbrainz-release-title-year-type-track-count");
+    assert.equal(match.evidence.providerUrlMatched, false);
+    assert.equal(match.releaseMbid, "apple-linked-release");
+});
+
 test("uses MusicBrainz release titles when provider title differs from release group title", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "57231699",
@@ -234,6 +302,48 @@ test("uses MusicBrainz release titles when provider title differs from release g
     assert.equal(match.releaseGroup?.mbid, "b14c65e0-d21c-4999-aa9e-0c2cb9a23f8d");
     assert.equal(match.evidence.candidateTitle, "games");
     assert.deepEqual(match.evidence.availableReleaseMbids, ["16462c36-3748-4edd-9bb8-334628778f14"]);
+});
+
+test("prefers a full release-title match over a shorter expanded-title prefix", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "287367980",
+        title: "Pompeii / Come As You Are (MTV Unplugged)",
+        version: "MTV Unplugged",
+        releaseDate: "2023-04-12",
+        type: "SINGLE",
+        trackCount: 2,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "pompeii-single-rg",
+            title: "Pompeii",
+            primaryType: "Single",
+            firstReleaseDate: "2013-01-01",
+            releases: [
+                { mbid: "pompeii-single-release", title: "Pompeii", trackCount: 2, mediaCount: 1 },
+            ],
+        },
+        {
+            mbid: "mtv-unplugged-rg",
+            title: "Pompeii / Come as You Are (MTV Unplugged)",
+            primaryType: "Single",
+            firstReleaseDate: "2023-04-12",
+            releases: [
+                {
+                    mbid: "mtv-unplugged-release",
+                    title: "Pompeii / Come as You Are (MTV Unplugged)",
+                    trackCount: 2,
+                    mediaCount: 1,
+                },
+            ],
+        },
+    ]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.releaseGroup?.mbid, "mtv-unplugged-rg");
+    assert.equal(match.releaseMbid, "mtv-unplugged-release");
+    assert.equal(match.evidence.candidateTitle, "pompeii come as you are mtv unplugged");
+    assert.notDeepEqual(match.evidence.ambiguousWith, ["mtv-unplugged-rg"]);
 });
 
 test("matches symbolic MusicBrainz release-group titles before partial provider editions", () => {

@@ -53,6 +53,10 @@ const RELEASE_GROUP_FIXTURE: MbReleaseGroup = {
       country: "US",
       barcode: "074643811224",
       date: "1982-11-30",
+      relations: [
+        { url: { resource: "https://tidal.com/album/123456" } },
+        { url: { resource: "https://music.apple.com/us/album/987654" } },
+      ],
       media: [
         {
           position: 1,
@@ -129,6 +133,10 @@ test("mapMbReleaseToLidarr flattens media/tracks/recording", () => {
   assert.equal(release.TrackCount, 1);
   assert.equal(release.MediaCount, 1);
   assert.equal(release.Media[0].Format, "CD");
+  assert.deepEqual(release.ExternalUrls, [
+    "https://tidal.com/album/123456",
+    "https://music.apple.com/us/album/987654",
+  ]);
   const track = release.Tracks[0];
   assert.equal(track.Id, "track-gid-1");
   assert.equal(track.RecordingId, "rec-gid-1");
