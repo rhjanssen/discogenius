@@ -4,7 +4,12 @@ import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-gro
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
 import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { upsertProviderReleaseMatch } from "./provider-matches.js";
+import {
+    upsertProviderReleaseMatch,
+    getReleaseGroupAvailability,
+    setSlotSelection,
+    type ReleaseAvailabilityProvider,
+} from "./provider-matches.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
 
@@ -853,6 +858,84 @@ export class ReleaseGroupSlotService {
             }
         })();
 
+        // The per-group selection above can only assemble offers the matcher
+        // attached to that one release group. Re-pick each touched slot's release
+        // from the whole-artist availability graph (direct + composite coverage),
+        // so a larger MB release whose tracks span provider albums matched to
+        // *different* groups wins. Composite coverage is only knowable once every
+        // album is matched, so this is where selection first sees the full graph —
+        // it reads the release graph rather than the per-group candidate buckets.
+        this.selectLargestCoveredReleasePerSlot(selections);
+
         return counts;
+    }
+
+    private static selectLargestCoveredReleasePerSlot(
+        selections: ReleaseGroupSlotSelection[],
+    ): void {
+        const slotsByGroup = new Map<string, Set<string>>();
+        for (const selection of selections) {
+            let slots = slotsByGroup.get(selection.releaseGroupMbid);
+            if (!slots) {
+                slots = new Set();
+                slotsByGroup.set(selection.releaseGroupMbid, slots);
+            }
+            slots.add(selection.slot);
+        }
+
+        const qualityRank = (quality: string | null | undefined): number => {
+            const q = String(quality || "").toUpperCase();
+            if (q.includes("ATMOS") || q.includes("SPATIAL")) return 4;
+            if (q.includes("HIRES")) return 3;
+            if (q.includes("LOSSLESS")) return 2;
+            if (q.includes("HIGH")) return 1;
+            return 0;
+        };
+
+        for (const [releaseGroupMbid, slots] of slotsByGroup) {
+            const availability = getReleaseGroupAvailability(releaseGroupMbid);
+            const trackCountByRelease = new Map(
+                availability.releases.map((release) => [release.releaseMbid, release.trackCount ?? 0]),
+            );
+
+            for (const slot of slots) {
+                const currentReleaseMbid = availability.selectedReleaseBySlot[slot] ?? null;
+                const currentTracks = currentReleaseMbid ? (trackCountByRelease.get(currentReleaseMbid) ?? 0) : 0;
+
+                let best: { releaseMbid: string; tracks: number; offer: ReleaseAvailabilityProvider } | null = null;
+                for (const release of availability.releases) {
+                    const tracks = release.trackCount ?? 0;
+                    const offer = release.availability
+                        .filter((candidate) => (candidate.librarySlot ?? "stereo") === slot)
+                        .sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0];
+                    if (!offer) continue;
+                    if (!best || tracks > best.tracks) {
+                        best = { releaseMbid: release.releaseMbid, tracks, offer };
+                    }
+                }
+
+                if (!best || best.tracks <= currentTracks || best.releaseMbid === currentReleaseMbid) {
+                    continue;
+                }
+
+                const providerAlbumId = best.offer.providerAlbumIds?.length
+                    ? best.offer.providerAlbumIds.join(";")
+                    : best.offer.providerAlbumId;
+                try {
+                    setSlotSelection({
+                        releaseGroupMbid,
+                        slot,
+                        releaseMbid: best.releaseMbid,
+                        provider: best.offer.provider,
+                        providerAlbumId,
+                    });
+                } catch (error) {
+                    console.warn(
+                        `[Slots] Could not select larger covered release ${best.releaseMbid} for ${releaseGroupMbid}:${slot}:`,
+                        (error as Error)?.message,
+                    );
+                }
+            }
+        }
     }
 }

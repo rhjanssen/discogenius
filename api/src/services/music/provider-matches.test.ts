@@ -253,6 +253,42 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
   assert.equal(slot.match_method, "strict_composite_track_coverage");
 });
 
+test("composite coverage matches provider tracks by ISRC even when titles differ", () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-isrc", "ISRC Artist");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'single')`)
+    .run("rg-isrc", "artist-isrc", "ISRC Composite");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count)
+              VALUES ('rel-isrc', 'rg-isrc', 'artist-isrc', 'ISRC Composite', 'Official', '2023-01-01', 'XW', 1, 2)`).run();
+
+  for (const [rec, trk, title, pos, isrc] of [
+    ["rec-a", "trk-a", "Canonical Title A", 1, "AAAA12345678"],
+    ["rec-b", "trk-b", "Canonical Title B", 2, "BBBB12345678"],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, isrcs) VALUES (?, 'artist-isrc', ?, 200000, ?)`)
+      .run(rec, title, JSON.stringify([isrc]));
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+                VALUES (?, 'rel-isrc', ?, ?, ?, 1, 200000)`).run(trk, rec, title, pos);
+  }
+
+  const albumData = (track: { title: string; isrc: string }) =>
+    JSON.stringify({ quality: "LOSSLESS", tracks: [{ ...track, track_number: 1, volume_number: 1, duration: 200 }] });
+  // Provider titles deliberately do NOT match the MB titles — only the ISRC links them.
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different A', 'LOSSLESS', ?)`)
+    .run("prov-a", albumData({ title: "Totally Different A", isrc: "AAAA12345678" }));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different B', 'LOSSLESS', ?)`)
+    .run("prov-b", albumData({ title: "Totally Different B", isrc: "BBBB12345678" }));
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-isrc");
+  const release = result.releases.find((item) => item.releaseMbid === "rel-isrc");
+  assert.ok(release);
+  const composite = release.availability.find((offer) => offer.matchKind === "composite");
+  assert.ok(composite, "ISRC-only composite should form despite mismatched titles");
+  assert.deepEqual(composite!.providerAlbumIds, ["prov-a", "prov-b"]);
+});
+
 test("setSlotSelection switches the selected release and derives the best provider", () => {
   const { db } = dbModule;
   seedReleaseGroup();
