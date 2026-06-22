@@ -331,7 +331,7 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
     switch (job.name) {
         case CommandNames.RefreshMetadata:
             // Per-artist curation is handled by the event-driven pipeline:
-            // ARTIST_SCANNED → RescanFolders → RESCAN_COMPLETED → CurateArtist.
+            // ARTIST_REFRESH_COMPLETED → RescanFolders → ARTIST_SCANNED → CurateArtist.
             // Only queue the library-wide root scan if full-cycle; DownloadMissing
             // is deferred until all monitoring-originated follow-up work drains.
             if (monitoringCycle === "full-cycle") {

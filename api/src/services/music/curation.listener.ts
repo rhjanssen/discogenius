@@ -1,5 +1,5 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
-import { appEvents, AppEvent, type ArtistScannedEventPayload, type RescanCompletedEventPayload } from "../commands/app-events.js";
+import { appEvents, AppEvent, type ArtistRefreshCompletedEventPayload, type ArtistScannedEventPayload } from "../commands/app-events.js";
 import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
 import {
     type ArtistWorkflow,
@@ -43,7 +43,7 @@ export function initCurationListeners() {
     console.log("[Listeners] Initializing curation event listeners");
 
     // Trigger disk scan after metadata refresh is complete
-    appEvents.on(AppEvent.ARTIST_SCANNED, (payload: ArtistScannedEventPayload | undefined) => {
+    appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETED, (payload: ArtistRefreshCompletedEventPayload | undefined) => {
         if (payload?.scanLibrary) {
             const workflow = resolveRescanWorkflow(payload?.workflow);
             if (!workflow) {
@@ -68,7 +68,7 @@ export function initCurationListeners() {
     });
 
     // Trigger missing search/curation after disk scan is complete
-    appEvents.on(AppEvent.RESCAN_COMPLETED, (payload: RescanCompletedEventPayload | undefined) => {
+    appEvents.on(AppEvent.ARTIST_SCANNED, (payload: ArtistScannedEventPayload | undefined) => {
         if (!payload) {
             return;
         }
@@ -102,5 +102,5 @@ export function initCurationListeners() {
         );
     });
 
-    // You can add more decoupled listeners here, e.g. for ALBUM_SCANNED
+    // You can add more decoupled listeners here, e.g. for AlbumImported.
 }

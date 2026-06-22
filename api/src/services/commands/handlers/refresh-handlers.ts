@@ -79,7 +79,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     });
 
     // Emit event so decoupled listeners (like curation.listener) can chain the redundancy check
-    appEvents.emit(AppEvent.ARTIST_SCANNED, {
+    appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETED, {
         artistId: job.payload.artistId,
         artistName: job.payload.artistName,
         workflow: job.payload.workflow,
@@ -147,7 +147,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
             const monitoringCycle = Boolean(job.payload.monitoringCycle);
 
             // Emit event so per-artist pipeline can chain (curation listener handles this)
-            appEvents.emit(AppEvent.ARTIST_SCANNED, {
+            appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETED, {
                 artistId,
                 artistName,
                 workflow: monitoringCycle ? 'monitoring-intake' : 'metadata-refresh',

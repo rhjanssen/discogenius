@@ -3,7 +3,9 @@ import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
 import { commandHandlers } from "./handlers/index.js";
-import type { CommandHandler, CommandHandlerContext } from "./handlers/index.js";
+import type { CommandHandler } from "./handlers/index.js";
+import { buildHandlerContext } from "./job-context.js";
+import { JobWorkerPool } from "./worker/job-worker-pool.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -59,78 +61,6 @@ export class CommandExecutor {
 
     private static async sleep(ms: number) {
         await new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    /**
-     * Cooperative yield: hand the single Node event loop back to pending I/O
-     * (HTTP requests, SSE, timers) between heavy work units. better-sqlite3 is
-     * synchronous, so a long inline batch (e.g. scanning 50 artists) would
-     * otherwise monopolize the loop and starve the API. This is the
-     * single-threaded stand-in for Lidarr's off-thread command execution; the
-     * real fix (worker_threads) is tracked in docs/JOB_EXECUTION_THREADING_PLAN.md.
-     */
-    private static async yieldToEventLoop() {
-        await new Promise(resolve => setImmediate(resolve));
-    }
-
-    private static updateJobDescription(job: CommandModel, options: { progress?: number; description?: string }) {
-        const payloadPatch: Record<string, unknown> = {};
-        if (options.description) {
-            payloadPatch.description = options.description;
-        }
-
-        CommandQueueService.updateState(job.id, {
-            progress: options.progress,
-            payloadPatch: Object.keys(payloadPatch).length > 0 ? payloadPatch : undefined,
-        });
-    }
-
-    private static resolveArtistLabel(job: CommandModel) {
-        const payloadArtist = String(job.payload?.artistName || "").trim();
-        if (payloadArtist && payloadArtist.toLowerCase() !== 'unknown artist') {
-            return payloadArtist;
-        }
-
-        const workflow = String(job.payload?.workflow || "").trim();
-        switch (workflow) {
-            case 'monitoring-intake':
-            case 'full-monitoring':
-                return '';
-            case 'refresh-scan':
-                return '';
-            case 'metadata-refresh':
-                return 'artist metadata';
-            case 'library-scan':
-                return 'library folders';
-            default:
-                return '';
-        }
-    }
-
-    private static formatArtistPhaseDescription(job: CommandModel, phase: string, fallback = 'Artist') {
-        const subject = this.resolveArtistLabel(job) || fallback;
-        return `${subject} · ${phase}`;
-    }
-
-    private static formatWorkflowJobLabel(job: CommandModel, fallback: string) {
-        const workflow = String(job.payload?.workflow || '').trim();
-        const subject = this.resolveArtistLabel(job) || fallback;
-
-        switch (workflow) {
-            case 'monitoring-intake':
-            case 'full-monitoring':
-                return `Monitoring ${subject}`;
-            case 'refresh-scan':
-                return `Refreshing ${subject}`;
-            case 'metadata-refresh':
-                return `Refreshing metadata for ${subject}`;
-            case 'library-scan':
-                return `Scanning ${subject}`;
-            case 'curation':
-                return `Curating ${subject}`;
-            default:
-                return subject;
-        }
     }
 
     private static logBlocked(type: string, reason?: string) {
@@ -218,26 +148,32 @@ export class CommandExecutor {
         this.activeJobs.set(job.id, promise);
     }
 
-    private static buildHandlerContext(): CommandHandlerContext {
-        return {
-            updateJobDescription: (job, options) => this.updateJobDescription(job, options),
-            formatArtistPhaseDescription: (job, phase, fallback) => this.formatArtistPhaseDescription(job, phase, fallback),
-            formatWorkflowJobLabel: (job, fallback) => this.formatWorkflowJobLabel(job, fallback),
-            resolveArtistLabel: (job) => this.resolveArtistLabel(job),
-            yieldToEventLoop: () => this.yieldToEventLoop(),
-        };
+    /**
+     * Run a command's handler. In the live app the job-worker pool is running, so
+     * this hands the work to a real OS thread (worker_threads) — the direct
+     * analogue of Lidarr's off-thread CommandExecutor — keeping the main thread's
+     * HTTP+SSE loop free. When the pool isn't running (unit tests calling
+     * processJob directly), it runs the handler in-process.
+     */
+    private static async runHandler(job: CommandModel): Promise<void> {
+        if (JobWorkerPool.isActive()) {
+            await JobWorkerPool.run(job);
+            return;
+        }
+
+        const handler = commandHandlers[job.name];
+        if (handler) {
+            await (handler as CommandHandler)(job, buildHandlerContext());
+        } else {
+            console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
+        }
     }
 
     private static async processJob(job: CommandModel) {
         console.log(`⚙️ Processing Command #${job.id}: ${job.name}`);
 
         try {
-            const handler = commandHandlers[job.name];
-            if (handler) {
-                await (handler as CommandHandler)(job, this.buildHandlerContext());
-            } else {
-                console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
-            }
+            await this.runHandler(job);
 
             CommandQueueService.complete(job.id);
             queueNextMonitoringPass(job);

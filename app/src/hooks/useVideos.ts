@@ -33,8 +33,7 @@ type UseVideosOptions = {
 const VIDEOS_PAGE_SIZE = 50;
 const VIDEOS_GLOBAL_EVENTS = [
   "artist.scanned",
-  "album.scanned",
-  "rescan.completed",
+  "artist.refresh.completed",
   "file.added",
   "file.deleted",
   "file.upgraded",

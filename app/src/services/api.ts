@@ -1469,7 +1469,7 @@ class ApiClient {
     const knownEvents = [
       'command.added', 'command.updated', 'command.deleted', 'queue.cleared',
       'history.added',
-      'artist.scanned', 'album.scanned', 'rescan.completed', 'config.updated',
+      'artist.scanned', 'artist.refresh.completed', 'config.updated',
       'file.added', 'file.deleted', 'file.upgraded'
     ];
 

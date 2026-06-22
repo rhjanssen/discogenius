@@ -5,8 +5,7 @@ import { LIBRARY_UPDATED_EVENT } from "@/utils/appEvents";
 
 const ARTIST_PAGE_GLOBAL_EVENTS = [
     "artist.scanned",
-    "album.scanned",
-    "rescan.completed",
+    "artist.refresh.completed",
     "file.added",
     "file.deleted",
     "file.upgraded",

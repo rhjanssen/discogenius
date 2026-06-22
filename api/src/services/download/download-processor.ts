@@ -24,6 +24,7 @@ import type {
 } from '../commands/command-bodies.js';
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
+import { JobWorkerPool } from '../commands/worker/job-worker-pool.js';
 
 type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
@@ -165,9 +166,19 @@ export class DownloadProcessor {
 
         const importPromise = (async () => {
             try {
-                await DownloadedTracksImportService.process(job as CommandModelOf<typeof CommandNames.ImportDownload>, {
-                    updateState: emitImportProgress,
-                });
+                if (JobWorkerPool.isActive()) {
+                    // Run the heavy import (metadata parse + matching + tagging +
+                    // sync DB writes) on a worker thread so it never blocks the
+                    // main thread's HTTP/SSE loop. Progress streams back via the
+                    // bridge to the same emitImportProgress sink used inline.
+                    await JobWorkerPool.run(job, {
+                        onProgress: (state) => emitImportProgress(state as Parameters<typeof emitImportProgress>[0]),
+                    });
+                } else {
+                    await DownloadedTracksImportService.process(job as CommandModelOf<typeof CommandNames.ImportDownload>, {
+                        updateState: emitImportProgress,
+                    });
+                }
 
                 CommandQueueService.complete(job.id);
                 downloadEvents.emitCompleted(job.id, {
