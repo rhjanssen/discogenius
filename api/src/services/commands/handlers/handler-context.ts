@@ -8,15 +8,16 @@
  * one monolithic switch — is what makes off-thread execution tractable later.
  */
 
-import type { CommandModel, CommandModelOf, CommandName } from "../command-queue.js";
+import type {CommandModel, CommandModelOf} from "../command-model.js";
+import type {CommandName} from "../command-names.js";
 
 export interface CommandHandlerContext {
   /** Update a command's progress / description (persisted + broadcast). */
-  updateJobDescription(job: CommandModel, options: { progress?: number; description?: string }): void;
+  updateCommandDescription(job: CommandModel, options: { progress?: number; description?: string }): void;
   /** Build a "<artist> · <phase>" progress label. */
   formatArtistPhaseDescription(job: CommandModel, phase: string, fallback?: string): string;
   /** Build a workflow-aware label, e.g. "Refreshing <artist>". */
-  formatWorkflowJobLabel(job: CommandModel, fallback: string): string;
+  formatWorkflowCommandLabel(job: CommandModel, fallback: string): string;
   /** Resolve a human label for the command's subject artist. */
   resolveArtistLabel(job: CommandModel): string;
   /** Hand the event loop back to pending I/O between heavy work units. */

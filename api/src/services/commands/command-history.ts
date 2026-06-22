@@ -11,7 +11,9 @@ import {
     type HistoryEventFeedItem,
     type HistoryEventType,
 } from "./history-events.js";
-import { CommandModel, CommandName, CommandNames, CommandQueueService } from "./command-queue.js";
+import {CommandModel} from "./command-model.js";
+import {CommandName, CommandNames} from "./command-names.js";
+import {CommandQueueManager} from "./command-queue-manager.js";
 
 const ALL_ACTIVITY_STATUSES = ["queued", "started", "completed", "failed", "cancelled"] as const;
 type ActivityStatus = typeof ALL_ACTIVITY_STATUSES[number];
@@ -635,14 +637,14 @@ const sortJobsByTriggerThenTimeDesc = (jobs: CommandModel[]) => {
 };
 
 export function getActiveCommands(limit: number = 100) {
-    const activeJobs = CommandQueueService.listJobs("%", "started", limit);
+    const activeJobs = CommandQueueManager.all("%", "started", limit);
     return sortJobsByTriggerThenTimeDesc(activeJobs)
         .slice(0, limit)
         .map((job) => mapJob(job));
 }
 
 export function getCommandHistory(limit: number = 50, offset: number = 0) {
-    return CommandQueueService.getHistory(limit, offset).map((job) => mapJob(job));
+    return CommandQueueManager.getHistory(limit, offset).map((job) => mapJob(job));
 }
 
 export interface ActivityQuery {
@@ -929,7 +931,7 @@ export function getActivityEventsPage(options: { limit?: number; offset?: number
 
     const taskTypes = getActivityTypesByCategories(DEFAULT_ACTIVITY_CATEGORIES);
     const taskTotal = taskTypes.length > 0
-        ? CommandQueueService.countJobsByTypesAndStatuses(taskTypes, [...ALL_ACTIVITY_STATUSES])
+        ? CommandQueueManager.countJobsByTypesAndStatuses(taskTypes, [...ALL_ACTIVITY_STATUSES])
         : 0;
     const historyTotal = countHistoryEvents();
 
@@ -1049,8 +1051,8 @@ export function getActivityPage(query: ActivityQuery = {}): ActivityPage {
         : statuses.length === 1 && statuses[0] === "queued"
             ? "execution"
             : "created_desc";
-    const total = CommandQueueService.countJobsByTypesAndStatuses(filteredTypes, statuses);
-    const jobs = CommandQueueService.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
+    const total = CommandQueueManager.countJobsByTypesAndStatuses(filteredTypes, statuses);
+    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
         orderBy,
     });
     const pendingQueuePositionById = statuses.includes("queued")
@@ -1085,9 +1087,9 @@ export function getActivitySummary(categories: readonly CommandQueueCategory[] =
     }
 
     return {
-        queued: CommandQueueService.countJobsByTypesAndStatuses(types, ["queued"]),
-        started: CommandQueueService.countJobsByTypesAndStatuses(types, ["started"]),
-        history: CommandQueueService.countJobsByTypesAndStatuses(types, ["completed", "failed", "cancelled"]),
+        queued: CommandQueueManager.countJobsByTypesAndStatuses(types, ["queued"]),
+        started: CommandQueueManager.countJobsByTypesAndStatuses(types, ["started"]),
+        history: CommandQueueManager.countJobsByTypesAndStatuses(types, ["completed", "failed", "cancelled"]),
     };
 }
 

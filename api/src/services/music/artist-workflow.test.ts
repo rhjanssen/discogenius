@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildRefreshArtistCommand, queueArtistIntake } from "./artist-workflow.js";
-import { CommandQueueService } from "../commands/command-queue.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 
 test("credited artist metadata refreshes can disable recursive credit expansion", () => {
   const payload = buildRefreshArtistCommand({
@@ -17,22 +17,22 @@ test("credited artist metadata refreshes can disable recursive credit expansion"
 });
 
 test("unmonitored artist intake reuses metadata refresh without collaborator snowballing", () => {
-  const originalAddJob = CommandQueueService.addJob;
+  const originalAddJob = CommandQueueManager.push;
   let queued: { type?: string; payload?: Record<string, unknown> } = {};
-  CommandQueueService.addJob = ((type: string, payload: Record<string, unknown>) => {
+  CommandQueueManager.push = ((type: string, payload: Record<string, unknown>) => {
     queued = { type, payload };
     return 42;
-  }) as typeof CommandQueueService.addJob;
+  }) as typeof CommandQueueManager.push;
 
   try {
-    const jobId = queueArtistIntake({
+    const commandId = queueArtistIntake({
       artistId: "artist-mbid",
       artistName: "Collaborator",
       monitored: false,
       forceUpdate: true,
     });
 
-    assert.equal(jobId, 42);
+    assert.equal(commandId, 42);
     assert.equal(queued.type, "RefreshArtist");
     assert.equal(queued.payload?.monitorArtist, false);
     assert.equal(queued.payload?.hydrateCatalog, true);
@@ -40,7 +40,7 @@ test("unmonitored artist intake reuses metadata refresh without collaborator sno
     assert.equal(queued.payload?.expandCreditedArtists, false);
     assert.equal(queued.payload?.scanDepth, "deep");
   } finally {
-    CommandQueueService.addJob = originalAddJob;
+    CommandQueueManager.push = originalAddJob;
   }
 });
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 
-import { forwardCacheInvalidate, forwardEventToMain, isJobWorker, JOB_WORKER_MARKER } from "./job-protocol.js";
+import { forwardCacheInvalidate, forwardEventToMain, isCommandWorker, COMMAND_WORKER_MARKER } from "./command-worker-protocol.js";
 
 interface CollectedMessage {
     kind: string;
@@ -10,20 +10,21 @@ interface CollectedMessage {
 }
 
 test("bridge forwarders are inert on the main thread", () => {
-    assert.equal(isJobWorker(), false, "main thread is not a job worker");
+    assert.equal(isCommandWorker(), false, "main thread is not a command worker");
     // No parentPort on the main thread — these must be safe no-ops, not throws.
     assert.doesNotThrow(() => forwardEventToMain("command.updated", { id: 1 }));
     assert.doesNotThrow(() => forwardCacheInvalidate("all"));
 });
 
-test("job bridge forwards events + cache invalidations across the thread boundary", async () => {
+test("command worker bridge forwards events + cache invalidations across the thread boundary", async () => {
     // Spawn through the same bootstrap the pool uses in dev/tests: a plain-JS
     // shim that registers tsx inside the worker, then imports the .ts fixture
     // (whose .js-suffixed imports would otherwise not resolve in the worker).
-    const bootstrapUrl = new URL("./job-worker-bootstrap.mjs", import.meta.url);
-    const fixtureUrl = new URL("./job-bridge.fixture.ts", import.meta.url);
+    const bootstrapUrl = new URL("./command-worker-bootstrap.mjs", import.meta.url);
+    const fixtureExt = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
+    const fixtureUrl = new URL(`./command-worker-bridge.fixture${fixtureExt}`, import.meta.url);
     const worker = new Worker(bootstrapUrl, {
-        workerData: { [JOB_WORKER_MARKER]: true, __entry: fixtureUrl.href },
+        workerData: { [COMMAND_WORKER_MARKER]: true, __entry: fixtureUrl.href },
     });
 
     const messages: CollectedMessage[] = [];
@@ -39,9 +40,9 @@ test("job bridge forwards events + cache invalidations across the thread boundar
     await finished;
     await worker.terminate();
 
-    // The workerData marker makes isJobWorker() true inside a spawned job worker.
+    // The workerData marker makes isCommandWorker() true inside a spawned command worker.
     const probe = messages.find((m) => m.kind === "probe");
-    assert.equal(probe?.isJobWorker, true, "isJobWorker() should be true inside the spawned worker");
+    assert.equal(probe?.isCommandWorker, true, "isCommandWorker() should be true inside the spawned worker");
 
     // appEvents emissions are bridged as {kind:'event', event, payload}.
     const event = messages.find((m) => m.kind === "event");
@@ -58,9 +59,9 @@ test("job bridge forwards events + cache invalidations across the thread boundar
         "expected an all-cache invalidation",
     );
 
-    // ImportDownload progress is bridged as {kind:'importProgress', jobId, state}.
+    // ImportDownload progress is bridged as {kind:'importProgress', commandId, state}.
     const importProgress = messages.find((m) => m.kind === "importProgress");
     assert.ok(importProgress, "expected a forwarded import progress message");
-    assert.equal(importProgress.jobId, 42);
+    assert.equal(importProgress.commandId, 42);
     assert.deepEqual(importProgress.state, { progress: 50, state: "importing" });
 });

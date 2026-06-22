@@ -1,5 +1,6 @@
 import { getConfigSection } from "../config/config.js";
 import { db } from "../../database.js";
+import { isMainThread } from "node:worker_threads";
 import crypto from "crypto";
 import path from "path";
 import { streamingProviderManager } from "../providers/index.js";
@@ -35,13 +36,41 @@ type MediaCoverProxyEntry = {
 };
 
 const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
+const MEDIA_COVER_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
+let lastMediaCoverCleanupAt = 0;
+
+function runBestEffortMediaCoverWrite(action: () => void): void {
+  try {
+    db.pragma("busy_timeout = 0");
+    action();
+  } catch {
+    // This cache is an optimization for proxied artwork URLs. During heavy
+    // command-worker writes, never let cache maintenance block library reads.
+  } finally {
+    try {
+      db.pragma(`busy_timeout = ${isMainThread ? 5000 : 30000}`);
+    } catch {
+      // Ignore restore failures; the next connection initialization will set it.
+    }
+  }
+}
 
 function clearExpiredMediaCoverProxyEntries(now = Date.now()): void {
-  try {
-    db.prepare("DELETE FROM MediaCoverProxyCache WHERE expires_at <= ?").run(now);
-  } catch (error) {
-    console.warn("Failed to clear expired media cover proxy entries:", error);
+  if (now - lastMediaCoverCleanupAt < MEDIA_COVER_CLEANUP_INTERVAL_MS) {
+    return;
   }
+  lastMediaCoverCleanupAt = now;
+
+  for (const [hash, entry] of mediaCoverProxyMemoryCache) {
+    if (entry.expiresAt <= now) {
+      mediaCoverProxyMemoryCache.delete(hash);
+    }
+  }
+
+  runBestEffortMediaCoverWrite(() => {
+    db.prepare("DELETE FROM MediaCoverProxyCache WHERE expires_at <= ?").run(now);
+  });
 }
 
 function getSafeMediaCoverFilename(url: string): string {
@@ -70,22 +99,28 @@ export function registerMediaCoverProxyUrl(value: unknown): string | null {
   clearExpiredMediaCoverProxyEntries(now);
 
   const hash = crypto.createHash("sha256").update(url).digest("hex");
-  try {
+  const expiresAt = now + MEDIA_COVER_PROXY_TTL_MS;
+  mediaCoverProxyMemoryCache.set(hash, { url, expiresAt });
+
+  runBestEffortMediaCoverWrite(() => {
     db.prepare(`
       INSERT INTO MediaCoverProxyCache (hash, url, expires_at)
       VALUES (?, ?, ?)
       ON CONFLICT(hash) DO UPDATE SET
         expires_at = excluded.expires_at
-    `).run(hash, url, now + MEDIA_COVER_PROXY_TTL_MS);
-  } catch (error) {
-    console.warn("Failed to register media cover proxy URL in DB:", error);
-  }
+    `).run(hash, url, expiresAt);
+  });
 
   return `/MediaCoverProxy/${hash}/${getSafeMediaCoverFilename(url)}`;
 }
 
 export function getRegisteredMediaCoverProxyUrl(hash: string): string | null {
   clearExpiredMediaCoverProxyEntries();
+  const memoryEntry = mediaCoverProxyMemoryCache.get(hash);
+  if (memoryEntry && memoryEntry.expiresAt > Date.now()) {
+    return memoryEntry.url;
+  }
+
   try {
     const row = db.prepare("SELECT url FROM MediaCoverProxyCache WHERE hash = ?").get(hash) as { url: string } | undefined;
     return row?.url ?? null;

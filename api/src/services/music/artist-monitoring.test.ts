@@ -105,7 +105,7 @@ test("monitoring a named MusicBrainz search result hydrates display metadata bef
     SELECT name, ref_id, status
     FROM commands
     WHERE id = ?
-  `).get(result.jobId) as { name: string; ref_id: string; status: string };
+  `).get(result.commandId) as { name: string; ref_id: string; status: string };
 
   assert.equal(artist.id, artistMbid);
   assert.equal(artist.name, "Bastille");

@@ -4,7 +4,7 @@ import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
 import { appEvents, type AppEvent } from "../app-events.js";
-import type { CommandModel } from "../command-queue.js";
+import type {CommandModel} from "../command-model.js";
 import {
     invalidateAlbumDownloadStatus,
     invalidateAllDownloadState,
@@ -13,14 +13,14 @@ import {
     invalidateReleaseGroupDownloadStatus,
 } from "../../download/download-state.js";
 import {
-    JOB_WORKER_MARKER,
+    COMMAND_WORKER_MARKER,
     type CacheInvalidateTarget,
     type MainToWorkerMessage,
     type WorkerToMainMessage,
-} from "./job-protocol.js";
+} from "./command-worker-protocol.js";
 
 /**
- * Main-thread pool of job worker threads — the off-thread execution backend for
+ * Main-thread pool of command worker threads — the off-thread execution backend for
  * the `CommandExecutor`, modelled on Lidarr's `THREAD_LIMIT = 3` real-thread
  * `CommandExecutor`. Each worker runs one command handler at a time on its own
  * OS thread + DB connection, so heavy synchronous better-sqlite3 / CPU work
@@ -33,7 +33,7 @@ import {
  * in-process. The only context where the pool isn't started is unit tests that
  * exercise handler logic directly (cf. Lidarr's CommandExecutorFixture, which
  * runs `IExecute` handlers in-process without the real thread pool). See
- * docs/JOB_EXECUTION_THREADING_PLAN.md.
+ * `CommandExecutor`.
  */
 
 /** Optional per-run hooks. `onProgress` receives ImportDownload progress states. */
@@ -42,7 +42,7 @@ export interface JobRunOptions {
 }
 
 interface JobSettle {
-    jobId: number;
+    commandId: number;
     resolve: () => void;
     reject: (error: Error) => void;
     onProgress?: (state: unknown) => void;
@@ -58,7 +58,7 @@ interface QueuedJob extends JobSettle {
     job: CommandModel;
 }
 
-export class JobWorkerPool {
+export class CommandWorkerPool {
     private static workers: PoolWorker[] = [];
     private static queue: QueuedJob[] = [];
     private static started = false;
@@ -75,26 +75,26 @@ export class JobWorkerPool {
     /**
      * Resolve how to spawn a worker for the current runtime.
      *
-     * Production runs compiled JS under plain node: spawn `job-worker-entry.js`
+     * Production runs compiled JS under plain node: spawn `command-worker-entry.js`
      * directly. Dev/tests run TypeScript source under tsx, whose loader does not
-     * reach worker threads — so spawn the plain-JS `job-worker-bootstrap.mjs`,
+     * reach worker threads — so spawn the plain-JS `command-worker-bootstrap.mjs`,
      * which registers tsx inside the worker and then imports the `.ts` entry
-     * (passed via workerData.__entry). See job-worker-bootstrap.mjs.
+     * (passed via workerData.__entry). See command-worker-bootstrap.mjs.
      */
     private static resolveSpawn(): { entry: string; workerData: Record<string, unknown> } {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const isCompiled = here.includes(`${path.sep}dist${path.sep}`) || here.endsWith(`${path.sep}dist`);
-        const baseWorkerData: Record<string, unknown> = { [JOB_WORKER_MARKER]: true };
+        const baseWorkerData: Record<string, unknown> = { [COMMAND_WORKER_MARKER]: true };
 
         if (isCompiled) {
-            return { entry: path.join(here, "job-worker-entry.js"), workerData: baseWorkerData };
+            return { entry: path.join(here, "command-worker-entry.js"), workerData: baseWorkerData };
         }
 
         return {
-            entry: path.join(here, "job-worker-bootstrap.mjs"),
+            entry: path.join(here, "command-worker-bootstrap.mjs"),
             workerData: {
                 ...baseWorkerData,
-                __entry: pathToFileURL(path.join(here, "job-worker-entry.ts")).href,
+                __entry: pathToFileURL(path.join(here, "command-worker-entry.ts")).href,
             },
         };
     }
@@ -107,7 +107,7 @@ export class JobWorkerPool {
         for (let i = 0; i < size; i++) {
             this.spawnWorker();
         }
-        console.log(`🧵 Job worker pool started (${size} thread${size === 1 ? "" : "s"})`);
+        console.log(`🧵 Command worker pool started (${size} thread${size === 1 ? "" : "s"})`);
     }
 
     static async stop(): Promise<void> {
@@ -128,7 +128,7 @@ export class JobWorkerPool {
                 // best-effort shutdown
             }
         }));
-        console.log("🧵 Job worker pool stopped");
+        console.log("🧵 Command worker pool stopped");
     }
 
     /**
@@ -143,7 +143,7 @@ export class JobWorkerPool {
             this.start();
         }
         return new Promise<void>((resolve, reject) => {
-            const queued: QueuedJob = { job, jobId: job.id, resolve, reject, onProgress: options.onProgress };
+            const queued: QueuedJob = { job, commandId: job.id, resolve, reject, onProgress: options.onProgress };
             const idle = this.workers.find((entry) => !entry.busy);
             if (idle) {
                 this.assign(idle, queued);
@@ -155,7 +155,7 @@ export class JobWorkerPool {
 
     private static assign(entry: PoolWorker, queued: QueuedJob): void {
         entry.busy = true;
-        entry.settle = { jobId: queued.jobId, resolve: queued.resolve, reject: queued.reject, onProgress: queued.onProgress };
+        entry.settle = { commandId: queued.commandId, resolve: queued.resolve, reject: queued.reject, onProgress: queued.onProgress };
         entry.worker.postMessage({ kind: "run", job: queued.job } satisfies MainToWorkerMessage);
     }
 
@@ -195,15 +195,15 @@ export class JobWorkerPool {
                 this.applyCacheInvalidate(message.target, message.key);
                 break;
             case "importProgress":
-                if (entry.settle && entry.settle.jobId === message.jobId) {
+                if (entry.settle && entry.settle.commandId === message.commandId) {
                     entry.settle.onProgress?.(message.state);
                 }
                 break;
             case "done":
-                this.finishJob(entry, message.jobId, null);
+                this.finishJob(entry, message.commandId, null);
                 break;
             case "error":
-                this.finishJob(entry, message.jobId, new Error(message.message));
+                this.finishJob(entry, message.commandId, new Error(message.message));
                 break;
         }
     }
@@ -228,12 +228,12 @@ export class JobWorkerPool {
         }
     }
 
-    private static finishJob(entry: PoolWorker, jobId: number, error: Error | null): void {
+    private static finishJob(entry: PoolWorker, commandId: number, error: Error | null): void {
         const settle = entry.settle;
         entry.busy = false;
         entry.settle = undefined;
 
-        if (settle && settle.jobId === jobId) {
+        if (settle && settle.commandId === commandId) {
             if (error) settle.reject(error);
             else settle.resolve();
         }
@@ -256,7 +256,7 @@ export class JobWorkerPool {
         }
 
         if (this.started) {
-            console.error("🧵 Job worker died, respawning:", error.message);
+            console.error("🧵 Command worker died, respawning:", error.message);
             this.spawnWorker();
             // A freshly spawned worker is idle — pull any queued work onto it.
             const replacement = this.workers[this.workers.length - 1];

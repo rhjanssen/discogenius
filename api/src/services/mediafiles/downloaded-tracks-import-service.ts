@@ -9,7 +9,8 @@ import { AudioTagService } from "./audio-tag-service.js";
 import { getDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
-import { CommandModelOf, CommandNames } from "../commands/command-queue.js";
+import {CommandModelOf} from "../commands/command-model.js";
+import {CommandNames} from "../commands/command-names.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;

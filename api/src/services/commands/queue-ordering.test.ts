@@ -9,12 +9,12 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.queue-order.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let queueModule: typeof import("./command-queue.js");
+let queueModule: typeof import("./command-queue-manager.js");
 let downloadQueueQueryModule: typeof import("../download/download-queue-query-service.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
-    queueModule = await import("./command-queue.js");
+    queueModule = await import("./command-queue-manager.js");
     downloadQueueQueryModule = await import("../download/download-queue-query-service.js");
     dbModule.initDatabase();
 });
@@ -42,7 +42,7 @@ function queuePendingDownload(type: "track" | "video" | "album", providerId: str
             ? queueModule.CommandNames.DownloadAlbum
             : queueModule.CommandNames.DownloadTrack;
 
-    return queueModule.CommandQueueService.addJob(
+    return queueModule.CommandQueueManager.push(
         jobType,
         { providerId, type, url: `https://listen.tidal.com/${type}/${providerId}` },
         providerId,
@@ -54,13 +54,13 @@ test("reorderPendingJobs preserves explicit move order deterministically", () =>
     const second = queuePendingDownload("track", "2");
     const third = queuePendingDownload("track", "3");
 
-    const changed = queueModule.CommandQueueService.reorderPendingJobs([third, first], {
+    const changed = queueModule.CommandQueueManager.reorderPendingJobs([third, first], {
         beforeJobId: second,
         types: queueModule.DOWNLOAD_COMMAND_NAMES,
     });
     assert.equal(changed, 3);
 
-    const pending = queueModule.CommandQueueService.listJobsByTypesAndStatuses(
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
         queueModule.DOWNLOAD_COMMAND_NAMES,
         ["queued"],
         10,
@@ -79,25 +79,25 @@ test("reorderPendingJobs rejects invalid reorder sets", () => {
     const second = queuePendingDownload("track", "12");
 
     assert.throws(
-        () => queueModule.CommandQueueService.reorderPendingJobs([first, first], { beforeJobId: second }),
+        () => queueModule.CommandQueueManager.reorderPendingJobs([first, first], { beforeJobId: second }),
         /duplicate queue item ids/i,
     );
 
     const completed = queuePendingDownload("track", "13");
-    queueModule.CommandQueueService.complete(completed);
+    queueModule.CommandQueueManager.complete(completed);
 
     assert.throws(
-        () => queueModule.CommandQueueService.reorderPendingJobs([completed], { beforeJobId: second }),
+        () => queueModule.CommandQueueManager.reorderPendingJobs([completed], { beforeJobId: second }),
         /Only pending download queue items can be reordered/i,
     );
 
     assert.throws(
-        () => queueModule.CommandQueueService.reorderPendingJobs([first], { beforeJobId: first }),
+        () => queueModule.CommandQueueManager.reorderPendingJobs([first], { beforeJobId: first }),
         /anchor must be a different pending queue item/i,
     );
 
     assert.throws(
-        () => queueModule.CommandQueueService.reorderPendingJobs([first], {}),
+        () => queueModule.CommandQueueManager.reorderPendingJobs([first], {}),
         /requires exactly one anchor/i,
     );
 });
@@ -107,17 +107,17 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
     const second = queuePendingDownload("track", "22");
     const third = queuePendingDownload("track", "23");
 
-    queueModule.CommandQueueService.markProcessing(first);
-    queueModule.CommandQueueService.markProcessing(second);
+    queueModule.CommandQueueManager.markProcessing(first);
+    queueModule.CommandQueueManager.markProcessing(second);
 
-    const originalJob = queueModule.CommandQueueService.getById(first);
-    const secondJob = queueModule.CommandQueueService.getById(second);
-    const thirdJob = queueModule.CommandQueueService.getById(third);
+    const originalJob = queueModule.CommandQueueManager.get(first);
+    const secondJob = queueModule.CommandQueueManager.get(second);
+    const thirdJob = queueModule.CommandQueueManager.get(third);
     assert.ok(originalJob);
     assert.ok(secondJob);
     assert.ok(thirdJob);
 
-    const importJobId = queueModule.CommandQueueService.addJob(
+    const importJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ImportDownload,
         {
             type: "track",
@@ -131,13 +131,13 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
         originalJob?.queue_order,
     );
 
-    queueModule.CommandQueueService.complete(first);
+    queueModule.CommandQueueManager.complete(first);
 
-    const importJob = queueModule.CommandQueueService.getById(importJobId);
+    const importJob = queueModule.CommandQueueManager.get(importJobId);
     assert.ok(importJob);
     assert.equal(importJob?.queue_order, originalJob?.queue_order);
 
-    const liveJobs = queueModule.CommandQueueService.listJobsByTypesAndStatuses(
+    const liveJobs = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
         queueModule.DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
         ["queued", "started"],
         10,
@@ -171,7 +171,7 @@ test("import jobs inherit durable queue order and live queue listing stays stabl
 });
 
 test("download queue query surfaces pending, processing, and history items with payload metadata", () => {
-    const processingAlbumId = queueModule.CommandQueueService.addJob(
+    const processingAlbumId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
             type: "album",
@@ -186,7 +186,7 @@ test("download queue query surfaces pending, processing, and history items with 
         },
         "release-group-1:stereo",
     );
-    const pendingAlbumId = queueModule.CommandQueueService.addJob(
+    const pendingAlbumId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
             type: "album",
@@ -200,7 +200,7 @@ test("download queue query surfaces pending, processing, and history items with 
         },
         "release-group-2:spatial",
     );
-    const completedTrackId = queueModule.CommandQueueService.addJob(
+    const completedTrackId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         {
             type: "track",
@@ -213,8 +213,8 @@ test("download queue query surfaces pending, processing, and history items with 
         "provider-track-1",
     );
 
-    queueModule.CommandQueueService.markProcessing(processingAlbumId);
-    queueModule.CommandQueueService.complete(completedTrackId);
+    queueModule.CommandQueueManager.markProcessing(processingAlbumId);
+    queueModule.CommandQueueManager.complete(completedTrackId);
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 2);
@@ -293,7 +293,7 @@ test("download queue query resolves canonical release-group provider offers with
         }),
     );
 
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
             type: "album",
@@ -307,7 +307,7 @@ test("download queue query resolves canonical release-group provider offers with
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 1);
-    assert.equal(live.items[0]?.id, jobId);
+    assert.equal(live.items[0]?.id, commandId);
     assert.equal(live.items[0]?.title, "Give Me the Future");
     assert.equal(live.items[0]?.artist, "Bastille");
     assert.equal(live.items[0]?.album_id, "rg-gmtf");
@@ -320,7 +320,7 @@ test("download queue query resolves canonical release-group provider offers with
         albumIds: ["rg-gmtf"],
         providerIds: ["tidal-gmtf-expanded"],
     });
-    assert.deepEqual(details.map((item) => item.id), [jobId]);
+    assert.deepEqual(details.map((item) => item.id), [commandId]);
 });
 
 test("download queue query resolves canonical track provider offers without ProviderMedia rows", () => {
@@ -361,7 +361,7 @@ test("download queue query resolves canonical track provider offers without Prov
         "track-cover",
     );
 
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         {
             type: "track",
@@ -373,7 +373,7 @@ test("download queue query resolves canonical track provider offers without Prov
 
     const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     assert.equal(live.total, 1);
-    assert.equal(live.items[0]?.id, jobId);
+    assert.equal(live.items[0]?.id, commandId);
     assert.equal(live.items[0]?.title, "Canonical Track");
     assert.equal(live.items[0]?.artist, "Track Artist");
     assert.equal(live.items[0]?.album_id, "rg-track");
@@ -386,11 +386,11 @@ test("download queue query resolves canonical track provider offers without Prov
         albumIds: ["rg-track"],
         providerIds: ["tidal-track-1"],
     });
-    assert.deepEqual(details.map((item) => item.id), [jobId]);
+    assert.deepEqual(details.map((item) => item.id), [commandId]);
 });
 
 test("download queue history collapses completed download and import jobs into one logical item", () => {
-    const downloadJobId = queueModule.CommandQueueService.addJob(
+    const downloadJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
             type: "album",
@@ -405,9 +405,9 @@ test("download queue history collapses completed download and import jobs into o
         },
         "release-group-history:stereo",
     );
-    queueModule.CommandQueueService.complete(downloadJobId);
+    queueModule.CommandQueueManager.complete(downloadJobId);
 
-    const importJobId = queueModule.CommandQueueService.addJob(
+    const importJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ImportDownload,
         {
             type: "album",
@@ -424,7 +424,7 @@ test("download queue history collapses completed download and import jobs into o
         },
         "provider-album-history",
     );
-    queueModule.CommandQueueService.complete(importJobId);
+    queueModule.CommandQueueManager.complete(importJobId);
 
     const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
@@ -436,7 +436,7 @@ test("download queue history collapses completed download and import jobs into o
 });
 
 test("download queue history keeps completed album visible during import handoff", () => {
-    const downloadJobId = queueModule.CommandQueueService.addJob(
+    const downloadJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
             type: "album",
@@ -451,9 +451,9 @@ test("download queue history keeps completed album visible during import handoff
         },
         "release-group-handoff:stereo",
     );
-    queueModule.CommandQueueService.complete(downloadJobId);
+    queueModule.CommandQueueManager.complete(downloadJobId);
 
-    const importJobId = queueModule.CommandQueueService.addJob(
+    const importJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ImportDownload,
         {
             type: "album",
@@ -470,7 +470,7 @@ test("download queue history keeps completed album visible during import handoff
         },
         "provider-album-handoff",
     );
-    queueModule.CommandQueueService.markProcessing(importJobId);
+    queueModule.CommandQueueManager.markProcessing(importJobId);
 
     const historyDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
@@ -479,7 +479,7 @@ test("download queue history keeps completed album visible during import handoff
     assert.equal(historyDuringImport.items[0]?.stage, "download");
     assert.equal(historyDuringImport.items[0]?.title, "Handoff Album");
 
-    queueModule.CommandQueueService.complete(importJobId);
+    queueModule.CommandQueueManager.complete(importJobId);
 
     const historyAfterImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
@@ -490,23 +490,23 @@ test("download queue history keeps completed album visible during import handoff
 });
 
 test("terminal queue jobs ignore late progress, state, complete, and fail updates", () => {
-    const jobId = queuePendingDownload("track", "99");
-    queueModule.CommandQueueService.markProcessing(jobId);
-    queueModule.CommandQueueService.updateState(jobId, {
+    const commandId = queuePendingDownload("track", "99");
+    queueModule.CommandQueueManager.markProcessing(commandId);
+    queueModule.CommandQueueManager.updateState(commandId, {
         progress: 45,
         payloadPatch: { downloadState: { state: "downloading", statusMessage: "Downloading track" } },
     });
-    queueModule.CommandQueueService.cancel(jobId);
+    queueModule.CommandQueueManager.cancel(commandId);
 
-    queueModule.CommandQueueService.updateProgress(jobId, 88);
-    queueModule.CommandQueueService.updateState(jobId, {
+    queueModule.CommandQueueManager.updateProgress(commandId, 88);
+    queueModule.CommandQueueManager.updateState(commandId, {
         progress: 90,
         payloadPatch: { downloadState: { state: "importing", statusMessage: "Late import state" } },
     });
-    queueModule.CommandQueueService.complete(jobId);
-    queueModule.CommandQueueService.fail(jobId, "Late failure");
+    queueModule.CommandQueueManager.complete(commandId);
+    queueModule.CommandQueueManager.fail(commandId, "Late failure");
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
     assert.equal(job.status, "cancelled");
     assert.equal(job.progress, 45);
@@ -516,24 +516,24 @@ test("terminal queue jobs ignore late progress, state, complete, and fail update
 });
 
 test("terminal queue jobs cannot be resurrected as processing", () => {
-    const jobId = queuePendingDownload("track", "100");
-    queueModule.CommandQueueService.cancel(jobId);
+    const commandId = queuePendingDownload("track", "100");
+    queueModule.CommandQueueManager.cancel(commandId);
 
-    const marked = queueModule.CommandQueueService.markProcessing(jobId);
+    const marked = queueModule.CommandQueueManager.markProcessing(commandId);
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.equal(marked, false);
     assert.ok(job);
     assert.equal(job.status, "cancelled");
 });
 
 test("manual retry resets attempts so max-attempt jobs can run again", () => {
-    const jobId = queuePendingDownload("track", "101");
+    const commandId = queuePendingDownload("track", "101");
 
-    queueModule.CommandQueueService.fail(jobId, "first failure");
-    queueModule.CommandQueueService.retry(jobId);
+    queueModule.CommandQueueManager.fail(commandId, "first failure");
+    queueModule.CommandQueueManager.retry(commandId);
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
     assert.equal(job.status, "queued");
     assert.equal(job.attempts, 0);
@@ -542,7 +542,7 @@ test("manual retry resets attempts so max-attempt jobs can run again", () => {
 });
 
 test("active import blocks duplicate download for the same content id", () => {
-    const importJobId = queueModule.CommandQueueService.addJob(
+    const importJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ImportDownload,
         {
             type: "track",
@@ -554,7 +554,7 @@ test("active import blocks duplicate download for the same content id", () => {
     );
 
     const duplicateDownloadId = queuePendingDownload("track", "102");
-    const pendingDownloads = queueModule.CommandQueueService.listJobsByTypesAndStatuses(
+    const pendingDownloads = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
         queueModule.DOWNLOAD_COMMAND_NAMES,
         ["queued", "started"],
     );

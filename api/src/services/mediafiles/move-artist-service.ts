@@ -6,7 +6,8 @@ import { findArtistPathConflict, normalizeArtistFolderInput } from "../music/art
 import { ArtistPathBuilder } from "../music/artist-path-builder.js";
 import { Config } from "../config/config.js";
 import { LibraryFilesService, removeEmptyParents, type RenameStatusSummary } from "./library-files.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { RenameTrackFileService } from "./rename-track-file-service.js";
 
 type ArtistPathRow = {
@@ -30,7 +31,7 @@ export interface MoveArtistResult {
   path: string;
   changed: boolean;
   moveFilesQueued: boolean;
-  jobId: number | null;
+  commandId: number | null;
   renameStatus: RenameStatusSummary;
 }
 
@@ -134,10 +135,10 @@ export class MoveArtistService {
 
     const renameStatus = RenameTrackFileService.getRenameStatus({ artistId: options.artistId }, 10);
 
-    let jobId: number | null = null;
+    let commandId: number | null = null;
     const shouldQueueMove = options.moveFiles === true && changed && Boolean(currentPath) && renameStatus.renameNeeded > 0;
     if (shouldQueueMove) {
-      const queuedJobId = CommandQueueService.addJob(
+      const queuedJobId = CommandQueueManager.push(
         CommandNames.MoveArtist,
         {
           artistId: options.artistId,
@@ -149,7 +150,7 @@ export class MoveArtistService {
         1,
         1,
       );
-      jobId = queuedJobId > 0 ? queuedJobId : null;
+      commandId = queuedJobId > 0 ? queuedJobId : null;
     }
 
     return {
@@ -158,8 +159,8 @@ export class MoveArtistService {
       oldPath: currentPath,
       path: nextPath,
       changed,
-      moveFilesQueued: shouldQueueMove && jobId !== null,
-      jobId,
+      moveFilesQueued: shouldQueueMove && commandId !== null,
+      commandId,
       renameStatus,
     };
   }

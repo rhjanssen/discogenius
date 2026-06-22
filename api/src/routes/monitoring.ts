@@ -131,11 +131,11 @@ router.post("/stop", (_, res) => {
 
 const queueCurateArtists = (_: any, res: any) => {
   try {
-    const jobId = queueCurationPass({ trigger: CommandTrigger.Manual });
+    const commandId = queueCurationPass({ trigger: CommandTrigger.Manual });
 
     res.json({
       success: true,
-      jobId,
+      commandId,
       message: "Queued curation for monitored artists.",
     });
   } catch (error: any) {
@@ -148,11 +148,11 @@ router.post("/curate", queueCurateArtists);
 // Trigger manual metadata refresh — metadata only, no local scan, curation, or downloads.
 router.post("/check", (_, res) => {
   try {
-    const jobId = queueMetadataRefreshPass({ trigger: CommandTrigger.Manual });
+    const commandId = queueMetadataRefreshPass({ trigger: CommandTrigger.Manual });
 
     res.json({
       success: true,
-      jobId,
+      commandId,
       message: "Queued a metadata refresh command.",
     });
   } catch (error: any) {
@@ -163,11 +163,11 @@ router.post("/check", (_, res) => {
 // Trigger the full metadata refresh -> local scan/import -> curation -> download workflow.
 router.post("/trigger-all", (_, res) => {
   try {
-    const jobId = queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true });
+    const commandId = queueMonitoringCyclePass({ trigger: CommandTrigger.Manual, includeRootScan: true });
 
     res.json({
       success: true,
-      jobId,
+      commandId,
       message: "Queued a monitoring cycle.",
     });
   } catch (error: any) {
@@ -212,10 +212,10 @@ router.get("/check-stream", async (_, res) => {
 // Separate from scanning - allows user to review curation before downloading
 router.post("/download-missing", async (_, res) => {
   try {
-    const jobId = queueDownloadMissingPass({ trigger: CommandTrigger.Manual });
+    const commandId = queueDownloadMissingPass({ trigger: CommandTrigger.Manual });
     res.json({
       success: true,
-      jobId,
+      commandId,
       message: "Queued a download-missing command.",
     });
   } catch (error: any) {
@@ -226,10 +226,10 @@ router.post("/download-missing", async (_, res) => {
 // Scan library for files that don't meet the current quality settings and queue upgrades
 router.post("/check-upgrades", async (_, res) => {
   try {
-    const jobId = queueCheckUpgradesPass({ trigger: CommandTrigger.Manual });
+    const commandId = queueCheckUpgradesPass({ trigger: CommandTrigger.Manual });
     res.json({
       success: true,
-      jobId,
+      commandId,
       message: "Queued an upgrade check command.",
     });
   } catch (error: any) {

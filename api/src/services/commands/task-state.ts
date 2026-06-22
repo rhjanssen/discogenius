@@ -1,7 +1,7 @@
 import { db } from "../../database.js";
 import type { MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { getManagedArtists } from "../music/managed-artists.js";
-import { ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames } from "./command-queue.js";
+import {ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames} from "./command-names.js";
 
 export interface MonitoringProgress {
     lastCheckTimestamp: string | null;

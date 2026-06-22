@@ -16,7 +16,7 @@ and flow through the normal download → import (replace-by-identity) pipeline.
 - `UpgraderService.checkUpgrades()` (`api/src/services/mediafiles/upgrader.ts`) already:
   scans `TrackFiles` + `ProviderItems`, compares current file quality vs the provider's
   offered quality via `qualityCutoffNotMet`, and **queues download commands**
-  (`CommandQueueService`).
+  (`CommandQueueManager`).
 - `commands.name = 'CheckUpgrades'` triggers it; `config.ts` triggers it on quality change.
 - `upgrade_queue` table is **not** the file-replacement engine — import replaces the
   existing `TrackFiles` row by canonical identity. `upgrade_queue` only:
@@ -41,13 +41,13 @@ equivalent loop-prevention without the queue. Recommended (lean) approach:
   (`commands` table, completed rows with payload). This replaces the `skipped` flag with a
   derived check (no new table) — matching Lidarr's "don't re-grab what didn't upgrade".
 - Confirm command-queue dedup already blocks duplicate *pending* upgrades by `ref_id`+`name`
-  (it does — `CommandQueueService.addJob`), so only the post-failure loop needs the guard.
+  (it does — `CommandQueueManager.push`), so only the post-failure loop needs the guard.
 
 ## Steps
 
 1. **`upgrader.ts`**: drop the `LEFT JOIN upgrade_queue uq`, the `INSERT/UPDATE upgrade_queue`,
    and the `uq.status === 'skipped'` gate. Replace the skip gate with the history-guard above.
-   Keep the cutoff scan + `CommandQueueService` queuing.
+   Keep the cutoff scan + `CommandQueueManager` queuing.
 2. **`downloaded-tracks-import-service.ts`**: remove `clearUpgradeQueue()` and its 2 call
    sites; confirm import still replaces the existing `TrackFiles` row by identity (it does).
 3. **`database.ts`**: remove the `upgrade_queue` CREATE TABLE, `createUpgradeQueueProviderIdentityTable`,

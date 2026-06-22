@@ -1,6 +1,7 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
 import { appEvents, AppEvent, type ArtistRefreshCompletedEventPayload, type ArtistScannedEventPayload } from "../commands/app-events.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import {
     type ArtistWorkflow,
     buildCurateArtistCommand,
@@ -52,7 +53,7 @@ export function initCurationListeners() {
             }
 
             console.log(`[Listeners] Artist ${payload.artistId} metadata refreshed, queueing RescanFolders`);
-            CommandQueueService.addJob(
+            CommandQueueManager.push(
                 CommandNames.RescanFolders,
                 buildRescanFoldersCommand({
                     artistId: payload.artistId,
@@ -80,7 +81,7 @@ export function initCurationListeners() {
 
         console.log(`[Listeners] Artist ${payload.artistId} disk scan completed, queuing CurateArtist`);
         const workflow = resolveCurationWorkflow(payload.workflow);
-        CommandQueueService.addJob(
+        CommandQueueManager.push(
             CommandNames.CurateArtist,
             workflow
                 ? buildCurateArtistCommand({

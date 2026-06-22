@@ -39,12 +39,12 @@ test("root scan route service queues root scans with route-compatible defaults",
         getDefaultMonitorNewArtists: () => false,
     });
 
-    const jobId = service.queueRootScan({
+    const commandId = service.queueRootScan({
         fullProcessing: true,
         monitorArtist: "not-a-boolean",
     });
 
-    assert.equal(jobId, 42);
+    assert.equal(commandId, 42);
     assert.deepEqual(queuedOptions, {
         trigger: 1,
         fullProcessing: true,

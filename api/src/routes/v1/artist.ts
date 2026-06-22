@@ -101,6 +101,7 @@ router.get("/", async (req, res) => {
   try {
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
     const includeDownloadStats = parseOptionalQueryBoolean(req.query.includeDownloadStats) ?? true;
+    const includeCounts = parseOptionalQueryBoolean(req.query.includeCounts) ?? true;
 
     res.json(ArtistQueryService.listArtists({
       limit: parseInt(req.query.limit as string) || 50,
@@ -110,6 +111,7 @@ router.get("/", async (req, res) => {
       dir: req.query.dir as string | undefined,
       monitored: monitoredFilter,
       includeDownloadStats,
+      includeCounts,
     }));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -227,7 +229,7 @@ router.post("/:artistId/monitor", async (req, res) => {
       success: true,
       artistId,
       monitored: Boolean(result.artist?.effective_monitor),
-      queued: result.jobId !== -1,
+      queued: result.commandId !== -1,
       message: result.monitored
         ? "Artist monitored (scan queued)"
         : "Artist unmonitored",
@@ -254,8 +256,8 @@ router.post("/:artistId/scan", async (req, res) => {
     res.json({
       success: true,
       artistId,
-      queued: queued.jobId !== -1,
-      message: queued.jobId === -1
+      queued: queued.commandId !== -1,
+      message: queued.commandId === -1
         ? "Refresh & scan already queued"
         : "Refresh & scan queued",
     });
@@ -293,7 +295,7 @@ router.post("/:artistId/path", (req, res) => {
       oldPath: result.oldPath,
       changed: result.changed,
       queued: result.moveFilesQueued,
-      jobId: result.jobId,
+      commandId: result.commandId,
       renameStatus: result.renameStatus,
       message: result.moveFilesQueued
         ? "Artist path updated and file move queued"
@@ -411,7 +413,7 @@ router.patch("/:artistId", async (req, res) => {
     res.json({
       success: true,
       monitored: result.monitored,
-      queued: result.jobId !== -1,
+      queued: result.commandId !== -1,
     });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
@@ -467,7 +469,7 @@ router.put("/:artistId", async (req, res) => {
     res.json({
       success: true,
       monitored: result.monitored,
-      queued: result.jobId !== -1,
+      queued: result.commandId !== -1,
     });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -483,7 +485,7 @@ router.post("/:artistId/curate", async (req, res) => {
     }
 
     const artistName = String(artist.name || "").trim() || requireArtistName(artistId);
-    const jobId = queueArtistWorkflow({
+    const commandId = queueArtistWorkflow({
       artistId,
       artistName,
       workflow: "curation",
@@ -493,8 +495,8 @@ router.post("/:artistId/curate", async (req, res) => {
 
     res.json({
       success: true,
-      queued: jobId !== -1,
-      jobId,
+      queued: commandId !== -1,
+      commandId,
       message: `Queued curation for ${artistName}`,
     });
   } catch (error: any) {
@@ -512,7 +514,7 @@ router.post("/", async (req, res) => {
     rejectUnknownKeys(body, ["id", "mbid", "name"], "Artist add");
 
     // Ensure basic artist metadata exists and mark as monitored, then queue full scan.
-    const { artist, jobId } = await monitorArtistAndQueueIntake({
+    const { artist, commandId } = await monitorArtistAndQueueIntake({
       artistId,
       artistName,
       priority: 1,
@@ -522,7 +524,7 @@ router.post("/", async (req, res) => {
     res.json({
       success: true,
       id: artist?.id != null ? String(artist.id) : artistId,
-      queued: jobId !== -1,
+      queued: commandId !== -1,
       message: "Artist added to library (monitoring enabled, scan queued)"
     });
   } catch (error: any) {

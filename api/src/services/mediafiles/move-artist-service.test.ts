@@ -12,7 +12,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let libraryFilesModule: typeof import("./library-files.js");
 let moveArtistServiceModule: typeof import("./move-artist-service.js");
-let queueModule: typeof import("../commands/command-queue.js");
+let queueModule: typeof import("../commands/command-queue-manager.js");
 let validationModule: typeof import("../../utils/request-validation.js");
 
 function writeTestConfig() {
@@ -83,7 +83,7 @@ before(async () => {
   configModule = await import("../config/config.js");
   libraryFilesModule = await import("./library-files.js");
   moveArtistServiceModule = await import("./move-artist-service.js");
-  queueModule = await import("../commands/command-queue.js");
+  queueModule = await import("../commands/command-queue-manager.js");
   validationModule = await import("../../utils/request-validation.js");
 
   writeTestConfig();
@@ -149,13 +149,13 @@ test("moveArtist queues MoveArtist when moveFiles is requested", () => {
 
   assert.ok(result);
   assert.equal(result?.moveFilesQueued, true);
-  assert.ok(result?.jobId);
+  assert.ok(result?.commandId);
 
   const job = dbModule.db.prepare(`
     SELECT name, ref_id as refId
     FROM commands
     WHERE id = ?
-  `).get(result?.jobId) as { name: string; refId: string };
+  `).get(result?.commandId) as { name: string; refId: string };
 
   assert.equal(job.name, queueModule.CommandNames.MoveArtist);
   assert.equal(job.refId, "1");
@@ -177,7 +177,7 @@ test("moveArtist can rebuild the artist path from the current naming template", 
   assert.ok(result);
   assert.equal(result?.path, "Artist One [artist-mbid-1]");
   assert.equal(result?.moveFilesQueued, true);
-  assert.ok(result?.jobId);
+  assert.ok(result?.commandId);
 });
 
 test("executeMoveArtistJob moves the artist folder and rebases tracked file paths", () => {

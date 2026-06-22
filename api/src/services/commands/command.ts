@@ -16,7 +16,9 @@
  */
 
 import { db } from '../../database.js';
-import { CommandModel, CommandNames, isCommandName, type CommandName } from './command-queue.js';
+import {CommandModel} from "./command-model.js";
+import {CommandNames, isCommandName} from "./command-names.js";
+import {type CommandName} from "./command-queue-manager.js";
 import {
     getCommandDefinition,
     getCommandTypesForQueueCategory,

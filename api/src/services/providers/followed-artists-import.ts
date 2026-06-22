@@ -209,11 +209,11 @@ export class FollowedArtistsImportService {
                     continue;
                 }
 
-                const jobId = queueArtistMonitoringIntake({
+                const commandId = queueArtistMonitoringIntake({
                     artistId: result.localArtistId,
                     artistName: artist.name,
                 });
-                if (jobId !== -1) {
+                if (commandId !== -1) {
                     queuedCount += 1;
                 }
 

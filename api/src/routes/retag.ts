@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
-import { CommandNames, CommandQueueService } from "../services/commands/command-queue.js";
+import {CommandNames} from "../services/commands/command-names.js";
+import {CommandQueueManager} from "../services/commands/command-queue-manager.js";
 
 const router = Router();
 
@@ -54,12 +55,12 @@ router.post("/apply", async (req, res) => {
         : `retag-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null })}`)
       : undefined;
 
-    const jobId = isArtistWideRetag
-      ? CommandQueueService.addJob(CommandNames.RetagArtist, {
+    const commandId = isArtistWideRetag
+      ? CommandQueueManager.push(CommandNames.RetagArtist, {
         artistId,
         artistIds: artistId ? [artistId] : undefined,
       }, refId, 1, 1)
-      : CommandQueueService.addJob(CommandNames.RetagFiles, {
+      : CommandQueueManager.push(CommandNames.RetagFiles, {
         ids: normalizedIds,
         applyAll,
         artistId,
@@ -68,8 +69,8 @@ router.post("/apply", async (req, res) => {
 
     res.json({
       success: true,
-      queued: jobId !== -1,
-      jobId,
+      queued: commandId !== -1,
+      commandId,
       message: "Retag task queued",
     });
   } catch (error: any) {

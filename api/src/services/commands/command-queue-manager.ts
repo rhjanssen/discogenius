@@ -60,17 +60,17 @@ import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
 // Structural status changes (processing, completed, failed, cancelled) emit
 // immediately. Progress / description-only updates are coalesced so that at
 // most one COMMAND_UPDATED is emitted per job per second.
-const JOB_UPDATE_THROTTLE_MS = 1000;
-const jobUpdateBuffer = new Map<number, { payload: CommandEventPayload; timer: ReturnType<typeof setTimeout> }>();
-const TERMINAL_JOB_STATUSES = new Set<CommandStatus>(["completed", "failed", "cancelled"]);
+const COMMAND_UPDATE_THROTTLE_MS = 1000;
+const commandUpdateBuffer = new Map<number, { payload: CommandEventPayload; timer: ReturnType<typeof setTimeout> }>();
+const TERMINAL_COMMAND_STATUSES = new Set<CommandStatus>(["completed", "failed", "cancelled"]);
 
 /**
  * Emit COMMAND_UPDATED for progress/description changes at most once per second
  * per job.  The first call for a given job emits immediately; subsequent calls
  * within the throttle window are coalesced and flushed when the timer fires.
  */
-function emitThrottledJobUpdate(payload: CommandEventPayload): void {
-    const existing = jobUpdateBuffer.get(payload.id);
+function emitThrottledCommandUpdate(payload: CommandEventPayload): void {
+    const existing = commandUpdateBuffer.get(payload.id);
     if (existing) {
         // Already have a pending timer — just update the buffered payload
         existing.payload = payload;
@@ -80,23 +80,23 @@ function emitThrottledJobUpdate(payload: CommandEventPayload): void {
     // First call for this job — emit immediately, then start throttle window
     appEvents.emit(AppEvent.COMMAND_UPDATED, payload);
     const timer = setTimeout(() => {
-        const buffered = jobUpdateBuffer.get(payload.id);
-        jobUpdateBuffer.delete(payload.id);
+        const buffered = commandUpdateBuffer.get(payload.id);
+        commandUpdateBuffer.delete(payload.id);
         if (buffered) {
             appEvents.emit(AppEvent.COMMAND_UPDATED, buffered.payload);
         }
-    }, JOB_UPDATE_THROTTLE_MS);
+    }, COMMAND_UPDATE_THROTTLE_MS);
     if (timer.unref) timer.unref();
-    jobUpdateBuffer.set(payload.id, { payload, timer });
+    commandUpdateBuffer.set(payload.id, { payload, timer });
 }
 
 /** Flush and clear any pending throttled update for a job (used before
  *  structural events that must not be preceded by a stale progress update). */
-function clearJobUpdateThrottle(jobId: number): void {
-    const existing = jobUpdateBuffer.get(jobId);
+function clearCommandUpdateThrottle(commandId: number): void {
+    const existing = commandUpdateBuffer.get(commandId);
     if (existing) {
         clearTimeout(existing.timer);
-        jobUpdateBuffer.delete(jobId);
+        commandUpdateBuffer.delete(commandId);
     }
 }
 
@@ -178,11 +178,11 @@ function areEquivalentRefreshArtistPayloads(
         && left.expandCreditedArtists === right.expandCreditedArtists;
 }
 
-export class CommandQueueService {
+export class CommandQueueManager {
     /**
      * Add a job to the queue
      */
-    static addJob<T extends CommandName>(
+    static push<T extends CommandName>(
         type: T,
         payload: CommandBodyMap[T],
         refId?: string,
@@ -258,7 +258,7 @@ VALUES(?, ?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         return newId;
     }
 
-    static listJobs(
+    static all(
         typePattern: string = '%',
         statusPattern: string = '%',
         limit: number = 50,
@@ -434,8 +434,8 @@ ${buildExecutionOrderClause()}
             WHERE id = ? AND status = 'queued'
         `).run(id);
         if (result.changes === 0) return false;
-        clearJobUpdateThrottle(id);
-        const job = this.getById(id);
+        clearCommandUpdateThrottle(id);
+        const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'started', progress: job.progress } as CommandEventPayload);
         return true;
     }
@@ -443,14 +443,14 @@ ${buildExecutionOrderClause()}
     static updateProgress(id: number, progress: number) {
         const result = db.prepare("UPDATE commands SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(progress, id);
         if (result.changes === 0) return;
-        const job = this.getById(id);
-        if (job) emitThrottledJobUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
+        const job = this.get(id);
+        if (job) emitThrottledCommandUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
     }
 
     static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<CommandBodyCommon> }) {
-        const current = this.getById(id);
+        const current = this.get(id);
         if (!current) return null;
-        if (TERMINAL_JOB_STATUSES.has(current.status)) return current;
+        if (TERMINAL_COMMAND_STATUSES.has(current.status)) return current;
 
         const updates: string[] = ["updated_at = CURRENT_TIMESTAMP"];
         const params: unknown[] = [];
@@ -477,9 +477,9 @@ ${buildExecutionOrderClause()}
         params.push(id);
         db.prepare(`UPDATE commands SET ${updates.join(", ")} WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`).run(...params);
 
-        const updated = this.getById(id);
+        const updated = this.get(id);
         if (updated) {
-            emitThrottledJobUpdate({
+            emitThrottledCommandUpdate({
                 id,
                 type: updated.name,
                 status: updated.status,
@@ -494,8 +494,8 @@ ${buildExecutionOrderClause()}
     static complete(id: number) {
         const result = db.prepare("UPDATE commands SET status = 'completed', progress = 100, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')").run(id);
         if (result.changes === 0) return;
-        clearJobUpdateThrottle(id);
-        const job = this.getById(id);
+        clearCommandUpdateThrottle(id);
+        const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'completed', progress: 100 } as CommandEventPayload);
     }
 
@@ -506,15 +506,15 @@ ${buildExecutionOrderClause()}
             WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
     `).run(error, id);
         if (result.changes === 0) return;
-        clearJobUpdateThrottle(id);
-        const job = this.getById(id);
+        clearCommandUpdateThrottle(id);
+        const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'failed', progress: job.progress, error } as CommandEventPayload);
     }
 
     static cancel(id: number) {
         db.prepare("UPDATE commands SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-        clearJobUpdateThrottle(id);
-        const job = this.getById(id);
+        clearCommandUpdateThrottle(id);
+        const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'cancelled', progress: job.progress } as CommandEventPayload);
     }
 
@@ -546,7 +546,7 @@ ${buildExecutionOrderClause()}
                 payload = json_remove(COALESCE(payload, '{}'), '$.downloadState')
             WHERE id = ?
 	    `).run(id);
-        const job = this.getById(id);
+        const job = this.get(id);
         if (job) appEvents.emit(AppEvent.COMMAND_UPDATED, { id, type: job.name, status: 'queued', progress: 0 } as CommandEventPayload);
     }
 
@@ -586,7 +586,7 @@ ${buildExecutionOrderClause()}
      *
      * Disabled when olderThanMs <= 0.
      */
-    static requeueStaleProcessingJobs(options: {
+    static requeue(options: {
         typePattern?: string;
         olderThanMs: number;
         note?: string;
@@ -688,7 +688,7 @@ ${buildExecutionOrderClause()}
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
 
-    static clearFinished(typePattern: string = '%') {
+    static cleanCommands(typePattern: string = '%') {
         db.prepare(`
             DELETE FROM commands
             WHERE name LIKE ? AND status IN ('completed', 'failed', 'cancelled')
@@ -723,14 +723,14 @@ ${buildExecutionOrderClause()}
     }
 
     static reorderPendingJobs(
-        jobIds: number[],
+        commandIds: number[],
         options: {
             beforeJobId?: number;
             afterJobId?: number;
             types?: readonly CommandName[];
         } = {},
     ): number {
-        const normalizedJobIds = jobIds.filter((jobId) => Number.isInteger(jobId) && jobId > 0);
+        const normalizedJobIds = commandIds.filter((commandId) => Number.isInteger(commandId) && commandId > 0);
         if (normalizedJobIds.length === 0) {
             throw new Error("Queue reorder requires one or more valid pending queue item ids.");
         }
@@ -756,7 +756,7 @@ ${buildExecutionOrderClause()}
 
         const pendingById = new Map(pendingJobs.map((job) => [job.id, job]));
         const movingSet = new Set(distinctJobIds);
-        const movingJobs = distinctJobIds.map((jobId) => pendingById.get(jobId)).filter((job): job is CommandModel => job != null);
+        const movingJobs = distinctJobIds.map((commandId) => pendingById.get(commandId)).filter((job): job is CommandModel => job != null);
 
         if (movingJobs.length !== distinctJobIds.length) {
             throw new Error("Only pending download queue items can be reordered.");
@@ -821,7 +821,7 @@ ${buildExecutionOrderClause()}
     /**
      * Get job by ID
      */
-    static getById(id: number): CommandModel | null {
+    static get(id: number): CommandModel | null {
         const job = db.prepare(`SELECT * FROM commands WHERE id = ? `).get(id) as any;
 
         if (!job) return null;
@@ -847,9 +847,10 @@ ${buildExecutionOrderClause()}
     /**
      * Delete a specific job by ID
      */
-    static deleteJob(id: number) {
-        const job = this.getById(id);
+    static deleteCommand(id: number) {
+        const job = this.get(id);
         db.prepare("DELETE FROM commands WHERE id = ?").run(id);
         if (job) appEvents.emit(AppEvent.COMMAND_DELETED, { id, type: job.name, status: job.status, progress: job.progress } as CommandEventPayload);
     }
 }
+

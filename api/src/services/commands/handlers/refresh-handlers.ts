@@ -2,12 +2,13 @@ import { RefreshArtistService } from "../../music/refresh-artist-service.js";
 import { RefreshAlbumService } from "../../music/refresh-album-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { shouldRefreshArtist } from "../../config/refresh-policy.js";
+import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: ctx.formatArtistPhaseDescription(job, "preparing artist refresh"),
     });
@@ -20,7 +21,8 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             seedSimilarArtists: false,
             forceUpdate: job.payload.forceUpdate ?? false,
         });
-        ctx.updateJobDescription(job, {
+        ArtistStatisticsService.refresh([job.payload.artistId]);
+        ctx.updateCommandDescription(job, {
             progress: 100,
             description: ctx.formatArtistPhaseDescription(job, "metadata refreshed"),
         });
@@ -37,7 +39,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         expandCreditedArtists: job.payload.expandCreditedArtists ?? true,
         progress: (event) => {
             if (event.kind === "status") {
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress: 10,
                     description: ctx.formatArtistPhaseDescription(job, "refreshing metadata"),
                 });
@@ -45,7 +47,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             }
 
             if (event.kind === "albums_total") {
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress: event.total > 0 ? 15 : 75,
                     description: event.total > 0
                         ? ctx.formatArtistPhaseDescription(job, `indexing releases (0/${event.total})`)
@@ -57,7 +59,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             if (event.kind === "album") {
                 const total = Math.max(event.total, 1);
                 const progress = Math.min(45, 15 + Math.round((event.index / total) * 30));
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress,
                     description: ctx.formatArtistPhaseDescription(job, `indexing releases (${event.index}/${event.total})`),
                 });
@@ -66,14 +68,15 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             if (event.kind === "album_tracks") {
                 const total = Math.max(event.total, 1);
                 const progress = Math.min(85, 45 + Math.round((event.index / total) * 40));
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress,
                     description: ctx.formatArtistPhaseDescription(job, `scanning tracks (${event.index}/${event.total}: ${event.title})`),
                 });
             }
         },
     });
-    ctx.updateJobDescription(job, {
+    ArtistStatisticsService.refresh([job.payload.artistId]);
+    ctx.updateCommandDescription(job, {
         progress: 90,
         description: ctx.formatArtistPhaseDescription(job, "finalizing version groups"),
     });
@@ -100,7 +103,7 @@ export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) =>
 
 export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (job, ctx) => {
     const baseLabel = "Managed artists";
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: `${baseLabel} - preparing metadata refresh`,
     });
@@ -129,7 +132,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         }
 
         const progress = Math.min(90, 10 + Math.round(((i + 1) / allArtists.length) * 80));
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress,
             description: `${baseLabel} - refreshing ${artistName || 'artist'} (${i + 1}/${allArtists.length}, ${refreshed} refreshed, ${skipped} skipped)`,
         });
@@ -142,6 +145,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
                 includeSimilarArtists: false,
                 seedSimilarArtists: false,
             });
+            ArtistStatisticsService.refresh([artistId]);
             refreshed++;
 
             const monitoringCycle = Boolean(job.payload.monitoringCycle);
@@ -165,7 +169,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         await ctx.yieldToEventLoop();
     }
 
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Refreshed ${refreshed} artist(s), skipped ${skipped} (${allArtists.length} total)`,
     });

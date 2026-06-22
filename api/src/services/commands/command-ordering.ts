@@ -4,7 +4,7 @@
  * The SQL `ORDER BY` builders and the in-memory priority comparators mirror
  * Lidarr's `CommandPriorityComparer` / `CommandQueue` ordering; `safeParsePayload`
  * + `hydrateJobRow` turn a raw `commands` row into a typed `CommandModel`. Pure
- * functions (no `CommandQueueService` dependency) so they're independently
+ * functions (no `CommandQueueManager` dependency) so they're independently
  * testable (see queue-ordering.test.ts) and don't form an import cycle.
  */
 
@@ -17,7 +17,7 @@ export function isObjectPayload(value: unknown): value is CommandBodyCommon {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function safeParsePayload(raw: unknown, jobId?: number): CommandBodyCommon {
+export function safeParsePayload(raw: unknown, commandId?: number): CommandBodyCommon {
     if (isObjectPayload(raw)) return raw;
     if (typeof raw !== 'string') return {};
 
@@ -25,7 +25,7 @@ export function safeParsePayload(raw: unknown, jobId?: number): CommandBodyCommo
         const parsed = JSON.parse(raw);
         return isObjectPayload(parsed) ? parsed : {};
     } catch (error) {
-        console.warn(`[Queue] Failed to parse payload for job ${jobId ?? 'unknown'}; using empty payload`, error);
+        console.warn(`[Queue] Failed to parse payload for job ${commandId ?? 'unknown'}; using empty payload`, error);
         return {};
     }
 }

@@ -569,6 +569,7 @@ class ApiClient {
     sort?: string;
     dir?: 'asc' | 'desc';
     includeDownloadStats?: boolean;
+    includeCounts?: boolean;
     timeoutMs?: number | null;
     signal?: AbortSignal;
   }): Promise<ArtistsListResponseContract> {
@@ -580,6 +581,7 @@ class ApiClient {
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     if (params?.includeDownloadStats !== undefined) queryParams.set('includeDownloadStats', params.includeDownloadStats ? 'true' : 'false');
+    if (params?.includeCounts !== undefined) queryParams.set('includeCounts', params.includeCounts ? 'true' : 'false');
     const query = queryParams.toString();
     return this.request(
       `/v1/artist${query ? `?${query}` : ''}`,

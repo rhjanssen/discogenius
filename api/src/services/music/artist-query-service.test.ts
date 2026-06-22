@@ -12,6 +12,7 @@ let dbModule: typeof import("../../database.js");
 let artistQueryModule: typeof import("./artist-query-service.js");
 let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
 let skyHookProxyModule: typeof import("../metadata/skyhook-proxy.js");
+let artistStatisticsModule: typeof import("./artist-statistics-service.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
@@ -19,6 +20,7 @@ before(async () => {
   artistQueryModule = await import("./artist-query-service.js");
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
   skyHookProxyModule = await import("../metadata/skyhook-proxy.js");
+  artistStatisticsModule = await import("./artist-statistics-service.js");
 });
 
 beforeEach(() => {
@@ -199,6 +201,11 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
 
 test("artist list and album helper count canonical release groups and tracks", () => {
   const { artistId } = seedCanonicalArtistPage();
+
+  // Statistics are precomputed off the request path (command workers refresh
+  // them on scan); the list reads the cached ArtistStatistics table rather than
+  // recomputing synchronously, so refresh once here to populate it.
+  artistStatisticsModule.ArtistStatisticsService.refresh();
 
   const list = artistQueryModule.ArtistQueryService.listArtists({
     limit: 10,

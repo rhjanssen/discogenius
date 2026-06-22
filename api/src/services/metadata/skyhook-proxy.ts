@@ -4,6 +4,14 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 
+/** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
+export interface SkyHookRating {
+  Count?: number;
+  Value?: number;
+  count?: number;
+  value?: number;
+}
+
 export interface LidarrArtist {
   id: string;
   artistname: string;
@@ -12,7 +20,28 @@ export interface LidarrArtist {
   type?: string;
   images: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   overview?: string;
+  // Popularity rating from the Servarr metadata server. Lidarr maps this to
+  // Artist.Ratings; we fold value (0–10) into our 0–100 popularity score.
+  rating?: SkyHookRating;
+  Rating?: SkyHookRating;
   Albums: LidarrAlbum[];
+}
+
+/**
+ * Derive a 0–100 popularity score from the Servarr metadata-server rating,
+ * mirroring how Lidarr surfaces artist popularity from the same source. The
+ * rating value is on a 0–10 scale; we scale it to 0–100 to match the existing
+ * provider-sourced popularity range. Returns null when there are no votes, so
+ * an unrated artist never overwrites an existing provider popularity with 0.
+ */
+export function deriveSkyHookPopularity(rating: SkyHookRating | undefined | null): number | null {
+  if (!rating) return null;
+  const count = Number(rating.Count ?? rating.count ?? 0);
+  const value = Number(rating.Value ?? rating.value ?? 0);
+  if (!Number.isFinite(count) || count <= 0 || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, Math.round(value * 10)));
 }
 
 export interface LidarrAlbum {
@@ -398,14 +427,19 @@ export class SkyHookProxy {
     db.transaction(() => {
       const imagesList = mapSkyHookImages(artist.images);
 
+      const popularity = deriveSkyHookPopularity(artist.rating ?? artist.Rating);
+
       db.prepare(`
-        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, data, images, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO UPDATE SET
           name = excluded.name,
           sort_name = excluded.sort_name,
           disambiguation = excluded.disambiguation,
           type = excluded.type,
+          -- Keep the Servarr rating when present; otherwise preserve whatever
+          -- popularity a provider sync already stored.
+          popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
           data = excluded.data,
           images = excluded.images,
           updated_at = CURRENT_TIMESTAMP
@@ -415,6 +449,7 @@ export class SkyHookProxy {
         artist.sortname,
         artist.disambiguation || null,
         artist.type || null,
+        popularity,
         JSON.stringify(artist),
         JSON.stringify(imagesList),
       );

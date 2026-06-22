@@ -1,11 +1,12 @@
 import { CurationService } from "../../music/curation-service.js";
 import { UpgraderService } from "../../mediafiles/upgrader.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
+import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, ctx) => {
     const baseLabel = "Managed artists";
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: `${baseLabel} - preparing curation`,
     });
@@ -24,7 +25,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
         const artistName = String((artist as any).name || '').trim();
 
         const progress = Math.min(90, 10 + Math.round(((i + 1) / artists.length) * 80));
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress,
             description: `${baseLabel} - curating ${artistName || 'artist'} (${i + 1}/${artists.length})`,
         });
@@ -34,6 +35,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
                 skipDownloadQueue: true,
                 forceDownloadQueue: false,
             });
+            ArtistStatisticsService.refresh([artistId]);
             curated++;
         } catch (error: any) {
             errors++;
@@ -41,7 +43,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
         }
     }
 
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Curated ${curated} artist(s)${errors > 0 ? `, ${errors} error(s)` : ''} (${artists.length} total)`,
     });
@@ -57,7 +59,7 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
     let totalVideos = 0;
 
     if (artists.length > 0) {
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress: 5,
             description: `Managed artists - checking monitored items (0/${artists.length})`,
         });
@@ -66,7 +68,7 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
     for (let index = 0; index < artists.length; index += 1) {
         const artist = artists[index];
         const artistName = String((artist as { name?: string }).name || "").trim();
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress: Math.min(90, 10 + Math.round((index / Math.max(artists.length, 1)) * 80)),
             description: artistName
                 ? `Managed artists - checking monitored items for ${artistName} (${index + 1}/${artists.length})`
@@ -74,13 +76,14 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
         });
 
         const queued = await CurationService.queueMonitoredItems(String(artist.id));
+        ArtistStatisticsService.refresh([String(artist.id)]);
         totalAlbums += queued.albums;
         totalTracks += queued.tracks;
         totalVideos += queued.videos;
     }
 
     const total = totalAlbums + totalTracks + totalVideos;
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Queued ${total} download(s) (${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos)`,
     });
@@ -88,7 +91,7 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
 
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
     const result = await UpgraderService.checkUpgrades(true);
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Queued ${result.details.length} upgrade candidate(s)`,
     });
@@ -102,4 +105,5 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job) =>
             forceDownloadQueue: false,
         }
     );
+    ArtistStatisticsService.refresh([job.payload.artistId]);
 };

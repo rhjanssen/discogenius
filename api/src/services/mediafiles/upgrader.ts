@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { updateAlbumDownloadStatus } from "../download/download-state.js";
 import { downloadProcessor } from "../download/download-processor.js";
 import { normalizeAudioQualityTag } from "../config/quality.js";
@@ -350,7 +351,7 @@ export class UpgraderService {
 
                 updateAlbumDownloadStatus(albumId);
 
-                CommandQueueService.addJob(
+                CommandQueueManager.push(
                     CommandNames.DownloadAlbum,
                     { providerId: albumId, reason: 'upgrade' },
                     albumId,
@@ -377,7 +378,7 @@ export class UpgraderService {
             const jobType = d.type === 'Music Video' ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
             console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.mediaId}: ${d.reason}`);
 
-            CommandQueueService.addJob(
+            CommandQueueManager.push(
                 jobType,
                 { providerId: d.mediaId, reason: 'upgrade' },
                 d.mediaId,

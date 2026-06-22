@@ -153,8 +153,8 @@ const updateFilteringConfig = (req: any, res: any) => {
   try {
     const updates = parseFilteringConfigUpdate(getObjectBody(req.body), getConfigSection("filtering"));
     updateConfig("filtering", updates);
-    const jobId = queueCurationPass({ trigger: CommandTrigger.Manual });
-    res.json({ success: true, jobId });
+    const commandId = queueCurationPass({ trigger: CommandTrigger.Manual });
+    res.json({ success: true, commandId });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });
@@ -183,8 +183,8 @@ router.post("/metadata", async (req, res) => {
     await syncDownloadBackends();
 
     // Queue a config prune job to clean up orphaned metadata sidecars
-    import("../../services/commands/command-queue.js").then(({ CommandNames, CommandQueueService }) => {
-      CommandQueueService.addJob(CommandNames.ConfigPrune, {}, 'system', 0, 1);
+    import("../../services/commands/command-queue-manager.js").then(({ CommandNames, CommandQueueManager }) => {
+      CommandQueueManager.push(CommandNames.ConfigPrune, {}, 'system', 0, 1);
     });
 
     res.json({ success: true });
