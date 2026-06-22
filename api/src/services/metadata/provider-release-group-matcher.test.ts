@@ -383,6 +383,91 @@ test("prefers spatial MusicBrainz release disambiguation for Dolby Atmos provide
     assert.deepEqual(match.evidence.availableReleaseMbids, ["dolby-atmos-release"]);
 });
 
+test("prefers matching explicit MusicBrainz release disambiguation for explicit provider albums", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "123964309",
+        title: "Doom Days (This Got Out Of Hand Edition)",
+        version: "This Got Out Of Hand Edition",
+        releaseDate: "2019-12-06",
+        type: "ALBUM",
+        quality: "HIRES_LOSSLESS",
+        explicit: true,
+        trackCount: 22,
+        volumeCount: 1,
+    }, [{
+        mbid: "doom-days-rg",
+        title: "Doom Days",
+        primaryType: "Album",
+        firstReleaseDate: "2019-06-14",
+        releases: [
+            {
+                mbid: "clean-release",
+                title: "Doom Days (This Got Out of Hand edition)",
+                disambiguation: "clean",
+                trackCount: 22,
+                mediaCount: 1,
+            },
+            {
+                mbid: "explicit-release",
+                title: "Doom Days (This Got Out of Hand edition)",
+                disambiguation: "explicit",
+                trackCount: 22,
+                mediaCount: 1,
+            },
+            {
+                mbid: "hires-explicit-release",
+                title: "Doom Days (This Got Out of Hand edition)",
+                disambiguation: "24bit/44.1kHz; explicit",
+                trackCount: 22,
+                mediaCount: 1,
+            },
+        ],
+    }]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.releaseMbid, "explicit-release");
+    assert.deepEqual(match.evidence.availableReleaseMbids, ["explicit-release"]);
+});
+
+test("prefers matching clean MusicBrainz release disambiguation for clean provider albums", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "123964389",
+        title: "Doom Days (This Got Out Of Hand Edition)",
+        version: "This Got Out Of Hand Edition",
+        releaseDate: "2019-12-06",
+        type: "ALBUM",
+        quality: "HIRES_LOSSLESS",
+        explicit: false,
+        trackCount: 22,
+        volumeCount: 1,
+    }, [{
+        mbid: "doom-days-rg",
+        title: "Doom Days",
+        primaryType: "Album",
+        firstReleaseDate: "2019-06-14",
+        releases: [
+            {
+                mbid: "explicit-release",
+                title: "Doom Days (This Got Out of Hand edition)",
+                disambiguation: "explicit",
+                trackCount: 22,
+                mediaCount: 1,
+            },
+            {
+                mbid: "clean-release",
+                title: "Doom Days (This Got Out of Hand edition)",
+                disambiguation: "clean",
+                trackCount: 22,
+                mediaCount: 1,
+            },
+        ],
+    }]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.releaseMbid, "clean-release");
+    assert.deepEqual(match.evidence.availableReleaseMbids, ["clean-release"]);
+});
+
 test("matches symbolic MusicBrainz release-group titles before partial provider editions", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "394021126",

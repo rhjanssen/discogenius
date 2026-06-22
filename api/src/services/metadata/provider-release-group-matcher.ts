@@ -10,6 +10,7 @@ export type ProviderAlbumForReleaseGroupMatching = {
     type?: string | null;
     quality?: string | null;
     qualityTags?: string[] | null;
+    explicit?: boolean | number | null;
     upc?: string | null;
     isrcs?: string[] | null;
     trackCount?: number | null;
@@ -142,6 +143,65 @@ function releaseSpatialScore(release: MusicBrainzReleaseForMatching): number {
         return 1;
     }
     return 0;
+}
+
+function releaseExplicitScore(release: MusicBrainzReleaseForMatching): number {
+    const text = `${release.title || ""} ${release.disambiguation || ""}`.toLowerCase();
+    if (/\bexplicit\b/.test(text)) {
+        return 1;
+    }
+    if (/\bclean\b|\bcensored\b/.test(text)) {
+        return -1;
+    }
+    return 0;
+}
+
+function providerExplicitPreference(album: ProviderAlbumForReleaseGroupMatching): boolean | null {
+    if (album.explicit === null || album.explicit === undefined) {
+        return null;
+    }
+    return Boolean(album.explicit);
+}
+
+function explicitPreferenceRank(release: MusicBrainzReleaseForMatching, preferExplicit: boolean | null): number {
+    if (preferExplicit === null) {
+        return 0;
+    }
+
+    const score = releaseExplicitScore(release);
+    if (score === 0) {
+        return 1;
+    }
+    return (score > 0) === preferExplicit ? 2 : 0;
+}
+
+function sortByExplicitPreference(
+    releases: MusicBrainzReleaseForMatching[],
+    preferExplicit: boolean | null,
+): MusicBrainzReleaseForMatching[] {
+    if (preferExplicit === null) {
+        return [...releases];
+    }
+
+    return [...releases].sort((left, right) => {
+        return explicitPreferenceRank(right, preferExplicit) - explicitPreferenceRank(left, preferExplicit)
+            || String(left.mbid).localeCompare(String(right.mbid));
+    });
+}
+
+function applyExplicitCompatibility(
+    releases: MusicBrainzReleaseForMatching[],
+    preferExplicit: boolean | null,
+): MusicBrainzReleaseForMatching[] {
+    if (preferExplicit === null || releases.length === 0) {
+        return releases;
+    }
+
+    const preferred = releases.filter((release) => {
+        const score = releaseExplicitScore(release);
+        return score !== 0 && (score > 0) === preferExplicit;
+    });
+    return preferred.length > 0 ? preferred : releases;
 }
 
 function addNormalizedCandidate(candidates: string[], value?: string | null): void {
@@ -277,6 +337,7 @@ function scoreAlbumAgainstReleaseGroup(
     releaseGroup: MusicBrainzReleaseGroupForMatching,
 ) {
     const releases = Array.isArray(releaseGroup.releases) ? releaseGroup.releases : [];
+    const explicitPreference = providerExplicitPreference(album);
     const providerResourceIds = providerAlbumResourceIds(album);
     const matchedReleaseByUrl = providerResourceIds.size > 0
         ? releases.find((release) =>
@@ -341,10 +402,15 @@ function scoreAlbumAgainstReleaseGroup(
         .filter((match): match is NonNullable<typeof match> => Boolean(match))
         .sort((left, right) =>
             right.titleScore - left.titleScore
+            || explicitPreferenceRank(right.release, explicitPreference) - explicitPreferenceRank(left.release, explicitPreference)
             || right.providerTitle.length - left.providerTitle.length
             || right.releaseTitle.length - left.releaseTitle.length
         );
-    const matchedReleaseByTitle = releaseTitleMatches.find((match) => {
+    const matchedReleaseByTitle = sortByExplicitPreference(
+        releaseTitleMatches.map((match) => match.release),
+        explicitPreference,
+    ).map((release) => releaseTitleMatches.find((match) => match.release === release)!)
+        .find((match) => {
         if (match.titleScore < 0.96) {
             return false;
         }
@@ -405,8 +471,10 @@ function scoreAlbumAgainstReleaseGroup(
         return (!album.trackCount || !trackCount || trackCount === Number(album.trackCount))
             && (!album.volumeCount || !mediaCount || mediaCount === Number(album.volumeCount));
     });
+    const explicitExpandedCompatibleReleases = applyExplicitCompatibility(expandedCompatibleReleases, explicitPreference);
+    const explicitShapeCompatibleReleases = applyExplicitCompatibility(shapeCompatibleReleases, explicitPreference);
     const spatialCompatibleReleases = spatialProviderAlbum
-        ? [...(expandedCompatibleReleases.length > 0 ? expandedCompatibleReleases : shapeCompatibleReleases)]
+        ? [...(explicitExpandedCompatibleReleases.length > 0 ? explicitExpandedCompatibleReleases : explicitShapeCompatibleReleases)]
             .filter((release) => releaseSpatialScore(release) > 0)
             .sort((left, right) => releaseSpatialScore(right) - releaseSpatialScore(left) || String(left.mbid).localeCompare(String(right.mbid)))
         : [];
@@ -421,9 +489,9 @@ function scoreAlbumAgainstReleaseGroup(
                 ? [matchedReleaseByTitle]
             : matchedReleaseBySpatial
                 ? [matchedReleaseBySpatial]
-            : expandedCompatibleReleases.length > 0
-                ? expandedCompatibleReleases
-                : shapeCompatibleReleases;
+            : explicitExpandedCompatibleReleases.length > 0
+                ? explicitExpandedCompatibleReleases
+                : explicitShapeCompatibleReleases;
     const matchedRelease = matchedReleaseByUrl
         || matchedReleaseByUpc
         || bestIsrcRelease
