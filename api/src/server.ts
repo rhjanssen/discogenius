@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import fs from "fs";
 import path from "path";
 
-import { backfillArtistPaths, closeDatabase, initDatabase } from "./database.js";
+import { backfillArtistPaths, closeDatabase, flushDatabase, initDatabase } from "./database.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/v1/album.js";
 import appAuthRouter from "./routes/app-auth.js";
@@ -46,7 +46,7 @@ import {
 import { runRuntimeMaintenance } from "./services/commands/runtime-maintenance.js";
 import { collectHealthDiagnosticsSnapshot } from "./services/commands/health.js";
 import { CommandExecutor } from "./services/commands/command-executor.js";
-import { JobWorkerPool } from "./services/commands/worker/job-worker-pool.js";
+import { CommandWorkerPool } from "./services/commands/worker/command-worker-pool.js";
 import { readIntEnv } from "./utils/env.js";
 
 function initializeAuthEnvironment() {
@@ -168,6 +168,14 @@ if (startupHealthSnapshot.status !== "healthy") {
   }
 }
 initCurationListeners();
+
+// Periodically drain the WAL so a write-heavy backlog (worker pool + main)
+// can't grow it into the hundreds of MB and slow every reader. PASSIVE returns
+// immediately with whatever it could reclaim, so it never blocks the event loop.
+const walCheckpointTimer = setInterval(() => {
+  flushDatabase("PASSIVE");
+}, readIntEnv("DISCOGENIUS_WAL_CHECKPOINT_INTERVAL_MS", 15000, 1000));
+walCheckpointTimer.unref();
 
 app.use((req, res, next) => {
   const finishTracking = trackRuntimeRequest(req.method, req.originalUrl || req.path);
@@ -298,14 +306,14 @@ const server = app.listen(port, () => {
 
   scheduleStartupMaintenance();
 
-  // Always start the off-thread job worker pool (Lidarr's CommandExecutor spawns
+  // Always start the off-thread command worker pool (Lidarr's CommandExecutor spawns
   // its threads at startup with no toggle). Both the command executor and the
   // download processor's import step dispatch heavy work here so it never blocks
   // the main HTTP/SSE thread.
   try {
-    JobWorkerPool.start();
+    CommandWorkerPool.start();
   } catch (error) {
-    console.error("Failed to start job worker pool:", error);
+    console.error("Failed to start command worker pool:", error);
   }
 
   if (process.env.DISCOGENIUS_DISABLE_DOWNLOADS === "1") {
@@ -357,9 +365,9 @@ async function shutdown(signal: string) {
   }
 
   try {
-    await JobWorkerPool.stop();
+    await CommandWorkerPool.stop();
   } catch (error) {
-    console.warn("[APP] Failed to stop job worker pool during shutdown:", error);
+    console.warn("[APP] Failed to stop command worker pool during shutdown:", error);
   }
 
   const forceExitTimer = setTimeout(() => {

@@ -6,12 +6,8 @@ import type {
   QueueStatusContract,
 } from "../../contracts/status.js";
 import { downloadProcessor } from "./download-processor.js";
-import {
-  DOWNLOAD_COMMAND_NAMES,
-  DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-  CommandNames,
-  CommandQueueService,
-} from "../commands/command-queue.js";
+import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 
 type QueueJobRow = {
   id: number;
@@ -443,10 +439,10 @@ function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFi
 }
 
 function buildQueuePositionById(): Map<number, number> {
-  const pendingDownloadJobs = CommandQueueService.listJobsByTypesAndStatuses(
+  const pendingDownloadJobs = CommandQueueManager.listJobsByTypesAndStatuses(
     DOWNLOAD_COMMAND_NAMES,
     ["queued"],
-    CommandQueueService.countJobsByTypesAndStatuses(DOWNLOAD_COMMAND_NAMES, ["queued"]),
+    CommandQueueManager.countJobsByTypesAndStatuses(DOWNLOAD_COMMAND_NAMES, ["queued"]),
     0,
     { orderBy: "queue_order" },
   ) as unknown as QueueJobRow[];
@@ -456,14 +452,14 @@ function buildQueuePositionById(): Map<number, number> {
   );
 }
 
-function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<number, number> {
+function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): Map<number, number> {
   const queuePositionById = new Map<number, number>();
-  if (jobIds.length === 0) {
+  if (commandIds.length === 0) {
     return queuePositionById;
   }
 
   const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
-  const idPlaceholders = jobIds.map(() => "?").join(",");
+  const idPlaceholders = commandIds.map(() => "?").join(",");
   const rows = db.prepare(`
     SELECT
       target.id,
@@ -488,7 +484,7 @@ function getPendingDownloadQueuePositionsForIds(jobIds: readonly number[]): Map<
     FROM commands target
     WHERE target.status = 'queued'
       AND target.id IN (${idPlaceholders})
-  `).all(...DOWNLOAD_COMMAND_NAMES, ...jobIds) as Array<{ id: number; queuePosition: number }>;
+  `).all(...DOWNLOAD_COMMAND_NAMES, ...commandIds) as Array<{ id: number; queuePosition: number }>;
 
   for (const row of rows) {
     queuePositionById.set(Number(row.id), Number(row.queuePosition));
@@ -585,7 +581,7 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
 export class DownloadQueueQueryService {
   static getQueueStatus(): QueueStatusContract {
     const status = downloadProcessor.getStatus();
-    const stats = CommandQueueService.getStats() as QueueStatusContract["stats"];
+    const stats = CommandQueueManager.getStats() as QueueStatusContract["stats"];
 
     return {
       ...status,
@@ -594,11 +590,11 @@ export class DownloadQueueQueryService {
   }
 
   static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    const total = CommandQueueService.countJobsByTypesAndStatuses(
+    const total = CommandQueueManager.countJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
     );
-    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       params.limit,
@@ -644,7 +640,7 @@ export class DownloadQueueQueryService {
       LIMIT ? OFFSET ?
     `).all(...logicalHistory.params, params.limit, params.offset) as Array<{ id: number }>;
     const jobs = rows
-      .map((row) => CommandQueueService.getById(row.id))
+      .map((row) => CommandQueueManager.get(row.id))
       .filter((job) => job !== null) as unknown as QueueJobRow[];
 
     return {
@@ -659,7 +655,7 @@ export class DownloadQueueQueryService {
   static getQueueDetails(filters: QueueDetailsFilters): QueueItemContract[] {
     const normalizedFilters = normalizeQueueDetailsFilters(filters);
     const queuePositionById = buildQueuePositionById();
-    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       5000,
@@ -674,7 +670,7 @@ export class DownloadQueueQueryService {
 
   static getActiveProgressSnapshots(): DownloadProgressContract[] {
     const queuePositionById = buildQueuePositionById();
-    const jobs = CommandQueueService.listJobsByTypesAndStatuses(
+    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
       5000,

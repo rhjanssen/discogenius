@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let queueModule: typeof import("../commands/command-queue.js");
+let queueModule: typeof import("../commands/command-queue-manager.js");
 let serviceModule: typeof import("./library-bulk-actions.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
@@ -26,7 +26,7 @@ before(async () => {
     dbModule = await import("../../database.js");
     dbModule.initDatabase();
 
-    queueModule = await import("../commands/command-queue.js");
+    queueModule = await import("../commands/command-queue-manager.js");
     serviceModule = await import("./library-bulk-actions.js");
 });
 

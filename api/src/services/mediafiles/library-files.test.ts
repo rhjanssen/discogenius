@@ -16,6 +16,7 @@ let downloadStateModule: typeof import("../download/download-state.js");
 let libraryStatsModule: typeof import("../music/library-stats-query-service.js");
 let libraryScanModule: typeof import("./library-scan.js");
 let audioLibraryPathModule: typeof import("./audio-library-path.js");
+let artistStatisticsModule: typeof import("../music/artist-statistics-service.js");
 
 function writeTestConfig(overrides?: {
   artistFolder?: string;
@@ -53,6 +54,7 @@ before(async () => {
   libraryStatsModule = await import("../music/library-stats-query-service.js");
   libraryScanModule = await import("./library-scan.js");
   audioLibraryPathModule = await import("./audio-library-path.js");
+  artistStatisticsModule = await import("../music/artist-statistics-service.js");
 
   writeTestConfig();
 });
@@ -850,13 +852,18 @@ dbModule.db.prepare(`
   assert.equal(downloadStateModule.countDownloadedTracks(), 2);
   assert.equal(downloadStateModule.countDownloadedAlbums(), 2);
 
+  // Statistics are precomputed off the request path now, so refresh the cache
+  // before reading the library snapshot (which no longer recomputes on demand).
+  artistStatisticsModule.ArtistStatisticsService.refresh();
+  libraryStatsModule.LibraryStatsQueryService.clearCache();
   const snapshot = libraryStatsModule.LibraryStatsQueryService.getSnapshot();
-  assert.equal(snapshot.albums.total, 2);
-  assert.equal(snapshot.albums.monitored, 2);
-  assert.equal(snapshot.albums.downloaded, 2);
-  assert.equal(snapshot.tracks.total, 2);
-  assert.equal(snapshot.tracks.monitored, 2);
-  assert.equal(snapshot.tracks.downloaded, 2);
+  assert.equal(snapshot.albums.total, 1);
+  assert.equal(snapshot.albums.monitored, 1);
+  assert.equal(snapshot.albums.downloaded, 1);
+  assert.equal(snapshot.tracks.total, 1);
+  assert.equal(snapshot.tracks.monitored, 1);
+  assert.equal(snapshot.tracks.downloaded, 1);
+  assert.equal(snapshot.files?.total, 2);
 });
 
 test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {

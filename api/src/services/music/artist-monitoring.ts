@@ -181,7 +181,7 @@ export async function monitorArtistAndQueueIntake(options: {
         throw new Error(`Artist ${artistId} not found`);
     }
 
-    const jobId = queueArtistMonitoringIntake({
+    const commandId = queueArtistMonitoringIntake({
         artistId,
         artistName: options.artistName,
         priority: options.priority,
@@ -190,7 +190,7 @@ export async function monitorArtistAndQueueIntake(options: {
 
     return {
         artist: loadArtistWithEffectiveMonitor(artistId),
-        jobId,
+        commandId,
     };
 }
 
@@ -200,7 +200,7 @@ export async function setArtistMonitoredState(options: {
     monitored: boolean;
     priority?: number;
     trigger?: number;
-}): Promise<{ artist: ArtistMonitorRow | undefined; monitored: boolean; jobId: number } | null> {
+}): Promise<{ artist: ArtistMonitorRow | undefined; monitored: boolean; commandId: number } | null> {
     if (options.monitored) {
         const result = await monitorArtistAndQueueIntake({
             artistId: options.artistId,
@@ -212,7 +212,7 @@ export async function setArtistMonitoredState(options: {
         return {
             artist: result.artist,
             monitored: true,
-            jobId: result.jobId,
+            commandId: result.commandId,
         };
     }
 
@@ -224,7 +224,7 @@ export async function setArtistMonitoredState(options: {
     return {
         artist: loadArtistWithEffectiveMonitor(options.artistId),
         monitored: false,
-        jobId: -1,
+        commandId: -1,
     };
 }
 
@@ -238,7 +238,7 @@ export async function queueArtistRefreshScan(artistId: string, options?: { force
         }
     }
 
-    const jobId = queueArtistWorkflow({
+    const commandId = queueArtistWorkflow({
         artistId,
         artistName: String(artist.name || "").trim(),
         workflow: "refresh-scan",
@@ -248,6 +248,6 @@ export async function queueArtistRefreshScan(artistId: string, options?: { force
 
     return {
         artist,
-        jobId,
+        commandId,
     };
 }

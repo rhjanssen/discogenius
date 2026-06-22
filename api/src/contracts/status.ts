@@ -214,8 +214,9 @@ function parseDownloadTrackProgressContract(value: unknown, index: number, label
 function parseTaskQueueStatContract(value: unknown, index: number): TaskQueueStatContract {
   const label = `taskQueueStats[${index}]`;
   const record = expectRecord(value, label);
+  const typeValue = record.type ?? record.name;
   return {
-    type: expectString(record.type, `${label}.type`),
+    type: expectString(typeValue, `${label}.type`),
     status: expectString(record.status, `${label}.status`),
     count: expectNumber(record.count, `${label}.count`),
   };

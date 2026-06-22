@@ -26,6 +26,7 @@ type UseArtistsOptions = {
   dir?: "asc" | "desc";
   search?: string;
   includeDownloadStats?: boolean;
+  includeCounts?: boolean;
   enabled?: boolean;
 };
 
@@ -46,6 +47,7 @@ const artistsQueryKey = (options: UseArtistsOptions) => [
     dir: options.dir ?? null,
     search: options.search ?? "",
     includeDownloadStats: options.includeDownloadStats ?? false,
+    includeCounts: options.includeCounts ?? true,
   },
 ] as const;
 
@@ -90,6 +92,7 @@ export const useArtists = (options?: UseArtistsOptions) => {
         dir: options?.dir,
         search: options?.search,
         includeDownloadStats: options?.includeDownloadStats ?? false,
+        includeCounts: options?.includeCounts ?? true,
         signal,
         timeoutMs,
       }),

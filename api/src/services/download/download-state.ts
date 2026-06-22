@@ -1,6 +1,6 @@
 import { db } from "../../database.js";
 import { buildArtistCompletionPredicate } from "../music/managed-artists.js";
-import { forwardCacheInvalidate } from "../commands/worker/job-protocol.js";
+import { forwardCacheInvalidate } from "../commands/worker/command-worker-protocol.js";
 
 const CACHE_TTL_MS = 30_000;
 
@@ -511,13 +511,19 @@ export function countDownloadedAlbums(): number {
         COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
       FROM ReleaseGroupSlots rgs
       JOIN Tracks t
-        ON t.release_mbid = rgs.selected_release_mbid
+        ON t.album_release_id = rgs.selected_album_release_id
+        OR (t.album_release_id IS NULL AND t.release_mbid = rgs.selected_release_mbid)
       LEFT JOIN TrackFiles lf
         ON (
-          lf.canonical_track_mbid = t.mbid
+          lf.track_id = t.id
+          OR lf.canonical_track_mbid = t.mbid
           OR (
-            lf.canonical_track_mbid IS NULL
-            AND lf.canonical_recording_mbid = t.recording_mbid
+            lf.track_id IS NULL
+            AND lf.canonical_track_mbid IS NULL
+            AND (
+              lf.recording_id = t.recording_id
+              OR (lf.recording_id IS NULL AND lf.canonical_recording_mbid = t.recording_mbid)
+            )
           )
         )
        AND lf.file_type = 'track'
@@ -538,13 +544,19 @@ export function countDownloadedTracks(): number {
     SELECT COUNT(DISTINCT rgs.release_group_mbid || ':' || rgs.slot || ':' || t.mbid) AS count
     FROM ReleaseGroupSlots rgs
     JOIN Tracks t
-      ON t.release_mbid = rgs.selected_release_mbid
+      ON t.album_release_id = rgs.selected_album_release_id
+      OR (t.album_release_id IS NULL AND t.release_mbid = rgs.selected_release_mbid)
     JOIN TrackFiles lf
       ON (
-        lf.canonical_track_mbid = t.mbid
+        lf.track_id = t.id
+        OR lf.canonical_track_mbid = t.mbid
         OR (
-          lf.canonical_track_mbid IS NULL
-          AND lf.canonical_recording_mbid = t.recording_mbid
+          lf.track_id IS NULL
+          AND lf.canonical_track_mbid IS NULL
+          AND (
+            lf.recording_id = t.recording_id
+            OR (lf.recording_id IS NULL AND lf.canonical_recording_mbid = t.recording_mbid)
+          )
         )
       )
      AND lf.file_type = 'track'

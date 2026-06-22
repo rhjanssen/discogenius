@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
 import { baseComparableTitle } from "../mediafiles/import-matching-utils.js";
@@ -573,7 +574,7 @@ export class CurationService {
             const albumTitleFull = formatAlbumTitle(album.title, album.version);
             const artistName = album.artist_name || artistNames[0] || 'Unknown';
             const provider = album.provider || "tidal";
-            CommandQueueService.addJob(CommandNames.DownloadAlbum, {
+            CommandQueueManager.push(CommandNames.DownloadAlbum, {
                 url: buildStreamingMediaUrl("album", albumId, provider as any),
                 type: 'album',
                 provider,
@@ -802,7 +803,7 @@ export class CurationService {
                 const title = video.video_title || 'Unknown Video';
                 const provider = video.provider || "tidal";
 
-                CommandQueueService.addJob(CommandNames.DownloadVideo, {
+                CommandQueueManager.push(CommandNames.DownloadVideo, {
                     url: buildStreamingMediaUrl("video", providerId, provider as any),
                     type: 'video',
                     provider,

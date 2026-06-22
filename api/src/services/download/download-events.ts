@@ -49,24 +49,24 @@ class DownloadEventEmitter extends EventEmitter {
      * importFailed) bypass the throttle and emit immediately so the frontend
      * can react without delay.
      */
-    emitProgress(jobId: number, data: DownloadProgressData) {
+    emitProgress(commandId: number, data: DownloadProgressData) {
         const IMMEDIATE_STATES = new Set(['completed', 'failed', 'importPending', 'importing', 'importFailed']);
         if (data.state && IMMEDIATE_STATES.has(data.state)) {
-            this.progressBuffer.delete(jobId);
-            this.progressLastEmit.set(jobId, Date.now());
-            this.emit('progress-batch', [{ jobId, ...data }]);
+            this.progressBuffer.delete(commandId);
+            this.progressLastEmit.set(commandId, Date.now());
+            this.emit('progress-batch', [{ commandId, ...data }]);
             return;
         }
 
         const now = Date.now();
-        const lastEmit = this.progressLastEmit.get(jobId) ?? 0;
+        const lastEmit = this.progressLastEmit.get(commandId) ?? 0;
 
         if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
-            this.progressBuffer.delete(jobId);
-            this.progressLastEmit.set(jobId, now);
-            this.emit('progress-batch', [{ jobId, ...data }]);
+            this.progressBuffer.delete(commandId);
+            this.progressLastEmit.set(commandId, now);
+            this.emit('progress-batch', [{ commandId, ...data }]);
         } else {
-            this.progressBuffer.set(jobId, data);
+            this.progressBuffer.set(commandId, data);
         }
 
         this.ensureProgressFlushTimer();
@@ -90,35 +90,35 @@ class DownloadEventEmitter extends EventEmitter {
         }
 
         const now = Date.now();
-        const batch: Array<DownloadProgressData & { jobId: number }> = [];
-        for (const [jobId, data] of this.progressBuffer) {
-            this.progressLastEmit.set(jobId, now);
-            batch.push({ jobId, ...data });
+        const batch: Array<DownloadProgressData & { commandId: number }> = [];
+        for (const [commandId, data] of this.progressBuffer) {
+            this.progressLastEmit.set(commandId, now);
+            batch.push({ commandId, ...data });
         }
         this.progressBuffer.clear();
         this.emit('progress-batch', batch);
     }
 
     /** Clean up throttle state for a finished job. */
-    clearJob(jobId: number): void {
-        this.progressBuffer.delete(jobId);
-        this.progressLastEmit.delete(jobId);
+    clearJob(commandId: number): void {
+        this.progressBuffer.delete(commandId);
+        this.progressLastEmit.delete(commandId);
     }
 
     // ---- Structural events (immediate) ----------------------------------------
 
-    emitStarted(jobId: number, data: DownloadStartedData) {
-        this.emit('started', { jobId, ...data });
+    emitStarted(commandId: number, data: DownloadStartedData) {
+        this.emit('started', { commandId, ...data });
     }
 
-    emitCompleted(jobId: number, data: DownloadCompletedData) {
-        this.clearJob(jobId);
-        this.emit('completed', { jobId, ...data });
+    emitCompleted(commandId: number, data: DownloadCompletedData) {
+        this.clearJob(commandId);
+        this.emit('completed', { commandId, ...data });
     }
 
-    emitFailed(jobId: number, data: DownloadFailedData) {
-        this.clearJob(jobId);
-        this.emit('failed', { jobId, ...data });
+    emitFailed(commandId: number, data: DownloadFailedData) {
+        this.clearJob(commandId);
+        this.emit('failed', { commandId, ...data });
     }
 
     // ---- Queue status (debounced, 5 s) ---------------------------------

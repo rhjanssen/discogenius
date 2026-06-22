@@ -9,13 +9,13 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.scheduler-hardening.test.d
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let queueModule: typeof import("./command-queue.js");
+let queueModule: typeof import("./command-queue-manager.js");
 let schedulerModule: typeof import("./command-executor.js");
 let healthModule: typeof import("./health.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
-    queueModule = await import("./command-queue.js");
+    queueModule = await import("./command-queue-manager.js");
     healthModule = await import("./health.js");
     schedulerModule = await import("./command-executor.js");
 
@@ -32,20 +32,20 @@ after(() => {
 });
 
 test("DownloadMissingForce queues a missing-download pass without legacy skip flag maintenance", async () => {
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadMissingForce,
         {},
     );
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
 
     await (schedulerModule.CommandExecutor as any).processJob(job);
 
-    const completed = queueModule.CommandQueueService.getById(jobId);
+    const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
 
-    const queuedDownloadMissing = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+    const queuedDownloadMissing = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
         [queueModule.CommandNames.DownloadMissing],
         10,
     );
@@ -53,21 +53,21 @@ test("DownloadMissingForce queues a missing-download pass without legacy skip fl
 });
 
 test("RescanAllRoots delegates to queueRescanFoldersPass and queues a RescanFolders job", async () => {
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.RescanAllRoots,
         {},
     );
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
 
     await (schedulerModule.CommandExecutor as any).processJob(job);
 
-    const completed = queueModule.CommandQueueService.getById(jobId);
+    const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
     assert.equal((completed?.payload as Record<string, unknown>)?.description, "Queued library-wide folder rescan");
 
-    const queuedRootScans = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+    const queuedRootScans = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
         [queueModule.CommandNames.RescanFolders],
         10,
     );
@@ -79,17 +79,17 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
         healthModule.collectHealthDiagnosticsSnapshot(),
     );
 
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.CheckHealth,
         {},
     );
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
 
     await (schedulerModule.CommandExecutor as any).processJob(job);
 
-    const completed = queueModule.CommandQueueService.getById(jobId);
+    const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
     assert.equal((completed?.payload as Record<string, unknown>)?.description, expectedDescription);
 });
@@ -100,21 +100,21 @@ test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a Refre
         VALUES (?, ?, ?), (?, ?, ?)
     `).run(101, "Monitored Artist", 1, 202, "Ignored Artist", 0);
 
-    const jobId = queueModule.CommandQueueService.addJob(
+    const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.BulkRefreshArtist,
         {},
     );
 
-    const job = queueModule.CommandQueueService.getById(jobId);
+    const job = queueModule.CommandQueueManager.get(commandId);
     assert.ok(job);
 
     await (schedulerModule.CommandExecutor as any).processJob(job);
 
-    const completed = queueModule.CommandQueueService.getById(jobId);
+    const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
     assert.equal((completed?.payload as Record<string, unknown>)?.description, "Queued metadata refresh for all monitored artists");
 
-    const queuedRefreshJobs = queueModule.CommandQueueService.getTopPendingJobsByTypes(
+    const queuedRefreshJobs = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
         [queueModule.CommandNames.RefreshMetadata],
         10,
     );

@@ -1,11 +1,13 @@
-import { CommandQueueService, CommandModel, NON_DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES } from "./command-queue.js";
+import {CommandModel} from "./command-model.js";
+import {NON_DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES} from "./command-names.js";
+import {CommandQueueManager} from "./command-queue-manager.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
 import { commandHandlers } from "./handlers/index.js";
 import type { CommandHandler } from "./handlers/index.js";
-import { buildHandlerContext } from "./job-context.js";
-import { JobWorkerPool } from "./worker/job-worker-pool.js";
+import { buildHandlerContext } from "./command-context.js";
+import { CommandWorkerPool } from "./worker/command-worker-pool.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -42,7 +44,7 @@ export class CommandExecutor {
         this.isRunning = true;
 
         // Recover interrupted non-download jobs after process restart.
-        const recovered = CommandQueueService.resetProcessingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES);
+        const recovered = CommandQueueManager.resetProcessingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES);
         if (recovered > 0) {
             console.log(`[CommandExecutor] Re-queued ${recovered} interrupted non-download job(s)`);
         }
@@ -86,7 +88,7 @@ export class CommandExecutor {
         let recovered = 0;
         const excludeIds = [...this.activeJobs.keys()];
         for (const type of NON_DOWNLOAD_COMMAND_NAMES) {
-            recovered += CommandQueueService.requeueStaleProcessingJobs({
+            recovered += CommandQueueManager.requeue({
                 typePattern: type,
                 olderThanMs: STUCK_JOB_MS,
                 excludeIds,
@@ -106,7 +108,7 @@ export class CommandExecutor {
                 // Try to fill all available slots
                 const slotsAvailable = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
                 if (slotsAvailable > 0) {
-                    const candidates = CommandQueueService.getTopPendingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES, 20);
+                    const candidates = CommandQueueManager.getTopPendingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES, 20);
                     let started = 0;
 
                     for (const candidate of candidates) {
@@ -139,7 +141,7 @@ export class CommandExecutor {
     private static startJob(job: CommandModel) {
         // Mark as processing synchronously BEFORE launching async work,
         // so the next poll loop won't re-select this job from the DB.
-        if (!CommandQueueService.markProcessing(job.id)) {
+        if (!CommandQueueManager.markProcessing(job.id)) {
             return;
         }
         const promise = this.processJob(job).finally(() => {
@@ -149,15 +151,15 @@ export class CommandExecutor {
     }
 
     /**
-     * Run a command's handler. In the live app the job-worker pool is running, so
+     * Run a command's handler. In the live app the command-worker pool is running, so
      * this hands the work to a real OS thread (worker_threads) — the direct
      * analogue of Lidarr's off-thread CommandExecutor — keeping the main thread's
      * HTTP+SSE loop free. When the pool isn't running (unit tests calling
      * processJob directly), it runs the handler in-process.
      */
     private static async runHandler(job: CommandModel): Promise<void> {
-        if (JobWorkerPool.isActive()) {
-            await JobWorkerPool.run(job);
+        if (CommandWorkerPool.isActive()) {
+            await CommandWorkerPool.run(job);
             return;
         }
 
@@ -175,12 +177,12 @@ export class CommandExecutor {
         try {
             await this.runHandler(job);
 
-            CommandQueueService.complete(job.id);
+            CommandQueueManager.complete(job.id);
             queueNextMonitoringPass(job);
             console.log(`✅ Command #${job.id} completed`);
         } catch (error: any) {
             console.error(`❌ Command #${job.id} failed:`, error);
-            CommandQueueService.fail(job.id, error?.message || 'Unknown scheduler error');
+            CommandQueueManager.fail(job.id, error?.message || 'Unknown scheduler error');
             queueNextMonitoringPass(job);
         }
     }

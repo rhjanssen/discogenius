@@ -2,6 +2,7 @@ import { DiskScanService } from "../../mediafiles/library-scan.js";
 import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
+import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import type { CommandHandler } from "./handler-context.js";
@@ -12,14 +13,14 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
 
     if (artistId && !addNewArtists) {
         // Per-artist scan (existing behavior)
-        const baseLabel = ctx.formatWorkflowJobLabel(job, "Rescan folders");
+        const baseLabel = ctx.formatWorkflowCommandLabel(job, "Rescan folders");
 
         // Step 1: Disk scan — reconcile track_files with disk reality
         await DiskScanService.scan({
             artistIds: [artistId],
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             onProgress: (event) => {
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress: event.progress,
                     description: `${baseLabel} - ${event.message}`,
                 });
@@ -29,17 +30,18 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         // Step 2: Optional metadata backfill.
         // Manual/local-only scans stop after reconciling files and importing from disk.
         if (!(job.payload.skipMetadataBackfill ?? false)) {
-            ctx.updateJobDescription(job, {
+            ctx.updateCommandDescription(job, {
                 progress: 90,
                 description: `${baseLabel} - backfilling metadata files`,
             });
             await DiskScanService.fillMissingMetadataFiles(artistId);
         }
 
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress: 95,
             description: `${baseLabel} - finalizing`,
         });
+        ArtistStatisticsService.refresh([artistId]);
 
         // Step 3: Emit completion so artist curation cascades when requested
         appEvents.emit(AppEvent.ARTIST_SCANNED, {
@@ -55,7 +57,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         });
     } else {
         // Library-wide scan (RescanFolders with addNewArtists)
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress: 5,
             description: "Scanning library root folders",
         });
@@ -66,21 +68,22 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             trigger: job.trigger ?? CommandTrigger.Unspecified,
             onProgress: (event) => {
-                ctx.updateJobDescription(job, {
+                ctx.updateCommandDescription(job, {
                     progress: event.progress ?? 50,
                     description: `Scanning library root folders - ${event.message}`,
                 });
             },
         });
-        ctx.updateJobDescription(job, {
+        ctx.updateCommandDescription(job, {
             progress: 95,
             description: "Scanning library root folders - finalizing",
         });
+        ArtistStatisticsService.refresh();
     }
 };
 
 export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Move Artist - moving artist folders into the stored artist path',
     });
@@ -95,14 +98,15 @@ export const handleMoveArtist: CommandHandler<"MoveArtist"> = async (job, ctx) =
         sourcePath: job.payload.sourcePath,
         destinationPath: job.payload.destinationPath,
     });
-    ctx.updateJobDescription(job, {
+    ArtistStatisticsService.refresh([job.payload.artistId]);
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Moved artist folders in ${result.movedRoots} root(s), updated ${result.updatedFiles} tracked file(s), cleaned ${result.cleanedDirectories} empty folder(s)`,
     });
 };
 
 export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Rename Artist - applying artist-wide rename plan',
     });
@@ -115,20 +119,21 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
     let cleanedDirectories = 0;
     for (const artistId of artistIds) {
         const result = RenameTrackFileService.executeRenameArtist({ artistId });
+        ArtistStatisticsService.refresh([artistId]);
         renamed += result.renamed;
         conflicts += result.conflicts;
         missing += result.missing;
         cleanedDirectories += result.cleanedDirectories;
         await ctx.yieldToEventLoop();
     }
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${renamed} file(s), ${conflicts} conflict(s), ${missing} missing, ${cleanedDirectories} empty folder(s) cleaned`,
     });
 };
 
 export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Rename Files - applying rename plan',
     });
@@ -140,14 +145,15 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
         });
-    ctx.updateJobDescription(job, {
+    ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
 };
 
 export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Retag Artist - applying artist-wide audio tag plan',
     });
@@ -159,19 +165,20 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     const errors: Array<{ id: number; error: string }> = [];
     for (const artistId of artistIds) {
         const result = await AudioTagService.applyByQuery({ artistId });
+        ArtistStatisticsService.refresh([artistId]);
         retagged += result.retagged;
         missing += result.missing;
         errors.push(...result.errors);
         await ctx.yieldToEventLoop();
     }
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${retagged} file(s), ${missing} missing, ${errors.length} error(s)`,
     });
 };
 
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Retag Files - applying audio tag plan',
     });
@@ -181,7 +188,8 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             artistId: job.payload.artistId,
             albumId: job.payload.albumId,
         });
-    ctx.updateJobDescription(job, {
+    ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
     });

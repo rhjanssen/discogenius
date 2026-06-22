@@ -28,6 +28,7 @@ import {
 import {
   parseActivityListResponseContract,
   parseQueueListResponseContract,
+  parseQueueStatusContract,
   parseStatusOverviewContract,
 } from "./status.js";
 import { parseAppReleaseInfoContract } from "./release.js";
@@ -358,6 +359,15 @@ test("status contract parsers validate queue and status overview payloads", () =
   assert.equal(overview.activity.history, 9);
   assert.equal(overview.commandStats.downloads?.started, 1);
   assert.equal(overview.runningCommands?.[0].name, "Refresh Artist");
+
+  const queueStatus = parseQueueStatusContract({
+    isPaused: false,
+    processing: false,
+    stats: [
+      { name: "RefreshArtist", status: "queued", count: 4 },
+    ],
+  });
+  assert.equal(queueStatus.stats?.[0].type, "RefreshArtist");
 
   const activity = parseActivityListResponseContract({
     items: [

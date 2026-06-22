@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.route-split.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../database.js");
-let queueModule: typeof import("../services/commands/command-queue.js");
+let queueModule: typeof import("../services/commands/command-queue-manager.js");
 let historyEventsModule: typeof import("../services/commands/history-events.js");
 let tasksRouter: typeof import("./v1/queue.js").default;
 let activityRouter: typeof import("./v1/history.js").default;
@@ -17,7 +17,7 @@ let statusRouter: typeof import("./status.js").default;
 
 before(async () => {
     dbModule = await import("../database.js");
-    queueModule = await import("../services/commands/command-queue.js");
+    queueModule = await import("../services/commands/command-queue-manager.js");
     historyEventsModule = await import("../services/commands/history-events.js");
     tasksRouter = (await import("./v1/queue.js")).default;
     activityRouter = (await import("./v1/history.js")).default;
@@ -64,16 +64,16 @@ function getGetHandler(router: any, pathName: string): (req: any, res: any) => v
 }
 
 test("/api/tasks defaults to queued+started+completed+failed+cancelled and supports explicit status override", () => {
-    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
-    const processingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshMetadata, { target: "library" });
-    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.BulkRefreshArtist, {});
-    const cancelledId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RescanAllRoots, {});
+    const pendingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
+    const processingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshMetadata, { target: "library" });
+    const completedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    const failedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.BulkRefreshArtist, {});
+    const cancelledId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RescanAllRoots, {});
 
-    queueModule.CommandQueueService.markProcessing(processingId);
-    queueModule.CommandQueueService.complete(completedId);
-    queueModule.CommandQueueService.fail(failedId, "test failure");
-    queueModule.CommandQueueService.cancel(cancelledId);
+    queueModule.CommandQueueManager.markProcessing(processingId);
+    queueModule.CommandQueueManager.complete(completedId);
+    queueModule.CommandQueueManager.fail(failedId, "test failure");
+    queueModule.CommandQueueManager.cancel(cancelledId);
 
     const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
@@ -110,7 +110,7 @@ test("/api/tasks defaults to queued+started+completed+failed+cancelled and suppo
 });
 
 test("/api/tasks rejects unsupported filters", () => {
-    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
+    queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");
 
     const tasksHandler = getGetHandler(tasksRouter as any, "/tasks");
 
@@ -132,14 +132,14 @@ test("/api/tasks rejects unsupported filters", () => {
 });
 
 test("/api/activity defaults to completed+failed+cancelled and supports explicit status override", () => {
-    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.ApplyCuration, { expectedArtists: 1 });
-    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.BulkRefreshArtist, {});
-    const cancelledId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.ConfigPrune, {});
+    const pendingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.ApplyCuration, { expectedArtists: 1 });
+    const completedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    const failedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.BulkRefreshArtist, {});
+    const cancelledId = queueModule.CommandQueueManager.push(queueModule.CommandNames.ConfigPrune, {});
 
-    queueModule.CommandQueueService.complete(completedId);
-    queueModule.CommandQueueService.fail(failedId, "test failure");
-    queueModule.CommandQueueService.cancel(cancelledId);
+    queueModule.CommandQueueManager.complete(completedId);
+    queueModule.CommandQueueManager.fail(failedId, "test failure");
+    queueModule.CommandQueueManager.cancel(cancelledId);
 
     const activityHandler = getGetHandler(activityRouter as any, "/activity");
 
@@ -195,9 +195,9 @@ test("/api/activity rejects unsupported filters", () => {
 });
 
 test("/api/activity/events returns merged event log sorted newest-first with pagination metadata", () => {
-    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-events" }, "album-events");
-    const failedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    queueModule.CommandQueueService.fail(failedId, "health failed");
+    const pendingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "album-events" }, "album-events");
+    const failedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueManager.fail(failedId, "health failed");
 
     const historyInfoId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,

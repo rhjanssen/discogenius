@@ -8,7 +8,8 @@ import { db } from "../database.js";
 import { findLibraryFileById, findTextLibraryFileByPath, listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/mediafiles/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/mediafiles/library-paths.js";
 import { queueArtistWorkflow } from "../services/music/artist-workflow.js";
-import { CommandNames, CommandQueueService } from "../services/commands/command-queue.js";
+import {CommandNames} from "../services/commands/command-names.js";
+import {CommandQueueManager} from "../services/commands/command-queue-manager.js";
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService, type RootScanSsePayload } from "../services/mediafiles/root-scan-route-service.js";
@@ -105,12 +106,12 @@ router.post("/rename/apply", (req, res) => {
         : `rename-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null, libraryRoot: libraryRoot || null, fileTypes: fileTypes || [] })}`)
       : undefined;
 
-    const jobId = isArtistWideRename
-      ? CommandQueueService.addJob(CommandNames.RenameArtist, {
+    const commandId = isArtistWideRename
+      ? CommandQueueManager.push(CommandNames.RenameArtist, {
         artistId,
         artistIds: artistId ? [artistId] : undefined,
       }, refId, 1, 1)
-      : CommandQueueService.addJob(CommandNames.RenameFiles, {
+      : CommandQueueManager.push(CommandNames.RenameFiles, {
         ids: normalizedIds,
         applyAll,
         artistId,
@@ -121,8 +122,8 @@ router.post("/rename/apply", (req, res) => {
 
     res.json({
       success: true,
-      queued: jobId !== -1,
-      jobId,
+      queued: commandId !== -1,
+      commandId,
       message: "Rename task queued",
     });
   } catch (error: any) {
@@ -320,14 +321,14 @@ router.post("/scan/:artistId", (req, res) => {
       return res.status(404).json({ detail: `Artist ${artistId} not found` });
     }
 
-    const jobId = queueArtistWorkflow({
+    const commandId = queueArtistWorkflow({
       artistId,
       artistName: artist.name,
       workflow: "library-scan",
       trigger: CommandTrigger.Manual,
     });
 
-    res.json({ success: true, jobId, message: `Library scan queued for ${artist.name}` });
+    res.json({ success: true, commandId, message: `Library scan queued for ${artist.name}` });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
@@ -340,12 +341,12 @@ router.post("/scan/:artistId", (req, res) => {
  */
 router.post("/scan-roots", (req, res) => {
   try {
-    const jobId = rootScanRouteService.queueRootScan({
+    const commandId = rootScanRouteService.queueRootScan({
       trigger: CommandTrigger.Manual,
       fullProcessing: req.body?.fullProcessing,
       monitorArtist: req.body?.monitorArtist,
     });
-    res.json({ success: true, jobId, message: "Root folder scan queued" });
+    res.json({ success: true, commandId, message: "Root folder scan queued" });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

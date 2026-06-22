@@ -101,7 +101,12 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
         spatial.provider_data AS spatial_provider_data
-      FROM Albums rg
+      FROM ArtistReleaseGroupCuration context
+      JOIN Artists managed_artist
+        ON managed_artist.mbid = context.source_artist_mbid
+       AND managed_artist.monitored = 1
+      JOIN Albums rg
+        ON rg.mbid = context.release_group_mbid
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
       LEFT JOIN ReleaseGroupSlots stereo
         ON stereo.release_group_mbid = rg.mbid
@@ -163,15 +168,8 @@ export class AlbumQueryService {
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
         const where: string[] = [
+            "context.included = 1",
             "a.id IS NOT NULL",
-            `EXISTS (
-                SELECT 1
-                FROM ArtistReleaseGroupCuration context
-                JOIN Artists managed_artist ON managed_artist.mbid = context.source_artist_mbid
-                WHERE context.release_group_mbid = rg.mbid
-                  AND context.included = 1
-                  AND managed_artist.monitored = 1
-            )`,
         ];
 
         if (search) {
@@ -210,6 +208,7 @@ export class AlbumQueryService {
         const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
         const query = `
           ${buildReleaseGroupSelect(whereClause, selectedProviderAlbumExpression)}
+          GROUP BY rg.mbid
           ${getReleaseGroupOrderBy(input.sort, sortDir)}
           LIMIT ? OFFSET ?
         `;
@@ -224,15 +223,24 @@ export class AlbumQueryService {
 
         const countQuery = `
           SELECT COUNT(*) AS count
-          FROM Albums rg
-          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN ReleaseGroupSlots stereo
-            ON stereo.release_group_mbid = rg.mbid
-           AND stereo.slot = 'stereo'
-          LEFT JOIN ReleaseGroupSlots spatial
-            ON spatial.release_group_mbid = rg.mbid
-           AND spatial.slot = 'spatial'
-          ${whereClause}
+          FROM (
+            SELECT rg.mbid
+            FROM ArtistReleaseGroupCuration context
+            JOIN Artists managed_artist
+              ON managed_artist.mbid = context.source_artist_mbid
+             AND managed_artist.monitored = 1
+            JOIN Albums rg
+              ON rg.mbid = context.release_group_mbid
+            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+            LEFT JOIN ReleaseGroupSlots stereo
+              ON stereo.release_group_mbid = rg.mbid
+             AND stereo.slot = 'stereo'
+            LEFT JOIN ReleaseGroupSlots spatial
+              ON spatial.release_group_mbid = rg.mbid
+             AND spatial.slot = 'spatial'
+            ${whereClause}
+            GROUP BY rg.mbid
+          ) counted
         `;
         const { count } = db.prepare(countQuery).get(...countParams) as { count: number };
 

@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -141,7 +142,7 @@ export class AlbumCommandService {
     }
 
     /** Monitor + lock a single track, optionally queue download */
-    static async monitorTrack(trackId: string, shouldDownload: boolean): Promise<{ success: boolean; monitored_track?: string; trackId?: string; albumId?: string; jobId?: number | null; message?: string; status?: number }> {
+    static async monitorTrack(trackId: string, shouldDownload: boolean): Promise<{ success: boolean; monitored_track?: string; trackId?: string; albumId?: string; commandId?: number | null; message?: string; status?: number }> {
         const track = db.prepare(`
             SELECT
               CAST(t.id AS TEXT) AS local_track_id,
@@ -185,7 +186,7 @@ export class AlbumCommandService {
         this.setReleaseGroupMonitored(String(track.release_group_mbid), true);
         invalidateReleaseGroupDownloadStatus(String(track.release_group_mbid));
 
-        let jobId: number | null = null;
+        let commandId: number | null = null;
         if (shouldDownload) {
             if (!track.provider_id) {
                 return {
@@ -193,7 +194,7 @@ export class AlbumCommandService {
                     monitored_track: track.mbid || trackId,
                     trackId,
                     albumId: String(track.release_group_mbid),
-                    jobId: null,
+                    commandId: null,
                     message: "Track monitored; no provider offer is selected for download",
                     status: 202,
                 };
@@ -206,7 +207,7 @@ export class AlbumCommandService {
                 ? `${title} (${version})`
                 : title;
             const artistName = track.artist_name || "Unknown";
-            jobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
+            commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
                 url: buildStreamingMediaUrl("track", trackProviderId, provider as any),
                 type: 'track',
                 provider,
@@ -223,11 +224,11 @@ export class AlbumCommandService {
             }, String(track.local_track_id), 0, 1);
         }
 
-        return { success: true, monitored_track: track.mbid || trackId, trackId, albumId: String(track.release_group_mbid), jobId };
+        return { success: true, monitored_track: track.mbid || trackId, trackId, albumId: String(track.release_group_mbid), commandId };
     }
 
     /** Mark a release group wanted and queue its selected provider offer. */
-    static async addAlbum(albumId: string, shouldDownload: boolean, requestedSlot?: string | null): Promise<{ success: boolean; albumId?: string; jobId?: number | null; jobIds?: number[]; status?: number; message?: string }> {
+    static async addAlbum(albumId: string, shouldDownload: boolean, requestedSlot?: string | null): Promise<{ success: boolean; albumId?: string; commandId?: number | null; commandIds?: number[]; status?: number; message?: string }> {
         if (!this.releaseGroupExists(albumId)) {
             return { success: false, status: 404, message: 'Release group not found' };
         }
@@ -244,7 +245,7 @@ export class AlbumCommandService {
             };
         }
 
-        const jobIds: number[] = [];
+        const commandIds: number[] = [];
         if (shouldDownload) {
             for (const selection of selections) {
                 let providerData: any = null;
@@ -257,7 +258,7 @@ export class AlbumCommandService {
                 const providerAlbumId = selection.selected_provider_id;
                 const artistName = selection.artist_name || providerData?.artist?.name || 'Unknown Artist';
                 const provider = selection.selected_provider || "tidal";
-                const jobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
+                const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
                     url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
                     type: 'album',
                     provider,
@@ -274,11 +275,11 @@ export class AlbumCommandService {
                     quality: selection.quality || providerData?.quality || null,
                     description: `${selection.title || providerData?.title || 'Unknown Album'} by ${artistName} (${selection.slot})`,
                 }, `${albumId}:${selection.slot}`, 0, 1);
-                jobIds.push(jobId);
+                commandIds.push(commandId);
             }
         }
 
-        return { success: true, albumId, jobId: jobIds[0] ?? null, jobIds };
+        return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };
     }
 
     /** Update album monitored and/or monitor_lock state */

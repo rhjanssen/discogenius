@@ -11,6 +11,7 @@ import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { ScanLevel } from "./scan-types.js";
 import { shouldRefreshArtist } from "../config/refresh-policy.js";
+import { ArtistStatisticsService } from "./artist-statistics-service.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../../contracts/catalog.js";
 import {
     albumProviderArtworkCandidatesFromRow,
@@ -55,6 +56,7 @@ export interface ArtistListQuery {
     dir?: string;
     monitored?: boolean;
     includeDownloadStats?: boolean;
+    includeCounts?: boolean;
 }
 
 export interface ArtistActivitySnapshot {
@@ -73,73 +75,103 @@ type ArtistCountRow = {
 };
 
 function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, ArtistCountRow> {
+    const result = new Map<string, ArtistCountRow>();
     if (artistMbids.length === 0) {
-        return new Map();
+        return result;
     }
 
-    const placeholders = artistMbids.map(() => "?").join(",");
+    const distinctMbids = Array.from(new Set(artistMbids));
+    const placeholders = distinctMbids.map(() => "?").join(",");
     const rows = db.prepare(`
-        SELECT
-            scope.artist_mbid AS artist_id,
-            COUNT(DISTINCT scope.release_group_mbid) AS cnt,
-            COUNT(DISTINCT CASE
-                WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1
-                THEN scope.release_group_mbid
-                ELSE NULL
-            END) AS monitored_cnt
-        FROM (
-            SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
-            UNION
-            SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
-        ) scope
-        LEFT JOIN ReleaseGroupSlots stereo
-          ON stereo.release_group_mbid = scope.release_group_mbid
-         AND stereo.slot = 'stereo'
-        LEFT JOIN ReleaseGroupSlots spatial
-          ON spatial.release_group_mbid = scope.release_group_mbid
-         AND spatial.slot = 'spatial'
-        WHERE scope.artist_mbid IN (${placeholders})
-        GROUP BY scope.artist_mbid
-    `).all(...artistMbids) as ArtistCountRow[];
+        WITH artist_scope AS (
+            SELECT artist_mbid, mbid AS release_group_mbid
+            FROM Albums
+            WHERE artist_mbid IN (${placeholders})
 
-    return new Map(rows.map((row) => [String(row.artist_id), row]));
+            UNION
+
+            SELECT artist_mbid, release_group_mbid
+            FROM ArtistReleaseGroups
+            WHERE artist_mbid IN (${placeholders})
+        ),
+        slot_state AS (
+            SELECT release_group_mbid,
+                   MAX(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored
+            FROM ReleaseGroupSlots
+            WHERE slot IN ('stereo', 'spatial')
+            GROUP BY release_group_mbid
+        )
+        SELECT scope.artist_mbid AS artist_id,
+               COUNT(*) AS cnt,
+               SUM(CASE WHEN COALESCE(slot_state.monitored, 0) = 1 THEN 1 ELSE 0 END) AS monitored_cnt
+        FROM artist_scope scope
+        LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
+        GROUP BY scope.artist_mbid
+    `).all(...distinctMbids, ...distinctMbids) as ArtistCountRow[];
+
+    for (const row of rows) {
+        result.set(String(row.artist_id), {
+            artist_id: String(row.artist_id),
+            cnt: Number(row.cnt || 0),
+            monitored_cnt: Number(row.monitored_cnt || 0),
+        });
+    }
+
+    return result;
 }
 
 function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCountRow> {
+    const result = new Map<string, ArtistCountRow>();
     if (artistMbids.length === 0) {
-        return new Map();
+        return result;
     }
 
-    const placeholders = artistMbids.map(() => "?").join(",");
+    const distinctMbids = Array.from(new Set(artistMbids));
+    const placeholders = distinctMbids.map(() => "?").join(",");
     const rows = db.prepare(`
-        SELECT
-            scope.artist_mbid AS artist_id,
-            COUNT(DISTINCT track.mbid) AS cnt,
-            COUNT(DISTINCT CASE
-                WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1
-                THEN track.mbid
-                ELSE NULL
-            END) AS monitored_cnt
-        FROM (
-            SELECT artist_mbid, mbid AS release_group_mbid FROM Albums
-            UNION
-            SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups
-        ) scope
-        JOIN AlbumReleases release
-          ON release.release_group_mbid = scope.release_group_mbid
-        JOIN Tracks track
-          ON track.release_mbid = release.mbid
-        LEFT JOIN ReleaseGroupSlots stereo
-          ON stereo.release_group_mbid = scope.release_group_mbid
-         AND stereo.slot = 'stereo'
-        LEFT JOIN ReleaseGroupSlots spatial
-          ON spatial.release_group_mbid = scope.release_group_mbid
-         AND spatial.slot = 'spatial'
-        WHERE scope.artist_mbid IN (${placeholders})
-        GROUP BY scope.artist_mbid
-    `).all(...artistMbids) as ArtistCountRow[];
+        WITH artist_scope AS (
+            SELECT artist_mbid, mbid AS release_group_mbid
+            FROM Albums
+            WHERE artist_mbid IN (${placeholders})
 
-    return new Map(rows.map((row) => [String(row.artist_id), row]));
+            UNION
+
+            SELECT artist_mbid, release_group_mbid
+            FROM ArtistReleaseGroups
+            WHERE artist_mbid IN (${placeholders})
+        ),
+        slot_state AS (
+            SELECT release_group_mbid,
+                   MAX(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored
+            FROM ReleaseGroupSlots
+            WHERE slot IN ('stereo', 'spatial')
+            GROUP BY release_group_mbid
+        ),
+        artist_tracks AS (
+            SELECT DISTINCT scope.artist_mbid,
+                   track.mbid,
+                   COALESCE(slot_state.monitored, 0) AS monitored
+            FROM artist_scope scope
+            JOIN AlbumReleases release ON release.release_group_mbid = scope.release_group_mbid
+            JOIN Tracks track ON track.release_mbid = release.mbid
+            LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
+        )
+        SELECT artist_mbid AS artist_id,
+               COUNT(*) AS cnt,
+               SUM(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored_cnt
+        FROM artist_tracks
+        GROUP BY artist_mbid
+    `).all(...distinctMbids, ...distinctMbids) as ArtistCountRow[];
+
+    for (const row of rows) {
+        result.set(String(row.artist_id), {
+            artist_id: String(row.artist_id),
+            cnt: Number(row.cnt || 0),
+            monitored_cnt: Number(row.monitored_cnt || 0),
+        });
+    }
+
+    return result;
 }
 
 function hasArtistIdentityGap(artist: ArtistMonitorRow): boolean {
@@ -401,6 +433,7 @@ export class ArtistQueryService {
         const sortDir = (input.dir || "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
         const monitoredFilter = input.monitored;
         const includeDownloadStats = input.includeDownloadStats !== false;
+        const includeCounts = input.includeCounts !== false;
 
         let query = `
       SELECT a.*,
@@ -450,9 +483,14 @@ export class ArtistQueryService {
         const artists = db.prepare(query).all(...params) as any[];
         const totalResult = db.prepare(countQuery).get(...countParams) as { total: number };
         const artistIds = artists.map((artist) => String(artist.id)).filter(Boolean);
-        const artistMbids = artists.map((artist) => String(artist.mbid || "")).filter(Boolean);
-        const albumCountsByArtistMbid = buildArtistReleaseGroupCountMap(artistMbids);
-        const trackCountsByArtistMbid = buildArtistTrackCountMap(artistMbids);
+        // Read precomputed statistics only — never compute on the request thread.
+        // Statistics are (re)computed off the main thread by the command workers
+        // as artists are scanned/curated (see the *-handlers refresh calls); the
+        // ArtistStatistics table persists, so the list endpoint stays fast.
+        // Missing rows surface as 0 until the owning artist's next worker refresh.
+        const artistStatisticsById = includeCounts
+            ? ArtistStatisticsService.getStatisticsMap(artistIds)
+            : new Map();
         const artistDownloadStats = includeDownloadStats
             ? getArtistDownloadStatsMap(artistIds)
             : null;
@@ -460,19 +498,22 @@ export class ArtistQueryService {
         return {
             items: artists.map((artist) => {
                 const artistId = String(artist.id);
-                const artistMbid = String(artist.mbid || "");
-                const albumCounts = artistMbid ? albumCountsByArtistMbid.get(artistMbid) : undefined;
-                const trackCounts = artistMbid ? trackCountsByArtistMbid.get(artistMbid) : undefined;
+                const statistics = artistStatisticsById.get(artistId);
                 const resolvedArtistPicture = proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
+                const countFields = includeCounts
+                    ? {
+                        album_count: Number(statistics?.album_count || 0),
+                        monitored_album_count: Number(statistics?.monitored_album_count || 0),
+                        track_count: Number(statistics?.track_count || 0),
+                        monitored_track_count: Number(statistics?.monitored_track_count || 0),
+                    }
+                    : {};
 
                 return {
                     ...artist,
                     picture: resolvedArtistPicture,
                     cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
-                    album_count: Number(albumCounts?.cnt || 0),
-                    monitored_album_count: Number(albumCounts?.monitored_cnt || 0),
-                    track_count: Number(trackCounts?.cnt || 0),
-                    monitored_track_count: Number(trackCounts?.monitored_cnt || 0),
+                    ...countFields,
                     downloaded: includeDownloadStats
                         ? artistDownloadStats?.get(artistId)?.downloadedPercent ?? 0
                         : Number(artist.downloaded ?? 0),

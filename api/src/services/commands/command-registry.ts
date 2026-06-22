@@ -3,7 +3,8 @@ import type {
   SystemTaskCategoryContract,
   SystemTaskRiskContract,
 } from "../../contracts/system-task.js";
-import { CommandNames, type CommandName } from "./command-queue.js";
+import {CommandNames} from "./command-names.js";
+import {type CommandName} from "./command-queue-manager.js";
 import {
   queueCleanupTempFiles,
   queueCompactDatabase,

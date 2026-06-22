@@ -1,9 +1,6 @@
 import { db } from "../../database.js";
 import { countManagedArtists } from "./managed-artists.js";
 import {
-    countDownloadedAlbums,
-    countDownloadedManagedArtists,
-    countDownloadedTracks,
     countDownloadedVideos,
 } from "../download/download-state.js";
 import type { LibraryStatsContract } from "../../contracts/catalog.js";
@@ -22,45 +19,59 @@ export class LibraryStatsQueryService {
             return cached.value;
         }
 
+        const artistCount = (db.prepare("SELECT COUNT(*) as count FROM Artists").get() as { count: number }).count;
+
+        // Read precomputed statistics only — the heavy whole-library aggregation
+        // runs off the main thread (command workers refresh per artist on scan;
+        // bulk handlers refresh the rest). Computing it here would block the
+        // event loop for tens of seconds on a cold cache.
+        const cachedArtistStats = db.prepare(`
+            SELECT
+                COALESCE(SUM(album_count), 0) AS album_total,
+                COALESCE(SUM(monitored_album_count), 0) AS album_monitored,
+                COALESCE(SUM(track_count), 0) AS track_total,
+                COALESCE(SUM(monitored_track_count), 0) AS track_monitored,
+                COALESCE(SUM(track_file_count), 0) AS track_downloaded,
+                SUM(CASE
+                    WHEN monitored_track_count > 0 AND track_file_count >= monitored_track_count THEN 1
+                    ELSE 0
+                END) AS artist_downloaded
+            FROM ArtistStatistics
+        `).get() as {
+            album_total: number;
+            album_monitored: number;
+            track_total: number;
+            track_monitored: number;
+            track_downloaded: number;
+            artist_downloaded: number;
+        };
+
+        const downloadedAlbums = (db.prepare(`
+            SELECT COUNT(DISTINCT COALESCE(
+                CAST(release_group_id AS TEXT),
+                canonical_release_group_mbid,
+                album_id
+            )) AS count
+            FROM TrackFiles
+            WHERE file_type = 'track'
+              AND (release_group_id IS NOT NULL OR canonical_release_group_mbid IS NOT NULL OR album_id IS NOT NULL)
+        `).get() as { count: number } | undefined)?.count ?? 0;
+
         const stats: LibraryStatsContract = {
             artists: {
-                total: (db.prepare("SELECT COUNT(*) as count FROM Artists").get() as { count: number }).count,
+                total: artistCount,
                 monitored: countManagedArtists(),
-                downloaded: countDownloadedManagedArtists(),
+                downloaded: Number(cachedArtistStats.artist_downloaded || 0),
             },
             albums: {
-                total: (db.prepare(`
-                    SELECT COUNT(*) AS count
-                    FROM ReleaseGroupSlots
-                    WHERE slot IN ('stereo', 'spatial')
-                      AND selected_release_mbid IS NOT NULL
-                `).get() as { count: number }).count,
-                monitored: (db.prepare(`
-                    SELECT COUNT(*) AS count
-                    FROM ReleaseGroupSlots
-                    WHERE slot IN ('stereo', 'spatial')
-                      AND selected_release_mbid IS NOT NULL
-                      AND monitored = 1
-                `).get() as { count: number }).count,
-                downloaded: countDownloadedAlbums(),
+                total: Number(cachedArtistStats.album_total || 0),
+                monitored: Number(cachedArtistStats.album_monitored || 0),
+                downloaded: Number(downloadedAlbums || 0),
             },
             tracks: {
-                total: (db.prepare(`
-                    SELECT COUNT(*) AS count
-                    FROM ReleaseGroupSlots rgs
-                    JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
-                    WHERE rgs.slot IN ('stereo', 'spatial')
-                      AND rgs.selected_release_mbid IS NOT NULL
-                `).get() as { count: number }).count,
-                monitored: (db.prepare(`
-                    SELECT COUNT(*) AS count
-                    FROM ReleaseGroupSlots rgs
-                    JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
-                    WHERE rgs.slot IN ('stereo', 'spatial')
-                      AND rgs.selected_release_mbid IS NOT NULL
-                      AND rgs.monitored = 1
-                `).get() as { count: number }).count,
-                downloaded: countDownloadedTracks(),
+                total: Number(cachedArtistStats.track_total || 0),
+                monitored: Number(cachedArtistStats.track_monitored || 0),
+                downloaded: Number(cachedArtistStats.track_downloaded || 0),
             },
             videos: {
                 // is_video / monitored are NOT NULL DEFAULT 0, so the bare

@@ -1,6 +1,6 @@
 import { runRuntimeMaintenance } from "../runtime-maintenance.js";
 import { runLowCouplingMaintenanceJob } from "../scheduler-maintenance-handlers.js";
-import type { CommandModel } from "../command-queue.js";
+import type {CommandModel} from "../command-model.js";
 import type { CommandHandler } from "./handler-context.js";
 
 /**
@@ -12,12 +12,12 @@ import type { CommandHandler } from "./handler-context.js";
 export const handleLowCouplingMaintenance: CommandHandler = async (job, ctx) => {
     const command = job as CommandModel;
     await runLowCouplingMaintenanceJob(command, {
-        updateJobDescription: (options) => ctx.updateJobDescription(command, options),
+        updateCommandDescription: (options) => ctx.updateCommandDescription(command, options),
     });
 };
 
 export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ctx) => {
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 10,
         description: 'Running housekeeping and optimizing the database',
     });
@@ -29,7 +29,7 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `and optimized the database`,
     ];
-    ctx.updateJobDescription(job, {
+    ctx.updateCommandDescription(job, {
         progress: 100,
         description: parts.join(', '),
     });

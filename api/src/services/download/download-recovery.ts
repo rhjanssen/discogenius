@@ -3,7 +3,8 @@ import { db } from "../../database.js";
 import type { ImportDownloadCommand } from "../commands/command-bodies.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { getDownloadWorkspacePath, type DownloadMediaType } from "./download-routing.js";
-import { CommandNames, type CommandModel } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {type CommandModel} from "../commands/command-queue-manager.js";
 
 const REDOWNLOAD_IMPORT_HINT = 're-download the item to retry import';
 

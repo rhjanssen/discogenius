@@ -10,7 +10,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let serviceModule: typeof import("./album-command-service.js");
-let queueModule: typeof import("../commands/command-queue.js");
+let queueModule: typeof import("../commands/command-queue-manager.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -26,7 +26,7 @@ before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   serviceModule = await import("./album-command-service.js");
-  queueModule = await import("../commands/command-queue.js");
+  queueModule = await import("../commands/command-queue-manager.js");
 });
 
 beforeEach(() => {

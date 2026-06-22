@@ -3,7 +3,9 @@ import { db } from "../../database.js";
 import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
-import { CommandModel, CommandNames, CommandQueueService } from "./command-queue.js";
+import {CommandModel} from "./command-model.js";
+import {CommandNames} from "./command-names.js";
+import {CommandQueueManager} from "./command-queue-manager.js";
 
 export interface SchedulerJobDescriptionUpdate {
     progress?: number;
@@ -11,7 +13,7 @@ export interface SchedulerJobDescriptionUpdate {
 }
 
 export interface SchedulerMaintenanceHandlerContext {
-    updateJobDescription: (options: SchedulerJobDescriptionUpdate) => void;
+    updateCommandDescription: (options: SchedulerJobDescriptionUpdate) => void;
 }
 
 export function formatHealthCheckDescription(snapshot: HealthDiagnosticsSnapshot): string {
@@ -44,40 +46,40 @@ export async function runLowCouplingMaintenanceJob(
 ) {
     switch (job.name) {
         case CommandNames.BulkRefreshArtist: {
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 10,
                 description: 'Queueing metadata refresh for all monitored artists',
             });
             // Queue a single RefreshMetadata job that iterates all artists inline (no staleness skip)
             const { queueMetadataRefreshPass } = await import('./scheduler.js');
             queueMetadataRefreshPass({ trigger: job.trigger ?? CommandTrigger.Manual });
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Queued metadata refresh for all monitored artists',
             });
             return;
         }
         case CommandNames.DownloadMissingForce: {
-            CommandQueueService.addJob(
+            CommandQueueManager.push(
                 CommandNames.DownloadMissing,
                 {},
                 undefined,
                 10,
             );
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Queued force download of missing media',
             });
             return;
         }
         case CommandNames.RescanAllRoots: {
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 10,
                 description: 'Queueing library-wide folder rescan',
             });
             const { queueRescanFoldersPass } = await import('./scheduler.js');
             queueRescanFoldersPass({ trigger: job.trigger ?? CommandTrigger.Manual, addNewArtists: true });
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Queued library-wide folder rescan',
             });
@@ -85,7 +87,7 @@ export async function runLowCouplingMaintenanceJob(
         }
         case CommandNames.CheckHealth: {
             const snapshot = collectHealthDiagnosticsSnapshot();
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: formatHealthCheckDescription(snapshot),
             });
@@ -94,21 +96,21 @@ export async function runLowCouplingMaintenanceJob(
         case CommandNames.CompactDatabase: {
             db.prepare('VACUUM;').run();
             db.prepare('ANALYZE;').run();
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Database compacted and analyzed',
             });
             return;
         }
         case CommandNames.CleanupTempFiles: {
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Temporary files cleaned',
             });
             return;
         }
         case CommandNames.UpdateLibraryMetadata: {
-            context.updateJobDescription({
+            context.updateCommandDescription({
                 progress: 100,
                 description: 'Library metadata updated',
             });

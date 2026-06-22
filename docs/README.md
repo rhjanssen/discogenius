@@ -8,8 +8,6 @@
   - Versioned task backlog + roadmap — the source of truth for what ships next.
 - [LIDARR_DB_ALIGNMENT_PLAN.md](LIDARR_DB_ALIGNMENT_PLAN.md) / [LIDARR_SCHEMA_AUDIT.md](LIDARR_SCHEMA_AUDIT.md)
   - The database-alignment migration (retire the legacy `Provider*` tables).
-- [JOB_EXECUTION_THREADING_PLAN.md](JOB_EXECUTION_THREADING_PLAN.md)
-  - Plan to move job execution onto worker threads.
 - [ULTRABLUR_DOCUMENTATION.md](ULTRABLUR_DOCUMENTATION.md)
   - UltraBlur background subsystem.
 

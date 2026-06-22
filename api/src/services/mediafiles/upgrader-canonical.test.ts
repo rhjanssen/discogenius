@@ -12,14 +12,14 @@ process.env.DISCOGENIUS_DISABLE_DOWNLOADS = "1";
 let dbModule: typeof import("../../database.js");
 let db: typeof import("../../database.js").db;
 let UpgraderService: typeof import("./upgrader.js").UpgraderService;
-let CommandNames: typeof import("../commands/command-queue.js").CommandNames;
+let CommandNames: typeof import("../commands/command-queue-manager.js").CommandNames;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   db = dbModule.db;
   ({ UpgraderService } = await import("./upgrader.js"));
-  ({ CommandNames } = await import("../commands/command-queue.js"));
+  ({ CommandNames } = await import("../commands/command-queue-manager.js"));
 });
 
 afterEach(() => {

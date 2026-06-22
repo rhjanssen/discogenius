@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getCommandHistory, mapJob } from "../../services/commands/command-history.js";
-import { CommandQueueService } from "../../services/commands/command-queue.js";
+import {CommandQueueManager} from "../../services/commands/command-queue-manager.js";
 import { runCommandByName } from "../../services/commands/system-task-service.js";
 import { getObjectBody, getRequiredString, isRequestValidationError } from "../../utils/request-validation.js";
 
@@ -8,7 +8,7 @@ const router = Router();
 
 router.get("/", (req, res) => {
   try {
-    const active = CommandQueueService.listJobs("%", "%", 200)
+    const active = CommandQueueManager.all("%", "%", 200)
       .filter((job) => job.status === "queued" || job.status === "started")
       .map((job) => mapJob(job));
     const historyLimit = Math.max(0, parseInt(String(req.query.limit || "50"), 10) || 50);
@@ -23,12 +23,12 @@ router.get("/", (req, res) => {
 
 router.get("/:id", (req, res) => {
   try {
-    const jobId = parseInt(req.params.id, 10);
-    if (Number.isNaN(jobId)) {
+    const commandId = parseInt(req.params.id, 10);
+    if (Number.isNaN(commandId)) {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    const job = CommandQueueService.getById(jobId);
+    const job = CommandQueueManager.get(commandId);
     if (!job) {
       return res.status(404).json({ detail: "Command not found" });
     }
@@ -42,13 +42,13 @@ router.get("/:id", (req, res) => {
 router.post("/", (req, res) => {
   try {
     const body = getObjectBody(req.body);
-    const jobId = runCommandByName(getRequiredString(body, "name"));
-    if (jobId === -1) {
+    const commandId = runCommandByName(getRequiredString(body, "name"));
+    if (commandId === -1) {
       return res.status(400).json({ detail: "Unsupported command name" });
     }
 
-    const job = CommandQueueService.getById(jobId);
-    res.status(201).json(job ? mapJob(job) : { id: jobId });
+    const job = CommandQueueManager.get(commandId);
+    res.status(201).json(job ? mapJob(job) : { id: commandId });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });
@@ -59,12 +59,12 @@ router.post("/", (req, res) => {
 
 router.delete("/:id", (req, res) => {
   try {
-    const jobId = parseInt(req.params.id, 10);
-    if (Number.isNaN(jobId)) {
+    const commandId = parseInt(req.params.id, 10);
+    if (Number.isNaN(commandId)) {
       return res.status(400).json({ detail: "Invalid command id" });
     }
 
-    CommandQueueService.cancel(jobId);
+    CommandQueueManager.cancel(commandId);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

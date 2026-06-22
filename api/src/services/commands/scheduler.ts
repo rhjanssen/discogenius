@@ -3,7 +3,8 @@ import { db } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { CurationService } from "../music/curation-service.js";
 import { RefreshArtistService } from "../music/refresh-artist-service.js";
-import { CommandNames, CommandQueueService, type CommandModel } from "./command-queue.js";
+import {CommandNames} from "./command-names.js";
+import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
 import { getManagedArtists, getManagedArtistsDueForRefresh } from "../music/managed-artists.js";
 import { readIntEnv } from "../../utils/env.js";
 import {
@@ -208,7 +209,7 @@ export function queueMetadataRefreshPass(options: {
     const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
     const refId = monitoringCycle ? `metadata-refresh:${monitoringCycle}` : "metadata-refresh";
-    const jobId = CommandQueueService.addJob(
+    const commandId = CommandQueueManager.push(
         CommandNames.RefreshMetadata,
         {
             title: "Refreshing metadata",
@@ -226,7 +227,7 @@ export function queueMetadataRefreshPass(options: {
         options.trigger ?? CommandTrigger.Manual,
     );
 
-    return jobId;
+    return commandId;
 }
 
 export function queueMonitoringCyclePass(options: { trigger?: number; includeRootScan?: boolean } = {}) {
@@ -248,7 +249,7 @@ export function queueRescanFoldersPass(options: {
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const refId = monitoringCycle ? `rescan-folders:${monitoringCycle}` : "rescan-folders";
-    const jobId = CommandQueueService.addJob(
+    const commandId = CommandQueueManager.push(
         CommandNames.RescanFolders,
         {
             addNewArtists: options.addNewArtists ?? false,
@@ -263,7 +264,7 @@ export function queueRescanFoldersPass(options: {
         options.trigger ?? CommandTrigger.Manual,
     );
 
-    return jobId;
+    return commandId;
 }
 
 export function queueCurationPass(options: {
@@ -275,7 +276,7 @@ export function queueCurationPass(options: {
     const artistIds = normalizeArtistIds(options.artistIds);
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds });
     const refId = monitoringCycle ? `apply-curation:${monitoringCycle}` : "apply-curation";
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.ApplyCuration,
         {
             title: "Applying curation",
@@ -299,7 +300,7 @@ export function queueDownloadMissingPass(options: {
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
     const refId = monitoringCycle ? `download-missing:${monitoringCycle}` : "download-missing";
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.DownloadMissing,
         {
             artistIds: normalizeArtistIds(options.artistIds),
@@ -380,7 +381,7 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
 }
 
 export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.CheckUpgrades,
         {
             title: "Checking upgrades",
@@ -394,7 +395,7 @@ export function queueCheckUpgradesPass(options: { trigger?: number } = {}) {
 
 export function queueHousekeepingPass(options: { trigger?: number } = {}) {
     const trigger = options.trigger ?? CommandTrigger.Scheduled;
-    const jobId = CommandQueueService.addJob(
+    const commandId = CommandQueueManager.push(
         CommandNames.Housekeeping,
         {
             title: "Running housekeeping",
@@ -404,10 +405,10 @@ export function queueHousekeepingPass(options: { trigger?: number } = {}) {
         0,
         trigger,
     );
-    if (jobId !== -1) {
+    if (commandId !== -1) {
         markScheduledTaskQueued("housekeeping");
     }
-    return jobId;
+    return commandId;
 }
 
 function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
@@ -447,6 +448,19 @@ function syncScheduledTasks() {
     DELETE FROM scheduled_tasks
     WHERE task_key NOT IN (${definitions.map(() => "?").join(", ")})
   `).run(...definitions.map((definition) => definition.key));
+}
+
+function trySyncScheduledTasks(): boolean {
+    try {
+        syncScheduledTasks();
+        return true;
+    } catch (error) {
+        if (error && typeof error === "object" && (error as { code?: string }).code === "SQLITE_BUSY") {
+            console.warn("[Monitoring] Scheduled task sync skipped because SQLite is busy; retrying on the next tick");
+            return false;
+        }
+        throw error;
+    }
 }
 
 function getScheduledTask(taskKey: ScheduledTaskKey): ScheduledTaskRow | null {
@@ -550,7 +564,9 @@ export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
 }
 
 function queueDueScheduledTasks() {
-    syncScheduledTasks();
+    if (!trySyncScheduledTasks()) {
+        return;
+    }
 
     for (const definition of getScheduledTaskDefinitions()) {
         const effective = getEffectiveScheduledTaskDefinition(definition);
@@ -575,8 +591,8 @@ function queueDueScheduledTasks() {
             isChecking = true;
             saveMonitoringProgress(0, true);
             try {
-                const jobId = queueMonitoringCyclePass({ trigger: CommandTrigger.Scheduled, includeRootScan: true });
-                if (jobId !== -1) {
+                const commandId = queueMonitoringCyclePass({ trigger: CommandTrigger.Scheduled, includeRootScan: true });
+                if (commandId !== -1) {
                     // Stamp at queue time (like Lidarr measures the next run from when
                     // the task fires) so a cycle that fails to fully complete still
                     // won't re-queue every tick. markMonitoringCycleCompleted()
@@ -597,8 +613,8 @@ function queueDueScheduledTasks() {
                 continue;
             }
 
-            const jobId = queueHousekeepingPass({ trigger: CommandTrigger.Scheduled });
-            if (jobId !== -1) {
+            const commandId = queueHousekeepingPass({ trigger: CommandTrigger.Scheduled });
+            if (commandId !== -1) {
                 markScheduledTaskQueued(definition.key);
                 console.log("🧹 Scheduled housekeeping queued");
             }
@@ -612,7 +628,7 @@ export function startMonitoring() {
     }
 
     loadMonitoringProgress();
-    syncScheduledTasks();
+    trySyncScheduledTasks();
 
     const { config } = getMonitoringStatus();
     console.log(`🔍 Starting scheduled task runner (monitoring cycle every ${config.scan_interval_hours}h, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h — UTC interval schedule, Lidarr-style)`);
@@ -686,8 +702,8 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
     return { newAlbums: totalNewAlbums, artists: artists.length };
 }
 
-export async function queueCheckNow(): Promise<{ success: boolean; jobId?: number }> {
-    const jobId = CommandQueueService.addJob(
+export async function queueCheckNow(): Promise<{ success: boolean; commandId?: number }> {
+    const commandId = CommandQueueManager.push(
         "RefreshMetadata",
         {
             title: "Refreshing provider metadata",
@@ -698,7 +714,7 @@ export async function queueCheckNow(): Promise<{ success: boolean; jobId?: numbe
         1,
     );
 
-    return { success: jobId > 0, jobId };
+    return { success: commandId > 0, commandId };
 }
 
 export async function checkNowStreaming(sendEvent: (event: string, data: any) => void): Promise<{ newAlbums: number; artists: number }> {
@@ -823,7 +839,7 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
 // ============================================================================
 
 export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.BulkRefreshArtist,
         {},
         'bulk-refresh-artist',
@@ -833,7 +849,7 @@ export function queueBulkRefreshArtist(options: { trigger?: number } = {}) {
 }
 
 export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.DownloadMissingForce,
         {},
         'download-missing-force',
@@ -843,7 +859,7 @@ export function queueDownloadMissingForce(options: { trigger?: number } = {}) {
 }
 
 export function queueRescanAllRoots(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.RescanAllRoots,
         { addNewArtists: false },
         'rescan-all-roots',
@@ -853,7 +869,7 @@ export function queueRescanAllRoots(options: { trigger?: number } = {}) {
 }
 
 export function queueCheckHealth(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.CheckHealth,
         {},
         'check-health',
@@ -863,7 +879,7 @@ export function queueCheckHealth(options: { trigger?: number } = {}) {
 }
 
 export function queueCompactDatabase(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.CompactDatabase,
         {},
         'compact-database',
@@ -873,7 +889,7 @@ export function queueCompactDatabase(options: { trigger?: number } = {}) {
 }
 
 export function queueCleanupTempFiles(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.CleanupTempFiles,
         {},
         'cleanup-temp-files',
@@ -883,7 +899,7 @@ export function queueCleanupTempFiles(options: { trigger?: number } = {}) {
 }
 
 export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.UpdateLibraryMetadata,
         {},
         'update-library-metadata',
@@ -892,7 +908,7 @@ export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
     );
 }
 export function queueConfigPrune(options: { trigger?: number } = {}) {
-    return CommandQueueService.addJob(
+    return CommandQueueManager.push(
         CommandNames.ConfigPrune,
         {},
         'config-prune',

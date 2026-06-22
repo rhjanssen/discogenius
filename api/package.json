@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "tsx watch --ignore ../library --ignore ../config --ignore ../downloads --ignore ../tmp index.ts",
-    "build": "tsc --project ./tsconfig.json",
+    "build": "tsc --project ./tsconfig.json && node -e \"const fs=require('fs'),path=require('path'); const srcDir='src/services/commands/worker', destDir='dist/src/services/commands/worker'; fs.mkdirSync(destDir, {recursive:true}); fs.readdirSync(srcDir).filter(f=>f.endsWith('.mjs')).forEach(f=>fs.copyFileSync(path.join(srcDir,f),path.join(destDir,f)))\"",
     "start": "node dist/index.js",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },

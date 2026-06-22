@@ -13,7 +13,7 @@ let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let curationServiceModule: typeof import("./curation-service.js");
 let albumQueryServiceModule: typeof import("./album-query-service.js");
-let queueModule: typeof import("../commands/command-queue.js");
+let queueModule: typeof import("../commands/command-queue-manager.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
   const rows = dbModule.db.prepare(`
@@ -54,7 +54,7 @@ before(async () => {
   configModule = await import("../config/config.js");
   curationServiceModule = await import("./curation-service.js");
   albumQueryServiceModule = await import("./album-query-service.js");
-  queueModule = await import("../commands/command-queue.js");
+  queueModule = await import("../commands/command-queue-manager.js");
 
   writeTestConfig();
 });

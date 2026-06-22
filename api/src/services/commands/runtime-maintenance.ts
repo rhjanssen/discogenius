@@ -5,6 +5,7 @@ import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
 import { resolveLibraryFileIdentity } from "../mediafiles/library-file-identity.js";
+import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 
 interface LibraryFileRow {
   id: number;
@@ -506,6 +507,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   })();
 
   refreshDownloadState(summary);
+  ArtistStatisticsService.refresh();
 
   // Prune finished commands rows older than 1 day (Lidarr keeps completed commands
   // 5 min in-memory and trims DB records older than 1 day via CommandRepository.Trim())

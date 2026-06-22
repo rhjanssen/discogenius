@@ -1,5 +1,6 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
-import { ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import type { RescanFoldersCommand } from "../commands/command-bodies.js";
 import { getManagedArtists } from "./managed-artists.js";
 
@@ -192,7 +193,7 @@ export function queueArtistWorkflow(params: {
   trigger?: number;
 }) {
   const { type, payload } = buildArtistWorkflowEntryJob(params);
-  return CommandQueueService.addJob(
+  return CommandQueueManager.push(
     type,
     payload,
     params.artistId,
@@ -231,7 +232,7 @@ export function queueLibraryRescan(options: {
   artistIds?: string[];
   addNewArtists?: boolean;
 } = {}) {
-  return CommandQueueService.addJob(
+  return CommandQueueManager.push(
     CommandNames.RescanFolders,
     {
       addNewArtists: options.addNewArtists ?? false,
@@ -281,7 +282,7 @@ export function queueManagedArtistsWorkflow(
 
   for (let index = 0; index < artists.length; index += 1) {
     const artist = artists[index];
-    const jobId = queueArtistWorkflow({
+    const commandId = queueArtistWorkflow({
       artistId: String(artist.id),
       artistName: artist.name,
       workflow,
@@ -289,7 +290,7 @@ export function queueManagedArtistsWorkflow(
       trigger,
     });
 
-    if (jobId !== -1) {
+    if (commandId !== -1) {
       queued += 1;
     }
 
@@ -299,7 +300,7 @@ export function queueManagedArtistsWorkflow(
       queued,
       artistId: String(artist.id),
       artistName: artist.name,
-      queuedJob: jobId !== -1,
+      queuedJob: commandId !== -1,
     });
   }
 

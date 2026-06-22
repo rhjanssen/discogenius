@@ -131,12 +131,14 @@ Docker runtime image.
   `upgrade_queue` should stay separate or fold into `job_queue`.
   See docs/LIDARR_SCHEMA_AUDIT.md.
 
-## 2.0.9 — Multithreaded job execution
-- **Job execution → worker_threads** ⬜ — move the download processor, then the
-  command executor, off the main event loop (own SQLite connections + message
-  bridge for SSE/cache/progress). Lidarr-style parallelism on the clean schema.
-  See docs/JOB_EXECUTION_THREADING_PLAN.md. (Cooperative yielding + perf indexing
-  shipped in 2.0.3 as the interim mitigation.)
+## 2.0.9 — Multithreaded command execution ✅
+Shipped: the command executor runs command handlers on a worker-thread pool
+with separate SQLite connections, while the main thread keeps queue ownership,
+SSE, HTTP, download orchestration, and command state transitions. Worker events,
+download-state cache invalidations, and import progress are bridged back to the
+main thread. Follow-up hardening in this pass adds explicit SQLite busy retries
+for concurrent writers and set-based library-list queries so the main library
+view stays responsive under worker load.
 
 ## 2.1.0 — Apple Music provider plugin
 - **Apple Music at TIDAL parity** ⬜ — own auth/token, catalog + artist-catalog

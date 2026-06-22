@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { CommandQueueService } from "../services/commands/command-queue.js";
+import {CommandQueueManager} from "../services/commands/command-queue-manager.js";
 import { CommandManager } from "../services/commands/command.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getActivitySummary } from "../services/commands/command-history.js";
@@ -9,7 +9,7 @@ const router = Router();
 
 router.get("/", (req, res) => {
     try {
-        const taskQueueStats = CommandQueueService.getStats() as TaskQueueStatContract[];
+        const taskQueueStats = CommandQueueManager.getStats() as TaskQueueStatContract[];
 
         const payload: StatusOverviewContract = {
             taskQueueStats,

@@ -10,12 +10,12 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let commandHistoryModule: typeof import("../commands/command-history.js");
-let queueModule: typeof import("../commands/command-queue.js");
+let queueModule: typeof import("../commands/command-queue-manager.js");
 let historyEventsModule: typeof import("../commands/history-events.js");
 
 before(async () => {
     dbModule = await import("../../database.js");
-    queueModule = await import("../commands/command-queue.js");
+    queueModule = await import("../commands/command-queue-manager.js");
     commandHistoryModule = await import("../commands/command-history.js");
     historyEventsModule = await import("../commands/history-events.js");
     dbModule.initDatabase();
@@ -35,31 +35,31 @@ after(() => {
 });
 
 test("activity page supports pagination and category/status filters", () => {
-    const refreshAlbumId = queueModule.CommandQueueService.addJob(
+    const refreshAlbumId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.RefreshAlbum,
         { albumId: "album-1" },
         "album-1",
     );
-    const applyCurationId = queueModule.CommandQueueService.addJob(
+    const applyCurationId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ApplyCuration,
         { expectedArtists: 1 },
     );
-    const refreshMetadataId = queueModule.CommandQueueService.addJob(
+    const refreshMetadataId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.RefreshMetadata,
         { target: "library" },
     );
-    const healthCheckId = queueModule.CommandQueueService.addJob(
+    const healthCheckId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.CheckHealth,
         {},
     );
-    const downloadTrackId = queueModule.CommandQueueService.addJob(
+    const downloadTrackId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         { providerId: "t1", url: "https://listen.tidal.com/track/t1", type: "track" },
         "t1",
     );
 
-    queueModule.CommandQueueService.markProcessing(refreshMetadataId);
-    queueModule.CommandQueueService.complete(healthCheckId);
+    queueModule.CommandQueueManager.markProcessing(refreshMetadataId);
+    queueModule.CommandQueueManager.complete(healthCheckId);
 
     const defaultPage = commandHistoryModule.getActivityPage({ limit: 100, offset: 0 });
     assert.equal(defaultPage.total, 5);
@@ -104,15 +104,15 @@ test("activity page supports pagination and category/status filters", () => {
 });
 
 test("activity summary returns command-surface counts without download queue duplication", () => {
-    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "album-2" }, "album-2");
+    queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "album-2" }, "album-2");
 
-    const metadataId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshMetadata, { target: "all" });
-    queueModule.CommandQueueService.markProcessing(metadataId);
+    const metadataId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshMetadata, { target: "all" });
+    queueModule.CommandQueueManager.markProcessing(metadataId);
 
-    const healthId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    queueModule.CommandQueueService.fail(healthId, "failed health check");
+    const healthId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueManager.fail(healthId, "failed health check");
 
-    queueModule.CommandQueueService.addJob(
+    queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         { providerId: "t2", url: "https://listen.tidal.com/track/t2", type: "track" },
         "t2",
@@ -127,11 +127,11 @@ test("activity summary returns command-surface counts without download queue dup
 });
 
 test("activity page computes absolute pending queue positions without scanning the full page set", () => {
-    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-1" }, "qp-1");
-    queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-2" }, "qp-2");
-    const pendingThirdId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-3" }, "qp-3");
-    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    queueModule.CommandQueueService.complete(completedId);
+    queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-1" }, "qp-1");
+    queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-2" }, "qp-2");
+    const pendingThirdId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "qp-3" }, "qp-3");
+    const completedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueManager.complete(completedId);
 
     const mixedPage = commandHistoryModule.getActivityPage({
         statuses: ["queued", "completed"],
@@ -150,19 +150,19 @@ test("activity page computes absolute pending queue positions without scanning t
 });
 
 test("activity page prioritizes processing downloads ahead of newer pending downloads", () => {
-    const processingId = queueModule.CommandQueueService.addJob(
+    const processingId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadVideo,
         { providerId: "video-processing", url: "https://listen.tidal.com/video/video-processing", type: "video" },
         "video-processing",
     );
-    queueModule.CommandQueueService.markProcessing(processingId);
+    queueModule.CommandQueueManager.markProcessing(processingId);
 
-    const pendingOneId = queueModule.CommandQueueService.addJob(
+    const pendingOneId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadVideo,
         { providerId: "video-pending-1", url: "https://listen.tidal.com/video/video-pending-1", type: "video" },
         "video-pending-1",
     );
-    const pendingTwoId = queueModule.CommandQueueService.addJob(
+    const pendingTwoId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadVideo,
         { providerId: "video-pending-2", url: "https://listen.tidal.com/video/video-pending-2", type: "video" },
         "video-pending-2",
@@ -236,17 +236,17 @@ test("activity descriptions resolve download jobs from canonical provider items 
         null, null, "video-recording-mbid", "Canonical Video", "video", "verified", 1, "test",
     );
 
-    const albumJobId = queueModule.CommandQueueService.addJob(
+    const albumJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         { providerId: "provider-album" },
         "provider-album",
     );
-    const trackJobId = queueModule.CommandQueueService.addJob(
+    const trackJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,
         { providerId: "provider-track" },
         "provider-track",
     );
-    const videoJobId = queueModule.CommandQueueService.addJob(
+    const videoJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadVideo,
         { providerId: "provider-video" },
         "provider-video",
@@ -266,9 +266,9 @@ test("activity descriptions resolve download jobs from canonical provider items 
 });
 
 test("activity events page merges task and history events with deterministic newest-first ordering", () => {
-    const pendingId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "events-album" }, "events-album");
-    const completedId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.CheckHealth, {});
-    queueModule.CommandQueueService.complete(completedId);
+    const pendingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "events-album" }, "events-album");
+    const completedId = queueModule.CommandQueueManager.push(queueModule.CommandNames.CheckHealth, {});
+    queueModule.CommandQueueManager.complete(completedId);
 
     const historyImportedId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
@@ -302,7 +302,7 @@ test("activity events page merges task and history events with deterministic new
 });
 
 test("activity events page pagination returns limit/offset/hasMore consistently", () => {
-    const taskId = queueModule.CommandQueueService.addJob(queueModule.CommandNames.RefreshAlbum, { albumId: "events-pagination" }, "events-pagination");
+    const taskId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "events-pagination" }, "events-pagination");
     const historyOneId = historyEventsModule.recordHistoryEvent({
         eventType: historyEventsModule.HISTORY_EVENT_TYPES.TrackFileImported,
         sourceTitle: "Imported A",

@@ -20,9 +20,8 @@ maps to Lidarr's, what we've split to match, and the remaining monoliths.
 
 ## Split to match Lidarr (done 2026-06-22)
 
-`command-queue.ts` (1160 lines) bundled what Lidarr keeps in separate files. Split,
-preserving the public API via barrel re-exports from `command-queue.ts` (so no
-import sites changed):
+`command-queue.ts` (1160 lines) bundled what Lidarr keeps in separate files. It
+was deleted, and import sites now depend on the specific command modules:
 
 - `command-names.ts` — command identity: `CommandNames`, the `*_COMMAND_NAMES`
   groupings, type guards. (≈ Lidarr command type identity.)
@@ -31,6 +30,8 @@ import sites changed):
 - `command-ordering.ts` — SQL `ORDER BY` builders, priority comparators
   (`compareJobsBy...`), payload parsing + row hydration. (≈ Lidarr
   `CommandPriorityComparer` / `CommandQueue` ordering.)
+- `command-queue-manager.ts` — queue persistence/state transitions. (≈ Lidarr
+  `CommandQueueManager`.)
 - `command-bodies.ts` (pre-existing) holds the per-command body interfaces
   (≈ Lidarr's individual `*Command.cs`). `command-trigger.ts`,
   `command-registry.ts`, `command-executor.ts`, `command.ts` were already split.

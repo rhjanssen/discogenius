@@ -972,7 +972,7 @@ const Library = () => {
 
   // Render a single artist card
   const renderArtistCard = (artist: any) => {
-    const albumCount = artist.album_count ?? 0;
+    const albumCount = artist.album_count;
     const imageUrl = artist.picture || artist.cover_image_url || null;
     const itemProgress = getProgressByProviderId(String(artist.id));
     return (
@@ -982,7 +982,7 @@ const Library = () => {
         imageUrl={imageUrl}
         alt={artist.name}
         title={artist.name}
-        subtitle={`${albumCount} releases`}
+        subtitle={typeof albumCount === "number" ? `${albumCount} releases` : "Artist"}
         monitored={artist.is_monitored}
         onMonitorToggle={() => toggleArtistMonitored(artist.id, !artist.is_monitored)}
         placeholder={
@@ -1083,8 +1083,8 @@ const Library = () => {
       align: "center",
       render: (artist: any) => (
         <>
-          <span className={dgCell.statPrimary}>{artist.monitored_album_count ?? 0}</span>
-          <span className={dgCell.statSecondary}> / {artist.album_count ?? 0}</span>
+          <span className={dgCell.statPrimary}>{artist.monitored_album_count ?? "--"}</span>
+          <span className={dgCell.statSecondary}> / {artist.album_count ?? "--"}</span>
         </>
       ),
     },
@@ -1097,8 +1097,8 @@ const Library = () => {
       className: dgCell.hideOnMobile,
       render: (artist: any) => (
         <>
-          <span className={dgCell.statPrimary}>{artist.monitored_track_count ?? 0}</span>
-          <span className={dgCell.statSecondary}> / {artist.track_count ?? 0}</span>
+          <span className={dgCell.statPrimary}>{artist.monitored_track_count ?? "--"}</span>
+          <span className={dgCell.statSecondary}> / {artist.track_count ?? "--"}</span>
         </>
       ),
     },

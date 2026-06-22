@@ -1,8 +1,9 @@
 import { EventEmitter } from 'events';
-import { forwardEventToMain, isJobWorker } from './worker/job-protocol.js';
+import { forwardEventToMain, isCommandWorker } from './worker/command-worker-protocol.js';
 import type { ArtistWorkflow } from '../music/artist-workflow.js';
 import type { MonitoringPassWorkflowValue } from './command-bodies.js';
-import type { AnyCommandBody, CommandStatus, CommandName } from './command-queue.js';
+import type {AnyCommandBody, CommandStatus} from "./command-model.js";
+import type {CommandName} from "./command-names.js";
 
 /**
  * Strongly typed events mapping
@@ -97,11 +98,11 @@ export interface AppEventPayloadMap {
 class TypedAppEventEmitter extends EventEmitter {
     emit<K extends AppEvent>(event: K, payload?: AppEventPayloadMap[K]): boolean;
     emit(event: string | symbol, payload?: unknown): boolean {
-        // When emitted from a job worker thread, forward to the main thread so
+        // When emitted from a command worker thread, forward to the main thread so
         // the SSE stream and main-thread listeners (curation/download) see it.
         // The bridge is a no-op on the main thread. Only string event names are
         // bridgeable (all AppEvent values are strings); symbol events stay local.
-        if (typeof event === 'string' && isJobWorker()) {
+        if (typeof event === 'string' && isCommandWorker()) {
             forwardEventToMain(event, payload);
         }
         return super.emit(event, payload);

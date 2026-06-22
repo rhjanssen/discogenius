@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-06-11
+Last updated: 2026-06-22
 
 ## Purpose
 
@@ -39,17 +39,17 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 ### Queue and Command Lifecycle
 
-- [api/src/services/queue.ts](api/src/services/queue.ts): SQLite-backed persistent job queue and payload typing
-- [api/src/services/command.ts](api/src/services/command.ts): command exclusivity and dedup gating
-- [api/src/services/system-task-service.ts](api/src/services/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
-- [api/src/services/download-processor.ts](api/src/services/download-processor.ts): exact media download jobs
-- [api/src/services/scheduler.ts](api/src/services/scheduler.ts): non-download jobs (scan/import/curation/maintenance)
-- [api/src/services/scheduler-maintenance-handlers.ts](api/src/services/scheduler-maintenance-handlers.ts): focused low-coupling Phase-1/maintenance handlers invoked by `scheduler.ts`, while scheduler keeps queue completion/failure ownership
-- [api/src/services/command-history.ts](api/src/services/command-history.ts): activity history projection and summary derivation
-- [api/src/routes/queue.ts](api/src/routes/queue.ts): non-download task API (`/api/tasks`) for list/filter plus add/retry/cancel/clear operations
-- [api/src/routes/activity.ts](api/src/routes/activity.ts): activity/history read APIs (`/api/activity`, `/api/activity/events`) for filtered command activity and merged event feed pagination
-- [api/src/routes/status.ts](api/src/routes/status.ts): summary-only control-plane snapshot (`/api/status`) for queue stats, activity summary, command stats, running commands, and rate-limit metrics
-- [api/src/routes/download-queue.ts](api/src/routes/download-queue.ts): live queue authority (`/api/queue`), dedicated queue history (`GET /api/queue/history`), and reorder operations
+- [api/src/services/commands/command-queue-manager.ts](../api/src/services/commands/command-queue-manager.ts): SQLite-backed persistent command queue, state transitions, dedupe, and reorder operations
+- [api/src/services/commands/command.ts](../api/src/services/commands/command.ts): command exclusivity and dedup gating
+- [api/src/services/commands/command-executor.ts](../api/src/services/commands/command-executor.ts): main-thread queue poller and state owner; dispatches handler execution to the command-worker pool
+- [api/src/services/commands/worker/command-worker-pool.ts](../api/src/services/commands/worker/command-worker-pool.ts): worker-thread execution pool for command handlers and heavy import work
+- [api/src/services/commands/scheduler.ts](../api/src/services/commands/scheduler.ts): 30s scheduled-task trigger that enqueues due commands
+- [api/src/services/commands/system-task-service.ts](../api/src/services/commands/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
+- [api/src/services/download/download-processor.ts](../api/src/services/download/download-processor.ts): exact media download orchestration; heavy import finalization runs through the command-worker pool
+- [api/src/services/commands/command-history.ts](../api/src/services/commands/command-history.ts): activity history projection and summary derivation
+- [api/src/routes/v1/queue.ts](../api/src/routes/v1/queue.ts): live queue authority (`/api/v1/queue`), dedicated queue history, and reorder operations
+- [api/src/routes/v1/command.ts](../api/src/routes/v1/command.ts): manual command enqueue surface
+- [api/src/routes/status.ts](../api/src/routes/status.ts): summary-only control-plane snapshot for queue stats, activity summary, command stats, running commands, and rate-limit metrics
 
 #### Control-Plane Endpoint Boundaries (Increment 1)
 
@@ -279,5 +279,4 @@ Operationally important semantics:
 - docs/CURATION_DEDUPLICATION.md: curation flow deep-dive
 - docs/TASKS.md: versioned task backlog + roadmap (the source of truth for what ships next)
 - docs/LIDARR_DB_ALIGNMENT_PLAN.md / docs/LIDARR_SCHEMA_AUDIT.md: the database-alignment migration plan
-- docs/JOB_EXECUTION_THREADING_PLAN.md: worker-thread job-execution plan
 - AGENTS.md (repo root): coding-agent expectations and validation checklist

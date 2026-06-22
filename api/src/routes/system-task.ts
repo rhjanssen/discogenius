@@ -57,12 +57,12 @@ router.patch("/:id", (req, res) => {
 
 router.post("/:id/run", (req, res) => {
   try {
-    const jobId = runSystemTask(req.params.id);
-    if (jobId === -1) {
+    const commandId = runSystemTask(req.params.id);
+    if (commandId === -1) {
       return res.status(404).json({ detail: "Task not found" });
     }
 
-    res.status(201).json({ id: jobId });
+    res.status(201).json({ id: commandId });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

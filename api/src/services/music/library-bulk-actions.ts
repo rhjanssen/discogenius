@@ -7,7 +7,8 @@ import {
     updateArtistDownloadStatus,
 } from "../download/download-state.js";
 import { CurationService } from "./curation-service.js";
-import { CommandNames, CommandQueueService } from "../commands/command-queue.js";
+import {CommandNames} from "../commands/command-names.js";
+import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getConfigSection } from "../config/config.js";
 
@@ -21,7 +22,7 @@ export type LibraryBulkItemStatus = "updated" | "queued" | "missing" | "unsuppor
 export interface LibraryBulkActionItemResult {
     id: string;
     status: LibraryBulkItemStatus;
-    jobId?: number;
+    commandId?: number;
     message?: string;
 }
 
@@ -312,7 +313,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 : title;
             const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
 
-            const jobId = CommandQueueService.addJob(CommandNames.DownloadAlbum, {
+            const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
                 url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
                 type: "album",
                 provider,
@@ -329,8 +330,8 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 description: `${displayTitle} by ${primaryArtist} (${slot})`,
             }, `${releaseGroupMbid}:${slot}`);
 
-            if (jobId > 0) {
-                queuedJobIds.push(jobId);
+            if (commandId > 0) {
+                queuedJobIds.push(commandId);
             }
         }
     }
@@ -390,7 +391,7 @@ function queueTrackDownloads(trackIds: string[]): number[] {
         const albumTitle = String(track.album_title || "Unknown Album").trim();
         const artistName = String(track.artist_name || "Unknown").trim() || "Unknown";
 
-        const jobId = CommandQueueService.addJob(CommandNames.DownloadTrack, {
+        const commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
             url: buildStreamingMediaUrl("track", String(track.provider_id)),
             type: "track",
             provider: track.provider || "tidal",
@@ -409,8 +410,8 @@ function queueTrackDownloads(trackIds: string[]): number[] {
             description: `${displayTitle} on ${albumTitle} by ${artistName}`,
         }, String(track.id || trackId));
 
-        if (jobId > 0) {
-            queuedJobIds.push(jobId);
+        if (commandId > 0) {
+            queuedJobIds.push(commandId);
         }
     }
 
@@ -456,7 +457,7 @@ function queueVideoDownloads(videoIds: string[]): number[] {
         const title = String(video.title || video.provider_title || "Unknown Video").trim();
         const artistName = String(video.artist_name || "Unknown").trim() || "Unknown";
 
-        const jobId = CommandQueueService.addJob(CommandNames.DownloadVideo, {
+        const commandId = CommandQueueManager.push(CommandNames.DownloadVideo, {
             url: buildStreamingMediaUrl("video", String(video.provider_id)),
             type: "video",
             provider: video.provider || "tidal",
@@ -471,8 +472,8 @@ function queueVideoDownloads(videoIds: string[]): number[] {
             description: `${title} by ${artistName}`,
         }, String(video.id || videoId));
 
-        if (jobId > 0) {
-            queuedJobIds.push(jobId);
+        if (commandId > 0) {
+            queuedJobIds.push(commandId);
         }
     }
 
@@ -581,7 +582,7 @@ export class LibraryBulkActionService {
         if (monitored) {
             for (const row of rows) {
                 const artistId = String(row.id);
-                const jobId = queueArtistMonitoringIntake({
+                const commandId = queueArtistMonitoringIntake({
                     artistId,
                     artistName: String(row.name || "").trim() || `Artist ${artistId}`,
                     priority: 1,
@@ -591,10 +592,10 @@ export class LibraryBulkActionService {
                 result.items.push({
                     id: artistId,
                     status: "queued",
-                    jobId,
+                    commandId,
                     message: "Monitoring enabled and intake queued",
                 });
-                result.queued += jobId > 0 ? 1 : 0;
+                result.queued += commandId > 0 ? 1 : 0;
                 result.updated += 1;
             }
             return result;
@@ -633,16 +634,16 @@ export class LibraryBulkActionService {
         }
 
         if (action === "download") {
-            const jobIds = queueAlbumDownloads(foundIds);
-            const jobIdSet = new Set(jobIds);
+            const commandIds = queueAlbumDownloads(foundIds);
+            const commandIdSet = new Set(commandIds);
             for (const id of foundIds) {
                 result.items.push({
                     id,
-                    status: jobIdSet.size > 0 ? "queued" : "noop",
+                    status: commandIdSet.size > 0 ? "queued" : "noop",
                     message: "Album download queued",
                 });
             }
-            result.queued += jobIds.length;
+            result.queued += commandIds.length;
             result.updated += foundIds.length;
             return result;
         }
@@ -714,13 +715,13 @@ export class LibraryBulkActionService {
         }
 
         if (action === "download") {
-            const jobIds = queueTrackDownloads(foundIds);
-            result.queued += jobIds.length;
+            const commandIds = queueTrackDownloads(foundIds);
+            result.queued += commandIds.length;
             for (const id of foundIds) {
                 result.items.push({
                     id,
-                    status: jobIds.length > 0 ? "queued" : "noop",
-                    message: jobIds.length > 0 ? "Track download queued" : "No provider offer available for track",
+                    status: commandIds.length > 0 ? "queued" : "noop",
+                    message: commandIds.length > 0 ? "Track download queued" : "No provider offer available for track",
                 });
             }
             result.updated += foundIds.length;
@@ -783,13 +784,13 @@ export class LibraryBulkActionService {
         }
 
         if (action === "download") {
-            const jobIds = queueVideoDownloads(foundIds);
-            result.queued += jobIds.length;
+            const commandIds = queueVideoDownloads(foundIds);
+            result.queued += commandIds.length;
             for (const id of foundIds) {
                 result.items.push({
                     id,
-                    status: jobIds.length > 0 ? "queued" : "noop",
-                    message: jobIds.length > 0 ? "Video download queued" : "No provider offer available for video",
+                    status: commandIds.length > 0 ? "queued" : "noop",
+                    message: commandIds.length > 0 ? "Video download queued" : "No provider offer available for video",
                 });
             }
             result.updated += foundIds.length;

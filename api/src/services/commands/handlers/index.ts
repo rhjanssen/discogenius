@@ -1,4 +1,4 @@
-import { CommandNames } from "../command-queue.js";
+import {CommandNames} from "../command-names.js";
 import type { CommandHandlerRegistry } from "./handler-context.js";
 import { handleRefreshArtist, handleRefreshAlbum, handleRefreshMetadata } from "./refresh-handlers.js";
 import { handleApplyCuration, handleDownloadMissing, handleCheckUpgrades, handleCurateArtist } from "./curation-handlers.js";

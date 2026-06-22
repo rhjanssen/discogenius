@@ -18,7 +18,7 @@ import {
   updateScheduledTask,
   type ScheduledTaskKey,
 } from "./scheduler.js";
-import { CommandQueueService, type CommandName } from "./command-queue.js";
+import {CommandQueueManager, type CommandName} from "./command-queue-manager.js";
 
 function normalizeTaskId(value: string): string {
   return String(value || "").trim().toLowerCase();
@@ -40,7 +40,7 @@ function getRunTimes(taskName: string) {
 }
 
 function isTaskActive(taskName: string) {
-  return CommandQueueService.listJobsByTypesAndStatuses(
+  return CommandQueueManager.listJobsByTypesAndStatuses(
     [taskName as CommandName],
     ["queued", "started"],
     1,
