@@ -155,6 +155,28 @@ interface TargetTrackRow {
   length_ms: number | null;
   medium_position: number | null;
   position: number | null;
+  isrcs: Set<string>;
+}
+
+function normalizeIsrc(value: unknown): string {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function parseIsrcSet(value: unknown): Set<string> {
+  const set = new Set<string>();
+  if (typeof value !== "string" || !value) return set;
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      for (const isrc of parsed) {
+        const normalized = normalizeIsrc(isrc);
+        if (normalized) set.add(normalized);
+      }
+    }
+  } catch {
+    // Ignore malformed ISRC payloads.
+  }
+  return set;
 }
 
 interface ProviderAlbumCoverageCandidate {
@@ -523,12 +545,14 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
       continue;
     }
 
-    const targetTracks = db.prepare(`
-      SELECT mbid, recording_mbid, title, length_ms, medium_position, position
-      FROM Tracks
-      WHERE release_mbid = ?
-      ORDER BY medium_position, position, mbid
-    `).all(release.releaseMbid) as TargetTrackRow[];
+    const targetTracks = (db.prepare(`
+      SELECT t.mbid, t.recording_mbid, t.title, t.length_ms, t.medium_position, t.position, rec.isrcs
+      FROM Tracks t
+      LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
+      WHERE t.release_mbid = ?
+      ORDER BY t.medium_position, t.position, t.mbid
+    `).all(release.releaseMbid) as Array<Omit<TargetTrackRow, "isrcs"> & { isrcs: string | null }>)
+      .map((row) => ({ ...row, isrcs: parseIsrcSet(row.isrcs) }));
 
     if (targetTracks.length < 2) continue;
 
@@ -626,6 +650,15 @@ function buildProviderAlbumCoverageCandidate(
 }
 
 function providerTrackMatchesTarget(providerTrack: ProviderTrackLike, target: TargetTrackRow): boolean {
+  // ISRC is authoritative: when both sides carry one, the recording identity is
+  // decided by it (no title/duration heuristic needed, and a mismatch is a hard
+  // no even if the titles look alike). Title + duration is the fallback for
+  // SkyHook-mode data that lacks ISRCs.
+  const providerIsrc = normalizeIsrc(providerTrack.isrc);
+  if (providerIsrc && target.isrcs.size > 0) {
+    return target.isrcs.has(providerIsrc);
+  }
+
   const providerTitle = normalizeTrackTitle(providerTrack.title);
   const targetTitle = normalizeTrackTitle(target.title);
   if (!providerTitle || !targetTitle || providerTitle !== targetTitle) return false;
