@@ -221,6 +221,7 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
       { title: "Extra Track", isrc: "GBUM70000000", duration: 180 },
     ]));
 
+  providerMatches.persistCompositeReleaseMatches("rg-unplugged");
   const result = providerMatches.getReleaseGroupAvailability("rg-unplugged");
   const release = result.releases.find((item) => item.releaseMbid === "rel-three-track");
 
@@ -281,6 +282,7 @@ test("composite coverage matches provider tracks by ISRC even when titles differ
               VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different B', 'LOSSLESS', ?)`)
     .run("prov-b", albumData({ title: "Totally Different B", isrc: "BBBB12345678" }));
 
+  providerMatches.persistCompositeReleaseMatches("rg-isrc");
   const result = providerMatches.getReleaseGroupAvailability("rg-isrc");
   const release = result.releases.find((item) => item.releaseMbid === "rel-isrc");
   assert.ok(release);

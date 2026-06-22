@@ -407,25 +407,32 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
         WHERE release_mbid = ar.mbid
       ) AS duration_seconds,
       pm.provider         AS provider,
+      pm.provider_item_id AS provider_item_id,
       pm.provider_album_id AS provider_album_id,
       pm.status           AS status,
       pm.confidence       AS confidence,
+      pm.evidence         AS evidence,
       pi.quality          AS quality,
       pi.library_slot     AS library_slot
     FROM AlbumReleases ar
     LEFT JOIN ProviderItemMatches pm
       ON pm.provider_item_type = 'album'
      AND pm.musicbrainz_release_mbid = ar.mbid
-     AND EXISTS (
-       SELECT 1
-       FROM ProviderItems current_pi
-       WHERE current_pi.provider = pm.provider
-         AND current_pi.entity_type = 'album'
-         AND CAST(current_pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
-         AND (
-           current_pi.release_mbid IS NULL
-           OR current_pi.release_mbid = pm.musicbrainz_release_mbid
-         )
+     AND (
+       -- Composite matches (a joined provider-album set) have no single
+       -- ProviderItems row; they carry their own coverage in evidence.
+       instr(pm.provider_item_id, ';') > 0
+       OR EXISTS (
+         SELECT 1
+         FROM ProviderItems current_pi
+         WHERE current_pi.provider = pm.provider
+           AND current_pi.entity_type = 'album'
+           AND CAST(current_pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+           AND (
+             current_pi.release_mbid IS NULL
+             OR current_pi.release_mbid = pm.musicbrainz_release_mbid
+           )
+       )
      )
     LEFT JOIN ProviderItems pi
       ON pi.provider = pm.provider
@@ -465,9 +472,11 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     track_count: number | null;
     duration_seconds: number | null;
     provider: string | null;
+    provider_item_id: string | null;
     provider_album_id: string | null;
     status: string | null;
     confidence: number | null;
+    evidence: string | null;
     quality: string | null;
     library_slot: string | null;
   }>;
@@ -492,19 +501,64 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       byRelease.set(r.release_mbid, rel);
     }
     if (r.provider) {
-      rel.availability.push({
-        provider: r.provider,
-        providerAlbumId: r.provider_album_id,
-        quality: r.quality,
-        librarySlot: r.library_slot,
-        status: r.status,
-        confidence: r.confidence,
-        matchKind: "direct",
-      });
+      if (typeof r.provider_item_id === "string" && r.provider_item_id.includes(COMPOSITE_PROVIDER_ID_SEPARATOR)) {
+        // Composite match: rebuild from the persisted evidence (quality, slot,
+        // album set) rather than a single ProviderItems row.
+        let parsed: { providerAlbumIds?: unknown; quality?: unknown; librarySlot?: unknown; coverageSummary?: unknown } = {};
+        try {
+          parsed = r.evidence ? JSON.parse(r.evidence) : {};
+        } catch {
+          parsed = {};
+        }
+        const providerAlbumIds = Array.isArray(parsed.providerAlbumIds) && parsed.providerAlbumIds.length > 0
+          ? parsed.providerAlbumIds.map((id) => String(id))
+          : splitProviderAlbumIds(r.provider_item_id);
+        rel.availability.push({
+          provider: r.provider,
+          providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
+          providerAlbumIds,
+          quality: parsed.quality != null ? String(parsed.quality) : null,
+          librarySlot: parsed.librarySlot != null ? String(parsed.librarySlot) : null,
+          status: r.status,
+          confidence: r.confidence,
+          matchKind: "composite",
+          coverageSummary: parsed.coverageSummary != null ? String(parsed.coverageSummary) : null,
+        });
+      } else {
+        rel.availability.push({
+          provider: r.provider,
+          providerAlbumId: r.provider_album_id,
+          quality: r.quality,
+          librarySlot: r.library_slot,
+          status: r.status,
+          confidence: r.confidence,
+          matchKind: "direct",
+        });
+      }
     }
   }
 
-  appendStrictCompositeCoverage(releaseGroupMbid, byRelease);
+  // Composite offers carry their quality in evidence, not a joinable ProviderItems
+  // row, so the SQL quality ordering can't see them. Re-order each release's offers
+  // by slot then quality so the badge order is deterministic across direct + composite.
+  const slotRank = (slot: string | null): number =>
+    slot === "stereo" ? 0 : slot === "spatial" ? 1 : slot === "video" ? 2 : 9;
+  const qualityRank = (quality: string | null): number => {
+    const q = String(quality || "").toUpperCase();
+    if (q.includes("HIRES")) return 100;
+    if (q === "LOSSLESS") return 90;
+    if (q.includes("ATMOS")) return 80;
+    if (q.includes("SPATIAL")) return 70;
+    if (q === "HIGH") return 20;
+    if (q === "LOW") return 10;
+    return 0;
+  };
+  for (const rel of byRelease.values()) {
+    rel.availability.sort((a, b) =>
+      slotRank(a.librarySlot) - slotRank(b.librarySlot)
+      || qualityRank(b.quality) - qualityRank(a.quality)
+      || String(a.providerAlbumId || "").localeCompare(String(b.providerAlbumId || "")));
+  }
 
   const slotRows = db.prepare(`
     SELECT slot, selected_release_mbid FROM ReleaseGroupSlots WHERE release_group_mbid = ?
@@ -519,7 +573,41 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
   };
 }
 
-function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<string, ReleaseAvailability>): void {
+/**
+ * Persist strict composite release matches for every release group of an artist
+ * (core + collaborative). Composite coverage — a *set* of provider albums whose
+ * combined identity (ISRC, then title/shape) exactly covers one MB release —
+ * lives in the match graph as first-class `ProviderItemMatches` rows, so the
+ * read layer and selection no longer recompute it on the fly.
+ */
+export function persistCompositeReleaseMatchesForArtist(artistMbid: string | null): void {
+  const mbid = String(artistMbid || "").trim();
+  if (!mbid) return;
+
+  const groups = db.prepare(`
+    SELECT DISTINCT rg.mbid
+    FROM Albums rg
+    LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+    WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+  `).all(mbid, mbid) as Array<{ mbid: string }>;
+
+  for (const { mbid: releaseGroupMbid } of groups) {
+    persistCompositeReleaseMatches(releaseGroupMbid);
+  }
+}
+
+export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
+  // Rebuild from scratch: drop stale composite matches for this group's releases
+  // (additive upsert can't retract a composite the offers no longer support).
+  db.prepare(`
+    DELETE FROM ProviderItemMatches
+    WHERE provider_item_type = 'album'
+      AND instr(provider_item_id, ';') > 0
+      AND musicbrainz_release_mbid IN (
+        SELECT mbid FROM AlbumReleases WHERE release_group_mbid = ?
+      )
+  `).run(releaseGroupMbid);
+
   const groupArtist = db.prepare(`
     SELECT artist_mbid
     FROM AlbumReleases
@@ -540,10 +628,22 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
 
   if (providerAlbums.length < 2) return;
 
-  for (const release of byRelease.values()) {
-    if (release.availability.some((offer) => offer.matchKind !== "composite")) {
-      continue;
-    }
+  const releases = db.prepare(`
+    SELECT mbid FROM AlbumReleases WHERE release_group_mbid = ?
+  `).all(releaseGroupMbid) as Array<{ mbid: string }>;
+
+  const hasDirectMatch = db.prepare(`
+    SELECT 1 FROM ProviderItemMatches
+    WHERE provider_item_type = 'album'
+      AND musicbrainz_release_mbid = ?
+      AND instr(provider_item_id, ';') = 0
+      AND (status IS NULL OR LOWER(status) <> 'rejected')
+    LIMIT 1
+  `);
+
+  for (const { mbid: releaseMbid } of releases) {
+    // A single provider album already covers this release directly — no composite needed.
+    if (hasDirectMatch.get(releaseMbid)) continue;
 
     const targetTracks = (db.prepare(`
       SELECT t.mbid, t.recording_mbid, t.title, t.length_ms, t.medium_position, t.position, rec.isrcs
@@ -551,7 +651,7 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
       LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
       WHERE t.release_mbid = ?
       ORDER BY t.medium_position, t.position, t.mbid
-    `).all(release.releaseMbid) as Array<Omit<TargetTrackRow, "isrcs"> & { isrcs: string | null }>)
+    `).all(releaseMbid) as Array<Omit<TargetTrackRow, "isrcs"> & { isrcs: string | null }>)
       .map((row) => ({ ...row, isrcs: parseIsrcSet(row.isrcs) }));
 
     if (targetTracks.length < 2) continue;
@@ -562,28 +662,27 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
 
     for (const selected of chooseStrictComposites(candidates, targetTracks)) {
       const orderedSelected = orderCompositeByTargetTrack(selected, targetTracks);
-      const provider = orderedSelected[0].provider;
       const providerAlbumIds = orderedSelected.map((candidate) => candidate.providerAlbumId);
       const qualities = orderedSelected.map((candidate) => candidate.quality).filter(Boolean) as string[];
       const quality = chooseLowestCompositeQuality(qualities);
       const librarySlot = orderedSelected.find((candidate) => candidate.librarySlot)?.librarySlot ?? null;
-      const evidence = orderedSelected.flatMap((candidate) => candidate.evidence);
 
-      release.availability.push({
-        provider,
+      upsertProviderReleaseMatch({
+        provider: orderedSelected[0].provider,
+        providerId: joinProviderAlbumIds(providerAlbumIds),
         providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
-        providerAlbumIds,
-        quality,
-        librarySlot,
+        releaseMbid,
         status: "verified",
         confidence: 1,
-        matchKind: "composite",
-        coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
+        method: "strict_composite_track_coverage",
+        evidence: JSON.stringify({
+          matchKind: "composite",
+          providerAlbumIds,
+          quality,
+          librarySlot,
+          coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
+        }),
       });
-
-      // Keep the in-memory evidence reachable while debugging via the service
-      // without expanding the public contract into a large per-track payload yet.
-      void evidence;
     }
   }
 }

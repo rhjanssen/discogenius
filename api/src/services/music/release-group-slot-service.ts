@@ -8,6 +8,7 @@ import {
     upsertProviderReleaseMatch,
     getReleaseGroupAvailability,
     setSlotSelection,
+    persistCompositeReleaseMatchesForArtist,
     type ReleaseAvailabilityProvider,
 } from "./provider-matches.js";
 
@@ -858,13 +859,13 @@ export class ReleaseGroupSlotService {
             }
         })();
 
-        // The per-group selection above can only assemble offers the matcher
-        // attached to that one release group. Re-pick each touched slot's release
-        // from the whole-artist availability graph (direct + composite coverage),
-        // so a larger MB release whose tracks span provider albums matched to
-        // *different* groups wins. Composite coverage is only knowable once every
-        // album is matched, so this is where selection first sees the full graph —
-        // it reads the release graph rather than the per-group candidate buckets.
+        // Materialize composite matches (a set of provider albums covering one MB
+        // release) as first-class match rows now that every direct match is
+        // stored, then re-pick each touched slot's release from the whole-artist
+        // availability graph (direct + composite). The per-group fill above only
+        // sees offers matched to that one group, so a larger MB release whose
+        // tracks span provider albums matched to *different* groups wins here.
+        persistCompositeReleaseMatchesForArtist(input.artistMbid);
         this.selectLargestCoveredReleasePerSlot(selections);
 
         return counts;
