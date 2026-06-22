@@ -51,6 +51,9 @@ const useStyles = makeStyles({
         justifyContent: "center",
         lineHeight: 1,
         transform: "translateY(0.5px)",
+        "@media (hover: hover) and (pointer: fine)": {
+            transform: "none",
+        },
     },
     // Heights are intentionally NOT overridden — we let Fluent's `size` prop set
     // the badge height so a QualityBadge lines up exactly with a MediaTypeBadge
@@ -108,7 +111,6 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                 className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
                 style={{ backgroundColor: palette.SpatialBackground, borderColor }}
                 aria-label="Dolby Atmos"
-                title="Dolby Atmos"
             >
                 <span
                     aria-hidden="true"

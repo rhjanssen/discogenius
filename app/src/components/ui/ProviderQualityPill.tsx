@@ -277,7 +277,6 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             >
                 <span
                     style={{ display: "inline-flex" }}
-                    title={tooltipLines.join("\n")}
                     aria-label={tooltipLines.join(". ")}
                 >
                     <QualityBadge quality={offer.quality as string} size={size} className={styles.badge} />
