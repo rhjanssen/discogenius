@@ -10,11 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let artistQueryModule: typeof import("./artist-query-service.js");
+let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   artistQueryModule = await import("./artist-query-service.js");
+  mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
 });
 
 beforeEach(() => {
@@ -213,6 +215,28 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums[0].source, "musicbrainz");
   assert.match(albums[0].cover_art_url, /^\/MediaCoverProxy\//);
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
+});
+
+test("artist page album cards prefer cached SkyHook artwork over provider fallback", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/cover.jpg";
+
+  db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
+    .run(
+      JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+      "release-group-mbid-1",
+    );
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+  const albums = (page?.rows || [])
+    .flatMap((row: any) => row.modules || [])
+    .find((module: any) => module.title === "Albums")?.items || [];
+
+  assert.equal(albums.length, 1);
+  const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
 });
 
 test("artist activity tracks canonical queued work and ignores provider catalog refs", () => {

@@ -197,8 +197,19 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
       { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
     ]));
   db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
+    .run("290132975", "Killing Me Softly With His Song (MTV Unplugged / Edit)", albumData([
+      { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
               VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
     .run("287367980", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
+      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
+      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
+    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
+    .run("287367976", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
       { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
       { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
     ]));
@@ -214,11 +225,17 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
   const release = result.releases.find((item) => item.releaseMbid === "rel-three-track");
 
   assert.ok(release);
-  assert.equal(release.availability.length, 1);
+  assert.equal(release.availability.length, 2);
+  assert.deepEqual(
+    release.availability.map((offer) => `${offer.quality}:${offer.providerAlbumId}`),
+    [
+      "HIRES_LOSSLESS:290132977;287367980",
+      "LOSSLESS:290132975;287367976",
+    ],
+  );
   assert.equal(release.availability[0].matchKind, "composite");
   assert.equal(release.availability[0].provider, "tidal");
   assert.deepEqual(release.availability[0].providerAlbumIds, ["290132977", "287367980"]);
-  assert.equal(release.availability[0].providerAlbumId, "290132977;287367980");
   assert.equal(release.availability[0].coverageSummary, "3/3 tracks from 2 provider albums");
 
   const after = providerMatches.setSlotSelection({

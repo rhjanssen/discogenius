@@ -68,6 +68,52 @@ test("unmatched provider offers retain discovery provenance without claiming can
   assert.equal(JSON.parse(row.data).discoveredFromArtistMbid, artistMbid);
 });
 
+test("provider release-group matching passes spatial quality and release disambiguation", () => {
+  const artistMbid = "artist-mbid-bastille";
+  const releaseGroupMbid = "release-group-mtv-unplugged";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "MTV Unplugged – Live in London", "Album", "2023-04-22");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, disambiguation, status, date, media_count, track_count
+    ) VALUES
+      (?, ?, ?, ?, NULL, 'Official', '2023-04-22', 1, 15),
+      (?, ?, ?, ?, 'Dolby Atmos mix', 'Official', '2023-04-22', 1, 15)
+  `).run(
+    "normal-digital-release",
+    releaseGroupMbid,
+    artistMbid,
+    "MTV Unplugged – Live in London",
+    "dolby-atmos-release",
+    releaseGroupMbid,
+    artistMbid,
+    "MTV Unplugged – Live in London",
+  );
+
+  const matches = (refreshServiceModule.RefreshArtistService as any).buildProviderReleaseGroupMatches(
+    artistMbid,
+    [{
+      provider_id: "291445075",
+      title: "MTV Unplugged",
+      quality: "DOLBY_ATMOS",
+      qualityTags: ["DOLBY_ATMOS"],
+      release_date: "2023-04-22",
+      type: "ALBUM",
+      num_tracks: 15,
+      num_volumes: 1,
+    }],
+  ) as Map<string, any>;
+
+  const match = matches.get("291445075");
+  assert.equal(match?.status, "verified");
+  assert.equal(match?.releaseMbid, "dolby-atmos-release");
+});
+
 test("matched provider offers attach to the canonical MusicBrainz artist and release group", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {

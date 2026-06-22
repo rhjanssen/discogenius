@@ -392,7 +392,19 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       pi.library_slot     AS library_slot
     FROM AlbumReleases ar
     LEFT JOIN ProviderItemMatches pm
-      ON pm.provider_item_type = 'album' AND pm.musicbrainz_release_mbid = ar.mbid
+      ON pm.provider_item_type = 'album'
+     AND pm.musicbrainz_release_mbid = ar.mbid
+     AND EXISTS (
+       SELECT 1
+       FROM ProviderItems current_pi
+       WHERE current_pi.provider = pm.provider
+         AND current_pi.entity_type = 'album'
+         AND CAST(current_pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+         AND (
+           current_pi.release_mbid IS NULL
+           OR current_pi.release_mbid = pm.musicbrainz_release_mbid
+         )
+     )
     LEFT JOIN ProviderItems pi
       ON pi.provider = pm.provider
      AND pi.entity_type = 'album'
@@ -524,32 +536,31 @@ function appendStrictCompositeCoverage(releaseGroupMbid: string, byRelease: Map<
       .map((album) => buildProviderAlbumCoverageCandidate(album, targetTracks))
       .filter((candidate): candidate is ProviderAlbumCoverageCandidate => Boolean(candidate));
 
-    const selected = chooseStrictComposite(candidates, targetTracks);
-    if (!selected || selected.length < 2) continue;
+    for (const selected of chooseStrictComposites(candidates, targetTracks)) {
+      const orderedSelected = orderCompositeByTargetTrack(selected, targetTracks);
+      const provider = orderedSelected[0].provider;
+      const providerAlbumIds = orderedSelected.map((candidate) => candidate.providerAlbumId);
+      const qualities = orderedSelected.map((candidate) => candidate.quality).filter(Boolean) as string[];
+      const quality = chooseLowestCompositeQuality(qualities);
+      const librarySlot = orderedSelected.find((candidate) => candidate.librarySlot)?.librarySlot ?? null;
+      const evidence = orderedSelected.flatMap((candidate) => candidate.evidence);
 
-    const orderedSelected = orderCompositeByTargetTrack(selected, targetTracks);
-    const provider = orderedSelected[0].provider;
-    const providerAlbumIds = orderedSelected.map((candidate) => candidate.providerAlbumId);
-    const qualities = orderedSelected.map((candidate) => candidate.quality).filter(Boolean) as string[];
-    const quality = chooseLowestCompositeQuality(qualities);
-    const librarySlot = orderedSelected.find((candidate) => candidate.librarySlot)?.librarySlot ?? null;
-    const evidence = orderedSelected.flatMap((candidate) => candidate.evidence);
+      release.availability.push({
+        provider,
+        providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
+        providerAlbumIds,
+        quality,
+        librarySlot,
+        status: "verified",
+        confidence: 1,
+        matchKind: "composite",
+        coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
+      });
 
-    release.availability.push({
-      provider,
-      providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
-      providerAlbumIds,
-      quality,
-      librarySlot,
-      status: "verified",
-      confidence: 1,
-      matchKind: "composite",
-      coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
-    });
-
-    // Keep the in-memory evidence reachable while debugging via the service
-    // without expanding the public contract into a large per-track payload yet.
-    void evidence;
+      // Keep the in-memory evidence reachable while debugging via the service
+      // without expanding the public contract into a large per-track payload yet.
+      void evidence;
+    }
   }
 }
 
@@ -641,10 +652,10 @@ function numericProviderDuration(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function chooseStrictComposite(
+function chooseStrictComposites(
   candidates: ProviderAlbumCoverageCandidate[],
   targetTracks: TargetTrackRow[],
-): ProviderAlbumCoverageCandidate[] | null {
+): ProviderAlbumCoverageCandidate[][] {
   const targetMbids = new Set(targetTracks.map((track) => track.mbid));
   const byProvider = new Map<string, ProviderAlbumCoverageCandidate[]>();
   for (const candidate of candidates) {
@@ -653,15 +664,77 @@ function chooseStrictComposite(
     byProvider.set(candidate.provider, list);
   }
 
+  const selections: ProviderAlbumCoverageCandidate[][] = [];
+  const selectionKeys = new Set<string>();
   for (const providerCandidates of byProvider.values()) {
-    const sorted = providerCandidates
+    const partial = providerCandidates
       .filter((candidate) => candidate.coveredTrackMbids.size < targetMbids.size)
-      .sort((a, b) => b.coveredTrackMbids.size - a.coveredTrackMbids.size || a.providerAlbumId.localeCompare(b.providerAlbumId));
+      .sort(compareCompositeCandidates);
 
-    const selected = findExactCover(sorted, targetMbids, [], new Set<string>(), 0);
-    if (selected && selected.length > 1) return selected;
+    for (const quality of Array.from(new Set(partial.map((candidate) => normalizeCompositeQuality(candidate.quality)))).sort(compareCompositeQualityDesc)) {
+      const selected = findExactCover(
+        partial.filter((candidate) => normalizeCompositeQuality(candidate.quality) === quality),
+        targetMbids,
+        [],
+        new Set<string>(),
+        0,
+      );
+      if (selected && selected.length > 1) {
+        const key = compositeSelectionKey(selected);
+        if (!selectionKeys.has(key)) {
+          selectionKeys.add(key);
+          selections.push(selected);
+        }
+      }
+    }
+
+    if (selections.length === 0) {
+      const selected = findExactCover(partial, targetMbids, [], new Set<string>(), 0);
+      if (selected && selected.length > 1) {
+        const key = compositeSelectionKey(selected);
+        selectionKeys.add(key);
+        selections.push(selected);
+      }
+    }
   }
-  return null;
+  return selections.sort((left, right) =>
+    compareCompositeQualityDesc(
+      normalizeCompositeQuality(chooseLowestCompositeQuality(left.map((candidate) => candidate.quality).filter(Boolean) as string[])),
+      normalizeCompositeQuality(chooseLowestCompositeQuality(right.map((candidate) => candidate.quality).filter(Boolean) as string[])),
+    ) || compositeSelectionKey(left).localeCompare(compositeSelectionKey(right)),
+  );
+}
+
+function compareCompositeCandidates(a: ProviderAlbumCoverageCandidate, b: ProviderAlbumCoverageCandidate): number {
+  return b.coveredTrackMbids.size - a.coveredTrackMbids.size
+    || compareCompositeQualityDesc(normalizeCompositeQuality(a.quality), normalizeCompositeQuality(b.quality))
+    || a.providerAlbumId.localeCompare(b.providerAlbumId);
+}
+
+function compositeSelectionKey(selected: ProviderAlbumCoverageCandidate[]): string {
+  return selected.map((candidate) => candidate.providerAlbumId).sort().join(COMPOSITE_PROVIDER_ID_SEPARATOR);
+}
+
+function normalizeCompositeQuality(value: string | null | undefined): string {
+  const q = String(value || "").toUpperCase();
+  if (q.includes("ATMOS") || q.includes("SPATIAL")) return "DOLBY_ATMOS";
+  if (q.includes("HIRES")) return "HIRES_LOSSLESS";
+  if (q.includes("LOSSLESS")) return "LOSSLESS";
+  if (q.includes("HIGH")) return "HIGH";
+  if (q.includes("LOW")) return "LOW";
+  return "";
+}
+
+function compositeQualityRank(quality: string): number {
+  if (quality === "DOLBY_ATMOS") return 4;
+  if (quality === "HIRES_LOSSLESS") return 3;
+  if (quality === "LOSSLESS") return 2;
+  if (quality === "HIGH") return 1;
+  return 0;
+}
+
+function compareCompositeQualityDesc(left: string, right: string): number {
+  return compositeQualityRank(right) - compositeQualityRank(left) || left.localeCompare(right);
 }
 
 function findExactCover(
