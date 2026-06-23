@@ -35,7 +35,6 @@ import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
 import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
 import { migrateLegacyTiddlDir } from "./services/providers/tidal/tiddl.js";
-import { initCurationListeners } from "./services/music/curation.listener.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
 import { startMonitoring } from "./services/commands/scheduler.js";
 import {
@@ -167,7 +166,10 @@ if (startupHealthSnapshot.status !== "healthy") {
     console.warn(`[HEALTH] ${issue.scope}: ${issue.message}`);
   }
 }
-initCurationListeners();
+// Curation chaining (RefreshArtist → RescanFolders → CurateArtist) is driven
+// from inside the command workers (see command-worker-entry) so its addJob
+// enqueues run off the main thread. Initialising it here too would double-enqueue
+// from the bridged events.
 
 // Periodically drain the WAL so a write-heavy backlog (worker pool + main)
 // can't grow it into the hundreds of MB and slow every reader. PASSIVE returns

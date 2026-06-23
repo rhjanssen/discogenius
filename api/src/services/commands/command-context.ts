@@ -1,5 +1,7 @@
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
-import type { CommandHandlerContext } from "./handlers/index.js";
+import { commandHandlers } from "./handlers/index.js";
+import type { CommandHandler, CommandHandlerContext } from "./handlers/index.js";
+import { queueNextMonitoringPass } from "./scheduler.js";
 
 /**
  * Shared command-execution helpers.
@@ -98,4 +100,40 @@ export function buildHandlerContext(): CommandHandlerContext {
         resolveArtistLabel: (job) => resolveArtistLabel(job),
         yieldToEventLoop: () => yieldToEventLoop(),
     };
+}
+
+/**
+ * Execute a claimed command's lifecycle — run handler → complete/fail → queue
+ * the next monitoring pass — entirely on the calling thread's DB connection.
+ * Analogous to Lidarr's `CommandExecutor.ExecuteCommand` running Complete/Fail
+ * on its own worker thread.
+ *
+ * Running complete/fail/next-pass here (rather than on the main thread) is what
+ * keeps the main event loop free under a scan backlog: those writes happen on
+ * worker connections, so a contended write never blocks the HTTP/SSE loop. The
+ * synchronous *claim* (markProcessing) stays on the main `CommandExecutor` so
+ * exclusivity (canStartCommand reads `status='started'`) is race-free; this
+ * function assumes the command is already claimed. In the live app it runs on a
+ * worker thread (`command-worker-entry`); in unit tests (no worker pool) it runs
+ * inline on the main thread.
+ *
+ * Never throws — handler failures are caught and persisted via `fail`.
+ */
+export async function executeCommand(job: CommandModel): Promise<void> {
+    console.log(`⚙️ Processing Command #${job.id}: ${job.name}`);
+    try {
+        const handler = commandHandlers[job.name];
+        if (handler) {
+            await (handler as CommandHandler)(job, buildHandlerContext());
+        } else {
+            console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
+        }
+        CommandQueueManager.complete(job.id);
+        queueNextMonitoringPass(job);
+        console.log(`✅ Command #${job.id} completed`);
+    } catch (error: any) {
+        console.error(`❌ Command #${job.id} failed:`, error);
+        CommandQueueManager.fail(job.id, error?.message || 'Unknown command error');
+        queueNextMonitoringPass(job);
+    }
 }
