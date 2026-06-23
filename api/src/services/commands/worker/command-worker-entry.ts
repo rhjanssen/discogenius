@@ -2,24 +2,25 @@ import { parentPort } from "node:worker_threads";
 
 import {CommandNames} from "../command-names.js";
 import {type CommandModelOf} from "../command-queue-manager.js";
-import { commandHandlers } from "../handlers/index.js";
-import type { CommandHandler } from "../handlers/index.js";
-import { buildHandlerContext } from "../command-context.js";
+import { executeCommand } from "../command-context.js";
 import { DownloadedTracksImportService } from "../../mediafiles/downloaded-tracks-import-service.js";
+import { initCurationListeners } from "../../music/curation.listener.js";
 import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
 
 /**
- * Job worker thread entrypoint — the off-thread analogue of one of Lidarr's
- * `CommandExecutor` threads. It opens its *own* better-sqlite3 connection (a
- * fresh module instance per thread; WAL allows concurrent readers + one writer)
- * and runs a single command handler at a time.
+ * Command worker thread entrypoint — one of the pool's real OS threads, the
+ * direct analogue of a Lidarr `CommandExecutor` thread. It opens its *own*
+ * better-sqlite3 connection (a fresh module instance per thread; WAL allows
+ * concurrent readers + one writer) and runs one command at a time.
  *
- * The main thread owns the queue/exclusivity/slot logic and the command's
- * state transitions (start/complete/fail); this worker only *executes the
- * handler*. Progress emits and follow-up enqueues the handler performs go
- * through `appEvents` / `download-state`, which the protocol bridge forwards
- * back to the main thread (see command-worker-protocol.ts). We never call initDatabase()
- * here — migrations stay a main-thread, single-writer concern.
+ * The worker owns the command's *full lifecycle* (markProcessing → handler →
+ * complete/fail → next monitoring pass) on its own connection, so the only
+ * command-table writes during a scan backlog happen off the main thread and
+ * can't block the API's event loop on write-lock contention. The curation
+ * chaining listeners run here too, so their follow-up enqueues are off-main as
+ * well. The handler's `appEvents` / `download-state` effects ride the protocol
+ * bridge back to the main thread (see command-worker-protocol.ts). We never call
+ * initDatabase() here — schema setup stays a main-thread, single-writer concern.
  */
 
 if (!parentPort || !isCommandWorker()) {
@@ -27,6 +28,10 @@ if (!parentPort || !isCommandWorker()) {
 }
 
 const port = parentPort;
+
+// Chain RefreshArtist → RescanFolders → CurateArtist from inside the worker, so
+// the listener's addJob enqueues run on this worker's connection (off-main).
+initCurationListeners();
 
 function post(message: WorkerToMainMessage): void {
     port.postMessage(message);
@@ -36,22 +41,19 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
     const job = message.job;
     try {
         if (job.name === CommandNames.ImportDownload) {
-            // Imports aren't in the command-handler registry (the download
-            // processor owns their orchestration); run the heavy import service
-            // here and stream progress back via the bridge. The import service's
-            // own appEvents (FILE_ADDED) + download-state cache invalidations are
-            // already forwarded by the generic bridge.
+            // Imports are owned by the download processor (it persists
+            // complete/fail + emits download-progress SSE). Here we only run the
+            // heavy import service and stream progress back via the bridge; its
+            // appEvents (FILE_ADDED) + cache invalidations ride the generic bridge.
             await DownloadedTracksImportService.process(
                 job as CommandModelOf<typeof CommandNames.ImportDownload>,
                 { updateState: (state) => forwardImportProgress(job.id, state) },
             );
         } else {
-            const handler = commandHandlers[job.name];
-            if (handler) {
-                await (handler as CommandHandler)(job, buildHandlerContext());
-            } else {
-                console.warn(`[command-worker] picked up unhandled command: ${job.name}`);
-            }
+            // Regular command: run the full lifecycle on this worker's
+            // connection. executeCommand persists complete/fail itself and never
+            // throws, so reaching here always means the lifecycle ran.
+            await executeCommand(job);
         }
         post({ kind: "done", commandId: job.id });
     } catch (error: any) {

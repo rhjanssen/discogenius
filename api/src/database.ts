@@ -216,18 +216,15 @@ export function backfillArtistPaths(): number {
 }
 
 const BASE_SCHEMA_VERSION = 31;
-const LEGACY_SEMVER_BASELINE_VERSION = 10000;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
 // ====================================================================
-// SCHEMA MIGRATIONS
-// Discogenius 2.0 resets the fresh-install schema baseline so SQLite
-// `user_version` starts at the current MusicBrainz/Lidarr-aligned schema.
-//
-// The legacy numbered migrations remain so older local databases can still
-// be lifted to the current schema before the baseline is normalized.
-// Future schema migrations should increment the integer schema version above 20.
+// SCHEMA
+// There is no migration engine: tables/indexes are created with
+// `CREATE ... IF NOT EXISTS` and runtime data is wiped rather than migrated, so
+// a fresh database is already at the current schema (`user_version =
+// BASE_SCHEMA_VERSION`, stamped by baselineSchemaVersion()).
 // ====================================================================
 export function hasTable(tableName: string): boolean {
   const row = db
@@ -307,7 +304,6 @@ function tableHasRows(tableName: string): boolean {
 
 
 
-const SCHEMA_MIGRATIONS: Array<{ version: number; description: string; up: () => void }> = [];
 
 function ensureCatalogForeignKeyColumns(): void {
   addColumnIfMissing("Albums", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE SET NULL");
@@ -1043,9 +1039,8 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
-  // Defensive: this schema-ensure runs before runMigrations() on existing DBs, so
-  // guarantee the v28 column exists before indexing it (fresh DBs already have it
-  // from the base CREATE TABLE above; existing DBs get it here ahead of migration).
+  // Guarantee the column exists before indexing it (fresh DBs already have it
+  // from the base CREATE TABLE above).
   if (!hasColumn("ProviderItems", "provider_album_id")) {
     db.exec("ALTER TABLE ProviderItems ADD COLUMN provider_album_id TEXT");
   }
@@ -1081,45 +1076,25 @@ function ensureMusicBrainzProviderSchema(): void {
   // initDatabase — no separate index needed here.)
 }
 
-type MigrationRunSummary = {
+type SchemaBaselineState = {
   fromVersion: number;
   toVersion: number;
   appliedDescriptions: string[];
 };
 
-function runMigrations(): MigrationRunSummary {
-  const currentVersion = db.pragma("user_version", { simple: true }) as number;
-  const appliedDescriptions: string[] = [];
-
-  let normalizedVersion = currentVersion;
-  if (normalizedVersion === 0) {
-    console.log(`🛠️  Baseline current schema to ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION})...`);
+/**
+ * Stamp the current schema baseline. There is no migration engine: schema
+ * objects are created with `CREATE TABLE/INDEX IF NOT EXISTS` and runtime data
+ * is wiped rather than migrated, so a fresh database is already at the current
+ * schema and we simply record `user_version = BASE_SCHEMA_VERSION`.
+ */
+function baselineSchemaVersion(): SchemaBaselineState {
+  const fromVersion = db.pragma("user_version", { simple: true }) as number;
+  if (fromVersion !== BASE_SCHEMA_VERSION) {
+    console.log(`🛠️  Baseline schema at version ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION}).`);
     db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
-    appliedDescriptions.push(`baseline current schema as ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION})`);
-    normalizedVersion = BASE_SCHEMA_VERSION;
   }
-
-  const pending = SCHEMA_MIGRATIONS
-    .filter((migration) => migration.version > normalizedVersion)
-    .sort((left, right) => left.version - right.version);
-
-  if (pending.length > 0) {
-    console.log(
-      `🛠️  Running ${pending.length} schema migration(s) (${normalizedVersion} → ${pending[pending.length - 1].version})...`
-    );
-    for (const migration of pending) {
-      console.log(`  [${migration.version}] ${migration.description}`);
-      migration.up();
-      appliedDescriptions.push(migration.description);
-      db.pragma(`user_version = ${migration.version}`);
-    }
-  }
-
-  return {
-    fromVersion: currentVersion,
-    toVersion: db.pragma("user_version", { simple: true }) as number,
-    appliedDescriptions,
-  };
+  return { fromVersion, toVersion: BASE_SCHEMA_VERSION, appliedDescriptions: [] };
 }
 
 export function initDatabase() {
@@ -1415,7 +1390,7 @@ export function initDatabase() {
     console.log("[SQLite] Startup integrity check skipped. Set DISCOGENIUS_STARTUP_INTEGRITY_CHECK=quick or full to run one at boot.");
   }
 
-  const migrationSummary = runMigrations();
+  const migrationSummary = baselineSchemaVersion();
   ensureCatalogForeignKeyColumns();
   ensureCatalogForeignKeyIndexes();
   ensureCatalogForeignKeyTriggers();
@@ -1509,7 +1484,7 @@ export function initDatabase() {
 
 }
 
-function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
+function recordDatabaseVersionState(migrationSummary: SchemaBaselineState) {
   const releaseInfo = getCurrentAppReleaseInfo();
   const appVersion = releaseInfo.version;
   const apiVersion = releaseInfo.apiVersion;
@@ -1597,7 +1572,7 @@ function recordDatabaseVersionState(migrationSummary: MigrationRunSummary) {
   }
 }
 
-function initializeDefaultData(migrationSummary: MigrationRunSummary) {
+function initializeDefaultData(migrationSummary: SchemaBaselineState) {
   // Check if quality profiles exist
   const profileCount = db.prepare("SELECT COUNT(*) as count FROM quality_profiles").get() as { count: number };
 

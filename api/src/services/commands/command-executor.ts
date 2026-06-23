@@ -3,10 +3,7 @@ import {NON_DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES} from "./co
 import {CommandQueueManager} from "./command-queue-manager.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
-import { queueNextMonitoringPass } from "./scheduler.js";
-import { commandHandlers } from "./handlers/index.js";
-import type { CommandHandler } from "./handlers/index.js";
-import { buildHandlerContext } from "./command-context.js";
+import { executeCommand } from "./command-context.js";
 import { CommandWorkerPool } from "./worker/command-worker-pool.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
@@ -139,8 +136,13 @@ export class CommandExecutor {
     }
 
     private static startJob(job: CommandModel) {
-        // Mark as processing synchronously BEFORE launching async work,
-        // so the next poll loop won't re-select this job from the DB.
+        // Claim the command synchronously on the main thread so the very next
+        // candidate's canStartCommand sees it as `started` — this keeps
+        // exclusivity (per-ref / type / library-wide) race-free. It's the only
+        // command-table write left on the main thread, and it's low-frequency
+        // (once per command *start*, bounded by worker throughput). The heavy,
+        // high-frequency writes (complete/fail/next-pass/curation) run on the
+        // worker connection inside executeCommand.
         if (!CommandQueueManager.markProcessing(job.id)) {
             return;
         }
@@ -151,39 +153,19 @@ export class CommandExecutor {
     }
 
     /**
-     * Run a command's handler. In the live app the command-worker pool is running, so
-     * this hands the work to a real OS thread (worker_threads) — the direct
-     * analogue of Lidarr's off-thread CommandExecutor — keeping the main thread's
-     * HTTP+SSE loop free. When the pool isn't running (unit tests calling
-     * processJob directly), it runs the handler in-process.
+     * Run a command's full lifecycle. In the live app the worker pool is running,
+     * so the command executes on a real OS thread (worker_threads) — the direct
+     * analogue of Lidarr's off-thread CommandExecutor — and *all* of its
+     * command-table writes (claim/complete/fail/next-pass) happen on the worker's
+     * connection, never blocking the main HTTP+SSE loop. When the pool isn't
+     * running (unit tests calling processJob directly), the lifecycle runs inline
+     * on the main thread via the same executeCommand path.
      */
-    private static async runHandler(job: CommandModel): Promise<void> {
+    private static async processJob(job: CommandModel) {
         if (CommandWorkerPool.isActive()) {
             await CommandWorkerPool.run(job);
-            return;
-        }
-
-        const handler = commandHandlers[job.name];
-        if (handler) {
-            await (handler as CommandHandler)(job, buildHandlerContext());
         } else {
-            console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
-        }
-    }
-
-    private static async processJob(job: CommandModel) {
-        console.log(`⚙️ Processing Command #${job.id}: ${job.name}`);
-
-        try {
-            await this.runHandler(job);
-
-            CommandQueueManager.complete(job.id);
-            queueNextMonitoringPass(job);
-            console.log(`✅ Command #${job.id} completed`);
-        } catch (error: any) {
-            console.error(`❌ Command #${job.id} failed:`, error);
-            CommandQueueManager.fail(job.id, error?.message || 'Unknown scheduler error');
-            queueNextMonitoringPass(job);
+            await executeCommand(job);
         }
     }
 }
