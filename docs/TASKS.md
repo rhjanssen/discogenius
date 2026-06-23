@@ -27,10 +27,26 @@ Release blockers before tagging:
   2026-06-23. Docker health was healthy; `/`, `/health`, `/api/health`, and
   `/api/v1/status` responded. The smoke-test container was stopped afterward.
 
-## 2.0.9 - Schema And Upgrade Cleanup
+## 2.0.9 - Upgrade Cutoff Cleanup
 
-Scope: finish the active cleanup that was intentionally left out of the 2.0.8
-release gate if it is not required for shipping.
+Scope: remove the materialized upgrade ledger and keep upgrade decisions on the
+Lidarr-style cutoff path.
+
+Release blockers before tagging:
+
+- done: `CheckUpgrades` no longer reads or writes `upgrade_queue`; upgrade
+  decisions stay in `UpgradableSpecification` and queue normal download
+  commands.
+- done: Recent completed upgrade download/import command history now suppresses
+  immediate no-improvement requeues, replacing the old skipped ledger.
+- done: `downloaded-tracks-import-service` no longer clears upgrade ledger rows.
+- done: Fresh schema no longer creates `upgrade_queue` or its indexes, and the
+  baseline test asserts that the table is absent.
+- done: Focused upgrader/schema tests passed under WSL on 2026-06-23.
+
+## Future Schema Cleanup
+
+Scope: deeper file-table and release-media normalization that remains unshipped.
 
 - pending: Prune redundant `TrackFiles` canonical indexes where composite indexes
   fully cover the hot paths.
@@ -39,9 +55,6 @@ release gate if it is not required for shipping.
   catalog FK joins, then remove those columns from the file tables.
 - pending: Fold `AlbumReleaseMedia` into `AlbumReleases.data` if the complexity
   of a separate media table stops paying for itself.
-- pending: Replace `upgrade_queue` skip memory with the Lidarr-style
-  cutoff/history guard described in `docs/UPGRADE_CUTOFF_MODEL_PLAN.md`, then
-  remove the table from the fresh schema.
 
 ## 2.1 - Settings And Provider UX
 

@@ -25,7 +25,6 @@ before(async () => {
 afterEach(() => {
   for (const table of [
     "commands",
-    "upgrade_queue",
     "TrackFiles",
     "ProviderItems",
     "ReleaseGroupSlots",
@@ -169,25 +168,7 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   assert.equal(result.albums, 1);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
-  const ledger = db.prepare(`
-    SELECT provider, entity_type, provider_id, album_provider_id, target_quality, status
-    FROM upgrade_queue
-  `).get() as {
-    provider: string;
-    entity_type: string;
-    provider_id: string;
-    album_provider_id: string | null;
-    target_quality: string;
-    status: string;
-  };
-  assert.deepEqual(ledger, {
-    provider: "tidal",
-    entity_type: "track",
-    provider_id: "track-provider-1",
-    album_provider_id: "album-provider-1",
-    target_quality: "HIRES_LOSSLESS",
-    status: "pending",
-  });
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgrade_queue'").get(), undefined);
 
   const jobs = listDownloadJobs();
   assert.equal(jobs.length, 1);
@@ -237,27 +218,73 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
   assert.equal(result.videos, 1);
   assert.equal(result.albums, 0);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
-  const ledger = db.prepare(`
-    SELECT provider, entity_type, provider_id, target_quality, status
-    FROM upgrade_queue
-  `).get() as {
-    provider: string;
-    entity_type: string;
-    provider_id: string;
-    target_quality: string;
-    status: string;
-  };
-  assert.deepEqual(ledger, {
-    provider: "tidal",
-    entity_type: "video",
-    provider_id: "video-provider-1",
-    target_quality: "MP4_1080P",
-    status: "pending",
-  });
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgrade_queue'").get(), undefined);
 
   const jobs = listDownloadJobs();
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].name, CommandNames.DownloadVideo);
   assert.equal(jobs[0].ref_id, "video-provider-1");
   assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "video-provider-1", reason: "upgrade" });
+});
+
+test("checkUpgrades does not immediately requeue a recent completed no-improvement upgrade", async () => {
+  seedArtistAndRelease();
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+    title, quality, library_slot, data
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "tidal",
+    "album",
+    "album-provider-1",
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "Canonical Album",
+    "HIRES_LOSSLESS",
+    "stereo",
+    JSON.stringify({ quality: "HIRES_LOSSLESS" }),
+  );
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+    track_mbid, recording_mbid, title, quality, library_slot, match_evidence, data
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "tidal",
+    "track",
+    "track-provider-1",
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "track-1",
+    "recording-1",
+    "Track One",
+    "HIRES_LOSSLESS",
+    "stereo",
+    JSON.stringify({ albumProviderId: "album-provider-1" }),
+    JSON.stringify({ albumProviderId: "album-provider-1", quality: "HIRES_LOSSLESS" }),
+  );
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+  });
+  db.prepare(`
+    INSERT INTO commands(name, ref_id, payload, priority, status, created_at, completed_at, updated_at)
+    VALUES (?, ?, ?, 0, 'completed', datetime('now', '-10 minutes'), datetime('now', '-5 minutes'), datetime('now', '-5 minutes'))
+  `).run(
+    CommandNames.ImportDownload,
+    "album-provider-1",
+    JSON.stringify({ type: "album", providerId: "album-provider-1", reason: "upgrade" }),
+  );
+
+  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+
+  assert.equal(result.tracks, 0);
+  assert.equal(result.videos, 0);
+  assert.equal(result.albums, 0);
+  assert.deepEqual(listDownloadJobs(), []);
 });

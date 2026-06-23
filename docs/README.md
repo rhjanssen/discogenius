@@ -13,8 +13,6 @@
   - Local MusicBrainz catalog-provider notes and dev wiring.
 - [RELEASE_CENTRIC_MATCHING_PLAN.md](RELEASE_CENTRIC_MATCHING_PLAN.md)
   - Remaining release-centric matching work.
-- [UPGRADE_CUTOFF_MODEL_PLAN.md](UPGRADE_CUTOFF_MODEL_PLAN.md)
-  - Planned cleanup for replacing `upgrade_queue` with cutoff/history semantics.
 - [LIDARR_STRUCTURE_ALIGNMENT.md](LIDARR_STRUCTURE_ALIGNMENT.md)
   - Current file/folder alignment notes and deferred split candidates.
 - [ULTRABLUR_DOCUMENTATION.md](ULTRABLUR_DOCUMENTATION.md)

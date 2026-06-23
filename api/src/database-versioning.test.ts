@@ -35,7 +35,7 @@ test("fresh database initializes the current development baseline", () => {
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
-    "commands", "scheduled_tasks", "upgrade_queue", "quality_profiles",
+    "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
     "ArtistStatistics",
   ];
@@ -48,13 +48,11 @@ test("fresh database initializes the current development baseline", () => {
   }
 });
 
-test("upgrade queue uses provider identity only", () => {
-  const columns = tableColumns("upgrade_queue");
-  assert.ok(columns.includes("provider"));
-  assert.ok(columns.includes("entity_type"));
-  assert.ok(columns.includes("provider_id"));
-  assert.equal(columns.includes("media_id"), false);
-  assert.equal(columns.includes("album_id"), false);
+test("upgrade queue table is absent from the fresh schema", () => {
+  const row = dbModule.db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgrade_queue'")
+    .get() as { name: string } | undefined;
+  assert.equal(row, undefined);
 });
 
 test("catalog tables expose integer foreign-key links as the authoritative join path", () => {
@@ -82,7 +80,7 @@ test("retired provider catalog tables are absent from the baseline", () => {
   const retiredTables = [
     "ProviderAlbums", "ProviderMedia", "ProviderAlbumArtists", "ProviderMediaArtists",
     "local_entities", "provider_entity_ids", "artist_metadata", "artwork_cache",
-    "provider_video_identity", "provider_video_items", "provider_ids",
+    "provider_video_identity", "provider_video_items", "provider_ids", "upgrade_queue",
   ];
 
   for (const tableName of retiredTables) {

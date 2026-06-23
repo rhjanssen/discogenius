@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.9] - 2026-06-23
+
+### Changed
+- **Upgrade checks now use cutoff/history semantics instead of a materialized ledger.** `CheckUpgrades` still evaluates installed files with `UpgradableSpecification` and queues normal download commands, but no longer reads or writes `upgrade_queue`.
+- **No-improvement upgrade loops are guarded by command history.** A recent completed upgrade download/import for the same provider item or album suppresses immediate requeue when the installed file still fails the cutoff, replacing the old skipped-row memory.
+
+### Removed
+- **`upgrade_queue` was removed from the fresh schema.** Import completion no longer clears upgrade ledger rows, and the baseline schema test now asserts the table is absent.
+
 ## [2.0.8] - 2026-06-23
 
 ### Removed

@@ -66,29 +66,6 @@ function resolveImportHistoryContext(type: string, providerId: string): ImportHi
     };
 }
 
-function clearUpgradeQueue(type: string, providerId: string) {
-    if (type === "album") {
-        const albumIds = providerId.split(";").filter(Boolean);
-        if (albumIds.length > 0) {
-            const placeholders = albumIds.map(() => '?').join(', ');
-            db.prepare(`
-                DELETE FROM upgrade_queue
-                WHERE album_provider_id IN (${placeholders})
-                   OR album_id IN (${placeholders})
-                   OR (entity_type = 'album' AND provider_id IN (${placeholders}))
-            `).run(...albumIds, ...albumIds, ...albumIds);
-        }
-        return;
-    }
-
-    const entityType = type === "video" ? "video" : "track";
-    db.prepare(`
-        DELETE FROM upgrade_queue
-        WHERE (entity_type = ? AND provider_id = ?)
-           OR media_id = ?
-    `).run(entityType, providerId, providerId);
-}
-
 function resolveAffectedArtistId(type: string, providerId: string): string | null {
     const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
     const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
@@ -284,7 +261,6 @@ export class DownloadedTracksImportService {
         });
 
         reconcileImportedDownload(type, providerId, organizeResult);
-        clearUpgradeQueue(type, providerId);
 
         const affectedArtistId = resolveAffectedArtistId(type, providerId);
         if (affectedArtistId) {
@@ -417,12 +393,6 @@ export class DownloadedTracksImportService {
 
         shouldCleanupDownloadPath = true;
     } catch (error) {
-        try {
-            clearUpgradeQueue(type, providerId);
-        } catch (cleanupError) {
-            console.error(`[ImportDownload] Failed to reset upgrade_queue after import failure for ${type} ${providerId}:`, cleanupError);
-        }
-
         const historyContext = resolveImportHistoryContext(type, providerId);
         const message = error instanceof Error ? error.message : String(error);
         try {

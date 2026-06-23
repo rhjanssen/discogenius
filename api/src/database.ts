@@ -349,26 +349,6 @@ function ensureTrackFileForeignKeyTriggers(): void {
   `);
 }
 
-function createUpgradeQueueProviderIdentityTable(tableName = "upgrade_queue"): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ${tableName} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      provider TEXT,
-      entity_type TEXT,
-      provider_id TEXT,
-      album_provider_id TEXT,
-      track_file_id INTEGER REFERENCES TrackFiles(id) ON DELETE SET NULL,
-      current_quality TEXT NOT NULL,
-      target_quality TEXT NOT NULL,
-      reason TEXT,
-      status TEXT DEFAULT 'pending',  -- pending, completed, skipped
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      processed_at DATETIME,
-      UNIQUE(provider, entity_type, provider_id)
-    )
-  `);
-}
-
 function ensureMetadataIdentitySchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS metadata_identity_status (
@@ -1105,11 +1085,6 @@ export function initDatabase() {
     )
   `);
 
-  // ====================================================================
-  // UPGRADE QUEUE (Track quality upgrade candidates)
-  // ====================================================================
-  createUpgradeQueueProviderIdentityTable();
-  // ====================================================================
   // CONFIG TABLE (Application settings)
   // ====================================================================
   db.exec(`
@@ -1208,13 +1183,6 @@ export function initDatabase() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_album ON history_events(album_id, date DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_media ON history_events(media_id, date DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_event_type ON history_events(event_type, date DESC)");
-
-  // Upgrade queue indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_provider_resource ON upgrade_queue(provider, entity_type, provider_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_provider ON upgrade_queue(provider, album_provider_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_track_file ON upgrade_queue(track_file_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_status ON upgrade_queue(status)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_target_quality ON upgrade_queue(target_quality)`);
 
   // Foreign key and lookup performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");

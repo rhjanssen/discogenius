@@ -205,7 +205,7 @@ Primary persisted entities:
 - history_events
 - `UnmappedFiles`
 - commands, scheduled_tasks, monitoring_runtime_state
-- quality_profiles, upgrade_queue
+- quality_profiles
 - config
 
 Operationally important semantics:
@@ -281,6 +281,5 @@ Operationally important semantics:
 - docs/DATA_MODEL_TARGET.md: current data-model rules and future data-model direction
 - docs/MB_LOCAL_MODE.md: local MusicBrainz catalog-provider notes
 - docs/RELEASE_CENTRIC_MATCHING_PLAN.md: release-centric matching follow-up plan
-- docs/UPGRADE_CUTOFF_MODEL_PLAN.md: upgrade cutoff-model follow-up plan
 - docs/LIDARR_STRUCTURE_ALIGNMENT.md: file/folder alignment and deferred split candidates
 - AGENTS.md (repo root): coding-agent expectations and validation checklist

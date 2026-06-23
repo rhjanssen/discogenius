@@ -31,9 +31,70 @@ type UpgradeCandidateRow = {
     current_bitrate: number | null;
     current_sample_rate: number | null;
     album_quality: string | null;
-    upgrade_status: string | null;
-    upgrade_target: string | null;
 };
+
+const UPGRADE_HISTORY_COOLDOWN_HOURS = 24;
+
+function hasRecentNoImprovementUpgradeAttempt(row: UpgradeCandidateRow): boolean {
+    if (!row.media_id) return false;
+
+    const mediaType = row.provider_entity_type;
+    const downloadCommand = mediaType === "video" ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
+    const params: Array<string | number | null> = [
+        `-${UPGRADE_HISTORY_COOLDOWN_HOURS} hours`,
+        downloadCommand,
+        row.media_id,
+        CommandNames.ImportDownload,
+        row.media_id,
+        mediaType,
+    ];
+
+    let albumClause = "";
+    if (row.album_id) {
+        albumClause = `
+            OR (
+                name = ?
+                AND ref_id = ?
+                AND json_extract(payload, '$.reason') = 'upgrade'
+            )
+            OR (
+                name = ?
+                AND ref_id = ?
+                AND json_extract(payload, '$.type') = 'album'
+            )
+        `;
+        params.push(
+            CommandNames.DownloadAlbum,
+            row.album_id,
+            CommandNames.ImportDownload,
+            row.album_id,
+        );
+    }
+
+    const recent = db.prepare(`
+        SELECT id
+        FROM commands
+        WHERE status = 'completed'
+          AND COALESCE(completed_at, updated_at, created_at) >= datetime('now', ?)
+          AND (
+            (
+                name = ?
+                AND ref_id = ?
+                AND json_extract(payload, '$.reason') = 'upgrade'
+            )
+            OR (
+                name = ?
+                AND ref_id = ?
+                AND json_extract(payload, '$.type') = ?
+            )
+            ${albumClause}
+          )
+        ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
+        LIMIT 1
+    `).get(...params) as { id: number } | undefined;
+
+    return recent != null;
+}
 
 export class UpgraderService {
     private static readonly UPGRADE_YIELD_EVERY = readIntEnv("DISCOGENIUS_UPGRADER_YIELD_EVERY", 100, 10);
@@ -101,9 +162,7 @@ export class UpgraderService {
                 album_item.quality,
                 json_extract(album_item.data, '$.quality'),
                 json_extract(album_item.data, '$.audioQuality')
-            ) AS album_quality,
-            uq.status       AS upgrade_status,
-            uq.target_quality AS upgrade_target
+            ) AS album_quality
         FROM TrackFiles lf
         LEFT JOIN ProviderItems media_item
           ON media_item.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
@@ -127,15 +186,6 @@ export class UpgraderService {
                 OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
                 OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
              )
-        LEFT JOIN upgrade_queue uq
-          ON (
-               uq.provider = COALESCE(media_item.provider, lf.provider, 'tidal')
-               AND uq.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
-               AND CAST(uq.provider_id AS TEXT) = CAST(COALESCE(
-                    media_item.provider_id,
-                    CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
-                ) AS TEXT)
-              )
         WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
           AND COALESCE(
                 media_item.provider_id,
@@ -215,43 +265,12 @@ export class UpgraderService {
             if (evaluation.needsChange) {
                 const expectedTarget = evaluation.targetQuality
                     || (row.media_type === 'Music Video' ? qualityProfile.videoCutoff : qualityProfile.audioCutoff);
-                // If this specific upgrade path was previously marked 'skipped' (e.g. Tidal doesn't offer it), do not queue it again
-                // If there's an active upgrade or skipped record targeting this OR HIGHER, skip
-                if (row.upgrade_status === 'skipped' && row.upgrade_target === expectedTarget) {
-                    // We know Tidal doesn't have it. Skip to prevent infinite loops.
+                if (hasRecentNoImprovementUpgradeAttempt(row)) {
+                    console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: recent upgrade attempt did not satisfy cutoff (${expectedTarget}).`);
                     continue;
                 }
 
                 result.details.push({ mediaId: String(row.media_id), type: row.media_type, reason: evaluation.reason });
-
-                if (row.media_id) {
-                    const provider = row.provider || "tidal";
-                    const albumProviderId = row.album_id || null;
-                    const currentQuality = normalizedCurrentQuality || row.current_quality || 'UNKNOWN';
-                    db.prepare(`
-                      INSERT INTO upgrade_queue (
-                        provider, entity_type, provider_id, album_provider_id,
-                        track_file_id, current_quality, target_quality, reason, status
-                      )
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                      ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                        status = 'pending',
-                        target_quality = excluded.target_quality,
-                        reason = excluded.reason,
-                        current_quality = excluded.current_quality,
-                        album_provider_id = COALESCE(excluded.album_provider_id, upgrade_queue.album_provider_id),
-                        track_file_id = COALESCE(excluded.track_file_id, upgrade_queue.track_file_id)
-                    `).run(
-                        provider,
-                        row.provider_entity_type,
-                        row.media_id,
-                        albumProviderId,
-                        row.file_id,
-                        currentQuality,
-                        expectedTarget,
-                        evaluation.reason
-                    );
-                }
 
                 if (row.media_type === 'Music Video') {
                     result.videos++;
