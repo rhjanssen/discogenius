@@ -64,7 +64,6 @@ const METADATA_UPDATE_KEYS = [
   "write_tidal_url",
   "mark_explicit",
   "upc_target",
-  "write_audio_metadata",
   "write_audio_tags_policy",
   "embed_replaygain",
 ] as const satisfies readonly (keyof MetadataConfigContract)[];
@@ -107,8 +106,6 @@ const FILTERING_UPDATE_KEYS = [
 const MONITORING_UPDATE_KEYS = [
   "enabled",
   "scanIntervalHours",
-  "startHour",
-  "durationHours",
   "monitorNewArtists",
   "removeUnmonitoredFiles",
   "artistRefreshDays",

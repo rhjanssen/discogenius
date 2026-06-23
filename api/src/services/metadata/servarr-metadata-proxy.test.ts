@@ -4,18 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-skyhook-proxy-"));
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-servarr-metadata-proxy-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let skyHookModule: typeof import("./skyhook-proxy.js");
+let servarrMetadataModule: typeof import("./servarr-metadata-proxy.js");
 let originalFetch: typeof fetch;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
-  skyHookModule = await import("./skyhook-proxy.js");
+  servarrMetadataModule = await import("./servarr-metadata-proxy.js");
   originalFetch = globalThis.fetch;
 });
 
@@ -25,7 +25,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("syncReleaseGroup stores SkyHook album detail release type fields", async () => {
+test("syncReleaseGroup stores Servarr Metadata Server album detail release type fields", async () => {
   const { db } = dbModule;
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -47,7 +47,7 @@ test("syncReleaseGroup stores SkyHook album detail release type fields", async (
     }),
   })) as unknown as typeof fetch;
 
-  await skyHookModule.skyHookProxy.syncReleaseGroup("release-group-mbid", "artist-mbid");
+  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("release-group-mbid", "artist-mbid");
 
   const releaseGroup = db.prepare(`
     SELECT title, primary_type, secondary_types, first_release_date
@@ -66,7 +66,7 @@ test("syncReleaseGroup stores SkyHook album detail release type fields", async (
   assert.equal(releaseGroup.first_release_date, "2023-04-22");
 });
 
-test("syncReleaseGroup keeps the canonical SkyHook album owner instead of the scanning artist", async () => {
+test("syncReleaseGroup keeps the canonical Servarr Metadata Server album owner instead of the scanning artist", async () => {
   const { db } = dbModule;
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -87,7 +87,7 @@ test("syncReleaseGroup keeps the canonical SkyHook album owner instead of the sc
     }),
   })) as unknown as typeof fetch;
 
-  await skyHookModule.skyHookProxy.syncReleaseGroup("happier-release-group", "bastille-mbid");
+  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("happier-release-group", "bastille-mbid");
 
   const releaseGroup = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
     .get("happier-release-group") as { artist_mbid: string };
@@ -121,7 +121,7 @@ test("searchAll ranks the substantial exact-name artist ahead of same-name colli
     ]),
   })) as unknown as typeof fetch;
 
-  const results = await skyHookModule.skyHookProxy.searchAll("Bastille", 10);
+  const results = await servarrMetadataModule.servarrMetadataProxy.searchAll("Bastille", 10);
 
   assert.equal(results[0].artist.id, "indie-pop-band");
   assert.equal(results[1].artist.id, "metal-band");

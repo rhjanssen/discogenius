@@ -10,7 +10,7 @@ import { RefreshVideoService } from "./refresh-video-service.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
-import { skyHookProxy } from "../metadata/skyhook-proxy.js";
+import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
 import {
     matchProviderAlbumsToReleaseGroups,
@@ -25,7 +25,7 @@ import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
-    getSkyHookArtistImageUrl,
+    getServarrMetadataArtistImageUrl,
     resolveArtistArtwork,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
@@ -154,7 +154,7 @@ export class RefreshArtistService {
 
         try {
             if (force || Number(cachedCount?.count || 0) === 0) {
-                await skyHookProxy.syncArtist(artistMbid);
+                await servarrMetadataProxy.syncArtist(artistMbid);
             }
             if (includeCreditedReleaseGroups) {
                 const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
@@ -231,7 +231,7 @@ export class RefreshArtistService {
 
         for (const releaseGroup of releaseGroups) {
             try {
-                await skyHookProxy.syncReleaseGroup(releaseGroup.mbid, artistMbid);
+                await servarrMetadataProxy.syncReleaseGroup(releaseGroup.mbid, artistMbid);
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to hydrate canonical release group ${releaseGroup.mbid}:`, error);
             }
@@ -249,7 +249,7 @@ export class RefreshArtistService {
         const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
         const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitored);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
-        const artistData = await skyHookProxy.syncArtist(artistMbid);
+        const artistData = await servarrMetadataProxy.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
             SELECT provider, provider_id, data
@@ -280,11 +280,11 @@ export class RefreshArtistService {
         }));
         const posterUrl = await resolveArtistArtwork({
             artistMbid,
-            skyHookData: artistData,
+            servarrMetadataData: artistData,
             providerCandidates,
             preferredCoverTypes: ["Poster", "Headshot"],
         });
-        const fanartUrl = getSkyHookArtistImageUrl(artistData, "Fanart") || posterUrl;
+        const fanartUrl = getServarrMetadataArtistImageUrl(artistData, "Fanart") || posterUrl;
         const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
             artistId: localArtistId,
             artistName,
@@ -381,7 +381,7 @@ export class RefreshArtistService {
             return new Map();
         }
 
-        const releaseGroups = skyHookProxy.getCachedReleaseGroupsForArtist(artistMbid);
+        const releaseGroups = servarrMetadataProxy.getCachedReleaseGroupsForArtist(artistMbid);
         if (releaseGroups.length === 0) {
             return new Map();
         }
@@ -602,7 +602,7 @@ export class RefreshArtistService {
         }
 
         const cachedReleaseGroups = new Map(
-            skyHookProxy.getCachedReleaseGroupsForArtist(artistMbid)
+            servarrMetadataProxy.getCachedReleaseGroupsForArtist(artistMbid)
                 .map((releaseGroup) => [releaseGroup.mbid, releaseGroup] as const),
         );
         const targets = db.prepare(`

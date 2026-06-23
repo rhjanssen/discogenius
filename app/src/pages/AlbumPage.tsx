@@ -822,7 +822,7 @@ const AlbumPage = () => {
           picture: artistImage,
         }]
       : [];
-  const albumSkyHookArtworkUrl = album ? (album.cover_art_url || null) : null;
+  const albumServarrMetadataArtworkUrl = album ? (album.cover_art_url || null) : null;
   const albumProviderArtworkUrl = album
     ? getAlbumCover((album as any).provider_cover_id, "large")
     : null;
@@ -830,14 +830,14 @@ const AlbumPage = () => {
     ? (getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
     : null;
   const albumStoredFallbackUrl = albumStoredArtworkUrl
-    && albumStoredArtworkUrl !== albumSkyHookArtworkUrl
+    && albumStoredArtworkUrl !== albumServarrMetadataArtworkUrl
     && albumStoredArtworkUrl !== albumProviderArtworkUrl
     ? albumStoredArtworkUrl
     : null;
   const albumArtworkUrl = album
     ? (
-      albumSkyHookArtworkUrl && !coverImageFailed
-        ? albumSkyHookArtworkUrl
+      albumServarrMetadataArtworkUrl && !coverImageFailed
+        ? albumServarrMetadataArtworkUrl
         : albumProviderArtworkUrl && !providerCoverImageFailed
           ? albumProviderArtworkUrl
           : albumStoredFallbackUrl
@@ -856,7 +856,7 @@ const AlbumPage = () => {
   useEffect(() => {
     setCoverImageFailed(false);
     setProviderCoverImageFailed(false);
-  }, [albumSkyHookArtworkUrl, albumProviderArtworkUrl]);
+  }, [albumServarrMetadataArtworkUrl, albumProviderArtworkUrl]);
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!album?.monitored_lock;
@@ -1267,7 +1267,7 @@ const AlbumPage = () => {
                       className={styles.coverArt}
                       decoding="async"
                       onError={() => {
-                        if (albumSkyHookArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
+                        if (albumServarrMetadataArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
                           setCoverImageFailed(true);
                         } else {
                           setProviderCoverImageFailed(true);

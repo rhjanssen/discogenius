@@ -340,7 +340,7 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         || null;
     const coverUrl = chooseCachedAlbumArtwork({
         albumMbid: row.mbid,
-        skyHookData: parseJsonObject(row.data),
+        servarrMetadataData: parseJsonObject(row.data),
         providerCandidates,
     });
 
@@ -912,7 +912,7 @@ export class ArtistQueryService {
             : [];
 
         // Similar artists were a provider-exclusive feature (TIDAL's getSimilarArtists);
-        // MusicBrainz/Skyhook has no similar-artist concept and Lidarr has no such
+        // MusicBrainz/Servarr Metadata Server has no similar-artist concept and Lidarr has no such
         // section, so the feature was removed during the provider-table retirement.
 
         const topTracks = db.prepare(`

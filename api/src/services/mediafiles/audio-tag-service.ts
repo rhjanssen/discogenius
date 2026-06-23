@@ -152,14 +152,8 @@ function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
   return false;
 }
 
-/**
- * Resolve the effective tag write policy from config, supporting both the
- * legacy boolean `write_audio_metadata` and the new Lidarr-aligned enum
- * `write_audio_tags_policy`.
- */
 function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
-  if (config.write_audio_tags_policy) return config.write_audio_tags_policy;
-  return config.write_audio_metadata === true ? "all_files" : "no";
+  return config.write_audio_tags_policy ?? "no";
 }
 
 function isRetagMaintenanceEnabled(config: MetadataConfig): boolean {
@@ -1191,7 +1185,6 @@ export class AudioTagService {
     }
 
     return this.buildDesiredTags(rows[0], {
-      write_audio_metadata: true,
       write_audio_tags_policy: "all_files",
       write_tidal_url: false,
       embed_replaygain: false,

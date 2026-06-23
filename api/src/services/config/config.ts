@@ -73,8 +73,6 @@ export interface AppConfig {
 export interface MonitoringConfig {
   enable_active_monitoring: boolean;   // Enable scheduled re-scans
   scan_interval_hours: number;         // How often to re-scan monitored artists (daily, weekly, monthly)
-  start_hour: number;                  // When to start monitoring window
-  duration_hours: number;              // How long monitoring window lasts
   monitor_new_artists: boolean;        // Auto-monitor artists discovered during root scans
   remove_unmonitored_files: boolean;   // Remove files for items no longer monitored
   last_check?: string;                 // Timestamp of last successful check
@@ -148,10 +146,8 @@ export interface MetadataConfig {
   write_tidal_url: boolean;
   mark_explicit: boolean;
   upc_target: "UPC" | "EAN" | "BARCODE";
-  /** @deprecated Use write_audio_tags_policy instead */
-  write_audio_metadata?: boolean;
   embed_replaygain?: boolean;
-  /** Lidarr-aligned tag write policy. Overrides legacy write_audio_metadata boolean. */
+  /** Lidarr-aligned tag write policy. */
   write_audio_tags_policy?: WriteAudioTagsPolicy;
   /** Remove all existing tags before writing desired ones (Lidarr's ScrubAudioTags). */
   scrub_audio_tags?: boolean;
@@ -208,8 +204,6 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   monitoring: {
     enable_active_monitoring: true,
     scan_interval_hours: 24,
-    start_hour: 2,
-    duration_hours: 6,
     monitor_new_artists: false,
     remove_unmonitored_files: false,
     artist_refresh_days: 30,
@@ -276,7 +270,6 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     write_tidal_url: false,
     mark_explicit: true,
     upc_target: "BARCODE",
-    write_audio_metadata: true,
     embed_replaygain: true,
     write_audio_tags_policy: "all_files",
     scrub_audio_tags: false,

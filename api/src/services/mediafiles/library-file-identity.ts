@@ -168,8 +168,7 @@ function getProviderItem(provider: string | null, entityType: string, providerId
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
   // Canonical-only resolver: provider ids resolve through ProviderItems (keyed by
-  // provider_id) + the canonical graph + ReleaseGroupSlots. The legacy
-  // ProviderMedia/ProviderAlbums catalog reads were removed — ProviderItems is the
+  // provider_id) + the canonical graph + ReleaseGroupSlots. ProviderItems is the
   // single provider-availability source.
   const albumId = nullableText(input.albumId);
   const artistId = nullableText(input.artistId);
@@ -216,8 +215,6 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       `).get(releaseGroupSlot.selected_release_mbid, offerRecordingMbid) as MbTrackRow | undefined) ?? null
     : null;
 
-  const legacyProvider = providerId ? "tidal" : null;
-
   return {
     canonicalArtistMbid:
       nullableText(input.canonicalArtistMbid)
@@ -247,7 +244,7 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ?? nullableText(providerMedia?.recording_mbid)
       ?? nullableText(selectedTrack?.recording_mbid)
       ?? null,
-    provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider ?? legacyProvider,
+    provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider ?? null,
     providerEntityType,
     providerId,
     librarySlot: preferredSlot,

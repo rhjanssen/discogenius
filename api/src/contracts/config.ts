@@ -80,7 +80,6 @@ export interface MetadataConfigContract {
   write_tidal_url: boolean;
   mark_explicit: boolean;
   upc_target: UpcTargetValue;
-  write_audio_metadata?: boolean;
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
 }
@@ -123,8 +122,6 @@ export interface FilteringConfigContract {
 export interface MonitoringConfigContract {
   enabled: boolean;
   scanIntervalHours: number;
-  startHour: number;
-  durationHours: number;
   monitorNewArtists: boolean;
   removeUnmonitoredFiles: boolean;
   artistRefreshDays: number;
@@ -221,7 +218,6 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     write_tidal_url: expectBoolean(record.write_tidal_url, "metadata.write_tidal_url"),
     mark_explicit: expectBoolean(record.mark_explicit, "metadata.mark_explicit"),
     upc_target: expectOneOf(record.upc_target, UPC_TARGET_VALUES, "metadata.upc_target"),
-    write_audio_metadata: expectOptionalBoolean(record.write_audio_metadata, "metadata.write_audio_metadata"),
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
   };
@@ -278,8 +274,6 @@ export function parseMonitoringConfigContract(value: unknown): MonitoringConfigC
   return {
     enabled: expectBoolean(record.enabled, "monitoring.enabled"),
     scanIntervalHours: expectNumber(record.scanIntervalHours, "monitoring.scanIntervalHours"),
-    startHour: expectNumber(record.startHour, "monitoring.startHour"),
-    durationHours: expectNumber(record.durationHours, "monitoring.durationHours"),
     monitorNewArtists: expectBoolean(record.monitorNewArtists, "monitoring.monitorNewArtists"),
     removeUnmonitoredFiles: expectBoolean(record.removeUnmonitoredFiles, "monitoring.removeUnmonitoredFiles"),
     artistRefreshDays: expectNumber(record.artistRefreshDays, "monitoring.artistRefreshDays"),

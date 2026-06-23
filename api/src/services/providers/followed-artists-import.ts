@@ -1,7 +1,7 @@
 import { db } from "../../database.js";
 import { queueArtistMonitoringIntake } from "../music/artist-monitoring.js";
 import { resolveArtistFolderForIdentityUpdate } from "../music/artist-paths.js";
-import { skyHookProxy } from "../metadata/skyhook-proxy.js";
+import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
 import { ProviderArtistIdentityService } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "./index.js";
 import type { ProviderArtist } from "./streaming-provider.js";
@@ -165,7 +165,7 @@ export class FollowedArtistsImportService {
                     artist.match_confidence = mbMatch.confidence;
                     artist.match_method = mbMatch.method;
                     try {
-                        await skyHookProxy.syncArtist(mbMatch.mbid);
+                        await servarrMetadataProxy.syncArtist(mbMatch.mbid);
                     } catch (error) {
                         console.warn(`[FollowedArtistsImport] Failed to sync canonical metadata for ${artist.name} (${mbMatch.mbid}):`, error);
                     }

@@ -1,221 +1,172 @@
-# Discogenius — Versioned Task Backlog
+# Discogenius Task Backlog
 
-Single source of truth for outstanding work. Keep statuses current; a fresh
-session should read this to pick up work — see "Transferring to a new session"
-at the bottom.
+Single source of truth for outstanding work. Shipped history belongs in
+`CHANGELOG.md`; this file should only describe work that still needs a decision,
+implementation, or release validation.
 
-Status: ⬜ pending · 🟡 in progress · ✅ done · ♻️ marked done before, needs revisit.
+Status: pending | in progress | done | revisit
 
-## Implementation-order rationale
-1. **Finish UI/UX + download/artwork/search fixes (2.0.4–2.0.7)** — quick wins, no deep dependencies.
-2. **Clean the DB (2.0.8)** before generalizing anything schema-level — don't
-   build new features on the legacy `Provider*` tables.
-3. **Multithreading (2.0.9)** — heavy multi-library downloads need the API to
-   stay responsive.
-4. **Apple Music provider (2.1.0)** — harden the provider abstraction with a
-   real second provider *before* reworking the library system, so library types
-   work with N providers rather than being redesigned again later.
-5. **Config→DB + library-type rework (2.2.0)** — the biggest schema/UX change;
-   wants the clean DB and a settled provider abstraction under it.
-6. **Import lists (2.3.0)** — builds on the followed-artist set + providers.
-7. **Local MusicBrainz mode + matching engine + multi-user (3.0)** — the largest
-   shift (changes the canonical data source); matching benefits from MB's
-   ISRC/UPC. Split from the library rework so neither overloads a release.
+## 2.0.8 - Canonical Alignment Release
 
----
+Scope: canonical database alignment, monitoring download-cycle fix,
+upgrade-check forcing fix, Servarr Metadata Server terminology, and related
+canonical-provider cleanup already listed under the unreleased `CHANGELOG.md`
+section.
 
-## 2.0.4 — Mobile / UI cluster
-- **#51 Mobile top nav bar** ⬜ — desktop-style top header (logo, search, nav)
-  replaces the four bottom tabs; remove the dedicated search page/route. Large
-  nav restructure.
-- **#50 Album mobile inline action buttons** ⬜ — icon+label inline (not stacked);
-  3 actions; deliberate album-page deviation.
-- **#42 Auth page polish** ⬜ — glassmorphism provider card, stronger logo glow,
-  remove icon frame squares, remove auto-redirect.
-- **Finish loading-skeleton parity** ⬜ — DataGrid / TrackTable / Queue / Activity.
-- **Verify `/api/v1/queue` under a full queue** ⬜ — indexed (15s→0.01s) but only
-  re-checked near-empty; confirm under a real backlog.
+Release blockers before tagging:
 
-## 2.0.5 — Library / artist views + collaborators
-- **#40 Library albums table/list view** ⬜ — w/ provider+quality column; grid/list
-  toggle; mobile variant.
-- **#41 Artist page list/table view** ⬜ — design-first.
-- **#43 Fetch-on-click collaborating artists** ⬜ — progressive, non-cascading
-  (scan+match a monitored artist's collaborators, no curate/monitor, no snowball).
+- done: Full `yarn ci` passed on 2026-06-23 after the 2.0.8 version bump.
+- done: Remaining schema/index cleanup is deferred to 2.0.9.
+- done: Prepared the release metadata with
+  `node .github/workflows/release/prepare-release.mjs --version 2.0.8`, then run
+  `yarn install --frozen-lockfile --non-interactive`; no lockfile change was
+  needed.
+- done: Replaced `## [2.0.8] - Unreleased` in `CHANGELOG.md` with
+  `## [2.0.8] - 2026-06-23`.
+- done: Ran `docker compose up -d --build` and smoke-tested the container on
+  2026-06-23. Docker health was healthy; `/`, `/health`, `/api/health`, and
+  `/api/v1/status` responded. The smoke-test container was stopped afterward.
 
-## 2.0.6 — UI/download bugfix + polish ✅
-Shipped: queue/tracklist badge sizing, album-page quality-pill dedup for the
-Atmos-fallback case, split-download hover fix, Atmos→stereo fallback routing +
-permanent `--dolby-atmos allow`, job-scoped download workspaces (ENOENT race),
-ghost-queue-item fix, background grain/GPU (backdrop-filter) fixes, clean tiddl
-config/args split, and a stale-`/search` CI test removal.
+## 2.0.9 - Schema And Upgrade Cleanup
 
-## 2.0.7 — Artist/image/search + UI polish ✅
-Shipped: immediate artist artwork/info hydration on hot-load/search-add; one
-shared album-art resolver (canonical→provider fallback, no duplicate paths);
-track/video search artwork resolves to real URLs; first-order collaborators get
-a deep canonical+provider scan while staying unmonitored/uncurated; per-artist
-filter persistence; local+MB-only search (no provider live-search); tracklist
-(clickable artists, Duration+Quality columns, single-volume row hidden, play/stop
-controls); Plex-style low-res+blur UltraBlur with decoded cross-fade; slimmer
-Docker runtime image.
+Scope: finish the active cleanup that was intentionally left out of the 2.0.8
+release gate if it is not required for shipping.
 
-## 2.0.8 — Database alignment (clean canonical schema)
-- **Monitoring download flow** ✅ — fixed "active monitoring on, artists curated,
-  but nothing downloaded overnight." The scheduled/manual monitoring cycle's terminal
-  `DownloadMissing` raced in-flight intake (gate ignored
-  `RefreshArtist`/`RescanFolders`/`CurateArtist`) and could run before curation had
-  created any monitored slots. Now: the cycle pre-download gate also waits on
-  `hasActiveArtistWorkflowJobs()`, then queues `DownloadMissing` as the terminal
-  monitoring-cycle pass. Standalone artist add, scan, curation, and collaborator
-  scanning do not auto-download; downloads stay tied to an explicit manual/scheduled
-  monitoring cycle or download command, matching the Lidarr-style order of
-  operations.
-- **Retire legacy `Provider*` tables** ✅ — full 5-phase migration to a single
-  canonical graph + `ProviderItems`. See docs/LIDARR_DB_ALIGNMENT_PLAN.md.
-  Phase 0 (inventory) + Phase 1 dry-run done; target model clarified (Recordings
-  = canonical track/work info + standalone videos; Tracks = release↔recording map).
-  **Phase 1 shipped:** (a) `backfillCanonicalTrackFiles` gap-fill in housekeeping;
-  (b) canonical-aware library-file dedupe (slot-aware `(canonical_recording_mbid,
-  file_type, library_slot)` pass alongside the legacy media-id pass). Both tested
-  (`runtime-maintenance-backfill.test.ts`); real-DB dry-run = 0 orphan-risk, 100%
-  canonical resolution. **Phase 2 started:** `library-files-query-service` now
-  decorates library-file listings from canonical `TrackFiles` identity +
-  `Recordings`/`ProviderItems`, not `ProviderMedia`/`ProviderAlbums`;
-  `command-history` now resolves download activity descriptions from
-  `ProviderItems` + canonical artist/release/recording data; `scan-refresh-state`
-  now uses `ProviderItems.updated_at` for track/video scan freshness instead of
-  `ProviderMedia.last_scanned`; `refresh-policy` now reads canonical
-  `Albums.first_release_date` and `ProviderItems.updated_at` instead of legacy
-  provider release/scan columns; `providers/tidal/tidal-provider` now falls back
-  to canonical `ProviderItems` for album download-progress track lists instead
-  of `ProviderMedia`; `import-matcher-service` now resolves fingerprint album
-  candidates from canonical `TrackFiles` identity + `ProviderItems` instead of
-  joining `ProviderMedia`; `library-files.ts` (path computation, video layout/root
-  resolution, pruning) is fully canonical; `library-metadata-backfill` now
-  discovers album/lyrics/video sidecars from canonical `ProviderItems` and carries
-  provider/canonical identity into sidecar rows; `metadata-files` now uses
-  canonical/provider-item metadata for local NFO/artwork fallbacks;
-  `lyric-service` now shares cached lyrics via canonical `ProviderItems`/MBIDs;
-  `rename-track-file-service` now replicates separated-root sidecars by canonical
-  release-group/track/recording identity plus `ProviderItems`; `audio-tag-service`
-  now builds retag target context from canonical identity + `ProviderItems`
-  before legacy fallback data. **Phase 3 supplement homing started:** v24 adds
-  canonical provider-supplement columns on `Albums`/`AlbumReleases`/`Recordings`;
-  `refresh-album-service` mirrors album/release/track supplements there while
-  keeping legacy compatibility writes, and NFO/audio-tag fallbacks read the
-  catalog values first. Provider UPC/ISRC are matching evidence and stay on
-  `ProviderItems`, not catalog barcode/ISRC columns. Dead legacy provider
-  module/version repair helpers
-  (`module-fixer`, `version-grouper`) were removed after verifying zero
-  production imports, and `DownloadMissingForce` no longer carries an obsolete
-  provider skip-flag reset. Runtime monitor-gap repair now writes canonical
-  `ReleaseGroupSlots`/`Recordings` monitor state, not provider monitor columns.
-  Slot identity must remain release-specific: stereo and spatial selections can
-  point at different `AlbumReleases` and provider UPC/ISRC evidence inside one
-  release group, while an Atmos-only provider offer can intentionally fill both
-  stereo and spatial slots when no stereo offer is available.
-  `CheckUpgrades` now scans `TrackFiles` canonical/provider identity +
-  `ProviderItems` instead of `ProviderMedia`/`ProviderAlbums` and queues
-  canonical-only audio/video upgrade downloads; schema v27 re-keys
-  `upgrade_queue` to provider resource identity while retaining nullable legacy
-  shadow ids during the transition. **Phase 5 shipped:** schema v29 drops
-  `ProviderAlbums`, `ProviderMedia`, `ProviderAlbumArtists`, and
-  `ProviderMediaArtists`; fresh databases no longer create them and active tests
-  assert catalog state flows through MusicBrainz/Skyhook tables plus
-  `ProviderItems`. **Remaining cleanup:** decide whether to remove the nullable
-  `TrackFiles.album_id`/`media_id` shadow columns now or leave them until the
-  next file-import/schema cleanup batch.
-- **Schema/index cleanups** ⬜ — prune redundant `TrackFiles` canonical_* indexes;
-  fold `AlbumReleaseMedia`→`AlbumReleases.data`; consider whether provider-keyed
-  `upgrade_queue` should stay separate or fold into `job_queue`.
-  See docs/LIDARR_SCHEMA_AUDIT.md.
+- pending: Prune redundant `TrackFiles` canonical indexes where composite indexes
+  fully cover the hot paths.
+- pending: Replace remaining file/sidecar joins that still read
+  `TrackFiles.album_id` and `TrackFiles.media_id` with provider identity and
+  catalog FK joins, then remove those columns from the file tables.
+- pending: Fold `AlbumReleaseMedia` into `AlbumReleases.data` if the complexity
+  of a separate media table stops paying for itself.
+- pending: Replace `upgrade_queue` skip memory with the Lidarr-style
+  cutoff/history guard described in `docs/UPGRADE_CUTOFF_MODEL_PLAN.md`, then
+  remove the table from the fresh schema.
 
-## 2.0.9 — Multithreaded command execution ✅
-Shipped: the command executor runs command handlers on a worker-thread pool
-with separate SQLite connections, while the main thread keeps queue ownership,
-SSE, HTTP, download orchestration, and command state transitions. Worker events,
-download-state cache invalidations, and import progress are bridged back to the
-main thread. Follow-up hardening in this pass adds explicit SQLite busy retries
-for concurrent writers and set-based library-list queries so the main library
-view stays responsive under worker load.
+## 2.1 - Settings And Provider UX
 
-## 2.1.0 — Apple Music provider plugin
-- **Apple Music at TIDAL parity** ⬜ — own auth/token, catalog + artist-catalog
-  search, followed/favorite import, audio (lossless/spatial where available) +
-  video downloads, lyrics, artwork, ISRC/UPC.
-- **Harden the provider abstraction** ⬜ — adding a provider should be a clean
-  plugin; providers stay availability/download resources only (never create
-  canonical entities). Includes the multi-provider selection/switching UX.
+Scope: reduce settings overload before adding more provider and metadata-source
+surface area.
 
-## 2.2.0 — Configurable library types + config-in-DB
-The headline 2.x feature. Generalizes today's hardcoded stereo/spatial/video
-slots into **user-defined library types**.
-- **Config → DB** ⬜ — move settings out of `config.toml` into DB tables with a
-  settings UI (better than TOML; prerequisite for editable library defs).
-- **Library-type model** ⬜ — in Settings, add/edit library types, each =
-  `{ name, root/location, content kind (audio|video), desired quality }`
-  (e.g. Lossless / Lossy / Dolby Atmos / Music Video). Replaces the fixed
-  stereo/spatial/video slots; **migrate** `ReleaseGroupSlots` from the 3 fixed
-  slots to dynamic library-type ids.
-- **Download/curate per library type** ⬜ — a monitored artist's full discography
-  is downloaded into **every applicable library type**, so the same song ends up
-  as a Lossless *and* Lossy *and* Atmos *and* Music-Video version across the
-  libraries. Release-type filtering/curation stays **global** (not per-artist).
-- *Note:* this subsumes Lidarr's per-artist "metadata/quality profile" idea —
-  quality/format is chosen per **library type**, not per artist. (For now a single
-  shared followed-artist set feeds all library types; per-artist library
-  selection could come later.)
+- pending: Move editable settings out of `config.toml` into DB-backed settings
+  with a UI.
+- pending: Redesign connected-provider settings so each provider gets a compact
+  connection card with status, primary actions, and capability summary. Move
+  advanced/token/backend details behind disclosure panels or diagnostics instead
+  of showing them inline by default.
+- pending: Add multi-provider selection/switching UX once the second provider is
+  real. The UI should distinguish default provider, enabled providers, provider
+  capability gaps, and per-library-type availability without duplicating raw
+  provider config fields.
+- pending: Simplify metadata embedding settings to match Lidarr's mental model:
+  one main "Embed metadata tags" toggle backed by the tag-write policy, with
+  separate sidecar toggles for NFO, artwork, lyrics, video thumbnails, and
+  ReplayGain/fingerprinting only where they are genuinely independent.
+- pending: Move provider health, catalog-source health, and download-backend
+  diagnostics into a dedicated status/diagnostics area so the main Settings page
+  stays task-oriented.
 
-## 2.3.0 — Import lists
-- **Import sources** ⬜ — the shared followed-artist set, plus marking a **provider
-  playlist** (e.g. a TIDAL/Apple playlist) or an **external chart/top-40 list** as
-  an import source that seeds monitored artists/albums.
-- **Import-list exclusions** ⬜ — don't re-add removed items.
+## 2.2 - Streaming Provider Expansion
 
-## 3.0 — Local MusicBrainz mode + matching engine + multi-user
+Scope: make additional streaming-service integrations real without changing the
+database model for each provider. TIDAL is the only fully working provider
+today; Apple Music is planned but not yet functional end to end.
 
-### Local MusicBrainz database — deep integration (the big one) ⬜
-Connect directly to a **local MusicBrainz database** ("MB-local mode"):
-- Do **not** scan/replicate canonical metadata — it's all already in the local DB.
-  We only (a) match provider releases to monitored artists and (b) curate using
-  the **full ISRC/UPC** data the local MB DB exposes.
-- Library view "show unmonitored" then lists **every artist in the MB database**.
-- **Mode switching:** the user can switch between MB-local and "normal" mode.
-  Switching MB-local → normal triggers a **migration/DB-build at that moment** to
-  replicate the canonical data needed for the monitored artists (normal mode has
-  no full MB DB to lean on).
-- Substantial: dual data-source abstraction, mode toggle, on-switch migration,
-  matching/curation reading ISRC/UPC straight from MB.
+- pending: Finish the Apple Music provider and bring it to TIDAL parity:
+  auth/token handling, catalog and artist search, followed/favorite import,
+  lossless/spatial/video downloads, lyrics, artwork, download backend binding,
+  provider capability reporting, diagnostics, and provider evidence capture.
+- pending: Harden the provider abstraction so adding a provider is a plugin-level
+  integration, not a schema change. Providers remain availability/download
+  resources only.
+- pending: Define the provider-plugin contract: provider manifest, capability
+  descriptors, auth lifecycle, catalog/offers API, download backend binding,
+  lyrics/artwork hooks, quality mapping, and diagnostics.
+- pending: Add at least one more provider candidate after Apple Music as a proof
+  of the plugin contract. Candidate selection should be based on available
+  download backend viability, not catalog-only browsing.
+- pending: Add import sources for provider playlists, external chart lists, and
+  the existing followed-artist set.
+- pending: Add import-list exclusions so removed items are not re-added.
 
-### Unified edition-aware matching engine (#3 + #23) ♻️
-One normalized `scoreTrackMatch` shared by read-service + slot-service —
-recording-MBID/ISRC exact → position+volume+duration(~8s) w/ base-title gate →
-string fallback; tests incl. single+album combine to prevent false coverage.
-Fixes wrong-version selection + false "unavailable" tracks; add IMVDb for videos.
-(Benefits directly from MB-local mode's ISRC/UPC.)
+## 2.3 - Library Types
 
-### Multi-user ⬜ — users + roles/auth.
+Scope: replace fixed stereo/spatial/video slots with user-configurable library
+types.
 
----
+- pending: Replace the fixed stereo/spatial/video slots with configurable
+  library types: name, root, content kind, and desired quality.
+- pending: Migrate `ReleaseGroupSlots` from fixed slot names to library-type
+  identifiers while preserving monitored and lock semantics.
+- pending: Download/curate per library type while keeping release-type filtering
+  global.
 
-## Deprioritized / optional (not scheduled)
-Per Robert: **not prioritized** — pick up only if a concrete need appears.
-- Notifications (Discord/webhook), Tags, Blocklist (failed releases).
-- Per-artist metadata/quality profiles (replaced by the 2.2.0 library-type model).
-- Metadata-consumer profiles / `.nfo` writing (MBID embedding already largely
-  done — see [[acoustid-mbid-embedding-facts]] in notes).
+## 3.0 - Catalog Source Modes And Local MusicBrainz
 
----
+Scope: full metadata-provider/backend-mode implementation in backend and
+frontend. Users should be able to choose the hosted Servarr Metadata Server or a
+local MusicBrainz-docker instance.
 
-## Transferring this backlog to a new session
-The harness task list (TaskCreate/TaskList) is **per-session and ephemeral** —
-it doesn't survive resets or move between tools. **This committed file is the
-portable mechanism.**
-- **Claude Code / this harness:** *"Read docs/TASKS.md, re-seed it as tracked
-  tasks, then start the 2.0.4 items."* Can fan out with subagents/workflows for
-  research/independent work; sequential coding is done inline.
-- **OpenAI Codex:** *"Read docs/TASKS.md and work the 2.0.4 section."* Its own
-  planner; no equivalent subagent system — the file is the contract.
-- **Claude Desktop:** chat app (+ MCP), not an autonomous coder — point it at the
-  repo for context; edit in a coding harness.
+- pending: Wire `CatalogProvider` into the live runtime so artist search,
+  artist refresh, release-group refresh, matching, artwork hydration, and import
+  identity all go through the selected catalog source instead of directly
+  importing `servarrMetadataProxy`.
+- pending: Add backend config and persistence for catalog source mode:
+  `servarr-metadata` and `musicbrainz-local`, plus the local `/ws/2` base URL,
+  health status, last successful check, and user-facing validation errors.
+- pending: Add frontend settings for catalog source selection: Servarr Metadata
+  Server as the hosted default, Local MusicBrainz as the advanced/self-hosted
+  mode, with connection test, clear warnings about setup cost, and links to
+  `docs/MB_LOCAL_MODE.md`.
+- pending: Implement safe mode switching. Switching from MB-local to Servarr
+  Metadata Server must build the local canonical cache for monitored artists;
+  switching from Servarr Metadata Server to MB-local must avoid destructive cache
+  churn and should lazily refresh records through MBIDs.
+- pending: Define and implement supplemental Servarr Metadata Server lookups for
+  fields a local MusicBrainz mirror does not serve well or at all. Examples:
+  cached/normalized artwork URLs, metadata-server ratings/popularity, and any
+  Servarr-specific convenience fields. Supplemental data must never override
+  MusicBrainz identity, release grouping, track identity, UPC/ISRC evidence, or
+  provider-resource evidence.
+- pending: Add the local-MusicBrainz external-link matching tier once MB-local
+  mode is wired into runtime.
+- revisit: Unify edition-aware matching around one shared scoring path that uses
+  recording MBID/ISRC, position, volume, duration, and title-distance evidence.
+- pending: Add multi-user support with users, roles, and auth.
+
+## Ongoing Matching And Availability
+
+These tasks can land in any release above if they unblock that release.
+
+- in progress: Finish release-centric provider matching. Current state:
+  composite release matches are persisted in `ProviderItemMatches`, and slot
+  selection can use those persisted matches. Remaining work is to refactor
+  `provider-release-group-matcher` so provider albums score directly against
+  all candidate MusicBrainz releases for the artist rather than being
+  constrained to one release group container. Evidence priority should be local
+  MusicBrainz external links, UPC/barcode and ISRC/recording coverage, then
+  title/version/date/type/medium/tracklist shape.
+- pending: Implement artist-wide release/recording coverage optimization before
+  final per-release-group slot selection. Use MusicBrainz recording MBIDs first,
+  ISRC fallback second, and title/duration/position shape only when stronger
+  identity is missing. Apply the user's release-type, secondary-type,
+  explicit/clean, spatial/video, and library-type filters before solving
+  coverage, so unchecked or disallowed releases are not candidates. Objective:
+  full filtered-discography coverage with the fewest releases/provider downloads
+  and least redundant overlap, then use quality, explicit/clean preference,
+  evidence strength, and track count as tie-breakers.
+- pending: Add curation tests for edition choice affecting global coverage:
+  verify that a smaller edition plus one EP can beat a larger edition that
+  forces multiple singles or leaves recordings unavailable.
+- pending: Only recompute composite matches for artists/release groups whose
+  provider offers changed.
+
+## Deprioritized
+
+Pick these up only if a concrete need appears:
+
+- Notifications, tags, blocklist/failed releases.
+- Per-artist metadata or quality profiles. The preferred model is library-type
+  quality, not per-artist quality.
+- Metadata-consumer profiles beyond the existing MBID tagging and NFO/artwork
+  sidecar support.

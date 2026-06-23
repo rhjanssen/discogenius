@@ -22,10 +22,10 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("SkyHook album artwork is registered through the media cover proxy", () => {
+test("Servarr Metadata Server album artwork is registered through the media cover proxy", () => {
   const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/cover.jpg";
   const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
-    skyHookData: {
+    servarrMetadataData: {
       Images: [
         {
           CoverType: "Cover",
@@ -50,10 +50,10 @@ test("SkyHook album artwork is registered through the media cover proxy", () => 
   assert.equal(mediaCoverServiceModule.resolveMediaCoverProxyUrl(artworkUrl), remoteUrl);
 });
 
-test("SkyHook selectors return raw URLs for durable storage", () => {
+test("Servarr Metadata Server selectors return raw URLs for durable storage", () => {
   const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/storage-cover.jpg";
 
-  assert.equal(mediaCoverServiceModule.getSkyHookAlbumImageUrl({
+  assert.equal(mediaCoverServiceModule.getServarrMetadataAlbumImageUrl({
     Images: [
       {
         CoverType: "Cover",
@@ -65,9 +65,9 @@ test("SkyHook selectors return raw URLs for durable storage", () => {
   }), remoteUrl);
 });
 
-test("provider artwork is used when SkyHook has no usable image URL", () => {
+test("provider artwork is used when Servarr Metadata Server has no usable image URL", () => {
   const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
-    skyHookData: {
+    servarrMetadataData: {
       Images: [
         {
           CoverType: "Cover",
@@ -86,9 +86,9 @@ test("provider artwork is used when SkyHook has no usable image URL", () => {
   assert.match(artworkUrl ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/750x750\.jpg$/);
 });
 
-test("SkyHook album artwork wins over cached provider fallback artwork", () => {
+test("Servarr Metadata Server album artwork wins over cached provider fallback artwork", () => {
   const albumMbid = "album-with-provider-fallback";
-  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/skyhook-cover.jpg";
+  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/Servarr Metadata Server-cover.jpg";
   const providerUrl = "https://resources.tidal.com/images/11111111/1111/1111/1111/111111111111/750x750.jpg";
 
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
@@ -103,11 +103,11 @@ test("SkyHook album artwork wins over cached provider fallback artwork", () => {
 
   const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
     albumMbid,
-    skyHookData: {
+    servarrMetadataData: {
       Images: [
         {
           CoverType: "Cover",
-          Url: skyHookUrl,
+          Url: servarrMetadataUrl,
           Width: 1200,
           Height: 1200,
         },
@@ -117,5 +117,5 @@ test("SkyHook album artwork wins over cached provider fallback artwork", () => {
   });
 
   const hash = artworkUrl?.split("/")[2] ?? "";
-  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
 });

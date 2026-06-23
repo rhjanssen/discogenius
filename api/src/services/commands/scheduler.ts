@@ -580,10 +580,6 @@ function queueDueScheduledTasks() {
         }
 
         if (definition.key === "monitoring-cycle") {
-            // Lidarr-style: run purely on the interval, in UTC, with no time-of-day
-            // window. (The old start_hour/duration_hours window only gated queuing
-            // and never stopped in-flight work, so it mostly caused confusion +
-            // timezone surprises.)
             if (isChecking || hasActiveMonitoringCycleWorkflow()) {
                 continue;
             }

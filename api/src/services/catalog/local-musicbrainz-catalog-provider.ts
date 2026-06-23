@@ -6,7 +6,7 @@
  * ⚠️ NOT WIRED INTO RUNTIME (U3 scaffolding). This is a stub implementation,
  * intended to be exercised by fixture unit tests and, later, against a running
  * `.ref_musicbrainz-docker` container. It is intentionally NOT registered as the
- * active catalog source — the live app keeps using the SkyHook flow.
+ * active catalog source — the live app keeps using the Servarr Metadata Server flow.
  *
  * Why the `:5000` mirror first (not direct Postgres)? It returns the exact MB
  * `/ws/2` JSON our existing MB-shaped code already consumes (see
@@ -107,7 +107,7 @@ export class LocalMusicBrainzCatalogProvider implements CatalogProvider {
   }
 
   async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
-    // Unlike SkyHook, MB exposes a direct /release/{mbid} endpoint with media,
+    // Unlike Servarr Metadata Server, MB exposes a direct /release/{mbid} endpoint with media,
     // tracks and inline recordings + ISRCs.
     const release = await this.fetchJson<MbRelease>(
       `/release/${encodeURIComponent(releaseMbid)}?inc=recordings+artist-credits+isrcs+labels&fmt=json`,

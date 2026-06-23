@@ -10,27 +10,22 @@ export interface ArtistMetadataScanState {
 
 function resolveScanFlag(
   explicitValue: boolean | undefined,
-  legacyValue: boolean | undefined,
   defaultValue: boolean,
 ): boolean {
   if (explicitValue !== undefined) {
     return explicitValue;
   }
 
-  if (legacyValue !== undefined) {
-    return legacyValue;
-  }
-
   return defaultValue;
 }
 
 export function shouldHydrateArtistAlbumTracks(policy: ArtistMetadataScanPolicy): boolean {
-  return resolveScanFlag(policy.hydrateAlbumTracks, policy.monitorAlbums, true);
+  return resolveScanFlag(policy.hydrateAlbumTracks, true);
 }
 
 export function shouldHydrateArtistCatalog(
   policy: ArtistMetadataScanPolicy,
   state: ArtistMetadataScanState,
 ): boolean {
-  return resolveScanFlag(policy.hydrateCatalog, policy.monitorAlbums, true) || state.hasManagedMetadata !== true;
+  return resolveScanFlag(policy.hydrateCatalog, true) || state.hasManagedMetadata !== true;
 }

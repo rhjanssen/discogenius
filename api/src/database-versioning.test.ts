@@ -36,7 +36,7 @@ test("fresh database initializes the current development baseline", () => {
     "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
     "commands", "scheduled_tasks", "upgrade_queue", "quality_profiles",
-    "history_events", "database_version_history", "MediaCoverProxyCache",
+    "history_events", "MediaCoverProxyCache",
     "ArtistStatistics",
   ];
 
@@ -46,6 +46,15 @@ test("fresh database initializes the current development baseline", () => {
       .get(tableName) as { name: string } | undefined;
     assert.ok(row, `Expected table '${tableName}' to exist`);
   }
+});
+
+test("upgrade queue uses provider identity only", () => {
+  const columns = tableColumns("upgrade_queue");
+  assert.ok(columns.includes("provider"));
+  assert.ok(columns.includes("entity_type"));
+  assert.ok(columns.includes("provider_id"));
+  assert.equal(columns.includes("media_id"), false);
+  assert.equal(columns.includes("album_id"), false);
 });
 
 test("catalog tables expose integer foreign-key links as the authoritative join path", () => {

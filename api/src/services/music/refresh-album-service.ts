@@ -856,7 +856,7 @@ export class RefreshAlbumService {
         // "New" = no album offer yet. The provider album's facts now live solely on
         // the ProviderItems offer (written below) + canonical supplement homing; the
         // legacy ProviderAlbums/ProviderAlbumArtists rows are gone. Album-artist
-        // relations are canonical (AlbumArtists, from Skyhook).
+        // relations are canonical (AlbumArtists, from Servarr Metadata Server).
         const offerExisted = db.prepare(`
             SELECT 1 FROM ProviderItems
             WHERE provider = 'tidal' AND entity_type = 'album'

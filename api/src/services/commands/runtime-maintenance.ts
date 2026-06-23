@@ -4,12 +4,10 @@ import { invalidateAllDownloadState } from "../download/download-state.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
-import { resolveLibraryFileIdentity } from "../mediafiles/library-file-identity.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 
 interface LibraryFileRow {
   id: number;
-  media_id: number | null;
   canonical_recording_mbid: string | null;
   canonical_track_mbid: string | null;
   track_id: number | null;
@@ -35,14 +33,8 @@ export interface RuntimeMaintenanceSummary {
   albumStatesRefreshed: number;
   artistStatesRefreshed: number;
   databaseOptimized: boolean;
-  mediaIdentityIndexEnsured: boolean;
-  trackedAssetIdentityIndexesEnsured: boolean;
   /** Finished commands rows pruned (Lidarr-aligned: completed > 1 day) */
   historyJobsPruned: number;
-  /** TrackFiles rows whose canonical_*_mbid columns were back-filled from legacy ids (Phase 1 DB-alignment) */
-  canonicalTrackFilesBackfilled: number;
-  /** TrackFiles rows whose canonical integer FK columns were back-filled from mbids/ProviderItems */
-  trackFileForeignKeysBackfilled: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -110,27 +102,16 @@ function compareLibraryFiles(left: LibraryFileRow, right: LibraryFileRow): numbe
   return compareLibraryFileScores(leftScore, rightScore);
 }
 
-// Legacy provider-id dedupe identity. Kept because the unique index created
-// later in the maintenance transaction is still (media_id, file_type) until the
-// Phase 5 schema migration — this pass guarantees that invariant before the
-// index is (re)created.
-function mediaIdentityKey(row: LibraryFileRow): string {
-  if (row.media_id === null || row.media_id === undefined) {
-    return "";
-  }
-  return `media:${row.media_id}:${row.file_type}`;
-}
-
 /**
- * Canonical-first dedupe identity (Phase 1, corrected). A file's canonical
- * identity is the **track** (the release↔recording mapping), NOT the recording:
+ * A file's canonical identity is the **track** (the release↔recording mapping),
+ * NOT the recording:
  * one recording legitimately appears as a track on several releases, so the same
  * recording downloaded from two different releases yields two *distinct* files
  * that must NOT be merged. So audio dedupes by `track_id`/`canonical_track_mbid`
  * (release-specific) within a slot. Videos have no release/track, so they dedupe
  * by `recording_id`/`canonical_recording_mbid`. library_slot is part of the key
  * (a track's stereo and spatial copies are distinct files). Returns "" when the
- * relevant canonical id is missing, leaving such rows to the media-id pass.
+ * relevant canonical id is missing.
  */
 function canonicalIdentityKey(row: LibraryFileRow): string {
   const slot = String(row.library_slot ?? "").trim().toLowerCase();
@@ -153,7 +134,6 @@ function dedupeLibraryFilesByKey(
   const rows = db.prepare(`
     SELECT
       id,
-      media_id,
       canonical_recording_mbid,
       canonical_track_mbid,
       track_id,
@@ -168,7 +148,7 @@ function dedupeLibraryFilesByKey(
       modified_at,
       created_at
     FROM TrackFiles
-    WHERE (media_id IS NOT NULL OR canonical_recording_mbid IS NOT NULL OR track_id IS NOT NULL OR recording_id IS NOT NULL)
+    WHERE (canonical_recording_mbid IS NOT NULL OR track_id IS NOT NULL OR recording_id IS NOT NULL)
       AND file_type IN ('track', 'video')
     ORDER BY id ASC
   `).all() as LibraryFileRow[];
@@ -206,162 +186,7 @@ function dedupeLibraryFilesByKey(
 }
 
 export function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
-  // Media-id pass first to preserve the (media_id, file_type) unique-index
-  // invariant, then the canonical pass to catch cross-media same-recording dupes.
-  dedupeLibraryFilesByKey(mediaIdentityKey, summary);
   dedupeLibraryFilesByKey(canonicalIdentityKey, summary);
-}
-
-interface CanonicalBackfillRow {
-  id: number;
-  artist_id: number | null;
-  album_id: number | null;
-  media_id: number | null;
-  file_type: string;
-  quality: string | null;
-  library_root: string | null;
-  library_slot: string | null;
-  provider: string | null;
-  provider_entity_type: string | null;
-  provider_id: string | null;
-  canonical_artist_mbid: string | null;
-  canonical_release_group_mbid: string | null;
-  canonical_release_mbid: string | null;
-  canonical_track_mbid: string | null;
-  canonical_recording_mbid: string | null;
-}
-
-/**
- * Phase 1 (Lidarr DB alignment): make TrackFiles canonical-first by back-filling
- * the canonical_*_mbid columns for rows that still rely on the legacy
- * media_id/album_id provider linkage. New downloads/imports already populate
- * these on write; this pass closes gaps on older rows (and rows imported before
- * the canonical columns existed) so file lookups/dedup can switch to the
- * canonical ids without orphaning anything.
- *
- * Only NULL columns are filled — existing canonical ids are passed through as
- * inputs and never overwritten. media_id/album_id are kept as shadow columns
- * (dropped in Phase 5).
- */
-export function backfillCanonicalTrackFiles(summary: RuntimeMaintenanceSummary) {
-  // Candidate rows: have a legacy provider id to resolve from, and are missing
-  // at least one canonical id relevant to their kind.
-  const rows = db.prepare(`
-    SELECT
-      id, artist_id, album_id, media_id, file_type, quality, library_root, library_slot,
-      provider, provider_entity_type, provider_id,
-      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
-      canonical_track_mbid, canonical_recording_mbid
-    FROM TrackFiles
-    WHERE (media_id IS NOT NULL OR album_id IS NOT NULL)
-      AND (
-        canonical_release_group_mbid IS NULL
-        OR (
-          file_type IN ('track', 'video', 'lyrics', 'video_thumbnail')
-          AND media_id IS NOT NULL
-          AND canonical_recording_mbid IS NULL
-        )
-      )
-  `).all() as CanonicalBackfillRow[];
-
-  if (rows.length === 0) {
-    return;
-  }
-
-  // COALESCE keeps any value already present; the resolver also receives the
-  // existing values as inputs, so it's stable/idempotent.
-  const update = db.prepare(`
-    UPDATE TrackFiles SET
-      canonical_artist_mbid = COALESCE(canonical_artist_mbid, ?),
-      canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?),
-      canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
-      canonical_track_mbid = COALESCE(canonical_track_mbid, ?),
-      canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?)
-    WHERE id = ?
-  `);
-
-  for (const row of rows) {
-    const identity = resolveLibraryFileIdentity({
-      artistId: row.artist_id,
-      albumId: row.album_id,
-      mediaId: row.media_id,
-      fileType: row.file_type,
-      quality: row.quality,
-      libraryRoot: row.library_root,
-      librarySlot: row.library_slot,
-      provider: row.provider,
-      providerEntityType: row.provider_entity_type,
-      providerId: row.provider_id,
-      canonicalArtistMbid: row.canonical_artist_mbid,
-      canonicalReleaseGroupMbid: row.canonical_release_group_mbid,
-      canonicalReleaseMbid: row.canonical_release_mbid,
-      canonicalTrackMbid: row.canonical_track_mbid,
-      canonicalRecordingMbid: row.canonical_recording_mbid,
-    });
-
-    // Skip rows the resolver couldn't advance (nothing new to fill).
-    const fillsSomething =
-      (row.canonical_artist_mbid === null && identity.canonicalArtistMbid !== null) ||
-      (row.canonical_release_group_mbid === null && identity.canonicalReleaseGroupMbid !== null) ||
-      (row.canonical_release_mbid === null && identity.canonicalReleaseMbid !== null) ||
-      (row.canonical_track_mbid === null && identity.canonicalTrackMbid !== null) ||
-      (row.canonical_recording_mbid === null && identity.canonicalRecordingMbid !== null);
-    if (!fillsSomething) {
-      continue;
-    }
-
-    const result = update.run(
-      identity.canonicalArtistMbid,
-      identity.canonicalReleaseGroupMbid,
-      identity.canonicalReleaseMbid,
-      identity.canonicalTrackMbid,
-      identity.canonicalRecordingMbid,
-      row.id,
-    );
-    summary.canonicalTrackFilesBackfilled += Number(result.changes || 0);
-  }
-}
-
-/**
- * Phase: integer-FK linkage. Keep the canonical integer FK columns
- * (release_group_id/album_release_id/track_id/recording_id) populated from the
- * canonical mbids, and recording_id for mbid-less provider videos from the video
- * ProviderItems offer. NULL-guarded + idempotent; the v23 migration does the
- * initial fill, this keeps new/changed rows current between scans.
- */
-export function backfillTrackFileForeignKeys(summary: RuntimeMaintenanceSummary) {
-  if (!hasTrackFileForeignKeys()) {
-    return;
-  }
-  const byMbid = db.prepare(`
-    UPDATE TrackFiles SET
-      release_group_id = COALESCE(release_group_id, (SELECT id FROM Albums WHERE mbid = TrackFiles.canonical_release_group_mbid)),
-      album_release_id = COALESCE(album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = TrackFiles.canonical_release_mbid)),
-      track_id = COALESCE(track_id, (SELECT id FROM Tracks WHERE mbid = TrackFiles.canonical_track_mbid)),
-      recording_id = COALESCE(recording_id, (SELECT id FROM Recordings WHERE mbid = TrackFiles.canonical_recording_mbid))
-    WHERE (release_group_id IS NULL AND canonical_release_group_mbid IS NOT NULL)
-       OR (album_release_id IS NULL AND canonical_release_mbid IS NOT NULL)
-       OR (track_id IS NULL AND canonical_track_mbid IS NOT NULL)
-       OR (recording_id IS NULL AND canonical_recording_mbid IS NOT NULL)
-  `).run();
-  summary.trackFileForeignKeysBackfilled += Number(byMbid.changes || 0);
-
-  const byVideoOffer = db.prepare(`
-    UPDATE TrackFiles SET recording_id = (
-      SELECT pi.recording_id FROM ProviderItems pi
-      WHERE pi.entity_type = 'video'
-        AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
-        AND pi.recording_id IS NOT NULL
-      LIMIT 1
-    )
-    WHERE file_type = 'video' AND recording_id IS NULL AND provider_id IS NOT NULL
-  `).run();
-  summary.trackFileForeignKeysBackfilled += Number(byVideoOffer.changes || 0);
-}
-
-function hasTrackFileForeignKeys(): boolean {
-  return db.prepare("PRAGMA table_info(TrackFiles)").all()
-    .some((column) => (column as { name: string }).name === "recording_id");
 }
 
 export function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
@@ -459,51 +284,15 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     albumStatesRefreshed: 0,
     artistStatesRefreshed: 0,
     databaseOptimized: false,
-    mediaIdentityIndexEnsured: false,
-    trackedAssetIdentityIndexesEnsured: false,
     historyJobsPruned: 0,
-    canonicalTrackFilesBackfilled: 0,
-    trackFileForeignKeysBackfilled: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
   summary.duplicateTrackedAssetsRemoved = LibraryFilesService.pruneDuplicateTrackedAssets().removed;
 
   db.transaction(() => {
-    backfillCanonicalTrackFiles(summary);
-    backfillTrackFileForeignKeys(summary);
     dedupeLibraryFiles(summary);
     repairMonitoringGaps(summary);
-
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_media_identity
-      ON TrackFiles(media_id, file_type)
-      WHERE media_id IS NOT NULL
-        AND file_type IN ('track', 'video')
-    `);
-    summary.mediaIdentityIndexEnsured = true;
-
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_media_sidecar_identity
-      ON TrackFiles(media_id, file_type)
-      WHERE media_id IS NOT NULL
-        AND file_type IN ('lyrics', 'video_thumbnail')
-    `);
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_album_sidecar_identity
-      ON TrackFiles(album_id, file_type, library_root)
-      WHERE album_id IS NOT NULL
-        AND media_id IS NULL
-        AND file_type IN ('cover', 'video_cover', 'review')
-    `);
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_artist_sidecar_identity
-      ON TrackFiles(artist_id, file_type, library_root)
-      WHERE album_id IS NULL
-        AND media_id IS NULL
-        AND file_type IN ('cover', 'bio')
-    `);
-    summary.trackedAssetIdentityIndexesEnsured = true;
   })();
 
   refreshDownloadState(summary);
@@ -529,14 +318,12 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     summary.duplicateLibraryFilesRemoved > 0 ||
     summary.mediaMonitorRepairs > 0 ||
     summary.albumMonitorRepairs > 0 ||
-    summary.artistMonitorRepairs > 0 ||
-    summary.canonicalTrackFilesBackfilled > 0
+    summary.artistMonitorRepairs > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
       `${summary.duplicateTrackedAssetsRemoved} duplicate tracked asset(s), ` +
       `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
-      `back-filled ${summary.canonicalTrackFilesBackfilled} canonical track-file id(s), ` +
       `repaired ${summary.mediaMonitorRepairs} media, ${summary.albumMonitorRepairs} albums, ` +
       `${summary.artistMonitorRepairs} artists, refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,

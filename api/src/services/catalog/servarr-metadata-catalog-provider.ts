@@ -1,25 +1,25 @@
 /**
- * `SkyhookCatalogProvider` — wraps **today's** SkyHook / MusicBrainz web-API
+ * `ServarrMetadataCatalogProvider` — wraps **today's** Servarr Metadata Server / MusicBrainz web-API
  * replica flow behind the `CatalogProvider` interface. See
  * `docs/DATA_MODEL_TARGET.md` §3.
  *
  * This is a thin, behavior-preserving adapter: every method delegates to the
- * existing `SkyHookProxy` (`api.lidarr.audio`). It does NOT change what the
- * SkyHook flow does — it only documents it as one `CatalogProvider`
+ * existing `ServarrMetadataProxy` (`api.lidarr.audio`). It does NOT change what the
+ * Servarr Metadata Server flow does — it only documents it as one `CatalogProvider`
  * implementation so the catalog source becomes swappable.
  *
  * NOTE (U3 scaffolding): not yet wired into the live request path. The live app
- * still calls `skyHookProxy` directly. This adapter exists so MB-local mode can
+ * still calls `ServarrMetadataProxy` directly. This adapter exists so MB-local mode can
  * be slotted in later without touching call sites.
  *
- * SkyHook capability gaps (these methods are intentionally absent / throwing):
+ * Servarr Metadata Server capability gaps (these methods are intentionally absent / throwing):
  *  - no standalone recording endpoint  → `getRecording` omitted
  *  - no UPC index                       → `lookupByUPC` omitted
  *  - no ISRC index                      → `lookupByISRC` omitted
  * MB-local mode fills these in; until then matching falls back to
  * title/track-count/date/duration (see §3 "Rate limits").
  */
-import { SkyHookProxy } from "../metadata/skyhook-proxy.js";
+import { ServarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
 import type {
   CatalogProvider,
   CatalogSearchOptions,
@@ -31,20 +31,20 @@ import type {
 import { findReleaseInGroup, releaseGroupsFromArtist } from "./catalog-provider.js";
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 
-export class SkyhookCatalogProvider implements CatalogProvider {
-  readonly id = "skyhook";
-  readonly name = "SkyHook (Lidarr / MusicBrainz API)";
+export class ServarrMetadataCatalogProvider implements CatalogProvider {
+  readonly id = "servarr-metadata";
+  readonly name = "Servarr Metadata Server";
 
   /**
-   * Inject the proxy for testability. Defaults to a fresh `SkyHookProxy`
+   * Inject the proxy for testability. Defaults to a fresh `ServarrMetadataProxy`
    * (read-only methods used here don't touch the DB, so a fresh instance is
    * safe — the DB-writing `syncArtist` / `syncReleaseGroup` live on the proxy
    * and remain the live ingestion path, separate from this read adapter).
    */
   constructor(private readonly proxy: Pick<
-    SkyHookProxy,
+    ServarrMetadataProxy,
     "getArtistInfo" | "getAlbumInfo" | "searchForNewArtist" | "searchAll"
-  > = new SkyHookProxy()) {}
+  > = new ServarrMetadataProxy()) {}
 
   async getArtist(artistMbid: string): Promise<LidarrArtist> {
     return this.proxy.getArtistInfo(artistMbid);
@@ -60,7 +60,7 @@ export class SkyhookCatalogProvider implements CatalogProvider {
   }
 
   /**
-   * SkyHook serves releases (with tracks) only as children of a release group,
+   * Servarr Metadata Server serves releases (with tracks) only as children of a release group,
    * not by release MBID. We fetch the parent group and project the release out.
    * Since we don't know the group MBID here, we cannot fetch directly — callers
    * that have the group should prefer `getReleaseGroup`. This convenience path
@@ -68,9 +68,9 @@ export class SkyhookCatalogProvider implements CatalogProvider {
    * group the caller fetched; otherwise returns null.
    */
   async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
-    // SkyHook has no `/release/{mbid}` endpoint; release detail is always nested
+    // Servarr Metadata Server has no `/release/{mbid}` endpoint; release detail is always nested
     // under `/album/{releaseGroupMbid}`. Without the group MBID we cannot
-    // resolve it, so this returns null in the SkyHook implementation. MB-local
+    // resolve it, so this returns null in the Servarr Metadata Server implementation. MB-local
     // overrides this with a direct release lookup.
     void releaseMbid;
     return null;
@@ -78,7 +78,7 @@ export class SkyhookCatalogProvider implements CatalogProvider {
 
   /**
    * Resolve a release (with tracks) when the owning release-group MBID is known.
-   * Not part of the `CatalogProvider` contract, but the natural SkyHook shape;
+   * Not part of the `CatalogProvider` contract, but the natural Servarr Metadata Server shape;
    * `musicbrainz-release-group-read-service` effectively does this against the
    * local replica today.
    */
@@ -100,4 +100,4 @@ export class SkyhookCatalogProvider implements CatalogProvider {
   }
 }
 
-export const skyhookCatalogProvider = new SkyhookCatalogProvider();
+export const servarrMetadataCatalogProvider = new ServarrMetadataCatalogProvider();

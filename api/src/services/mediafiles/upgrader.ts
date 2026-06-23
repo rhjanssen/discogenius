@@ -23,8 +23,6 @@ type UpgradeCandidateRow = {
     media_id: string | null;
     media_type: string;
     album_id: string | null;
-    legacy_media_id: string | null;
-    legacy_album_id: string | null;
     source_quality: string | null;
     current_quality: string | null;
     current_codec: string | null;
@@ -70,8 +68,8 @@ export class UpgraderService {
         );
 
         // Apply quality settings to actual downloaded library files. Resolve the
-        // provider resource to re-download from TrackFiles canonical identity +
-        // ProviderItems; ProviderMedia/ProviderAlbums are compatibility shadows.
+        // provider resource to re-download from TrackFiles provider identity and
+        // canonical ProviderItems.
         const query = db.prepare(`
         SELECT
             lf.id AS file_id,
@@ -79,19 +77,15 @@ export class UpgraderService {
             CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END AS provider_entity_type,
             COALESCE(
                 media_item.provider_id,
-                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END,
-                lf.media_id
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
             ) AS media_id,
             CASE WHEN lf.file_type = 'video' THEN 'Music Video' ELSE 'track' END AS media_type,
             COALESCE(
                 CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END,
                 json_extract(media_item.match_evidence, '$.albumProviderId'),
                 json_extract(media_item.data, '$.albumProviderId'),
-                album_item.provider_id,
-                lf.album_id
+                album_item.provider_id
             ) AS album_id,
-            lf.media_id AS legacy_media_id,
-            lf.album_id AS legacy_album_id,
             COALESCE(
                 media_item.quality,
                 json_extract(media_item.data, '$.quality'),
@@ -116,7 +110,6 @@ export class UpgraderService {
          AND (lf.provider IS NULL OR media_item.provider = lf.provider)
          AND (
                 (lf.provider_entity_type IN ('track', 'video') AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
-                OR (lf.media_id IS NOT NULL AND CAST(media_item.provider_id AS TEXT) = CAST(lf.media_id AS TEXT))
                 OR (lf.track_id IS NOT NULL AND media_item.track_id = lf.track_id)
                 OR (lf.recording_id IS NOT NULL AND media_item.recording_id = lf.recording_id)
                 OR (lf.canonical_track_mbid IS NOT NULL AND media_item.track_mbid = lf.canonical_track_mbid)
@@ -127,7 +120,6 @@ export class UpgraderService {
          AND (COALESCE(lf.provider, media_item.provider) IS NULL OR album_item.provider = COALESCE(lf.provider, media_item.provider))
          AND (
                 (lf.provider_entity_type = 'album' AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
-                OR (lf.album_id IS NOT NULL AND CAST(album_item.provider_id AS TEXT) = CAST(lf.album_id AS TEXT))
                 OR (json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
                     AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT))
                 OR (json_extract(media_item.data, '$.albumProviderId') IS NOT NULL
@@ -141,16 +133,13 @@ export class UpgraderService {
                AND uq.entity_type = CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END
                AND CAST(uq.provider_id AS TEXT) = CAST(COALESCE(
                     media_item.provider_id,
-                    CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END,
-                    lf.media_id
-               ) AS TEXT)
-             )
-          OR (lf.media_id IS NOT NULL AND CAST(uq.media_id AS TEXT) = CAST(lf.media_id AS TEXT))
+                    CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
+                ) AS TEXT)
+              )
         WHERE (lf.file_type = 'track' OR lf.file_type = 'video')
           AND COALESCE(
                 media_item.provider_id,
-                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END,
-                lf.media_id
+                CASE WHEN lf.provider_entity_type IN ('track', 'video') THEN lf.provider_id END
               ) IS NOT NULL
           ${artistId ? "AND lf.artist_id = ?" : ""}
         ORDER BY
@@ -158,9 +147,7 @@ export class UpgraderService {
           CASE
             WHEN lf.provider_entity_type IN ('track', 'video')
              AND CAST(media_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
-            WHEN lf.media_id IS NOT NULL
-             AND CAST(media_item.provider_id AS TEXT) = CAST(lf.media_id AS TEXT) THEN 1
-            ELSE 2
+            ELSE 1
           END,
           CASE
             WHEN lf.provider_entity_type = 'album'
@@ -173,9 +160,7 @@ export class UpgraderService {
              AND album_item.release_mbid = lf.canonical_release_mbid THEN 3
             WHEN lf.canonical_release_group_mbid IS NOT NULL
              AND album_item.release_group_mbid = lf.canonical_release_group_mbid THEN 4
-            WHEN lf.album_id IS NOT NULL
-             AND CAST(album_item.provider_id AS TEXT) = CAST(lf.album_id AS TEXT) THEN 5
-            ELSE 6
+            ELSE 5
           END,
           CASE album_item.library_slot WHEN COALESCE(lf.library_slot, 'stereo') THEN 0 ELSE 1 END,
           media_item.updated_at DESC,
@@ -241,78 +226,31 @@ export class UpgraderService {
 
                 if (row.media_id) {
                     const provider = row.provider || "tidal";
-                    const legacyMediaId = row.legacy_media_id || null;
-                    const legacyAlbumId = row.legacy_album_id || null;
                     const albumProviderId = row.album_id || null;
                     const currentQuality = normalizedCurrentQuality || row.current_quality || 'UNKNOWN';
-                    const updateResult = db.prepare(`
-                    UPDATE upgrade_queue
-                    SET
+                    db.prepare(`
+                      INSERT INTO upgrade_queue (
+                        provider, entity_type, provider_id, album_provider_id,
+                        track_file_id, current_quality, target_quality, reason, status
+                      )
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                      ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                         status = 'pending',
-                        target_quality = ?,
-                        reason = ?,
-                        current_quality = ?,
-                        provider = ?,
-                        entity_type = ?,
-                        provider_id = ?,
-                        album_provider_id = COALESCE(?, album_provider_id),
-                        track_file_id = COALESCE(?, track_file_id),
-                        media_id = COALESCE(?, media_id),
-                        album_id = COALESCE(?, album_id)
-                    WHERE (
-                        provider = ?
-                        AND entity_type = ?
-                        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    )
-                    OR (? IS NOT NULL AND CAST(media_id AS TEXT) = CAST(? AS TEXT))
+                        target_quality = excluded.target_quality,
+                        reason = excluded.reason,
+                        current_quality = excluded.current_quality,
+                        album_provider_id = COALESCE(excluded.album_provider_id, upgrade_queue.album_provider_id),
+                        track_file_id = COALESCE(excluded.track_file_id, upgrade_queue.track_file_id)
                     `).run(
-                        expectedTarget,
-                        evaluation.reason,
-                        currentQuality,
                         provider,
                         row.provider_entity_type,
                         row.media_id,
                         albumProviderId,
                         row.file_id,
-                        legacyMediaId,
-                        legacyAlbumId,
-                        provider,
-                        row.provider_entity_type,
-                        row.media_id,
-                        legacyMediaId,
-                        legacyMediaId
+                        currentQuality,
+                        expectedTarget,
+                        evaluation.reason
                     );
-
-                    if (updateResult.changes === 0) {
-                        db.prepare(`
-                        INSERT INTO upgrade_queue (
-                            media_id, album_id, provider, entity_type, provider_id,
-                            album_provider_id, track_file_id, current_quality,
-                            target_quality, reason, status
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                        ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                            status = 'pending',
-                            target_quality = excluded.target_quality,
-                            reason = excluded.reason,
-                            current_quality = excluded.current_quality,
-                            album_provider_id = COALESCE(excluded.album_provider_id, upgrade_queue.album_provider_id),
-                            track_file_id = COALESCE(excluded.track_file_id, upgrade_queue.track_file_id),
-                            media_id = COALESCE(excluded.media_id, upgrade_queue.media_id),
-                            album_id = COALESCE(excluded.album_id, upgrade_queue.album_id)
-                    `).run(
-                            legacyMediaId,
-                            legacyAlbumId,
-                            provider,
-                            row.provider_entity_type,
-                            row.media_id,
-                            albumProviderId,
-                            row.file_id,
-                            currentQuality,
-                            expectedTarget,
-                            evaluation.reason
-                        );
-                    }
                 }
 
                 if (row.media_type === 'Music Video') {

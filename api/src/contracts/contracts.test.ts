@@ -56,8 +56,6 @@ test("config contract parsers normalize expected public settings shapes", () => 
     config: {
       enabled: true,
       scanIntervalHours: 24,
-      startHour: 2,
-      durationHours: 6,
       monitorNewArtists: true,
       removeUnmonitoredFiles: true,
       artistRefreshDays: 30,
@@ -68,7 +66,7 @@ test("config contract parsers normalize expected public settings shapes", () => 
       progressArtistIndex: 4,
     },
   });
-  assert.equal(monitoringStatus.config.startHour, 2);
+  assert.equal(monitoringStatus.config.scanIntervalHours, 24);
   assert.equal(monitoringStatus.running, true);
 
   const curation = parseFilteringConfigContract({

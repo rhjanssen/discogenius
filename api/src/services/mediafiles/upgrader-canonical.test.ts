@@ -116,7 +116,7 @@ function listDownloadJobs() {
   }>;
 }
 
-test("checkUpgrades queues canonical audio album upgrades without legacy provider rows", async () => {
+test("checkUpgrades queues canonical audio album upgrades without provider catalog rows", async () => {
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
     provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
@@ -170,15 +170,13 @@ test("checkUpgrades queues canonical audio album upgrades without legacy provide
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   const ledger = db.prepare(`
-    SELECT provider, entity_type, provider_id, album_provider_id, media_id, album_id, target_quality, status
+    SELECT provider, entity_type, provider_id, album_provider_id, target_quality, status
     FROM upgrade_queue
   `).get() as {
     provider: string;
     entity_type: string;
     provider_id: string;
     album_provider_id: string | null;
-    media_id: string | null;
-    album_id: string | null;
     target_quality: string;
     status: string;
   };
@@ -187,8 +185,6 @@ test("checkUpgrades queues canonical audio album upgrades without legacy provide
     entity_type: "track",
     provider_id: "track-provider-1",
     album_provider_id: "album-provider-1",
-    media_id: null,
-    album_id: null,
     target_quality: "HIRES_LOSSLESS",
     status: "pending",
   });
@@ -200,89 +196,7 @@ test("checkUpgrades queues canonical audio album upgrades without legacy provide
   assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "album-provider-1", reason: "upgrade" });
 });
 
-test("checkUpgrades updates migrated queue rows by legacy media shadow before inserting", async () => {
-  seedArtistAndRelease();
-  db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    "tidal",
-    "album",
-    "album-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "Canonical Album",
-    "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ quality: "HIRES_LOSSLESS" }),
-  );
-  db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    "tidal",
-    "track",
-    "track-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-1",
-    "recording-1",
-    "Track One",
-    "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ albumProviderId: "album-provider-1" }),
-    JSON.stringify({ albumProviderId: "album-provider-1", quality: "HIRES_LOSSLESS" }),
-  );
-
-insertTrackFile({
-    album_id: "legacy-album-1",
-    media_id: "legacy-media-1",
-    canonical_artist_mbid: "artist-mbid",
-    canonical_release_group_mbid: "release-group-1",
-    canonical_release_mbid: "release-1",
-    canonical_track_mbid: "track-1",
-    canonical_recording_mbid: "recording-1",
-    provider: "tidal",
-    provider_entity_type: "track",
-    provider_id: "track-provider-1",
-  });
-  db.prepare(`
-    INSERT INTO upgrade_queue (
-      media_id, provider, entity_type, provider_id, current_quality, target_quality, reason, status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("legacy-media-1", "tidal", "track", "legacy-media-1", "LOW", "LOSSLESS", "old", "skipped");
-
-  const result = await UpgraderService.checkUpgrades(true, "artist-local");
-
-  assert.equal(result.tracks, 1);
-  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM upgrade_queue").get() as { count: number }).count, 1);
-  const ledger = db.prepare(`
-    SELECT provider, entity_type, provider_id, album_provider_id, media_id, target_quality, status
-    FROM upgrade_queue
-  `).get() as {
-    provider: string;
-    entity_type: string;
-    provider_id: string;
-    album_provider_id: string | null;
-    media_id: string | null;
-    target_quality: string;
-    status: string;
-  };
-  assert.deepEqual(ledger, {
-    provider: "tidal",
-    entity_type: "track",
-    provider_id: "track-provider-1",
-    album_provider_id: "album-provider-1",
-    media_id: "legacy-media-1",
-    target_quality: "HIRES_LOSSLESS",
-    status: "pending",
-  });
-});
-
-test("checkUpgrades queues canonical video upgrades without legacy provider rows", async () => {
+test("checkUpgrades queues canonical video upgrades without provider catalog rows", async () => {
   db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Canonical Artist", "artist-mbid", 1);
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
@@ -324,14 +238,12 @@ test("checkUpgrades queues canonical video upgrades without legacy provider rows
   assert.equal(result.albums, 0);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   const ledger = db.prepare(`
-    SELECT provider, entity_type, provider_id, media_id, album_id, target_quality, status
+    SELECT provider, entity_type, provider_id, target_quality, status
     FROM upgrade_queue
   `).get() as {
     provider: string;
     entity_type: string;
     provider_id: string;
-    media_id: string | null;
-    album_id: string | null;
     target_quality: string;
     status: string;
   };
@@ -339,8 +251,6 @@ test("checkUpgrades queues canonical video upgrades without legacy provider rows
     provider: "tidal",
     entity_type: "video",
     provider_id: "video-provider-1",
-    media_id: null,
-    album_id: null,
     target_quality: "MP4_1080P",
     status: "pending",
   });

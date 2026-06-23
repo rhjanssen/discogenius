@@ -463,7 +463,7 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
 
 function loadAlbumArtworkContext(albumId: string): {
     albumMbid: string | null;
-    skyHookData: Record<string, any> | null;
+    servarrMetadataData: Record<string, any> | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
     const row = db.prepare(`
@@ -520,13 +520,13 @@ function loadAlbumArtworkContext(albumId: string): {
 
     return {
         albumMbid: row.album_mbid ? String(row.album_mbid) : null,
-        skyHookData: parseJsonObject(row.release_group_data),
+        servarrMetadataData: parseJsonObject(row.release_group_data),
         providerCandidates,
     };
 }
 
 function loadArtistArtworkContext(artistId: string): {
-    skyHookData: Record<string, any> | null;
+    servarrMetadataData: Record<string, any> | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
     const row = db.prepare(`
@@ -559,7 +559,7 @@ function loadArtistArtworkContext(artistId: string): {
     }
 
     return {
-        skyHookData: parseJsonObject(row.artist_metadata_data),
+        servarrMetadataData: parseJsonObject(row.artist_metadata_data),
         providerCandidates: [
             {
                 provider: row.provider ? String(row.provider) : "tidal",
@@ -592,7 +592,7 @@ export async function downloadAlbumCover(
     let url = context
         ? await resolveAlbumArtwork({
             albumMbid: context.albumMbid,
-            skyHookData: context.skyHookData,
+            servarrMetadataData: context.servarrMetadataData,
             providerCandidates: context.providerCandidates,
             size: resolution,
         })
@@ -639,7 +639,7 @@ export async function downloadAlbumVideoCover(
 /**
  * Download artist picture at specified resolution
  * @param artistId - Tidal artist ID
- * @param resolution - Preferred resolution. SkyHook/source images are used as-is; provider fallback may quantize.
+ * @param resolution - Preferred resolution. Servarr Metadata Server/source images are used as-is; provider fallback may quantize.
  * @param outputPath - Full path where to save the image
  */
 export async function downloadArtistPicture(
@@ -650,7 +650,7 @@ export async function downloadArtistPicture(
     const context = loadArtistArtworkContext(artistId);
     const resolvedArtworkUrl = context
         ? await resolveArtistArtwork({
-            skyHookData: context.skyHookData,
+            servarrMetadataData: context.servarrMetadataData,
             providerCandidates: context.providerCandidates,
             preferredCoverTypes: ["Poster", "Headshot", "Fanart"],
             size: resolution,

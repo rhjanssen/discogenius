@@ -192,7 +192,7 @@ Contributions are welcome! Please:
 
 For significant changes, open an issue first to discuss your proposal.
 
-See [AGENTS.md](AGENTS.md) and [.github/copilot-instructions.md](.github/copilot-instructions.md) for development guidelines.
+See [AGENTS.md](AGENTS.md) for development guidelines and agent expectations.
 
 ## License & Disclaimers
 

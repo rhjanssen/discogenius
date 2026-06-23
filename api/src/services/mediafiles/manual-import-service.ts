@@ -307,7 +307,7 @@ export class ManualImportService {
                 }
 
                 // Album monitoring is canonical: the slot + Albums row carry it.
-                // (AlbumArtists is canonical/Skyhook; the legacy provider relation
+                // (AlbumArtists is canonical/Servarr Metadata Server; the legacy provider relation
                 // write is dropped.) The video canonical graph is ensured in a
                 // pre-pass before this transaction (RefreshVideoService); here we
                 // only flip the canonical monitored flags.

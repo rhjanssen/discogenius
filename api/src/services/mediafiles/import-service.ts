@@ -702,7 +702,7 @@ export class ImportService {
             // Album monitoring is canonical now: the slot (ReleaseGroupSlots) + the
             // Albums row carry monitored state, not the retired provider catalog.
             // Per-track monitoring is covered by the slot; AlbumArtists is canonical
-            // (Skyhook), so the legacy ProviderAlbumArtists write is dropped.
+            // (Servarr Metadata Server), so the legacy ProviderAlbumArtists write is dropped.
             if (albumRow.release_group_mbid) {
                 db.prepare(`
                     UPDATE ReleaseGroupSlots

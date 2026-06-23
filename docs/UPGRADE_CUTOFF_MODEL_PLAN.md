@@ -50,9 +50,8 @@ equivalent loop-prevention without the queue. Recommended (lean) approach:
    Keep the cutoff scan + `CommandQueueManager` queuing.
 2. **`downloaded-tracks-import-service.ts`**: remove `clearUpgradeQueue()` and its 2 call
    sites; confirm import still replaces the existing `TrackFiles` row by identity (it does).
-3. **`database.ts`**: remove the `upgrade_queue` CREATE TABLE, `createUpgradeQueueProviderIdentityTable`,
-   `ensureUpgradeQueueProviderIdentitySchema`, and the v27 re-key migration (no backwards-compat
-   needed — test container only). Drop the table if present on boot.
+3. **`database.ts`**: remove the `upgrade_queue` CREATE TABLE and related indexes from the
+   fresh schema once the history guard replaces it.
 4. **Tests**: `upgrader-canonical.test.ts` asserts on `upgrade_queue` rows — rewrite to assert
    on **queued download commands** (`SELECT … FROM commands WHERE name IN (Download…)`), which
    the test partly does already (`listDownloadJobs`). Add a loop-guard test: a completed

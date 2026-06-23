@@ -849,8 +849,7 @@ const SettingsPage = () => {
     });
 
     const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
-    const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy
-        ?? (metadataSettings?.write_audio_metadata === true ? "all_files" : "no");
+    const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
     const audioRetaggingEnabled =
         metadataSettings?.enable_fingerprinting === true
         || writeAudioTagsPolicy !== "no"
@@ -1152,8 +1151,6 @@ const SettingsPage = () => {
             setMonitoringConfig({
                 enabled: false,
                 scanIntervalHours: 24,
-                startHour: 2,
-                durationHours: 6,
                 monitorNewArtists: false,
                 removeUnmonitoredFiles: false,
                 artistRefreshDays: 30,
@@ -1908,40 +1905,6 @@ const SettingsPage = () => {
                         </div>
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Start Hour</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Hour of day to start monitoring (0-23)
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={0}
-                                max={23}
-                                value={monitoringConfig?.startHour?.toString() || '23'}
-                                onChange={(_, data) => updateMonitoring({ startHour: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Duration (Hours)</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    How long the monitoring window lasts
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={1}
-                                max={24}
-                                value={monitoringConfig?.durationHours?.toString() || '4'}
-                                onChange={(_, data) => updateMonitoring({ durationHours: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
                                 <Text weight="semibold">Artist Refresh (Days)</Text>
                                 <Text size={200} className={styles.mutedText}>
                                     Minimum days between artist scans
@@ -2058,7 +2021,6 @@ const SettingsPage = () => {
                             checked: writeAudioTagsPolicy !== "no",
                             onChange: (checked) => {
                                 updateMetadataSettings({
-                                    write_audio_metadata: checked,
                                     write_audio_tags_policy: checked ? "all_files" : "no",
                                 });
                                 setRetagStatus(null);
@@ -2206,7 +2168,7 @@ const SettingsPage = () => {
                                     <div className={styles.rowContent}>
                                         <Text weight="semibold">Resolution</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            SkyHook/source images are preferred; provider fallback may use the nearest available size
+                                            Servarr Metadata Server/source images are preferred; provider fallback may use the nearest available size
                                         </Text>
                                     </div>
                                     <Select

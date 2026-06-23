@@ -2,14 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
-## [2.0.8] - Unreleased
+## [2.0.8] - 2026-06-23
 
 ### Removed
-- **Similar-artists section removed.** It was populated exclusively from TIDAL's `getSimilarArtists` into legacy `ProviderSimilarArtists`; MusicBrainz/Skyhook has no similar-artist concept and Lidarr has no such section. Per the canonical-source-of-truth policy (providers download + supplement canonical columns only, never seed parallel catalogs/features), the artist-page "Similar Artists" module, its read (`artist-query-service`) and population (`refresh-artist-service`), and the `ProviderSimilarArtists`/`ProviderSimilarAlbums` tables were retired. Top-tracks stays (already MusicBrainz-driven). See `docs/LIDARR_DB_ALIGNMENT_PLAN.md` §3b.
+- **Similar-artists section removed.** It was populated exclusively from TIDAL's `getSimilarArtists` into legacy `ProviderSimilarArtists`; MusicBrainz/Servarr Metadata Server has no similar-artist concept and Lidarr has no such section. Per the canonical-source-of-truth policy (providers download + supplement canonical columns only, never seed parallel catalogs/features), the artist-page "Similar Artists" module, its read (`artist-query-service`) and population (`refresh-artist-service`), and the `ProviderSimilarArtists`/`ProviderSimilarAlbums` tables were retired. Top-tracks stays (already MusicBrainz-driven).
 - **Dead provider-catalog repair helpers removed:** `version-grouper` and `module-fixer` had no production imports and only wrote/derived data from legacy `ProviderAlbumArtists`/`ProviderAlbums` catalog tables. Removing them shrinks the remaining DB-alignment surface to active read/write paths.
 
 ### Changed
-- **DB alignment Phase 1 (TrackFiles canonical-first), foundational step:** housekeeping now runs a `backfillCanonicalTrackFiles` pass that resolves and COALESCE-fills the `canonical_*_mbid` columns for any `TrackFiles` row still relying on the legacy `media_id`/`album_id` provider linkage (NULL-only, never overwrites, idempotent). This closes canonical gaps on older/pre-canonical-column rows so file lookups/dedup can later switch off the legacy ids without orphaning files. New downloads/imports already populate these on write; a real-DB dry-run confirmed 0 orphan-risk and 100% canonical resolution. See `docs/LIDARR_DB_ALIGNMENT_PLAN.md`.
+- **DB alignment Phase 1 (TrackFiles canonical-first), foundational step:** housekeeping now runs a `backfillCanonicalTrackFiles` pass that resolves and COALESCE-fills the `canonical_*_mbid` columns for any `TrackFiles` row still relying on the legacy `media_id`/`album_id` provider linkage (NULL-only, never overwrites, idempotent). This closes canonical gaps on older/pre-canonical-column rows so file lookups/dedup can later switch off the legacy ids without orphaning files. New downloads/imports already populate these on write; a real-DB dry-run confirmed 0 orphan-risk and 100% canonical resolution.
 - **Library-file dedupe is now canonical-aware:** the housekeeping dedupe runs a canonical pass keyed on release-specific track identity for audio (`canonical_track_mbid`, `file_type`, `library_slot`) and recording identity for videos (`canonical_recording_mbid`, `file_type`, `library_slot`) in addition to the legacy `(media_id, file_type)` pass, while never merging stereo and spatial copies.
 - **DB alignment Phase 2 has started with library-file listings:** `library-files-query-service` now decorates file rows from canonical `TrackFiles` identity, `Recordings`, and `ProviderItems` instead of joining `TrackFiles.media_id`/`album_id` to `ProviderMedia`/`ProviderAlbums`. This lets canonical-only file rows report provider source quality correctly while preserving legacy `album_id`/`media_id` fields in the API response during the migration.
 - **Activity/download history descriptions now resolve from canonical provider items:** `command-history` no longer reads `ProviderAlbums`/`ProviderMedia` to label queued or completed download jobs. It resolves provider ids through `ProviderItems` and the canonical MusicBrainz graph, so canonical-only album/track/video jobs display useful activity text without legacy rows.
@@ -50,7 +50,7 @@ All notable changes to this project are documented in this file.
 - Detail-page loading skeletons align with the real layout (top spacing/header height).
 
 ### Changed
-- Search stays local + MusicBrainz/SkyHook only for artists/albums/tracks/videos — no provider live-search.
+- Search stays local + MusicBrainz/Servarr Metadata Server only for artists/albums/tracks/videos — no provider live-search.
 - Tracklist: clickable artist names (linking via the known MusicBrainz id), a Duration column and a Quality column, the volume separator hidden on single-volume releases, and refined play/stop controls.
 - Background UltraBlur is generated small and blurred client-side (Plex-style), cutting the payload ~35x, and new pages now cross-fade in once decoded instead of snapping.
 - Runtime Docker image slimmed via a yarn cache mount and node_modules pruning.
@@ -286,7 +286,7 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - Updated [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) with Phase 1 command summary table, grouping manually-triggerable commands and legacy orchestration commands separately.
-- Updated [docs/ARCHITECTURE_WORKPLAN.md](docs/ARCHITECTURE_WORKPLAN.md) to mark Phase 1 complete and define Phase 2 scope (UI dashboard exposure and periodic scheduling configuration).
+- Updated the architecture workplan to mark Phase 1 complete and define Phase 2 scope (UI dashboard exposure and periodic scheduling configuration).
 
 ## [1.0.9] - 2026-03-21
 

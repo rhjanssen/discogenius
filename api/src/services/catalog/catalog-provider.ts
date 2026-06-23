@@ -3,21 +3,21 @@
  *
  * Symmetric to `StreamingProvider`: it makes the *canonical catalog* source
  * (MusicBrainz) pluggable. Today the only live implementation is
- * `SkyhookCatalogProvider`, which delegates to the existing SkyHook / MB web
+ * `ServarrMetadataCatalogProvider`, which delegates to the existing Servarr Metadata Server / MB web
  * API replica flow. A future `LocalMusicBrainzCatalogProvider` reads a local
  * MusicBrainz-docker instance instead.
  *
- * **DTOs are deliberately the SkyHook/Lidarr shapes already produced by
- * `SkyHookProxy`** (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`,
+ * **DTOs are deliberately the Servarr Metadata Server/Lidarr shapes already produced by
+ * `ServarrMetadataProxy`** (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`,
  * `LidarrTrack`) plus the matcher's `MusicBrainzReleaseGroupForMatching`. These
  * are the canonical-metadata DTOs in this codebase — every downstream consumer
  * (`refresh-artist-service`, `musicbrainz-release-group-read-service`, the
  * release-group matcher, search routes) already speaks them. Reusing them means
- * any `CatalogProvider` implementation is a drop-in for the SkyHook flow without
+ * any `CatalogProvider` implementation is a drop-in for the Servarr Metadata Server flow without
  * forking a parallel DTO hierarchy.
  *
  * NOTE (U3 scaffolding): this interface is *additive*. It is not yet wired into
- * the live request path. The live app keeps calling `skyHookProxy` directly; the
+ * the live request path. The live app keeps calling `ServarrMetadataProxy` directly; the
  * adapters here document today's behavior and prepare for MB-local mode.
  */
 import type {
@@ -25,7 +25,7 @@ import type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/skyhook-proxy.js";
+} from "../metadata/servarr-metadata-proxy.js";
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 
 export type {
@@ -34,10 +34,10 @@ export type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/skyhook-proxy.js";
+} from "../metadata/servarr-metadata-proxy.js";
 
 /**
- * A canonical recording, keyed by MBID. SkyHook does not expose a standalone
+ * A canonical recording, keyed by MBID. Servarr Metadata Server does not expose a standalone
  * recording endpoint (recordings only arrive embedded in a release's tracks),
  * so `getRecording` is optional. MB-local can serve it directly.
  */
@@ -48,7 +48,7 @@ export interface CatalogRecording {
   /** Recording length in milliseconds, when known. */
   lengthMs?: number | null;
   isVideo?: boolean;
-  /** ISRCs attached to the recording (MB-local / `:5000` only — SkyHook omits these). */
+  /** ISRCs attached to the recording (MB-local / `:5000` only — Servarr Metadata Server omits these). */
   isrcs?: string[];
   /** Flattened artist-credit display string ("A feat. B"). */
   artistCredit?: string | null;
@@ -75,7 +75,7 @@ export interface CatalogIsrcLookupResult {
 /** A unified search hit. `entityType` disambiguates the populated payload. */
 export interface CatalogSearchResults {
   artists: LidarrArtist[];
-  /** Raw SkyHook `searchAll` rows (artist/album mixed) — opaque to callers that only need artists. */
+  /** Raw Servarr Metadata Server `searchAll` rows (artist/album mixed) — opaque to callers that only need artists. */
   raw?: unknown[];
 }
 
@@ -87,7 +87,7 @@ export interface CatalogSearchOptions {
  * Pluggable canonical-catalog source. All ids are MBIDs (`gid`).
  *
  * Implementations MUST translate their backend's native shape into the
- * SkyHook/Lidarr DTOs above; we never expose MusicBrainz's normalized Postgres
+ * Servarr Metadata Server/Lidarr DTOs above; we never expose MusicBrainz's normalized Postgres
  * rows (split dates, `artist_credit_name`, etc.) to the rest of the app.
  */
 export interface CatalogProvider {
@@ -109,13 +109,13 @@ export interface CatalogProvider {
   /** A single release with its full medium/track list. */
   getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null>;
 
-  /** A single recording by MBID. Optional: SkyHook has no recording endpoint. */
+  /** A single recording by MBID. Optional: Servarr Metadata Server has no recording endpoint. */
   getRecording?(recordingMbid: string): Promise<CatalogRecording | null>;
 
-  /** Releases carrying a given UPC/barcode. Optional: SkyHook exposes no UPC index. */
+  /** Releases carrying a given UPC/barcode. Optional: Servarr Metadata Server exposes no UPC index. */
   lookupByUPC?(upc: string): Promise<CatalogUpcLookupResult>;
 
-  /** Recordings carrying a given ISRC. Optional: SkyHook exposes no ISRC index. */
+  /** Recordings carrying a given ISRC. Optional: Servarr Metadata Server exposes no ISRC index. */
   lookupByISRC?(isrc: string): Promise<CatalogIsrcLookupResult>;
 
   /** Free-text search (artists by default). */

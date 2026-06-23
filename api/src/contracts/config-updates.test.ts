@@ -34,8 +34,6 @@ test("config update parsers return only validated partial updates", () => {
   }, {
     enabled: true,
     scanIntervalHours: 24,
-    startHour: 2,
-    durationHours: 6,
     monitorNewArtists: true,
     removeUnmonitoredFiles: true,
     artistRefreshDays: 30,
@@ -108,8 +106,6 @@ test("config update parsers reject unsupported keys and invalid values", () => {
     }, {
       enabled: true,
       scanIntervalHours: 24,
-      startHour: 2,
-      durationHours: 6,
       monitorNewArtists: true,
     removeUnmonitoredFiles: true,
       artistRefreshDays: 30,

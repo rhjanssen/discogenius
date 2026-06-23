@@ -9,7 +9,7 @@ import {
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "../services/metadata/media-cover-service.js";
-import { skyHookProxy } from "../services/metadata/skyhook-proxy.js";
+import { servarrMetadataProxy } from "../services/metadata/servarr-metadata-proxy.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -173,7 +173,7 @@ router.get("/", async (req, res) => {
                         id: row.id,
                         name: row.title,
                         cover_id: chooseCachedAlbumArtwork({
-                            skyHookData: parseJsonObject(row.data),
+                            servarrMetadataData: parseJsonObject(row.data),
                             providerCandidates: albumProviderArtworkCandidatesFromRow(row),
                         }),
                         artist_name: row.artist_name,
@@ -282,7 +282,7 @@ router.get("/", async (req, res) => {
                     // carries a usable URL, not a raw provider asset id.
                     cover: chooseCachedAlbumArtwork({
                         albumMbid: row.release_group_mbid,
-                        skyHookData: parseJsonObject(row.rg_data),
+                        servarrMetadataData: parseJsonObject(row.rg_data),
                         providerCandidates: row.album_cover
                             ? [{ provider: row.cover_provider, imageId: row.album_cover, data: row.cover_provider_data }]
                             : albumProviderArtworkCandidatesFromRow(row),
@@ -388,9 +388,9 @@ router.get("/", async (req, res) => {
             }
         }
 
-        // 2. Remote MusicBrainz (Skyhook) search
+        // 2. Remote MusicBrainz (Servarr Metadata Server) search
         if (query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))) {
-            const remoteItems = await skyHookProxy.searchAll(query, limit);
+            const remoteItems = await servarrMetadataProxy.searchAll(query, limit);
             for (const item of remoteItems) {
                 if (item.artist && requestedTypeSet.has("artists")) {
                     const mbid = item.artist.id;
@@ -404,7 +404,7 @@ router.get("/", async (req, res) => {
                             const imageId = [
                                 localArtist.picture,
                                 localArtist.cover_image_url,
-                                skyHookProxy.getArtistImageUrl(item.artist),
+                                servarrMetadataProxy.getArtistImageUrl(item.artist),
                             ].map((val) => {
                                 const text = val == null ? "" : String(val).trim();
                                 if (!text) return null;
@@ -422,7 +422,7 @@ router.get("/", async (req, res) => {
                             }, 'artist'));
                             addedArtistIds.add(localArtist.id.toString());
                         } else {
-                            const imageId = skyHookProxy.getArtistImageUrl(item.artist);
+                            const imageId = servarrMetadataProxy.getArtistImageUrl(item.artist);
                             const releaseGroupCount = Array.isArray(item.artist.Albums) ? item.artist.Albums.length : 0;
                             const disambiguation = String(item.artist.disambiguation || "").trim();
                             const details = [
@@ -454,7 +454,7 @@ router.get("/", async (req, res) => {
                         `).get(mbid) as any;
 
                         const artistName = item.album.artistname || item.album.artistName || item.album.ArtistName || item.album.artist?.artistname || null;
-                        const imageId = skyHookProxy.getAlbumImageUrl(item.album);
+                        const imageId = servarrMetadataProxy.getAlbumImageUrl(item.album);
 
                         if (localAlbum) {
                             results.albums.push(formatSearchResult({

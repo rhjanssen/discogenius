@@ -1,14 +1,14 @@
 <!-- markdownlint-disable MD013 -->
-# MB-local mode — catalog provider notes (U3 scaffolding)
+# MB-local mode — catalog provider notes
 
 Status: **scaffolding, not wired into runtime.** This documents the
-`CatalogProvider` abstraction added in U3 and the plan for serving the canonical
+`CatalogProvider` abstraction and the plan for serving the canonical
 catalog directly from a local MusicBrainz-docker instance instead of the
-SkyHook/Lidarr replica. It is the implementation companion to
+Servarr Metadata Server/Lidarr replica. It is the implementation companion to
 `docs/DATA_MODEL_TARGET.md` §3.
 
-No live behavior changed: the app still uses the SkyHook flow
-(`api/src/services/metadata/skyhook-proxy.ts`) exactly as before. Everything here
+No live behavior changed: the app still uses the Servarr Metadata Server flow
+(`api/src/services/metadata/servarr-metadata-proxy.ts`) exactly as before. Everything here
 is additive and behind interfaces/stubs.
 
 ## The abstraction
@@ -17,22 +17,42 @@ is additive and behind interfaces/stubs.
 
 | File | Role |
 | --- | --- |
-| `catalog-provider.ts` | The `CatalogProvider` interface (symmetric to `StreamingProvider`). DTOs are the existing SkyHook/Lidarr shapes (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`, `LidarrTrack`) — no parallel DTO hierarchy. |
-| `skyhook-catalog-provider.ts` | `SkyhookCatalogProvider` — thin adapter over today's `SkyHookProxy`. Documents current behavior as one implementation; changes nothing. |
+| `catalog-provider.ts` | The `CatalogProvider` interface (symmetric to `StreamingProvider`). DTOs are the existing Servarr Metadata Server/Lidarr shapes (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`, `LidarrTrack`) — no parallel DTO hierarchy. |
+| `servarr-metadata-catalog-provider.ts` | `ServarrMetadataCatalogProvider` — thin adapter over today's `ServarrMetadataProxy`. Documents current behavior as one implementation; changes nothing. |
 | `local-musicbrainz-catalog-provider.ts` | `LocalMusicBrainzCatalogProvider` — **stub**, reads the MB-docker `:5000` web-service mirror. Not registered as active. |
-| `musicbrainz-ws-mapping.ts` | Pure mappers: MB `/ws/2` JSON → SkyHook/Lidarr DTOs. Network-free, fixture-tested. |
-| `index.ts` | Barrel + a `catalogProviderRegistry` mirroring `streamingProviderManager`. Active source = `skyhook`. |
+| `musicbrainz-ws-mapping.ts` | Pure mappers: MB `/ws/2` JSON → Servarr Metadata Server/Lidarr DTOs. Network-free, fixture-tested. |
+| `index.ts` | Barrel + a `catalogProviderRegistry` mirroring `streamingProviderManager`. Active source id = `servarr-metadata`. |
 
 ### Methods
 
 `getArtist`, `getArtistReleaseGroups`, `getReleaseGroup`, `getReleaseWithTracks`,
 `getRecording?`, `lookupByUPC?`, `lookupByISRC?`, `search`.
 
-The last three are optional because **SkyHook can't serve them** (no standalone
+The last three are optional because **Servarr Metadata Server can't serve them** (no standalone
 recording endpoint, no UPC index, no ISRC index). Per §3, until MB-local is
 connected, matching falls back to title / track-count / date / duration /
 position and accepts slightly weaker matches. The MB-local provider implements
 all of them.
+
+## Supplemental Servarr metadata in local mode
+
+Local MusicBrainz is the authority for MusicBrainz identity, release grouping,
+release/track/recording shape, UPC/barcode, ISRC, and URL-relation matching.
+It does not need to replace every convenience field currently returned by the
+Servarr Metadata Server.
+
+When MB-local mode is active, Discogenius may still query the Servarr Metadata
+Server as a supplemental source for fields that improve UI/library management
+but do not define identity:
+
+- cached or normalized artwork URLs and image proxy hints
+- metadata-server ratings/popularity where available
+- other Servarr convenience fields that can be safely treated as display/cache
+  supplements
+
+Those supplemental reads must be optional, failure-tolerant, and visibly
+separate from the selected catalog source health. A Servarr outage in MB-local
+mode must not block artist search, release refresh, matching, or imports.
 
 ## Backend: `:5000` web-service mirror (ships first)
 
@@ -73,7 +93,7 @@ snippet and steps; in short:
 
 The overlay sets (read by the future wiring unit, ignored today):
 
-- `DISCOGENIUS_CATALOG_SOURCE` — `skyhook` (default) | `musicbrainz-local`
+- `DISCOGENIUS_CATALOG_SOURCE` — `servarr-metadata` (default) | `musicbrainz-local`
 - `MB_LOCAL_WS_URL` — default `http://musicbrainz:5000/ws/2`
 
 ## Mode switching (per §3)
@@ -81,18 +101,19 @@ The overlay sets (read by the future wiring unit, ignored today):
 Because Layers C/D and the file inventory key on **MBID**, Layer A (the canonical
 catalog tables) is a pure cache. So:
 
-- **MB-local → SkyHook:** trigger an on-demand catalog build for the monitored
+- **MB-local → Servarr Metadata Server:** trigger an on-demand catalog build for the monitored
   set.
-- **SkyHook → MB-local:** stop replicating and lazily empty Layer A *after a
+- **Servarr Metadata Server → MB-local:** stop replicating and lazily empty Layer A *after a
   delay*, so an accidental toggle doesn't force a rebuild.
 
-This switch is a future unit; U3 only lays the provider seam.
+This switch is future work; the current implementation only lays the provider
+seam.
 
 ## Testing
 
 - `musicbrainz-ws-mapping` + `LocalMusicBrainzCatalogProvider`: fixture unit
   tests against recorded `/ws/2` responses with an injected fetcher (no live
   network).
-- `SkyhookCatalogProvider`: delegating-adapter tests with a spy proxy.
+- `ServarrMetadataCatalogProvider`: delegating-adapter tests with a spy proxy.
 - **Live container e2e is skipped** — no MB-docker container is provisioned in
   CI; the behavior is covered by the fixture unit tests above.

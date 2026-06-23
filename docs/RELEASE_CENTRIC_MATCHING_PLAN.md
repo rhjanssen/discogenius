@@ -1,14 +1,16 @@
 # Release-centric provider matching (remove the release-group constraint)
 
-Status: **in progress**
+Status: **partially implemented; remaining matcher refactor is pending**
 
-Done so far:
-- ISRC-first composite track coverage (title/shape fallback for SkyHook).
+Current implemented state:
+- ISRC-first composite track coverage (title/shape fallback for Servarr Metadata Server).
 - Composite matches are now **first-class persisted `ProviderItemMatches` rows**
   (`persistCompositeReleaseMatches`), not a read-time recompute — the
   availability layer reads them and `appendStrictCompositeCoverage` is deleted.
 - Slot selection picks the largest covered release per slot from the availability
-  graph (direct + composite), covering core + collaborative release groups.
+  graph (direct + composite), covering core + collaborative release groups. This
+  is still release-group scoped and is not yet the final artist-wide coverage
+  optimizer.
 
 Remaining:
 - Refactor `provider-release-group-matcher` so a provider album matches an MB
@@ -16,6 +18,7 @@ Remaining:
 - **External-link tier** (tier 1) via the local musicbrainz-docker DB.
 - Optional: only re-persist composites for groups whose provider albums changed
   (today `persistCompositeReleaseMatchesForArtist` re-runs all groups per sync).
+- Artist-wide release/recording coverage optimizer before final slot selection.
 
 ## The problem
 
@@ -41,7 +44,7 @@ For each provider album, score against every candidate release using these tiers
 priority first:
 
 1. **External streaming links** — MB release `externalUrls` matching the provider resource id.
-   Requires the local musicbrainz-docker integration to carry URL relations; SkyHook strips
+   Requires the local musicbrainz-docker integration to carry URL relations; Servarr Metadata Server strips
    them (see [[discogenius-matching-facts]]). Highest confidence when present.
 2. **UPC / ISRC**
    - Direct: provider UPC == release barcode, or provider ISRC set ⊇ release ISRC set.
@@ -50,7 +53,7 @@ priority first:
 3. **Title + shape** — release title/disambiguation vs provider title, plus track/volume shape.
    - **Composite**: a set of provider albums whose combined title/shape 1:1-covers the
      release's tracks (the existing `appendStrictCompositeCoverage` logic, promoted to a real
-     match). This is the **only** tier available in SkyHook-proxy mode.
+     match). This is the **only** tier available in servarr-metadata-proxy mode.
 
 Each match (direct or composite) persists as `ProviderItemMatches` edges:
 `musicbrainz_release_mbid` ← one provider album (direct) or a `;`-joined provider album set
@@ -58,14 +61,30 @@ Each match (direct or composite) persists as `ProviderItemMatches` edges:
 
 ## Selection & monitoring (release-centric)
 
-Once matches are release-level, selection is the simple thing the user described:
+Once matches are release-level, selection should be artist-wide rather than
+purely release-group local:
 
-- For each library slot, list the artist's MB releases that have a match (direct or composite),
-  pick the **largest-track** best-quality covered release.
-- Curation's existing redundancy filter (`findReleaseGroupsContainedByAlbums`) then drops
-  releases/groups whose recordings are already covered → minimal release set, least overlap.
+- For each library slot, build the artist's matched MB releases from direct and
+  composite `ProviderItemMatches`.
+- Apply release-type, secondary-type, explicit/clean, spatial/video, and
+  library-type settings before coverage solving, so excluded releases never
+  become optimizer candidates.
+- Compute recording coverage for each candidate release using MB recording MBID
+  first, ISRC second, and title/duration/position shape only as a fallback.
+- Choose the release set that covers the filtered artist discography with the
+  fewest releases/provider downloads and the least redundant overlap.
+- Within equivalent coverage, prefer better quality, explicit/clean preference,
+  stronger evidence, and then larger/more complete editions.
+- Write the resulting per-release-group `ReleaseGroupSlots` selections.
 
-This makes the band-aid unnecessary: selection reads real matches, not a dynamic recompute.
+This makes the band-aid unnecessary: selection reads real matches, not a dynamic
+recompute. It also avoids treating "largest track count inside each release
+group" as the global objective.
+
+Example target behavior: if a release group has a 20-track edition and a
+25-track edition, but the 20-track edition plus one EP covers the artist's
+recordings while the 25-track edition forces five singles or leaves recordings
+unavailable, the optimizer should pick the 20-track edition plus the EP.
 
 ## Steps
 
@@ -77,21 +96,18 @@ This makes the band-aid unnecessary: selection reads real matches, not a dynamic
    `chooseStrictComposites` from `provider-matches.ts`, but on ISRC first, title/shape
    fallback). Persist composites via `upsertProviderReleaseMatch` with a composite provider id.
 3. **Drop** the dynamic `appendStrictCompositeCoverage` recompute once composites are real
-   matches (or keep it only as a SkyHook-mode fallback).
-4. **Selection**: replace per-group `selectReleaseMbidForCandidate` with release-level
-   selection (largest covered release per slot from persisted matches).
-5. **Tests**: ISRC-composite, title/shape-composite, external-link priority, and the
-   least-releases curation outcome (the Bastille MTV Unplugged case: `b1b81699`→`fab7ff68`,
-   `ac94d434` dropped).
+   matches (or keep it only as a Servarr Metadata Server-mode fallback).
+4. **Selection**: replace per-group `selectReleaseMbidForCandidate` with
+   artist-wide release selection from persisted matches. Apply user filters
+   before solving coverage. Track count should be a tie-breaker after
+   coverage/cost, not the first global objective.
+5. **Tests**: ISRC-composite, title/shape-composite, external-link priority, the
+   least-releases curation outcome (the Bastille MTV Unplugged case:
+   `b1b81699`→`fab7ff68`, `ac94d434` dropped), and a regression where the
+   largest edition in one release group produces worse artist-wide recording
+   coverage than a smaller edition plus one EP.
 
 ## Local-MB integration note
 
 Tier 1 (external links) and richer ISRC/UPC depend on the musicbrainz-docker DB (port per
 `.ref_musicbrainz-docker`; the UI on `:5000` is the web front, the DB is a different port).
-SkyHook mode must degrade gracefully to tier 3 only.
-
-## Also pending (from the merged-in Codex session, currently uncommitted)
-
-8 files of matcher/curation fixes (Atmos spatial preference, 24-bit composite availability,
-stale-match availability query, artist-page SkyHook artwork) are uncommitted and **green**
-(api build + 33 focused tests pass). They should be committed before the redesign starts.

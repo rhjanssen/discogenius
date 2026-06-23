@@ -1,11 +1,11 @@
 import {
     albumProviderArtworkCandidatesFromRow,
-    getSkyHookAlbumImageUrl,
+    getServarrMetadataAlbumImageUrl,
     parseJsonObject,
     registerMediaCoverProxyUrl,
     resolveAlbumArtwork,
 } from "./media-cover-service.js";
-import { skyHookProxy } from "./skyhook-proxy.js";
+import { servarrMetadataProxy } from "./servarr-metadata-proxy.js";
 
 function rowHasCanonicalArtwork(row: Record<string, any>): boolean {
     const images = parseJsonObject(row.images);
@@ -39,8 +39,8 @@ function rowHasProviderFallbackArtwork(row: Record<string, any>): boolean {
     });
 }
 
-function rowHasSkyHookDataArtwork(row: Record<string, any>): boolean {
-    return Boolean(getSkyHookAlbumImageUrl(parseJsonObject(row.data)));
+function rowHasServarrMetadataDataArtwork(row: Record<string, any>): boolean {
+    return Boolean(getServarrMetadataAlbumImageUrl(parseJsonObject(row.data)));
 }
 
 export async function ensureReleaseGroupArtworkHydrated(
@@ -48,7 +48,7 @@ export async function ensureReleaseGroupArtworkHydrated(
     logPrefix = "ReleaseGroupArtworkService",
 ): Promise<void> {
     if (rowHasCanonicalArtwork(releaseGroup)) return;
-    if (rowHasSkyHookDataArtwork(releaseGroup)) return;
+    if (rowHasServarrMetadataDataArtwork(releaseGroup)) return;
     if (rowHasAnyCachedArtwork(releaseGroup) && !rowHasProviderFallbackArtwork(releaseGroup)) return;
 
     const releaseGroupMbid = String(releaseGroup.mbid || "").trim();
@@ -56,7 +56,7 @@ export async function ensureReleaseGroupArtworkHydrated(
     if (!releaseGroupMbid || !artistMbid) return;
 
     try {
-        await skyHookProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
+        await servarrMetadataProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
     } catch (error) {
         console.warn(`[${logPrefix}] Failed to hydrate artwork for release group ${releaseGroupMbid}:`, error);
     }
@@ -69,7 +69,7 @@ export async function resolveHydratedReleaseGroupArtwork(
     await ensureReleaseGroupArtworkHydrated(releaseGroup, logPrefix);
     const resolvedCoverUrl = await resolveAlbumArtwork({
         albumMbid: releaseGroup.mbid,
-        skyHookData: parseJsonObject(releaseGroup.data),
+        servarrMetadataData: parseJsonObject(releaseGroup.data),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
     return resolvedCoverUrl

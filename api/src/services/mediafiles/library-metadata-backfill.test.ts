@@ -141,7 +141,7 @@ beforeEach(() => {
         save_video_thumbnail: false,
         save_lyrics: false,
         save_nfo: true,
-        write_audio_metadata: false,
+        write_audio_tags_policy: "no",
     });
     configModule.updateConfig("path", {
         music_path: path.join(tempDir, "music"),

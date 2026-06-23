@@ -134,12 +134,6 @@ function applyNumberFormat(value: number, format?: string): string {
   return String(value);
 }
 
-function parseLegacyPaddedToken(normalizedName: string, base: string): number | null {
-  const match = new RegExp(`^${base}(0+)$`).exec(normalizedName);
-  if (!match) return null;
-  return match[1].length;
-}
-
 function cleanupRendered(input: string): string {
   return (input || "")
     .replace(/\(\s*\)/g, "")
@@ -261,16 +255,6 @@ function buildDerived(context: NamingContext) {
 function resolveTokenValue(tokenName: string, customFormat: string, context: NamingContext): string {
   const derived = buildDerived(context);
   const normalizedName = normalizeTokenName(tokenName);
-
-  // Check for legacy padded token formats (e.g., trackNumber00, volumeNumber000)
-  const trackNumberLegacyPad = parseLegacyPaddedToken(normalizedName, "tracknumber");
-  if (trackNumberLegacyPad !== null) {
-    return applyNumberFormat(derived.trackNumber, "0".repeat(trackNumberLegacyPad));
-  }
-  const volumeNumberLegacyPad = parseLegacyPaddedToken(normalizedName, "volumenumber");
-  if (volumeNumberLegacyPad !== null) {
-    return applyNumberFormat(derived.volumeNumber, "0".repeat(volumeNumberLegacyPad));
-  }
 
   let baseValue: string | null = null;
   let isNumericToken = false;
@@ -478,11 +462,6 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
       baseValue = context.channels ? String(context.channels) : "";
       break;
 
-    // Legacy/ignored tokens (return empty for backward compatibility)
-    case "albumversion":
-    case "trackversion":
-      return "";
-
     default:
       return "";
   }
@@ -505,24 +484,6 @@ function resolveToken(rawTokenBody: string, context: NamingContext): string {
   const isAllUppercase = hasLetters && tokenName === tokenName.toUpperCase();
 
   let result = resolveTokenValue(tokenName, customFormat, context);
-
-  // Apply legacy modifiers (deprecated, e.g. :the, :clean)
-  const formatSpecifiers = parts.slice(1);
-  const legacyModifiers = formatSpecifiers.filter((m) => {
-    const trimmed = m.trim();
-    return trimmed === "the" || trimmed === "clean" || trimmed === "first";
-  });
-
-  for (const modifier of legacyModifiers) {
-    const trimmed = modifier.trim();
-    if (trimmed === "the") {
-      result = titleThe(result);
-    } else if (trimmed === "clean") {
-      result = cleanTitle(result);
-    } else if (trimmed === "first") {
-      result = result.trim().charAt(0) || "";
-    }
-  }
 
   if (isAllLowercase) {
     result = result.toLowerCase();
@@ -552,22 +513,7 @@ function renderTokens(template: string, context: NamingContext): string {
     return placeholder;
   });
 
-  // 2. Handle legacy single-bracket nested style: {prefix-{token}} -> e.g. {tidal-{videoId}}
-  processedTemplate = processedTemplate.replace(/\{([^{}]+)-\{([^{}]+)\}\}/g, (_match, prefix: string, tokenBody: string) => {
-    const val2Raw = resolveToken(tokenBody, context);
-    const literalPrefix = cleanFileName(String(prefix || "").trim());
-    if (!val2Raw || !literalPrefix) {
-      return "";
-    }
-    const parts = val2Raw.split(";").map(p => p.trim()).filter(Boolean);
-    if (parts.length === 0) return "";
-    const combinedIds = parts.join("; ");
-    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
-    literalPlaceholders.push(`{${literalPrefix}-${combinedIds}}`);
-    return placeholder;
-  });
-
-  // 3. Align with Lidarr's TitleRegex and ReplaceToken behavior (allowing colons in customFormat)
+  // 2. Align with Lidarr's TitleRegex and ReplaceToken behavior (allowing colons in customFormat)
   const TitleRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
 
   const rendered = processedTemplate.replace(TitleRegex, (
@@ -599,23 +545,6 @@ function renderTokens(template: string, context: NamingContext): string {
 
     if (replacementText === null || replacementText === undefined) {
       return match;
-    }
-
-    // Apply legacy modifiers (deprecated, e.g. :the, :clean, :first)
-    const legacyModifiers = formatSpecifiers.filter((m) => {
-      const trimmed = m.trim();
-      return trimmed === "the" || trimmed === "clean" || trimmed === "first";
-    });
-
-    for (const modifier of legacyModifiers) {
-      const trimmed = modifier.trim();
-      if (trimmed === "the") {
-        replacementText = titleThe(replacementText);
-      } else if (trimmed === "clean") {
-        replacementText = cleanTitle(replacementText);
-      } else if (trimmed === "first") {
-        replacementText = replacementText.trim().charAt(0) || "";
-      }
     }
 
     replacementText = replacementText.trim();
@@ -705,8 +634,6 @@ const KNOWN_TOKEN_NAMES = new Set([
   "samplerate",
   "bitdepth",
   "channels",
-  "albumversion",
-  "trackversion",
   "providername",
   "providerartistid",
   "provideralbumid",
@@ -744,9 +671,7 @@ function normalizeTemplateToken(token: string): string {
 
 function isKnownTemplateToken(token: string): boolean {
   const normalized = normalizeTemplateToken(token);
-  return KNOWN_TOKEN_NAMES.has(normalized)
-    || parseLegacyPaddedToken(normalized, "tracknumber") !== null
-    || parseLegacyPaddedToken(normalized, "volumenumber") !== null;
+  return KNOWN_TOKEN_NAMES.has(normalized);
 }
 
 function hasAnyToken(tokens: string[], names: string[]): boolean {
@@ -757,9 +682,7 @@ function hasAnyToken(tokens: string[], names: string[]): boolean {
 function hasTrackNumberToken(tokens: string[]): boolean {
   return tokens.some((token) => {
     const normalized = normalizeTemplateToken(token);
-    return normalized === "tracknumber"
-      || normalized === "track"
-      || parseLegacyPaddedToken(normalized, "tracknumber") !== null;
+    return normalized === "tracknumber" || normalized === "track";
   });
 }
 

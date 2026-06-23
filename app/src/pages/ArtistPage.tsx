@@ -884,11 +884,11 @@ const ArtistPage = () => {
     if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const skyHookImageUrl = item.cover_art_url || null;
+    const ServarrMetadataImageUrl = item.cover_art_url || null;
     const providerImageUrl = getAlbumCover(item.provider_cover_id, "medium");
     const storedImageUrl = getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
 
-    const imageUrl = skyHookImageUrl || storedImageUrl || providerImageUrl;
+    const imageUrl = ServarrMetadataImageUrl || storedImageUrl || providerImageUrl;
     const fallbackImageUrl = imageUrl === providerImageUrl ? null : providerImageUrl;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"

@@ -41,6 +41,3 @@ export function useToast() {
 
   return { toast, toasts: [] };
 }
-
-// Standalone toast for use outside components (backwards compat)
-export { useToast as toast };

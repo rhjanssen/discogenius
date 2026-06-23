@@ -367,28 +367,6 @@ test("resolveArtistFolderForIdentityUpdate preserves custom folders after MBID r
   assert.equal(resolved.path, path.join("Indie", "Bastille"));
 });
 
-test("backfillArtistPaths assigns numeric folders when multiple legacy artists are missing paths", () => {
-  writeTestConfig({ artistFolder: "{artistName}" });
-
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, monitored, path)
-    VALUES (?, ?, ?, NULL), (?, ?, ?, NULL)
-  `).run("1", "Air", 1, "2", "Air", 1);
-
-  const updated = dbModule.backfillArtistPaths();
-  const rows = dbModule.db.prepare(`
-    SELECT id, path
-    FROM Artists
-    ORDER BY id ASC
-  `).all() as Array<{ id: string; path: string }>;
-
-  assert.equal(updated, 2);
-  assert.deepEqual(rows, [
-    { id: "1", path: "Air" },
-    { id: "2", path: "Air (1)" },
-  ]);
-});
-
 test("upsertLibraryFile stores canonical MusicBrainz and provider identity for imported tracks", () => {
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)

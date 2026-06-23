@@ -56,8 +56,7 @@ function getJobPayload(job: ActivityJob): Record<string, unknown> | null {
 
 function getJobProviderId(job: ActivityJob): string {
     const payload = getJobPayload(job);
-    const legacyRefId = (job as ActivityJob & { ref_id?: string }).ref_id;
-    return String(payload?.providerId || legacyRefId || "").trim();
+    return String(payload?.providerId || "").trim();
 }
 
 function getJobMediaType(job: ActivityJob): string {

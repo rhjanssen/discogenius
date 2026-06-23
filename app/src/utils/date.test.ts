@@ -44,7 +44,8 @@ describe("date utilities", () => {
     it("should filter out internal metadata sources", () => {
       expect(formatMetadataAttribution("lidarr", null)).toBeNull();
       expect(formatMetadataAttribution("lidarr-metadata", null)).toBeNull();
-      expect(formatMetadataAttribution("skyhook", null)).toBeNull();
+      expect(formatMetadataAttribution("Servarr Metadata Server", null)).toBeNull();
+      expect(formatMetadataAttribution("servarr-metadata", null)).toBeNull();
       expect(formatMetadataAttribution("LIDARR", null)).toBeNull();
     });
 
@@ -60,7 +61,7 @@ describe("date utilities", () => {
 
     it("should format attribution with internal source and update date", () => {
       const dateString = "2026-06-02T13:00:00Z";
-      expect(formatMetadataAttribution("skyhook", dateString)).toBe("Updated: 02-June-2026");
+      expect(formatMetadataAttribution("Servarr Metadata Server", dateString)).toBe("Updated: 02-June-2026");
     });
 
     it("should format full attribution with custom source and update date", () => {

@@ -111,7 +111,7 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
 }
 
 /**
- * Metadata identity is now resolved against the canonical MusicBrainz/Skyhook
+ * Metadata identity is now resolved against the canonical MusicBrainz/Servarr Metadata Server
  * graph. Provider catalog tables are gone: an album/track's canonical link lives
  * on its `ProviderItems` offer (release_group_mbid / release_mbid / recording_mbid /
  * recording_id), populated by the release-group matcher and by-position mapping in

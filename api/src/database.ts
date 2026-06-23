@@ -2,7 +2,6 @@ import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/config.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
-import { resolveArtistFolderForPersistence } from "./services/music/artist-paths.js";
 
 let _db: Database.Database | null = null;
 
@@ -191,139 +190,15 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-export function backfillArtistPaths(): number {
-  const artists = db.prepare(`
-    SELECT Artists.id, Artists.name, Artists.mbid, ArtistMetadata.disambiguation
-    FROM Artists
-    LEFT JOIN ArtistMetadata ON ArtistMetadata.mbid = Artists.mbid
-    WHERE Artists.path IS NULL
-  `).all() as Array<{ id: number; name: string; mbid: string | null; disambiguation: string | null }>;
-  if (artists.length === 0) return 0;
-
-  const update = db.prepare("UPDATE Artists SET path = ? WHERE id = ? AND path IS NULL");
-  const tx = db.transaction(() => {
-    for (const artist of artists) {
-      update.run(resolveArtistFolderForPersistence({
-        artistId: artist.id,
-        artistName: artist.name,
-        artistMbId: artist.mbid,
-        artistDisambiguation: artist.disambiguation,
-      }), artist.id);
-    }
-  });
-  tx();
-  return artists.length;
-}
-
 const BASE_SCHEMA_VERSION = 31;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
 // ====================================================================
 // SCHEMA
-// There is no migration engine: tables/indexes are created with
-// `CREATE ... IF NOT EXISTS` and runtime data is wiped rather than migrated, so
-// a fresh database is already at the current schema (`user_version =
-// BASE_SCHEMA_VERSION`, stamped by baselineSchemaVersion()).
+// Fresh databases are created directly at the current schema. Runtime startup
+// does not migrate old schemas or backfill old rows.
 // ====================================================================
-export function hasTable(tableName: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName) as { name: string } | undefined;
-  return Boolean(row?.name);
-}
-
-export function hasColumn(tableName: string, columnName: string): boolean {
-  if (!hasTable(tableName)) {
-    return false;
-  }
-
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  return columns.some((column) => column.name === columnName);
-}
-
-export function hasColumns(tableName: string, requiredColumns: string[]): boolean {
-  if (!hasTable(tableName)) {
-    return false;
-  }
-
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  const columnSet = new Set(columns.map((column) => column.name));
-  return requiredColumns.every((columnName) => columnSet.has(columnName));
-}
-
-function tableExists(tableName: string): boolean {
-  return hasTable(tableName);
-}
-
-function exactTableExists(tableName: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName) as { name: string } | undefined;
-  return Boolean(row?.name);
-}
-
-function findTableNameCaseInsensitive(tableName: string): string | undefined {
-  const row = db.prepare(`
-    SELECT name
-    FROM sqlite_master
-    WHERE type = 'table' AND lower(name) = lower(?)
-    ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END
-    LIMIT 1
-  `).get(tableName, tableName) as { name?: string } | undefined;
-  return row?.name;
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replace(/"/g, "\"\"")}"`;
-}
-
-function getTableColumns(tableName: string): string[] {
-  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>;
-  return columns.map((column) => column.name);
-}
-
-function columnExists(tableName: string, columnName: string): boolean {
-  return hasColumn(tableName, columnName);
-}
-
-function addColumnIfMissing(tableName: string, columnName: string, ddl: string): void {
-  if (hasTable(tableName) && !hasColumn(tableName, columnName)) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${ddl}`);
-  }
-}
-
-function tableHasRows(tableName: string): boolean {
-  if (!tableExists(tableName)) {
-    return false;
-  }
-
-  const row = db.prepare(`SELECT 1 as present FROM ${tableName} LIMIT 1`).get() as { present?: number } | undefined;
-  return row?.present === 1;
-}
-
-
-
-
-function ensureCatalogForeignKeyColumns(): void {
-  addColumnIfMissing("Albums", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE SET NULL");
-  addColumnIfMissing("AlbumReleases", "release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE CASCADE");
-  addColumnIfMissing("AlbumReleases", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE SET NULL");
-  addColumnIfMissing("AlbumReleaseMedia", "album_release_id", "album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE CASCADE");
-  addColumnIfMissing("AlbumArtists", "release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE CASCADE");
-  addColumnIfMissing("AlbumArtists", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE CASCADE");
-  addColumnIfMissing("ArtistReleaseGroups", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE CASCADE");
-  addColumnIfMissing("ArtistReleaseGroups", "release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE CASCADE");
-  addColumnIfMissing("ArtistReleaseGroupCuration", "source_artist_metadata_id", "source_artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE CASCADE");
-  addColumnIfMissing("ArtistReleaseGroupCuration", "release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE CASCADE");
-  addColumnIfMissing("ArtistReleaseGroupCuration", "redundant_to_release_group_id", "redundant_to_release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL");
-  addColumnIfMissing("Tracks", "album_release_id", "album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE CASCADE");
-  addColumnIfMissing("Tracks", "recording_id", "recording_id INTEGER REFERENCES Recordings(id) ON DELETE CASCADE");
-  addColumnIfMissing("ReleaseGroupSlots", "artist_metadata_id", "artist_metadata_id INTEGER REFERENCES ArtistMetadata(id) ON DELETE CASCADE");
-  addColumnIfMissing("ReleaseGroupSlots", "release_group_id", "release_group_id INTEGER REFERENCES Albums(id) ON DELETE CASCADE");
-  addColumnIfMissing("ReleaseGroupSlots", "selected_album_release_id", "selected_album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL");
-}
-
 function ensureCatalogForeignKeyIndexes(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_metadata_id ON Albums(artist_metadata_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_releases_release_group_id ON AlbumReleases(release_group_id)");
@@ -439,19 +314,11 @@ function ensureCatalogForeignKeyTriggers(): void {
 }
 
 /**
- * Production triggers that keep the TrackFiles catalog integer FKs
- * (release_group_id/album_release_id/track_id/recording_id) in sync with the
- * transitional MBID columns on every write — so newly imported/renamed files link
- * straight to the catalog graph without waiting for the housekeeping backfill. COALESCE
- * preserves any explicitly-set FK, and recording_id falls back to the video
- * ProviderItems offer for mbid-less provider videos. The trigger bodies update
- * only the FK columns (never the mbid/provider_id columns the AFTER UPDATE trigger
- * watches), so they cannot recurse even if recursive_triggers is ON.
+ * Keep TrackFiles catalog integer FKs in sync when code writes MBID/provider
+ * identity. New write paths should set these FKs directly; the trigger keeps
+ * derived writes consistent.
  */
 function ensureTrackFileForeignKeyTriggers(): void {
-  if (!hasTable("TrackFiles") || !hasColumn("TrackFiles", "recording_id")) {
-    return;
-  }
   const body = `
     UPDATE TrackFiles SET
       release_group_id = COALESCE(release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.canonical_release_group_mbid)),
@@ -486,8 +353,6 @@ function createUpgradeQueueProviderIdentityTable(tableName = "upgrade_queue"): v
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${tableName} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      media_id TEXT,
-      album_id TEXT,
       provider TEXT,
       entity_type TEXT,
       provider_id TEXT,
@@ -499,78 +364,9 @@ function createUpgradeQueueProviderIdentityTable(tableName = "upgrade_queue"): v
       status TEXT DEFAULT 'pending',  -- pending, completed, skipped
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       processed_at DATETIME,
-      UNIQUE(provider, entity_type, provider_id),
-      UNIQUE(media_id)
+      UNIQUE(provider, entity_type, provider_id)
     )
   `);
-}
-
-function ensureUpgradeQueueProviderIdentitySchema(): void {
-  if (!hasTable("upgrade_queue")) {
-    createUpgradeQueueProviderIdentityTable();
-    return;
-  }
-
-  if (hasColumn("upgrade_queue", "provider_id") && hasColumn("upgrade_queue", "entity_type")) {
-    return;
-  }
-
-  db.pragma("foreign_keys = OFF");
-  try {
-    db.exec("DROP TABLE IF EXISTS upgrade_queue_legacy_v27");
-    db.exec("ALTER TABLE upgrade_queue RENAME TO upgrade_queue_legacy_v27");
-    createUpgradeQueueProviderIdentityTable();
-
-    if (hasTable("ProviderMedia") && hasTable("ProviderAlbums")) {
-      db.exec(`
-        INSERT OR IGNORE INTO upgrade_queue (
-          media_id, album_id, provider, entity_type, provider_id, album_provider_id,
-          current_quality, target_quality, reason, status, created_at, processed_at
-        )
-        SELECT
-          CAST(legacy.media_id AS TEXT),
-          CAST(legacy.album_id AS TEXT),
-          'tidal',
-          CASE WHEN legacy_media.type = 'Music Video' THEN 'video' ELSE 'track' END,
-          COALESCE(CAST(legacy_media.id AS TEXT), CAST(legacy.media_id AS TEXT)),
-          COALESCE(CAST(legacy_album.id AS TEXT), CAST(legacy.album_id AS TEXT)),
-          legacy.current_quality,
-          legacy.target_quality,
-          legacy.reason,
-          legacy.status,
-          legacy.created_at,
-          legacy.processed_at
-        FROM upgrade_queue_legacy_v27 legacy
-        LEFT JOIN ProviderMedia legacy_media ON CAST(legacy_media.id AS TEXT) = CAST(legacy.media_id AS TEXT)
-        LEFT JOIN ProviderAlbums legacy_album ON CAST(legacy_album.id AS TEXT) = CAST(legacy.album_id AS TEXT)
-      `);
-    } else {
-      db.exec(`
-        INSERT OR IGNORE INTO upgrade_queue (
-          media_id, album_id, provider, entity_type, provider_id, album_provider_id,
-          current_quality, target_quality, reason, status, created_at, processed_at
-        )
-        SELECT
-          CAST(media_id AS TEXT),
-          CAST(album_id AS TEXT),
-          'tidal',
-          'track',
-          CAST(media_id AS TEXT),
-          CAST(album_id AS TEXT),
-          current_quality,
-          target_quality,
-          reason,
-          status,
-          created_at,
-          processed_at
-        FROM upgrade_queue_legacy_v27
-      `);
-    }
-
-    db.exec("DROP TABLE IF EXISTS upgrade_queue_legacy_v27");
-  } finally {
-    db.pragma("foreign_keys = ON");
-  }
 }
 
 function ensureMetadataIdentitySchema(): void {
@@ -909,7 +705,7 @@ function ensureMusicBrainzProviderSchema(): void {
       album_release_id INTEGER,
       track_id INTEGER,
       recording_id INTEGER,
-      provider_album_id TEXT,             -- owning provider album id for track/video offers (replaces ProviderMedia.album_id link)
+      provider_album_id TEXT,             -- owning provider album id for track/video offers
       provider_url TEXT,
       asset_id TEXT,
       match_status TEXT,
@@ -1016,11 +812,6 @@ function ensureMusicBrainzProviderSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_provider_item_matches_source ON ProviderItemMatches(provider, provider_item_type, provider_item_id);
   `);
 
-  db.exec(`
-    DROP TABLE IF EXISTS RecordingLyrics;
-    DROP TABLE IF EXISTS Lyrics;
-  `);
-
   db.exec("CREATE INDEX IF NOT EXISTS idx_mb_release_groups_artist ON Albums(artist_mbid, first_release_date)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_artist ON AlbumArtists(artist_mbid, release_group_mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_groups_group ON ArtistReleaseGroups(release_group_mbid, artist_mbid)");
@@ -1039,11 +830,6 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
-  // Guarantee the column exists before indexing it (fresh DBs already have it
-  // from the base CREATE TABLE above).
-  if (!hasColumn("ProviderItems", "provider_album_id")) {
-    db.exec("ALTER TABLE ProviderItems ADD COLUMN provider_album_id TEXT");
-  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
   // The download-queue list resolves each item's metadata by provider_id (N+1
   // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
@@ -1076,25 +862,12 @@ function ensureMusicBrainzProviderSchema(): void {
   // initDatabase — no separate index needed here.)
 }
 
-type SchemaBaselineState = {
-  fromVersion: number;
-  toVersion: number;
-  appliedDescriptions: string[];
-};
-
-/**
- * Stamp the current schema baseline. There is no migration engine: schema
- * objects are created with `CREATE TABLE/INDEX IF NOT EXISTS` and runtime data
- * is wiped rather than migrated, so a fresh database is already at the current
- * schema and we simply record `user_version = BASE_SCHEMA_VERSION`.
- */
-function baselineSchemaVersion(): SchemaBaselineState {
+function stampSchemaVersion(): void {
   const fromVersion = db.pragma("user_version", { simple: true }) as number;
   if (fromVersion !== BASE_SCHEMA_VERSION) {
     console.log(`🛠️  Baseline schema at version ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION}).`);
     db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
   }
-  return { fromVersion, toVersion: BASE_SCHEMA_VERSION, appliedDescriptions: [] };
 }
 
 export function initDatabase() {
@@ -1156,10 +929,10 @@ export function initDatabase() {
       
       -- Linkage
       artist_id TEXT NOT NULL,           -- Managed artist id
-      album_id TEXT,                     -- Legacy provider album shadow id; prefer provider_id/provider_album_id + catalog FKs
-      media_id TEXT,                     -- Legacy provider media shadow id; prefer provider_id + catalog FKs
+      album_id TEXT,
+      media_id TEXT,
 
-      -- Transitional MBID identity (migration debt; prefer integer FKs below)
+      -- MusicBrainz identity captured when the file was imported/downloaded
       canonical_artist_mbid TEXT,
       canonical_release_group_mbid TEXT,
       canonical_release_mbid TEXT,
@@ -1363,21 +1136,6 @@ export function initDatabase() {
     )
   `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS database_version_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      app_version TEXT NOT NULL,
-      api_version TEXT NOT NULL,
-      schema_from INT NOT NULL,
-      schema_to INT NOT NULL,
-      migration_notes TEXT,
-      applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // ====================================================================
-  // MIGRATIONS — must run before indexes so migration-added columns exist
-  // ====================================================================
   const startupIntegrityCheck = String(process.env.DISCOGENIUS_STARTUP_INTEGRITY_CHECK || "off").toLowerCase();
   if (startupIntegrityCheck === "quick" || startupIntegrityCheck === "full") {
     const pragmaName = startupIntegrityCheck === "full" ? "integrity_check" : "quick_check";
@@ -1390,8 +1148,7 @@ export function initDatabase() {
     console.log("[SQLite] Startup integrity check skipped. Set DISCOGENIUS_STARTUP_INTEGRITY_CHECK=quick or full to run one at boot.");
   }
 
-  const migrationSummary = baselineSchemaVersion();
-  ensureCatalogForeignKeyColumns();
+  stampSchemaVersion();
   ensureCatalogForeignKeyIndexes();
   ensureCatalogForeignKeyTriggers();
 
@@ -1407,9 +1164,6 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid ON Artists(mbid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_mbid_monitored ON Artists(mbid, monitored)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_artists_musicbrainz_status ON Artists(musicbrainz_status)`);
-
-  db.exec(`DROP INDEX IF EXISTS idx_albums_downloaded`);
-  db.exec(`DROP INDEX IF EXISTS idx_media_downloaded`);
 
   // Job indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status)`);
@@ -1427,8 +1181,6 @@ export function initDatabase() {
 
   // Library file indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_artist_id ON TrackFiles(artist_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_album_id ON TrackFiles(album_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_media_id ON TrackFiles(media_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_file_type ON TrackFiles(file_type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_library_root ON TrackFiles(library_root)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_needs_rename ON TrackFiles(needs_rename)`);
@@ -1436,7 +1188,6 @@ export function initDatabase() {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_track_files_path ON TrackFiles(file_path)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_fingerprint ON TrackFiles(fingerprint)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_acoustid_id ON TrackFiles(acoustid_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_media_id_file_type ON TrackFiles(media_id, file_type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_artist ON TrackFiles(canonical_artist_mbid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release_group ON TrackFiles(canonical_release_group_mbid, library_slot)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)`);
@@ -1457,12 +1208,8 @@ export function initDatabase() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_album ON history_events(album_id, date DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_media ON history_events(media_id, date DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_history_events_event_type ON history_events(event_type, date DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_database_version_history_applied_at ON database_version_history(applied_at DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_database_version_history_app_version ON database_version_history(app_version, applied_at DESC)");
 
   // Upgrade queue indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_media_id ON upgrade_queue(media_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_id ON upgrade_queue(album_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_provider_resource ON upgrade_queue(provider, entity_type, provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_album_provider ON upgrade_queue(provider, album_provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_upgrade_queue_track_file ON upgrade_queue(track_file_id)`);
@@ -1480,11 +1227,11 @@ export function initDatabase() {
   // ====================================================================
   // DEFAULT DATA
   // ====================================================================
-  initializeDefaultData(migrationSummary);
+  initializeDefaultData();
 
 }
 
-function recordDatabaseVersionState(migrationSummary: SchemaBaselineState) {
+function recordDatabaseVersionState() {
   const releaseInfo = getCurrentAppReleaseInfo();
   const appVersion = releaseInfo.version;
   const apiVersion = releaseInfo.apiVersion;
@@ -1508,14 +1255,6 @@ function recordDatabaseVersionState(migrationSummary: SchemaBaselineState) {
       description = excluded.description,
       updated_at = CURRENT_TIMESTAMP
   `);
-
-  const insertHistory = db.prepare(`
-    INSERT INTO database_version_history (app_version, api_version, schema_from, schema_to, migration_notes)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-
-  const shouldRecordHistory = migrationSummary.toVersion !== migrationSummary.fromVersion
-    || previousVersionRow?.value !== appVersion;
 
   db.exec("BEGIN");
   try {
@@ -1551,20 +1290,6 @@ function recordDatabaseVersionState(migrationSummary: SchemaBaselineState) {
 
     db.prepare("DELETE FROM config WHERE key = 'runtime.current_schema_user_version'").run();
 
-    if (shouldRecordHistory) {
-      const notes = migrationSummary.appliedDescriptions.length > 0
-        ? migrationSummary.appliedDescriptions.join(" | ")
-        : "startup version change";
-
-      insertHistory.run(
-        appVersion,
-        apiVersion,
-        migrationSummary.fromVersion,
-        migrationSummary.toVersion,
-        notes
-      );
-    }
-
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -1572,7 +1297,7 @@ function recordDatabaseVersionState(migrationSummary: SchemaBaselineState) {
   }
 }
 
-function initializeDefaultData(migrationSummary: SchemaBaselineState) {
+function initializeDefaultData() {
   // Check if quality profiles exist
   const profileCount = db.prepare("SELECT COUNT(*) as count FROM quality_profiles").get() as { count: number };
 
@@ -1660,7 +1385,7 @@ function initializeDefaultData(migrationSummary: SchemaBaselineState) {
     insertConfig.run(key, value, description);
   }
 
-  recordDatabaseVersionState(migrationSummary);
+  recordDatabaseVersionState();
 
   console.log("✅ Default configuration initialized");
 }

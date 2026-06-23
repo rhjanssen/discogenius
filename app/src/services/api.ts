@@ -134,9 +134,7 @@ function toApiUrl(endpoint: string): string {
     return `${API_PREFIX}${endpoint}`;
   }
 
-  // Everything else lives under /api/v1. Accept legacy '/v1/...' call sites and
-  // normalize them onto the single versioned root.
-  const path = endpoint === '/v1' ? '' : endpoint.startsWith('/v1/') ? endpoint.slice(3) : endpoint;
+  const path = endpoint.startsWith('/v1/') ? endpoint.slice(3) : endpoint;
   return `${API_V1_PREFIX}${path}`;
 }
 

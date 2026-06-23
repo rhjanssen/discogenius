@@ -4,14 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rt-maintenance-backfill-"));
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rt-maintenance-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { backfillCanonicalTrackFiles, backfillTrackFileForeignKeys, dedupeLibraryFiles, repairMonitoringGaps } = await import("./runtime-maintenance.js");
+const { dedupeLibraryFiles, repairMonitoringGaps } = await import("./runtime-maintenance.js");
 
 function resetRows() {
   for (const table of [
@@ -25,9 +25,6 @@ function resetRows() {
 beforeEach(resetRows);
 afterEach(resetRows);
 
-// Seed the canonical graph plus ProviderItems. TrackFiles may still carry
-// media_id/album_id shadow ids, but those shadows now resolve through provider
-// offers rather than retired legacy provider catalog tables.
 function seedLegacyGraph() {
   db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
     .run("artist-local", "Legacy Artist", "artist-mbid", 1);
@@ -116,108 +113,17 @@ function freshSummary() {
     albumStatesRefreshed: 0,
     artistStatesRefreshed: 0,
     databaseOptimized: false,
-    mediaIdentityIndexEnsured: false,
-    trackedAssetIdentityIndexesEnsured: false,
     historyJobsPruned: 0,
-    canonicalTrackFilesBackfilled: 0,
-    trackFileForeignKeysBackfilled: 0,
   };
 }
-
-function getCanonical(id: number) {
-  return db.prepare(`
-    SELECT canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
-           canonical_track_mbid, canonical_recording_mbid
-    FROM TrackFiles WHERE id = ?
-  `).get(id) as Record<string, string | null>;
-}
-
-function seedProviderTrackOffer() {
-  // Provider availability offer the canonical-only resolver resolves mbids from.
-  db.prepare(`
-    INSERT OR IGNORE INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, provider_album_id, title,
-      quality, library_slot
-    )
-    VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid', 'release-group-1', 'release-1', 'track-1', 'recording-1', 'provider-album-1', 'Track One', 'LOSSLESS', 'stereo')
-  `).run();
-}
-
-test("back-fills canonical ids for a legacy track file via the ProviderItems offer", () => {
-  seedLegacyGraph();
-  seedProviderTrackOffer();
-  const id = insertLegacyTrackFile({ provider: "tidal", provider_entity_type: "track", provider_id: "provider-track-1" });
-
-  const summary = freshSummary();
-  backfillCanonicalTrackFiles(summary);
-
-  assert.equal(summary.canonicalTrackFilesBackfilled, 1);
-  const row = getCanonical(id);
-  assert.equal(row.canonical_artist_mbid, "artist-mbid");
-  assert.equal(row.canonical_release_group_mbid, "release-group-1");
-  assert.equal(row.canonical_release_mbid, "release-1");
-  assert.equal(row.canonical_track_mbid, "track-1");
-  assert.equal(row.canonical_recording_mbid, "recording-1");
-});
-
-test("never overwrites canonical ids already present and is idempotent", () => {
-  seedLegacyGraph();
-  seedProviderTrackOffer();
-  const id = insertLegacyTrackFile({
-    provider: "tidal", provider_entity_type: "track", provider_id: "provider-track-1",
-    canonical_recording_mbid: "manually-pinned-recording",
-  });
-
-  const first = freshSummary();
-  backfillCanonicalTrackFiles(first);
-  assert.equal(first.canonicalTrackFilesBackfilled, 1); // filled the other NULL columns
-
-  const row = getCanonical(id);
-  // Existing value preserved, not clobbered by the resolver's recording-1.
-  assert.equal(row.canonical_recording_mbid, "manually-pinned-recording");
-  assert.equal(row.canonical_release_group_mbid, "release-group-1");
-
-  // Second run finds nothing to fill (release_group already set, recording set).
-  const second = freshSummary();
-  backfillCanonicalTrackFiles(second);
-  assert.equal(second.canonicalTrackFilesBackfilled, 0);
-});
-
-test("skips rows with no legacy linkage to resolve from", () => {
-  seedLegacyGraph();
-  // A row with neither media_id nor album_id is not a candidate.
-  const id = insertLegacyTrackFile({ media_id: null, album_id: null });
-
-  const summary = freshSummary();
-  backfillCanonicalTrackFiles(summary);
-  assert.equal(summary.canonicalTrackFilesBackfilled, 0);
-  assert.equal(getCanonical(id).canonical_release_group_mbid, null);
-});
-
-test("leaves a fully-populated row untouched", () => {
-  seedLegacyGraph();
-  insertLegacyTrackFile({
-    canonical_artist_mbid: "artist-mbid",
-    canonical_release_group_mbid: "release-group-1",
-    canonical_release_mbid: "release-1",
-    canonical_track_mbid: "track-1",
-    canonical_recording_mbid: "recording-1",
-  });
-
-  const summary = freshSummary();
-  backfillCanonicalTrackFiles(summary);
-  assert.equal(summary.canonicalTrackFilesBackfilled, 0);
-});
 
 function countTrackFiles() {
   return (db.prepare("SELECT COUNT(*) c FROM TrackFiles").get() as { c: number }).c;
 }
 
-test("canonical dedupe removes same-track/same-slot dupes with different media_ids", () => {
+test("canonical dedupe removes same-track/same-slot dupes with different provider media ids", () => {
   seedLegacyGraph();
-  // Same track (same release appearance) + slot, two different legacy media_ids —
-  // the media-id key alone would keep both; the canonical track key collapses them.
+  // Same track (same release appearance) + slot, two different provider media ids.
   insertLegacyTrackFile({ media_id: "media-a", canonical_track_mbid: "track-1", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/a.flac", filename: "a.flac" });
   insertLegacyTrackFile({ media_id: "media-b", canonical_track_mbid: "track-1", canonical_recording_mbid: "rec-1", library_slot: "stereo", file_path: "C:/Music/b.flac", filename: "b.flac" });
   assert.equal(countTrackFiles(), 2);
@@ -269,78 +175,9 @@ test("canonical dedupe merges duplicate videos by recording within a slot", () =
   assert.equal(countTrackFiles(), 1);
 });
 
-test("dedupe still collapses legacy rows sharing media_id with no canonical recording", () => {
-  seedLegacyGraph();
-  insertLegacyTrackFile({ media_id: "media-x", canonical_recording_mbid: null, library_slot: "stereo", file_path: "C:/Music/x1.flac", filename: "x1.flac" });
-  insertLegacyTrackFile({ media_id: "media-x", canonical_recording_mbid: null, library_slot: "stereo", file_path: "C:/Music/x2.flac", filename: "x2.flac" });
-
-  const summary = freshSummary();
-  dedupeLibraryFiles(summary);
-
-  assert.equal(summary.duplicateLibraryFilesRemoved, 1);
-  assert.equal(countTrackFiles(), 1);
-});
-
 function idByMbid(table: string, mbid: string): number {
   return (db.prepare(`SELECT id FROM ${table} WHERE mbid = ?`).get(mbid) as { id: number }).id;
 }
-
-test("backfills canonical integer FKs from the canonical mbids", () => {
-  seedLegacyGraph();
-  const id = insertLegacyTrackFile({
-    canonical_release_group_mbid: "release-group-1",
-    canonical_release_mbid: "release-1",
-    canonical_track_mbid: "track-1",
-    canonical_recording_mbid: "recording-1",
-  });
-  // Simulate a pre-trigger row (FKs not yet populated). Updating FK columns does
-  // NOT fire the populate-on-write trigger (it watches the mbid/provider_id cols).
-  db.prepare("UPDATE TrackFiles SET release_group_id=NULL, album_release_id=NULL, track_id=NULL, recording_id=NULL WHERE id=?").run(id);
-
-  const summary = freshSummary();
-  backfillTrackFileForeignKeys(summary);
-
-  assert.equal(summary.trackFileForeignKeysBackfilled, 1);
-  const row = db.prepare(`
-    SELECT release_group_id, album_release_id, track_id, recording_id FROM TrackFiles WHERE id = ?
-  `).get(id) as Record<string, number | null>;
-  assert.equal(row.release_group_id, idByMbid("Albums", "release-group-1"));
-  assert.equal(row.album_release_id, idByMbid("AlbumReleases", "release-1"));
-  assert.equal(row.track_id, idByMbid("Tracks", "track-1"));
-  assert.equal(row.recording_id, idByMbid("Recordings", "recording-1"));
-
-  // Idempotent: a second run fills nothing.
-  const second = freshSummary();
-  backfillTrackFileForeignKeys(second);
-  assert.equal(second.trackFileForeignKeysBackfilled, 0);
-});
-
-test("backfills recording_id for mbid-less provider videos via the video ProviderItems offer", () => {
-  seedLegacyGraph();
-  db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)`)
-    .run(null, "Some Video", "artist-mbid", 1);
-  const videoRecordingId = (db.prepare(
-    "SELECT id FROM Recordings WHERE title = 'Some Video' AND is_video = 1",
-  ).get() as { id: number }).id;
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, recording_id, title, library_slot)
-    VALUES (?, ?, ?, ?, ?, ?)`).run("tidal", "video", "vid-999", videoRecordingId, "Some Video", "video");
-
-  const id = insertLegacyTrackFile({
-    media_id: null, album_id: null,
-    file_type: "video", library_slot: "video",
-    provider: "tidal", provider_entity_type: "video", provider_id: "vid-999",
-    file_path: "C:/Videos/some-video.mp4", filename: "some-video.mp4", extension: "mp4",
-  });
-  // Simulate a pre-trigger row.
-  db.prepare("UPDATE TrackFiles SET recording_id=NULL WHERE id=?").run(id);
-
-  const summary = freshSummary();
-  backfillTrackFileForeignKeys(summary);
-
-  assert.equal(summary.trackFileForeignKeysBackfilled, 1);
-  const row = db.prepare("SELECT recording_id FROM TrackFiles WHERE id = ?").get(id) as { recording_id: number | null };
-  assert.equal(row.recording_id, videoRecordingId);
-});
 
 test("monitoring gap repair promotes installed audio slots canonically without provider rows", () => {
   seedCanonicalMonitoringGraph();
@@ -451,7 +288,6 @@ test("monitoring gap repair resolves mbid-less provider video files through Prov
 
 test("populate-on-write trigger fills canonical integer FKs on INSERT", () => {
   seedLegacyGraph();
-  // No backfill call — the production trigger should fill the FKs at insert time.
   const id = insertLegacyTrackFile({
     canonical_release_group_mbid: "release-group-1",
     canonical_release_mbid: "release-1",

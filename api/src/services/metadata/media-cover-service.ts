@@ -6,7 +6,7 @@ import path from "path";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderArtworkEntityType } from "../providers/streaming-provider.js";
 
-export type SkyHookImage = {
+export type ServarrMetadataImage = {
   Url?: string | null;
   url?: string | null;
   remoteUrl?: string | null;
@@ -18,9 +18,9 @@ export type SkyHookImage = {
   height?: number | null;
 };
 
-export type SkyHookImageContainer = {
-  Images?: SkyHookImage[] | null;
-  images?: SkyHookImage[] | null;
+export type ServarrMetadataImageContainer = {
+  Images?: ServarrMetadataImage[] | null;
+  images?: ServarrMetadataImage[] | null;
 };
 
 export type ProviderArtworkCandidate = {
@@ -186,7 +186,7 @@ export function normalizeArtworkUrl(value: unknown): string | null {
   return null;
 }
 
-function getSkyHookImages(resource: SkyHookImageContainer | null | undefined): SkyHookImage[] {
+function getServarrMetadataImages(resource: ServarrMetadataImageContainer | null | undefined): ServarrMetadataImage[] {
   if (!resource) {
     return [];
   }
@@ -202,15 +202,15 @@ function getSkyHookImages(resource: SkyHookImageContainer | null | undefined): S
   return [];
 }
 
-function imageUrl(image: SkyHookImage): string | null {
+function imageUrl(image: ServarrMetadataImage): string | null {
   return normalizeArtworkUrl(image.Url || image.url || image.remoteUrl);
 }
 
-function imageCoverType(image: SkyHookImage): string {
+function imageCoverType(image: ServarrMetadataImage): string {
   return String(image.CoverType || image.coverType || "").trim().toLowerCase();
 }
 
-function imageArea(image: SkyHookImage): number {
+function imageArea(image: ServarrMetadataImage): number {
   const width = Number(image.Width ?? image.width ?? 0);
   const height = Number(image.Height ?? image.height ?? 0);
   return Number.isFinite(width * height) ? width * height : 0;
@@ -265,11 +265,11 @@ function chooseImageFromStoredList(
   return url ? options.proxy ? registerMediaCoverProxyUrl(url) || url : url : null;
 }
 
-export function getSkyHookImageUrl(
-  resource: SkyHookImageContainer | null | undefined,
+export function getServarrMetadataImageUrl(
+  resource: ServarrMetadataImageContainer | null | undefined,
   preferredCoverTypes: string | string[],
 ): string | null {
-  const images = getSkyHookImages(resource).filter((image) => imageUrl(image));
+  const images = getServarrMetadataImages(resource).filter((image) => imageUrl(image));
   if (images.length === 0) {
     return null;
   }
@@ -289,18 +289,18 @@ export function getSkyHookImageUrl(
   return fallbackUrl || null;
 }
 
-export function getSkyHookArtistImageUrl(
-  artist: SkyHookImageContainer | null | undefined,
+export function getServarrMetadataArtistImageUrl(
+  artist: ServarrMetadataImageContainer | null | undefined,
   preferredCoverTypes: string | string[] = ["Poster", "Headshot", "Fanart"],
 ): string | null {
-  return getSkyHookImageUrl(artist, preferredCoverTypes);
+  return getServarrMetadataImageUrl(artist, preferredCoverTypes);
 }
 
-export function getSkyHookAlbumImageUrl(
-  album: SkyHookImageContainer | null | undefined,
+export function getServarrMetadataAlbumImageUrl(
+  album: ServarrMetadataImageContainer | null | undefined,
   preferredCoverTypes: string | string[] = ["Cover", "Poster"],
 ): string | null {
-  return getSkyHookImageUrl(album, preferredCoverTypes);
+  return getServarrMetadataImageUrl(album, preferredCoverTypes);
 }
 
 function configuredAlbumCoverResolution(): "origin" | number {
@@ -375,7 +375,7 @@ export function chooseCachedProviderArtwork(
 
 export function chooseCachedAlbumArtwork(options: {
   albumMbid?: string | null;
-  skyHookData?: SkyHookImageContainer | null;
+  servarrMetadataData?: ServarrMetadataImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
 }): string | null {
   let storedProviderFallbackUrl: string | null = null;
@@ -402,9 +402,9 @@ export function chooseCachedAlbumArtwork(options: {
     }
   }
 
-  const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
-  if (skyHookUrl) {
-    return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
+  const servarrMetadataUrl = getServarrMetadataAlbumImageUrl(options.servarrMetadataData);
+  if (servarrMetadataUrl) {
+    return registerMediaCoverProxyUrl(servarrMetadataUrl) || servarrMetadataUrl;
   }
   if (storedProviderFallbackUrl) {
     return storedProviderFallbackUrl;
@@ -415,7 +415,7 @@ export function chooseCachedAlbumArtwork(options: {
 
 export function chooseCachedArtistArtwork(options: {
   artistMbid?: string | null;
-  skyHookData?: SkyHookImageContainer | null;
+  servarrMetadataData?: ServarrMetadataImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   preferredCoverTypes?: string | string[];
 }): string | null {
@@ -445,9 +445,9 @@ export function chooseCachedArtistArtwork(options: {
     }
   }
 
-  const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
-  if (skyHookUrl) {
-    return registerMediaCoverProxyUrl(skyHookUrl) || skyHookUrl;
+  const servarrMetadataUrl = getServarrMetadataArtistImageUrl(options.servarrMetadataData, options.preferredCoverTypes);
+  if (servarrMetadataUrl) {
+    return registerMediaCoverProxyUrl(servarrMetadataUrl) || servarrMetadataUrl;
   }
   const providerUrl = chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
   return registerMediaCoverProxyUrl(providerUrl) || providerUrl;
@@ -529,7 +529,7 @@ export async function resolveProviderArtworkUrl(
 
 export async function resolveAlbumArtwork(options: {
   albumMbid?: string | null;
-  skyHookData?: SkyHookImageContainer | null;
+  servarrMetadataData?: ServarrMetadataImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   size?: string | number | null;
 }): Promise<string | null> {
@@ -557,9 +557,9 @@ export async function resolveAlbumArtwork(options: {
     }
   }
 
-  const skyHookUrl = getSkyHookAlbumImageUrl(options.skyHookData);
-  if (skyHookUrl) {
-    return skyHookUrl;
+  const servarrMetadataUrl = getServarrMetadataAlbumImageUrl(options.servarrMetadataData);
+  if (servarrMetadataUrl) {
+    return servarrMetadataUrl;
   }
   if (storedProviderFallbackUrl) {
     return storedProviderFallbackUrl;
@@ -580,7 +580,7 @@ export async function resolveAlbumArtwork(options: {
 
 export async function resolveArtistArtwork(options: {
   artistMbid?: string | null;
-  skyHookData?: SkyHookImageContainer | null;
+  servarrMetadataData?: ServarrMetadataImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   preferredCoverTypes?: string | string[];
   size?: string | number | null;
@@ -611,9 +611,9 @@ export async function resolveArtistArtwork(options: {
     }
   }
 
-  const skyHookUrl = getSkyHookArtistImageUrl(options.skyHookData, options.preferredCoverTypes);
-  if (skyHookUrl) {
-    return skyHookUrl;
+  const servarrMetadataUrl = getServarrMetadataArtistImageUrl(options.servarrMetadataData, options.preferredCoverTypes);
+  if (servarrMetadataUrl) {
+    return servarrMetadataUrl;
   }
 
   const providerUrl = await resolveProviderArtworkUrl(
@@ -631,12 +631,12 @@ export async function resolveArtistArtwork(options: {
 
 // MediaCoverService class aligned 1:1 with Lidarr naming and structure
 export class MediaCoverService {
-  static getArtistImageUrl(artist: SkyHookImageContainer, preferredCoverType = "Poster"): string | null {
-    return getSkyHookArtistImageUrl(artist, preferredCoverType);
+  static getArtistImageUrl(artist: ServarrMetadataImageContainer, preferredCoverType = "Poster"): string | null {
+    return getServarrMetadataArtistImageUrl(artist, preferredCoverType);
   }
 
-  static getAlbumImageUrl(album: SkyHookImageContainer, preferredCoverType = "Cover"): string | null {
-    return getSkyHookAlbumImageUrl(album, preferredCoverType);
+  static getAlbumImageUrl(album: ServarrMetadataImageContainer, preferredCoverType = "Cover"): string | null {
+    return getServarrMetadataAlbumImageUrl(album, preferredCoverType);
   }
 
   static getCoverPath(entityId: number, coverEntity: 'Artist' | 'Album', coverType: string, extension: string): string {
@@ -644,7 +644,7 @@ export class MediaCoverService {
     return `${coverEntity.toLowerCase()}s/${entityId}/${coverType.toLowerCase()}${extension}`;
   }
 
-  static convertToLocalUrls(entityId: number, coverEntity: 'Artist' | 'Album', covers: SkyHookImage[]): void {
+  static convertToLocalUrls(entityId: number, coverEntity: 'Artist' | 'Album', covers: ServarrMetadataImage[]): void {
     // Discogenius uses raw RemoteUrl and resolved URLs directly, signature kept for 1:1 parity
   }
 

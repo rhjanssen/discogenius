@@ -18,21 +18,6 @@ export const TIDDL_CONFIG_DIR = path.join(TIDAL_PROVIDER_DIR, ".tiddl");
 export const TIDDL_AUTH_FILE = path.join(TIDDL_CONFIG_DIR, "auth.json");
 export const TIDDL_CONFIG_FILE = path.join(TIDDL_CONFIG_DIR, "config.toml");
 
-// One-time migration: relocate a pre-2.0.2 tiddl directory (config/.tiddl) into
-// the provider folder so existing auth/cache carries over without re-login.
-const LEGACY_TIDDL_CONFIG_DIR = path.join(CONFIG_DIR, ".tiddl");
-export function migrateLegacyTiddlDir(): void {
-    try {
-        if (fs.existsSync(LEGACY_TIDDL_CONFIG_DIR) && !fs.existsSync(TIDDL_CONFIG_DIR)) {
-            fs.mkdirSync(TIDAL_PROVIDER_DIR, { recursive: true });
-            fs.renameSync(LEGACY_TIDDL_CONFIG_DIR, TIDDL_CONFIG_DIR);
-            console.log(`[TIDDL] Migrated ${LEGACY_TIDDL_CONFIG_DIR} -> ${TIDDL_CONFIG_DIR}`);
-        }
-    } catch (error) {
-        console.warn("[TIDDL] Failed to migrate legacy tiddl directory:", error);
-    }
-}
-
 export type TiddlTrackQuality = "low" | "normal" | "high" | "max";
 export type TiddlVideoQuality = "sd" | "hd" | "fhd";
 
@@ -55,7 +40,6 @@ export function buildTiddlEnv(): NodeJS.ProcessEnv {
 }
 
 export function ensureTiddlConfigDir(): void {
-    migrateLegacyTiddlDir();
     if (!fs.existsSync(TIDDL_CONFIG_DIR)) {
         fs.mkdirSync(TIDDL_CONFIG_DIR, { recursive: true });
     }

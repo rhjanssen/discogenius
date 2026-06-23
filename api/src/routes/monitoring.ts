@@ -30,8 +30,6 @@ router.get("/status", (_, res) => {
       config: {
         enabled: status.config.enable_active_monitoring,
         scanIntervalHours: status.config.scan_interval_hours,
-        startHour: status.config.start_hour,
-        durationHours: status.config.duration_hours,
         monitorNewArtists: status.config.monitor_new_artists,
         removeUnmonitoredFiles: status.config.remove_unmonitored_files,
         artistRefreshDays: status.config.artist_refresh_days,
@@ -57,8 +55,6 @@ router.post("/config", (req, res) => {
     const validatedUpdates = parseMonitoringConfigUpdate(getObjectBody(req.body), {
       enabled: currentStatus.config.enable_active_monitoring,
       scanIntervalHours: currentStatus.config.scan_interval_hours,
-      startHour: currentStatus.config.start_hour,
-      durationHours: currentStatus.config.duration_hours,
       monitorNewArtists: currentStatus.config.monitor_new_artists,
       removeUnmonitoredFiles: currentStatus.config.remove_unmonitored_files,
       artistRefreshDays: currentStatus.config.artist_refresh_days,
@@ -71,8 +67,6 @@ router.post("/config", (req, res) => {
     });
     const updates: any = {};
     if ("enabled" in validatedUpdates) updates.enable_active_monitoring = validatedUpdates.enabled;
-    if ("startHour" in validatedUpdates) updates.start_hour = validatedUpdates.startHour;
-    if ("durationHours" in validatedUpdates) updates.duration_hours = validatedUpdates.durationHours;
     if ("scanIntervalHours" in validatedUpdates) updates.scan_interval_hours = validatedUpdates.scanIntervalHours;
     if ("monitorNewArtists" in validatedUpdates) updates.monitor_new_artists = validatedUpdates.monitorNewArtists;
     if ("removeUnmonitoredFiles" in validatedUpdates) updates.remove_unmonitored_files = validatedUpdates.removeUnmonitoredFiles;
@@ -87,8 +81,6 @@ router.post("/config", (req, res) => {
     const response = {
       enabled: config.enable_active_monitoring,
       scanIntervalHours: config.scan_interval_hours,
-      startHour: config.start_hour,
-      durationHours: config.duration_hours,
       monitorNewArtists: config.monitor_new_artists,
       removeUnmonitoredFiles: config.remove_unmonitored_files,
       artistRefreshDays: config.artist_refresh_days,

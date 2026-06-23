@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let artistQueryModule: typeof import("./artist-query-service.js");
 let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
-let skyHookProxyModule: typeof import("../metadata/skyhook-proxy.js");
+let ServarrMetadataProxyModule: typeof import("../metadata/servarr-metadata-proxy.js");
 let artistStatisticsModule: typeof import("./artist-statistics-service.js");
 
 before(async () => {
@@ -19,7 +19,7 @@ before(async () => {
   dbModule.initDatabase();
   artistQueryModule = await import("./artist-query-service.js");
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
-  skyHookProxyModule = await import("../metadata/skyhook-proxy.js");
+  ServarrMetadataProxyModule = await import("../metadata/servarr-metadata-proxy.js");
   artistStatisticsModule = await import("./artist-statistics-service.js");
 });
 
@@ -229,14 +229,14 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
-test("artist page album cards prefer cached SkyHook artwork over provider fallback", async () => {
+test("artist page album cards prefer cached Servarr Metadata Server artwork over provider fallback", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/cover.jpg";
+  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/cover.jpg";
 
   db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
     .run(
-      JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+      JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, source: "Servarr Metadata Server" }]),
       "release-group-mbid-1",
     );
 
@@ -247,18 +247,18 @@ test("artist page album cards prefer cached SkyHook artwork over provider fallba
 
   assert.equal(albums.length, 1);
   const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
   assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
 });
 
-test("artist page album cards resolve SkyHook artwork before provider fallback on first load", async () => {
+test("artist page album cards resolve Servarr Metadata Server artwork before provider fallback on first load", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/first-load.jpg";
+  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/first-load.jpg";
 
   db.prepare(`UPDATE Albums SET data = ?, images = NULL WHERE mbid = ?`)
     .run(
-      JSON.stringify({ images: [{ coverType: "Cover", url: skyHookUrl, width: 1200, height: 1200 }] }),
+      JSON.stringify({ images: [{ coverType: "Cover", url: servarrMetadataUrl, width: 1200, height: 1200 }] }),
       "release-group-mbid-1",
     );
 
@@ -269,15 +269,15 @@ test("artist page album cards resolve SkyHook artwork before provider fallback o
 
   assert.equal(albums.length, 1);
   const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
   assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
 });
 
 test("artist page hydrates missing release-group artwork before using provider fallback", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/hydrated.jpg";
-  const originalSync = skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/hydrated.jpg";
+  const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   db.prepare(`UPDATE Albums SET data = NULL, images = ? WHERE mbid = ?`)
     .run(
@@ -289,15 +289,15 @@ test("artist page hydrates missing release-group artwork before using provider f
       "release-group-mbid-1",
     );
 
-  skyHookProxyModule.skyHookProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
+  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
     assert.equal(releaseGroupMbid, "release-group-mbid-1");
     assert.equal(artistMbid, "artist-mbid-1");
     db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
       .run(
-        JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+        JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, source: "Servarr Metadata Server" }]),
         "release-group-mbid-1",
       );
-  }) as typeof skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+  }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   try {
     const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
@@ -307,31 +307,31 @@ test("artist page hydrates missing release-group artwork before using provider f
 
     assert.equal(albums.length, 1);
     const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
     assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
   } finally {
-    skyHookProxyModule.skyHookProxy.syncReleaseGroup = originalSync;
+    ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
   }
 });
 
-test("artist page hydrates blank release-group artwork from SkyHook", async () => {
+test("artist page hydrates blank release-group artwork from Servarr Metadata Server", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const skyHookUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/blank-card.jpg";
-  const originalSync = skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/blank-card.jpg";
+  const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   db.prepare(`UPDATE Albums SET data = NULL, images = NULL WHERE mbid = ?`)
     .run("release-group-mbid-1");
 
-  skyHookProxyModule.skyHookProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
+  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
     assert.equal(releaseGroupMbid, "release-group-mbid-1");
     assert.equal(artistMbid, "artist-mbid-1");
     db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
       .run(
-        JSON.stringify([{ coverType: "Cover", url: skyHookUrl, source: "skyhook" }]),
+        JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, source: "Servarr Metadata Server" }]),
         "release-group-mbid-1",
       );
-  }) as typeof skyHookProxyModule.skyHookProxy.syncReleaseGroup;
+  }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   try {
     const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
@@ -341,10 +341,10 @@ test("artist page hydrates blank release-group artwork from SkyHook", async () =
 
     assert.equal(albums.length, 1);
     const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), skyHookUrl);
+    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
     assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
   } finally {
-    skyHookProxyModule.skyHookProxy.syncReleaseGroup = originalSync;
+    ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
   }
 });
 

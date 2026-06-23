@@ -663,7 +663,7 @@ class LibraryMetadataBackfillService {
         }
 
         // ---- Video tag backfill ----
-        if (metadataConfig.write_audio_metadata) {
+        if (metadataConfig.write_audio_tags_policy !== "no") {
             const tagVideos = db.prepare(`
       SELECT lf.file_path,
              COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS media_id,

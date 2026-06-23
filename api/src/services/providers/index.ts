@@ -49,11 +49,6 @@ class StreamingProviderManager {
     }
   }
 
-  /**
-   * Resolve the active/default provider from config (DATA_MODEL_TARGET §4),
-   * not a hardcoded id. Falls back to the legacy "tidal" default, then to the
-   * first registered provider, if the configured id is missing/unregistered.
-   */
   getDefaultProviderId(): string {
     let configured: string | undefined;
     try {
@@ -63,6 +58,9 @@ class StreamingProviderManager {
     }
     if (configured && this.providers.has(configured)) {
       return configured;
+    }
+    if (configured) {
+      throw new Error(`configured default provider is not registered: ${configured}`);
     }
     if (this.providers.has(FALLBACK_DEFAULT_PROVIDER_ID)) {
       return FALLBACK_DEFAULT_PROVIDER_ID;

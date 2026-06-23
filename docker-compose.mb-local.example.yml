@@ -39,7 +39,7 @@ services:
       # --- MB-local mode (read by future LocalMusicBrainzCatalogProvider wiring) ---
       # The :5000 web-service mirror — same JSON shape as musicbrainz.org/ws/2,
       # but on your own instance with no 1-req/s rate limit.
-      - DISCOGENIUS_CATALOG_SOURCE=${DISCOGENIUS_CATALOG_SOURCE:-skyhook} # skyhook (default) | musicbrainz-local
+      - DISCOGENIUS_CATALOG_SOURCE=${DISCOGENIUS_CATALOG_SOURCE:-servarr-metadata} # servarr-metadata (default) | musicbrainz-local
       - MB_LOCAL_WS_URL=${MB_LOCAL_WS_URL:-http://musicbrainz:5000/ws/2}
       # Direct Postgres path (performance follow-up; leave unset until enabled):
       - MB_LOCAL_PG_URL=${MB_LOCAL_PG_URL:-}

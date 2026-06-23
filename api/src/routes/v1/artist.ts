@@ -14,7 +14,7 @@ import {
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
 import { FollowedArtistsImportService } from "../../services/providers/followed-artists-import.js";
-import { skyHookProxy, type LidarrArtist } from "../../services/metadata/skyhook-proxy.js";
+import { servarrMetadataProxy, type LidarrArtist } from "../../services/metadata/servarr-metadata-proxy.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
 import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
 import { ScanLevel } from "../../services/music/scan-types.js";
@@ -50,7 +50,7 @@ function formatArtistLookupResult(artist: LidarrArtist) {
   const imageId = [
     localArtist?.picture,
     localArtist?.cover_image_url,
-    skyHookProxy.getArtistImageUrl(artist),
+    servarrMetadataProxy.getArtistImageUrl(artist),
   ].map((value) => {
     const text = value == null ? "" : String(value).trim();
     if (!text) return null;
@@ -128,7 +128,7 @@ router.get("/lookup", async (req, res) => {
       return res.status(400).json({ detail: "Search term must be at least 2 characters" });
     }
 
-    const metadataArtists = await skyHookProxy.searchForNewArtist(term, limit);
+    const metadataArtists = await servarrMetadataProxy.searchForNewArtist(term, limit);
     const seen = new Set<string>();
     const artists = metadataArtists
       .map(formatArtistLookupResult)

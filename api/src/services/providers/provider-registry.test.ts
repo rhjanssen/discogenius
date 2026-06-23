@@ -28,11 +28,10 @@ test("registry resolves the active provider from config, not a hardcoded id", as
   assert.equal(streamingProviderManager.getDefaultProviderId(), "apple-music");
   assert.equal(streamingProviderManager.getDefaultStreamingProvider().id, "apple-music");
 
-  // Unknown/unregistered provider id falls back to the legacy default.
   writeDefaultProvider("does-not-exist");
-  assert.equal(streamingProviderManager.getDefaultProviderId(), "tidal");
+  assert.throws(() => streamingProviderManager.getDefaultProviderId(), /not registered/);
 
-  // Missing streaming config also falls back gracefully.
+  // Missing streaming config uses the built-in default.
   writeDefaultProvider(null);
   assert.equal(streamingProviderManager.getDefaultProviderId(), "tidal");
 });

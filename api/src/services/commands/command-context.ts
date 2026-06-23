@@ -7,7 +7,7 @@ import { queueNextMonitoringPass } from "./scheduler.js";
  * Shared command-execution helpers.
  *
  * Both execution paths use these identical semantics:
- *  - the inline `CommandExecutor` (single event loop, the legacy/fallback path), and
+ *  - the inline `CommandExecutor` (single event loop), and
  *  - the off-thread `command-worker-entry` (real OS thread via worker_threads).
  *
  * They only depend on `CommandQueueManager` (DB + event emit) and `setImmediate`,

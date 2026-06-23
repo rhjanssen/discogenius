@@ -18,10 +18,9 @@ maps to Lidarr's, what we've split to match, and the remaining monoliths.
 | `Datastore` | `database.ts` + `repositories/` |
 | `Extras` | `services/extras/` |
 
-## Split to match Lidarr (done 2026-06-22)
+## Command Queue Layout
 
-`command-queue.ts` (1160 lines) bundled what Lidarr keeps in separate files. It
-was deleted, and import sites now depend on the specific command modules:
+Command queue code is split by responsibility:
 
 - `command-names.ts` — command identity: `CommandNames`, the `*_COMMAND_NAMES`
   groupings, type guards. (≈ Lidarr command type identity.)
@@ -39,10 +38,10 @@ was deleted, and import sites now depend on the specific command modules:
 ## Remaining monolith candidates (deferred)
 
 These are large and Lidarr splits the equivalent concern, but they sit on the
-data-sensitive import/tagging/scan/DB paths that can't be runtime-validated on the
-Windows dev host (need Docker + real provider auth + files). Splitting them blindly
-risks the reliability that is the whole point, so they should be split
-incrementally with real-data validation, not in one mechanical pass:
+data-sensitive import/tagging/scan/DB paths. Splitting them blindly risks the
+reliability that is the whole point, so they should be split incrementally and
+validated with Docker plus real provider auth/files when host tooling is not
+enough.
 
 | File | Lines | Lidarr decomposition to mirror |
 |---|---|---|

@@ -25,7 +25,7 @@ export function formatMetadataAttribution(
   const parts: string[] = [];
   const normalizedSource = source?.trim();
   const isInternalMetadataSource = normalizedSource
-    ? ["lidarr", "lidarr-metadata", "skyhook"].includes(normalizedSource.toLowerCase())
+    ? ["lidarr", "lidarr-metadata", "servarr metadata server", "servarr-metadata"].includes(normalizedSource.toLowerCase())
     : false;
   if (normalizedSource && !isInternalMetadataSource) {
     parts.push(`Source: ${normalizedSource}`);

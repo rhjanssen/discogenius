@@ -752,7 +752,7 @@ function providerTrackMatchesTarget(providerTrack: ProviderTrackLike, target: Ta
   // ISRC is authoritative: when both sides carry one, the recording identity is
   // decided by it (no title/duration heuristic needed, and a mismatch is a hard
   // no even if the titles look alike). Title + duration is the fallback for
-  // SkyHook-mode data that lacks ISRCs.
+  // Servarr Metadata Server-mode data that lacks ISRCs.
   const providerIsrc = normalizeIsrc(providerTrack.isrc);
   if (providerIsrc && target.isrcs.size > 0) {
     return target.isrcs.has(providerIsrc);

@@ -1,10 +1,10 @@
 /**
  * Pure mappers: MusicBrainz web-service (`/ws/2`, `fmt=json`) JSON → the
- * SkyHook/Lidarr DTOs the rest of Discogenius consumes.
+ * Servarr Metadata Server/Lidarr DTOs the rest of Discogenius consumes.
  *
  * The local MB-docker `:5000` mirror serves the *same* JSON shape as
  * musicbrainz.org's `/ws/2` API (just without the 1-req/s limit), so this
- * mapping is what makes `LocalMusicBrainzCatalogProvider` a drop-in for SkyHook.
+ * mapping is what makes `LocalMusicBrainzCatalogProvider` a drop-in for Servarr Metadata Server.
  *
  * These functions are deliberately side-effect-free and network-free so they can
  * be unit-tested against recorded fixture responses.
@@ -23,7 +23,7 @@ import type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/skyhook-proxy.js";
+} from "../metadata/servarr-metadata-proxy.js";
 import type { CatalogRecording } from "./catalog-provider.js";
 
 /* ---- MB ws/2 response shapes (the subset we read) ---- */

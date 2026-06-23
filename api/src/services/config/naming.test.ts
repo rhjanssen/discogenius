@@ -5,7 +5,7 @@ import { previewNamingConfig, renderFileStem, renderRelativePath, validateNaming
 
 test("existing Discogenius naming tokens continue to render", () => {
   const rendered = renderFileStem(
-    "{artistName} - {albumFullTitle} ({releaseYear}) - {trackNumber00} - {trackFullTitle}",
+    "{artistName} - {albumFullTitle} ({releaseYear}) - {track:00} - {trackFullTitle}",
     {
       artistName: "Daft Punk",
       albumTitle: "Discovery",
@@ -57,13 +57,13 @@ test("normalized filename variants resolve correctly", () => {
   );
 });
 
-test("TRaSH-style prefixed nested tokens render as literal folder disambiguators", () => {
-  const rendered = renderRelativePath("{artistName} {mbid-{artistMbId}}", {
+test("prefixed nested tokens render as literal folder disambiguators", () => {
+  const rendered = renderRelativePath("{artistName} {artistMbId}", {
     artistName: "The Example Artist",
     artistMbId: "artist-mbid-1",
   });
 
-  assert.equal(rendered, "The Example Artist {mbid-artist-mbid-1}");
+  assert.equal(rendered, "The Example Artist artist-mbid-1");
 });
 
 test("release group and video id tokens render correctly", () => {
@@ -92,49 +92,6 @@ test("provider media and recording tokens render without track/video split", () 
   );
 
   assert.equal(rendered, "provider-media-1 ; provider-media-1 ; 42 ; recording-mbid-1");
-});
-
-test("modifiers work: :the applies The suffix transform (deprecated, use named variables)", () => {
-  const rendered = renderFileStem(
-    "{artistName:the} ; {albumTitle:the} ; {trackArtistName:the}",
-    {
-      artistName: "The Beatles",
-      albumTitle: "The White Album",
-      trackArtistName: "The Rolling Stones",
-    }
-  );
-
-  assert.equal(rendered, "Beatles, The ; White Album, The ; Rolling Stones, The");
-});
-
-test("modifiers work: :clean removes non-alphanumeric characters (deprecated, use named variables)", () => {
-  const rendered = renderFileStem(
-    "{artistName:clean} ; {albumTitle:clean} ; {trackTitle:clean}",
-    {
-      artistName: "AC/DC",
-      albumTitle: "The White Album",
-      trackTitle: "Don't Stop Me Now!",
-    }
-  );
-
-  assert.equal(rendered, "AC DC ; The White Album ; Don't Stop Me Now!");
-});
-
-test("modifiers work: :first extracts first character (deprecated, use named variables)", () => {
-  const rendered = renderFileStem("{artistName:first} ; {albumTitle:first}", {
-    artistName: "Daft Punk",
-    albumTitle: "Discovery",
-  });
-
-  assert.equal(rendered, "D ; D");
-});
-
-test("modifiers can be stacked: :clean:the (deprecated, use named variables)", () => {
-  const rendered = renderFileStem("{artistName:clean:the}", {
-    artistName: "The AC/DC",
-  });
-
-  assert.equal(rendered, "AC DC, The");
 });
 
 test("named variables: {artistCleanName} produces CleanTitle result", () => {
@@ -277,14 +234,6 @@ test("track and medium aliases support zero-padding custom formats", () => {
   });
 
   assert.equal(rendered, "01-001-01-001");
-
-  const legacyRendered = renderFileStem("{trackNumber00}-{volumeNumber000}", {
-    artistName: "Daft Punk",
-    trackNumber: 1,
-    volumeNumber: 1,
-  });
-
-  assert.equal(legacyRendered, "01-001");
 });
 
 test("quality metadata variables render correctly", () => {
@@ -394,7 +343,7 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
 
 test("validateNamingConfig rejects unknown tokens and unsafe track templates", () => {
   const validation = validateNamingConfig({
-    artist_folder: "{artistName} {mbid-{artistMbId}}",
+    artist_folder: "{artistName} {artistMbId}",
     album_track_path_single: "{AlbumTitle}/{Mystery Token}",
     album_track_path_multi: "../{medium:00}-{track:00} - {trackTitle}",
     video_file: "{artistName} - {videoTitle}",
@@ -440,11 +389,6 @@ test("provider-neutral tokens and double-bracket nested expressions render corre
   );
   assert.equal(renderedNestedMultiple, "{Apple Music-445566; 778899}");
 
-  const renderedNestedSingleBracket = renderFileStem(
-    "{apple-music-{providerAlbumId}}",
-    context
-  );
-  assert.equal(renderedNestedSingleBracket, "{apple-music-445566; 778899}");
 });
 
 test("validateNamingConfig accepts provider-neutral tokens", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { SkyhookCatalogProvider } from "./skyhook-catalog-provider.js";
+import { ServarrMetadataCatalogProvider } from "./servarr-metadata-catalog-provider.js";
 import type {
   LidarrArtist,
   LidarrReleaseGroupDetail,
@@ -53,7 +53,7 @@ function spyProxy(overrides: Partial<Record<string, (...args: any[]) => any>> = 
 
 test("getArtist delegates straight to proxy.getArtistInfo", async () => {
   const { proxy, calls } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const artist = await provider.getArtist("artist-mbid");
   assert.equal(artist.artistname, "Test Artist");
   assert.deepEqual(calls.map((c) => c.method), ["getArtistInfo"]);
@@ -62,7 +62,7 @@ test("getArtist delegates straight to proxy.getArtistInfo", async () => {
 
 test("getArtistReleaseGroups derives matcher groups + drops idless albums", async () => {
   const { proxy } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const groups = await provider.getArtistReleaseGroups("artist-mbid");
   assert.equal(groups.length, 2);
   assert.deepEqual(groups.map((g) => g.mbid), ["rg-1", "rg-2"]);
@@ -73,16 +73,16 @@ test("getArtistReleaseGroups derives matcher groups + drops idless albums", asyn
 
 test("getReleaseGroup delegates to proxy.getAlbumInfo", async () => {
   const { proxy, calls } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const detail = await provider.getReleaseGroup("rg-1");
   assert.equal(detail.title, "First");
   assert.equal(detail.Releases.length, 2);
   assert.equal(calls[0].method, "getAlbumInfo");
 });
 
-test("getReleaseWithTracks returns null (SkyHook has no /release endpoint)", async () => {
+test("getReleaseWithTracks returns null (Servarr Metadata Server has no /release endpoint)", async () => {
   const { proxy, calls } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const release = await provider.getReleaseWithTracks("rel-1");
   assert.equal(release, null);
   assert.equal(calls.length, 0);
@@ -90,7 +90,7 @@ test("getReleaseWithTracks returns null (SkyHook has no /release endpoint)", asy
 
 test("getReleaseWithTracksInGroup projects a release out of its group", async () => {
   const { proxy } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const release = await provider.getReleaseWithTracksInGroup("rg-1", "rel-2");
   assert.ok(release);
   assert.equal(release!.Title, "First (EU)");
@@ -100,7 +100,7 @@ test("getReleaseWithTracksInGroup projects a release out of its group", async ()
 
 test("search delegates to both searchForNewArtist and searchAll", async () => {
   const { proxy, calls } = spyProxy();
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const results = await provider.search("test", { limit: 7 });
   assert.equal(results.artists.length, 1);
   assert.ok(Array.isArray(results.raw));
@@ -116,14 +116,14 @@ test("search tolerates a failing searchAll (degrades to artists only)", async ()
       throw new Error("boom");
     },
   });
-  const provider = new SkyhookCatalogProvider(proxy as any);
+  const provider = new ServarrMetadataCatalogProvider(proxy as any);
   const results = await provider.search("test");
   assert.equal(results.artists.length, 1);
   assert.deepEqual(results.raw, []);
 });
 
 test("exposes stable id/name", () => {
-  const provider = new SkyhookCatalogProvider(spyProxy().proxy as any);
-  assert.equal(provider.id, "skyhook");
+  const provider = new ServarrMetadataCatalogProvider(spyProxy().proxy as any);
+  assert.equal(provider.id, "servarr-metadata");
   assert.ok(provider.name.length > 0);
 });

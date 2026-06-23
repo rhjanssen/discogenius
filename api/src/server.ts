@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import fs from "fs";
 import path from "path";
 
-import { backfillArtistPaths, closeDatabase, flushDatabase, initDatabase } from "./database.js";
+import { closeDatabase, flushDatabase, initDatabase } from "./database.js";
 import { authMiddleware } from "./middleware/auth.js";
 import albumsRouter from "./routes/v1/album.js";
 import appAuthRouter from "./routes/app-auth.js";
@@ -34,7 +34,6 @@ import unmappedRouter from "./routes/unmapped.js";
 import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
 import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
-import { migrateLegacyTiddlDir } from "./services/providers/tidal/tiddl.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
 import { startMonitoring } from "./services/commands/scheduler.js";
 import {
@@ -50,9 +49,6 @@ import { readIntEnv } from "./utils/env.js";
 
 function initializeAuthEnvironment() {
   ensureConfigExists();
-  // Relocate a pre-2.0.2 tiddl directory into config/providers/tidal/ before
-  // any TIDAL auth/health path reads it.
-  migrateLegacyTiddlDir();
 
   if (!process.env.ADMIN_PASSWORD) {
     const configuredPassword = String(getConfigSection("app").admin_password || "").trim();
@@ -151,11 +147,6 @@ app.use(cors({
 }));
 
 initDatabase();
-
-const backfilled = backfillArtistPaths();
-if (backfilled > 0) {
-  console.log(`📁 Backfilled path for ${backfilled} existing artist(s)`);
-}
 
 initAppLogging();
 startRuntimeDiagnostics();

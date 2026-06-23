@@ -84,11 +84,3 @@ export function isScheduledTaskDue(intervalMinutes: number, lastQueuedAt?: strin
 
     return Date.now() - lastQueuedTime >= intervalMinutes * 60_000;
 }
-
-// NOTE: Discogenius previously gated the monitoring cycle to a start_hour /
-// duration_hours time-of-day window. That window only controlled when a cycle
-// was *queued* (it never stopped in-flight work) and ran in the container's
-// local time, which caused timezone surprises. We now follow Lidarr's model:
-// scheduled tasks run purely on their interval in UTC, no time-of-day window.
-// The start_hour/duration_hours config fields are retained for backwards
-// compatibility but are no longer consulted by the scheduler.

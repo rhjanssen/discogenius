@@ -5,7 +5,7 @@ import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-serv
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
-export interface SkyHookRating {
+export interface ServarrMetadataRating {
   Count?: number;
   Value?: number;
   count?: number;
@@ -22,8 +22,8 @@ export interface LidarrArtist {
   overview?: string;
   // Popularity rating from the Servarr metadata server. Lidarr maps this to
   // Artist.Ratings; we fold value (0–10) into our 0–100 popularity score.
-  rating?: SkyHookRating;
-  Rating?: SkyHookRating;
+  rating?: ServarrMetadataRating;
+  Rating?: ServarrMetadataRating;
   Albums: LidarrAlbum[];
 }
 
@@ -34,7 +34,7 @@ export interface LidarrArtist {
  * provider-sourced popularity range. Returns null when there are no votes, so
  * an unrated artist never overwrites an existing provider popularity with 0.
  */
-export function deriveSkyHookPopularity(rating: SkyHookRating | undefined | null): number | null {
+export function deriveServarrMetadataPopularity(rating: ServarrMetadataRating | undefined | null): number | null {
   if (!rating) return null;
   const count = Number(rating.Count ?? rating.count ?? 0);
   const value = Number(rating.Value ?? rating.value ?? 0);
@@ -106,7 +106,7 @@ export interface MediaCover {
   extension?: string;
 }
 
-export function mapSkyHookImages(images?: any[] | null): MediaCover[] {
+export function mapServarrMetadataImages(images?: any[] | null): MediaCover[] {
   if (!images || !Array.isArray(images)) {
     return [];
   }
@@ -182,7 +182,7 @@ function extractExternalUrls(rawData?: string | null): string[] {
   return Array.from(urls);
 }
 
-export class SkyHookProxy {
+export class ServarrMetadataProxy {
   private readonly baseUrl = "https://api.lidarr.audio/api/v0.4";
 
   private normalizeSearchText(value: string): string {
@@ -273,7 +273,7 @@ export class SkyHookProxy {
           .slice(0, limit);
       }
     } catch (e) {
-      console.error("Skyhook searchAll failed:", e);
+      console.error("Servarr Metadata Server searchAll failed:", e);
     }
     return [];
   }
@@ -425,9 +425,9 @@ export class SkyHookProxy {
     const artist = await this.getArtistInfo(mbid);
 
     db.transaction(() => {
-      const imagesList = mapSkyHookImages(artist.images);
+      const imagesList = mapServarrMetadataImages(artist.images);
 
-      const popularity = deriveSkyHookPopularity(artist.rating ?? artist.Rating);
+      const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
 
       db.prepare(`
         INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, updated_at)
@@ -491,7 +491,7 @@ export class SkyHookProxy {
           }
         }
 
-        const albumImages = mapSkyHookImages(album.images || album.Images);
+        const albumImages = mapServarrMetadataImages(album.images || album.Images);
 
         insertRg.run(
           album.Id,
@@ -537,7 +537,7 @@ export class SkyHookProxy {
       const firstReleaseDate = detail.releasedate || null;
       const disambiguation = detail.disambiguation || null;
 
-      const albumImages = mapSkyHookImages(detail.images || detail.Images);
+      const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
 
       insertRg.run(
         releaseGroupMbid,
@@ -648,4 +648,4 @@ export class SkyHookProxy {
   }
 }
 
-export const skyHookProxy = new SkyHookProxy();
+export const servarrMetadataProxy = new ServarrMetadataProxy();
