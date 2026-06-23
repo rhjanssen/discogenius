@@ -35,6 +35,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import type { LibraryStats } from "@/hooks/useLibrary";
+import { LIBRARY_STATS_QUERY_KEY } from "@/hooks/useLibrary";
 import { useToast } from "@/hooks/useToast";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -281,8 +282,6 @@ const useStyles = makeStyles({
     },
 });
 
-const dashboardStatsQueryKey = ["dashboardStats"] as const;
-
 const DASHBOARD_TAB_STORAGE_KEY = "discogenius:dashboard-tab";
 let hasConsumedDashboardReloadState = false;
 
@@ -333,15 +332,16 @@ const Dashboard = () => {
         hasStatusData,
     } = useStatusOverview();
     useDebouncedQueryInvalidation({
-        queryKeys: [dashboardStatsQueryKey],
+        queryKeys: [LIBRARY_STATS_QUERY_KEY],
         globalEvents: ["file.added", "file.deleted", "file.upgraded", "config.updated"],
         windowEvents: [LIBRARY_UPDATED_EVENT, ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
     });
 
     const statsQuery = useQuery<LibraryStats | null>({
-        queryKey: dashboardStatsQueryKey,
-        queryFn: async (): Promise<LibraryStats | null> => await api.getStats() as LibraryStats,
+        // Shared key with the Library page: one cached /api/v1/stats fetch serves both.
+        queryKey: LIBRARY_STATS_QUERY_KEY,
+        queryFn: ({ signal }): Promise<LibraryStats | null> => api.getStats({ signal, timeoutMs: 8_000 }) as Promise<LibraryStats | null>,
         staleTime: 30_000,
         refetchOnWindowFocus: false,
         retry: 1,

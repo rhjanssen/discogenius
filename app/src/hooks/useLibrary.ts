@@ -14,7 +14,9 @@ type SortKey = "name" | "releaseDate" | "popularity" | "scannedAt";
 type SortDir = "asc" | "desc";
 type ActiveLibraryTab = "artists" | "albums" | "tracks" | "videos";
 
-const LIBRARY_STATS_QUERY_KEY = ["libraryStats"] as const;
+// Shared so the Dashboard reuses the same cached /api/v1/stats result instead of
+// fetching the identical snapshot under its own key.
+export const LIBRARY_STATS_QUERY_KEY = ["libraryStats"] as const;
 const LIBRARY_STATS_GLOBAL_EVENTS = [
   "artist.scanned",
   "artist.refresh.completed",
