@@ -305,11 +305,19 @@ REMAINING before dropping `data` (the all-or-nothing finish):
   `release.data` (`release_data`) and `recording.data` (`recording_data`) → audit
   exact fields (label/media now columns; recording.data is only written for
   videos, not audio).
-- `musicbrainz-release-group-read-service.ts` (`r.data` ~496 recording_data,
-  `t.data` ~497 track_data) + `track-query-service.ts` (`recording.data` ~314/430):
-  audit what they read (mostly cover/explicit, likely already typed columns).
-- `provider-matches.ts:720` (`album.data`): confirm whether this is catalog
-  `Albums.data` or a provider row; migrate or exclude accordingly.
+- `musicbrainz-release-group-read-service.ts` (`r.data`/`t.data` → recording_data/
+  track_data via `parseRecordingArtistCredits`) + `track-query-service.ts`
+  (`recording.data` → `artist-credit`): these read ARTIST CREDITS from the blob.
+  AUDITED 2026-06-24: this is the same data the "recording-centric song-set"
+  backlog item needs as a queryable relation. The blob carries only a primary
+  ArtistId (readers already fall back to `[{primary artist}]`), so do this WITH
+  that item — populate a Recordings credits column / recording↔artist-credit
+  relation and read from it — rather than a throwaway blob→column move. THIS is
+  the real blocker on dropping `data`.
+- `provider-matches.ts:720` (`album.data`): NOT catalog — this is a provider
+  album row (`ProviderItems.data`, parses `.tracks`). Out of scope; leave as-is.
+- `metadata-files.ts` release_data/recording_data: NFO fields — audit which are
+  already typed columns (label/media/country now are) vs. still blob-only.
 
 Final steps: drop `data` from the catalog tables + bump schema; reset the dev DB
 (authorized) and re-import; re-measure write throughput on the big library. Tests
