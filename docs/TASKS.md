@@ -109,11 +109,18 @@ this release.)
 - Work for 2.1.0 lives on git branch `2.1.0` (3 commits past main; 2.0.10 is
   released on main). Check out that branch.
 - Import feature: backend + enqueue + `import-sources` are live-validated against
-  TIDAL, but the modal has NOT been click-tested end-to-end in a browser (artists
-  actually added + SSE per-artist progress rendering). Verify that before calling
-  it shippable.
-- Responsiveness under refresh load IS validated (15/15 enqueues, 64ms health);
-  refresh THROUGHPUT is NOT improved yet (a big-artist refresh is still slow).
+  TIDAL. The modal was browser-tested end-to-end through the TIDAL playlist
+  source (`Trouwdienst`): SSE queues immediately, streams status/progress, can run
+  in background under worker load, and the resulting `ImportProviderArtists`
+  command completed successfully.
+- Responsiveness under refresh load IS validated (15/15 enqueues, 64ms health).
+  Refresh THROUGHPUT: the diff-reconcile skip-unchanged write path HAS landed
+  (`content_hash` change-key on ArtistMetadata + Albums; syncArtist/
+  syncReleaseGroup skip rewriting unchanged rows — Lidarr's UpdateMany-only-
+  changed). This eliminates the re-upsert-everything cost on re-refresh. NOT yet
+  done: shrinking the per-row `data` blob to curated columns (the row-size half
+  of the write cost) — see the blob-consumer map under the schema section.
+  Live scale re-measurement against the 2.3GB DB is still pending.
 - Line numbers in plans below drift — grep, don't trust them.
 
 ### General artist import (folded from 2.0.11)
@@ -157,16 +164,21 @@ the provider abstraction so a second provider can declare its own sources.
   on the 2453-artist/743K-track DB: 15/15 import enqueues succeeded, max 614ms,
   health 64ms, zero failures, no deadlock. Profile with
   `DISCOGENIUS_WRITE_PROFILE_MS=1000`.
-- pending (throughput, NOT responsiveness — validated on the 743K-track library):
-  individual write sections are still ~2–3s, dominated by ~21ms/row upserts whose
-  cost is the large per-row `data` TEXT JSON blobs (the 2.3GB DB is mostly these).
-  Real levers: (1) skip re-syncing UNCHANGED release groups (Lidarr checks
-  timestamps) so a refresh doesn't rewrite all 2099 RGs; (2) shrink/normalise the
-  per-row `data` blobs (Lidarr stores columns, not raw JSON); (3) chunk the
-  remaining `syncReleaseGroup` RG+releases transaction. NOTE: the catalog FK
-  triggers fire only on INSERT / UPDATE OF mbid — NOT on `ON CONFLICT DO UPDATE`
-  re-syncs — so they're a new-row cost, not the re-refresh cost. Background-refresh
-  throughput work for focused future sessions.
+- done (lever 1): skip re-syncing UNCHANGED rows. `content_hash` change-key on
+  ArtistMetadata + Albums; `syncArtist` skips the artist+RG-list rewrite when the
+  remote artist payload is unchanged, `syncReleaseGroup` skips the whole RG
+  tracklist rewrite when the remote RG detail is unchanged (with a repair guard:
+  a hash match never suppresses re-hydration of an RG whose child rows are
+  missing). Tested in `servarr-metadata-proxy.test.ts`.
+- pending (lever 2, the row-SIZE half): shrink/normalise the per-row `data` blob
+  to curated columns (Lidarr stores columns, not raw JSON). This is the schema
+  rework below; the blob-consumer map there is the precise migration list. Until
+  the blob is gone, a CHANGED row still writes the multi-KB JSON.
+- pending (lever 3): chunk the remaining `syncReleaseGroup` RG+releases
+  transaction if a measured write still holds the lock too long after lever 2.
+  NOTE: the catalog FK triggers fire only on INSERT / UPDATE OF mbid — NOT on
+  `ON CONFLICT DO UPDATE` re-syncs — so they're a new-row cost, not a re-refresh
+  cost.
 - pending: Audit other request-triggered routes for inline heavy work that should
   be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
   and adopt `runWithAsyncBusyRetry` for their writes.
@@ -252,15 +264,49 @@ value-add beyond Lidarr (Skyhook strips UPC/ISRC — the reason for local-MB) an
 must be preserved as queryable columns, NOT in a blob.
 
 Payoff: rows shrink from ~3KB to a handful of typed fields → fast writes (the
-scale fix) AND cheap diff change-detection (compare a few fields / a content hash,
-never a 3KB blob) — which is exactly what the refresh-port diff-reconcile needs.
+scale fix) AND cheap diff change-detection. The change-detection half is ALREADY
+DONE via `content_hash` (compare a hash, never the blob); dropping the blob is
+the remaining row-SIZE win.
+
+Blob-consumer migration map (grep-verified 2026-06-24 — migrate each off the
+catalog `data` blob to columns BEFORE dropping the blob, or these break). The
+catalog `data` blob (ArtistMetadata/Albums/AlbumReleases/Recordings/Tracks) is
+read in exactly these places; `ProviderItems.data` is a SEPARATE provider blob,
+out of scope here:
+
+- `servarr-metadata-proxy.ts` `getCachedReleaseGroupsForArtist`
+  (`extractExternalUrls(AlbumReleases.data)`): needs release external URLs /
+  relations for matching evidence → new `AlbumReleases.relations` (or
+  `external_links`) JSON column.
+- `servarr-metadata-proxy.ts` `syncArtist` (reads existing `Albums.data` to
+  preserve images/Releases on merge): obviated once images live in the existing
+  `images` column and releases come from `syncReleaseGroup` — delete the merge.
+- `refresh-artist-service.ts` `getLinkedProviderArtistId` (`ArtistMetadata.data`
+  → `artist.links`): needs artist external relations → new `ArtistMetadata.links`
+  JSON column.
+- `metadata-files.ts` (NFO build: `rg.data`, `release.data`, `recording.data`,
+  `am.data`): needs label / media (disc structure) / country / relations →
+  `AlbumReleases.label`, `AlbumReleases.country`, `AlbumReleases.media` JSON cols
+  (barcode already a column). Audit exact fields when migrating.
+- `musicbrainz-release-group-read-service.ts` (`r.data`, `t.data`) and
+  `musicbrainz-release-selection-service.ts` (`r.data`): release media/disc
+  structure for edition selection → `AlbumReleases.media` JSON col.
+- `artist-query-service.ts` (`rg.data`, `recording.data`), `track-query-service.ts`
+  (`recording.data`), `routes/search.ts` (`rg.data`), `provider-matches.ts:720`
+  (`album.data`): display/derived fields — audit exact reads when migrating;
+  most are already covered by existing typed columns.
+
+Sequence: (1) add the new JSON columns + populate in the write path (additive,
+blob retained — non-breaking); (2) migrate each consumer above to the columns;
+(3) drop `data` from the catalog tables + bump schema. Tests build a fresh
+schema each run, so only the FINAL live scale validation needs a DB reset.
 
 ### Settings and provider UX
 
 Reduce settings overload before adding more provider and metadata-source surface
 area.
 
-- pending: Move editable Discogenius app settings out of `config.toml` into
+- done: Move editable Discogenius app settings out of `config.toml` into
   DB-backed settings with a UI, using Lidarr's pattern: a small `config`
   key/value table, typed service accessors, defaults in code, an in-memory
   cache, and cache invalidation on writes. Avoid reading the TOML file on hot
@@ -273,11 +319,11 @@ area.
   process memory; Discogenius should keep tiddl-owned auth/config files under
   `/config/providers/tidal/.tiddl` and only mirror normalized UI settings into
   DB when the app needs typed policy decisions.
-- pending: Add a settings-write path that batches/saves changes through a
+- done: Add a settings-write path that batches/saves changes through a
   service layer, clears the settings cache, and emits a config-changed event.
   This must avoid chatty per-control writes and must not add long synchronous DB
   work to high-traffic routes.
-- pending: Redesign connected-provider settings so each provider gets a compact
+- done: Redesign connected-provider settings so each provider gets a compact
   connection card with status, primary actions, and capability summary. Move
   advanced/token/backend details behind disclosure panels or diagnostics instead
   of showing them inline by default. DECIDED: collapse the capability "wall of
