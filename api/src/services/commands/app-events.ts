@@ -28,6 +28,11 @@ export enum AppEvent {
     FILE_ADDED = 'file.added',
     FILE_DELETED = 'file.deleted',
     FILE_UPGRADED = 'file.upgraded',
+
+    // Provider artist-import progress (streamed to the import modal over SSE).
+    // Emitted from the ImportProviderArtists command handler (on a worker) and
+    // bridged to the main thread for the SSE route.
+    IMPORT_ARTISTS_PROGRESS = 'import.artists.progress',
 }
 
 export interface CommandEventPayload {
@@ -63,6 +68,13 @@ export interface ArtistScannedEventPayload {
     trigger: number;
 }
 
+export interface ImportArtistsProgressEventPayload {
+    commandId: number;
+    /** The FollowedArtistsImportEvent.type (status | total | artist-added | …). */
+    event: string;
+    data: Record<string, unknown>;
+}
+
 export interface FileChangeEventPayload {
     libraryFileId?: number | null;
     artistId?: string | number | null;
@@ -93,6 +105,7 @@ export interface AppEventPayloadMap {
     [AppEvent.FILE_ADDED]: FileChangeEventPayload;
     [AppEvent.FILE_DELETED]: FileChangeEventPayload;
     [AppEvent.FILE_UPGRADED]: FileChangeEventPayload;
+    [AppEvent.IMPORT_ARTISTS_PROGRESS]: ImportArtistsProgressEventPayload;
 }
 
 class TypedAppEventEmitter extends EventEmitter {

@@ -1264,10 +1264,10 @@ const SettingsPage = () => {
     const handleImportFollowed = async (provider: StreamingProviderStatus) => {
         setImporting(true);
         try {
-            const result: any = await api.importFollowedArtists(provider.id);
+            await api.importFollowedArtists(provider.id);
             toast({
-                title: "Import Started",
-                description: result.message || `Importing followed artists from ${provider.name}.`,
+                title: "Import queued",
+                description: `Importing followed artists from ${provider.name} in the background. Track progress in Activity.`,
             });
         } catch (error) {
             console.error("Error importing followed artists:", error);

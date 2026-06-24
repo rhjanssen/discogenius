@@ -235,6 +235,16 @@ export type CleanupTempFilesCommand = CommandBodyCommon;
 
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 
+export interface ImportProviderArtistsCommand extends CommandBodyCommon {
+  providerId?: string;
+  /** Which provider import source to pull artists from. */
+  importCategory: "followed-artists" | "playlist" | "favorite-tracks" | "mix";
+  /** Specific list id for playlist/mix sources. */
+  importListId?: string;
+  /** Human-readable label for progress/history (e.g. the playlist name). */
+  importLabel?: string;
+}
+
 export interface RetagFilesCommand extends CommandBodyCommon {
   ids?: number[];
   artistId?: string;

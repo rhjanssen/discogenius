@@ -1,10 +1,11 @@
-import { parentPort } from "node:worker_threads";
+import { parentPort, workerData } from "node:worker_threads";
 
 import {CommandNames} from "../command-names.js";
 import {type CommandModelOf} from "../command-queue-manager.js";
 import { executeCommand } from "../command-context.js";
 import { DownloadedTracksImportService } from "../../mediafiles/downloaded-tracks-import-service.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
+import { installWriteLockBuffer } from "../../db/write-lock.js";
 import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
 
 /**
@@ -28,6 +29,10 @@ if (!parentPort || !isCommandWorker()) {
 }
 
 const port = parentPort;
+
+// Join the cross-thread write mutex before any DB access, so this worker's writes
+// serialise with the pool + main thread instead of racing for SQLite's lock.
+installWriteLockBuffer((workerData as { writeLockBuffer?: SharedArrayBuffer } | undefined)?.writeLockBuffer);
 
 // Chain RefreshArtist → RescanFolders → CurateArtist from inside the worker, so
 // the listener's addJob enqueues run on this worker's connection (off-main).

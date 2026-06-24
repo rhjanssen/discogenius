@@ -32,6 +32,7 @@ export const CommandNames = {
     CompactDatabase: 'CompactDatabase',
     CleanupTempFiles: 'CleanupTempFiles',
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
+    ImportProviderArtists: 'ImportProviderArtists',
 } as const;
 
 export type CommandName = typeof CommandNames[keyof typeof CommandNames];
@@ -80,6 +81,7 @@ export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.CompactDatabase,
     CommandNames.CleanupTempFiles,
     CommandNames.UpdateLibraryMetadata,
+    CommandNames.ImportProviderArtists,
 ] as const;
 
 export function isDownloadJobType(type: string): type is typeof DOWNLOAD_COMMAND_NAMES[number] {

@@ -142,6 +142,14 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
   },
+  [CommandNames.ImportProviderArtists]: {
+    type: CommandNames.ImportProviderArtists,
+    name: "Import Artists",
+    requiresDiskAccess: false,
+    isTypeExclusive: true,
+    isExclusive: false,
+    isLongRunning: true,
+  },
   [CommandNames.DownloadVideo]: {
     type: CommandNames.DownloadVideo,
     name: "Download Video",

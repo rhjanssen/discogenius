@@ -1246,6 +1246,137 @@ export async function getFollowedArtists() {
     });
 }
 
+/** Shape returned to the import layer for any artist-bearing list. */
+type TidalImportArtist = {
+  provider_id: string;
+  name: string;
+  picture: string | null;
+  url: string;
+  popularity: number;
+};
+
+/**
+ * Collapse a list of TIDAL track items (favorites/playlist/mix items, each
+ * wrapped as `{ item: track }`) into distinct artists. Uses every credited
+ * artist on each track, deduped by id, preserving first-seen order.
+ */
+function extractArtistsFromTrackItems(items: any[]): TidalImportArtist[] {
+  const byId = new Map<string, TidalImportArtist>();
+  for (const wrapper of items || []) {
+    const track = wrapper?.item ?? wrapper;
+    if (!track) continue;
+    const artists = Array.isArray(track.artists) && track.artists.length > 0
+      ? track.artists
+      : track.artist
+        ? [track.artist]
+        : [];
+    for (const artist of artists) {
+      if (!artist?.id) continue;
+      const id = artist.id.toString();
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        provider_id: id,
+        name: artist.name || "Unknown Artist",
+        picture: artist.picture || null,
+        url: artist.url || `https://listen.tidal.com/artist/${id}`,
+        popularity: 0,
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+/** The user's own + favorited playlists, for the "Playlists" import source. */
+export async function getUserPlaylists() {
+  const token = loadToken();
+  if (!token) throw new Error("Not authenticated");
+  const userId = token.user?.userId;
+  const cc = token.user?.countryCode || "US";
+  if (!userId) throw new Error("User ID not found");
+
+  const data = await tidalApiRequestPaginated(`/users/${userId}/playlistsAndFavoritePlaylists?countryCode=${cc}`, 50);
+  return (data.items || [])
+    .map((wrapper: any) => wrapper?.playlist ?? wrapper?.item ?? wrapper)
+    .filter((playlist: any) => playlist && playlist.uuid)
+    .map((playlist: any) => ({
+      id: playlist.uuid as string,
+      title: playlist.title || "Untitled playlist",
+      itemCount: playlist.numberOfTracks ?? null,
+      image: playlist.squareImage || playlist.image || null,
+    }));
+}
+
+/** Distinct artists from a playlist's tracks. */
+export async function getPlaylistArtists(playlistUuid: string): Promise<TidalImportArtist[]> {
+  const cc = getCountryCode();
+  const data = await tidalApiRequestPaginated(`/playlists/${playlistUuid}/items?countryCode=${cc}`, 50);
+  return extractArtistsFromTrackItems(data.items || []);
+}
+
+/** Distinct artists from the user's favorite (liked) tracks. */
+export async function getFavoriteTrackArtists(): Promise<TidalImportArtist[]> {
+  const token = loadToken();
+  if (!token) throw new Error("Not authenticated");
+  const userId = token.user?.userId;
+  const cc = token.user?.countryCode || "US";
+  if (!userId) throw new Error("User ID not found");
+
+  const data = await tidalApiRequestPaginated(`/users/${userId}/favorites/tracks?countryCode=${cc}`, 50);
+  return extractArtistsFromTrackItems(data.items || []);
+}
+
+/** Distinct artists from a TIDAL mix's tracks. */
+export async function getMixArtists(mixId: string): Promise<TidalImportArtist[]> {
+  const cc = getCountryCode();
+  const data = await tidalApiRequestPaginated(`/mixes/${mixId}/items?countryCode=${cc}`, 50);
+  return extractArtistsFromTrackItems(data.items || []);
+}
+
+/**
+ * The mixes and featured playlists shown on the TIDAL home/start screen, via the
+ * v1 page API. Each entry's id is prefixed `mix:` or `playlist:` so the resolver
+ * knows which endpoint to read its tracks from.
+ */
+export async function getHomeImportLists(): Promise<Array<{ id: string; title: string; subtitle: string | null; image: string | null }>> {
+  const cc = getCountryCode();
+  const data = await tidalApiRequest(`/pages/home?countryCode=${cc}&deviceType=BROWSER`) as any;
+
+  const results: Array<{ id: string; title: string; subtitle: string | null; image: string | null }> = [];
+  const seen = new Set<string>();
+
+  for (const row of data?.rows || []) {
+    for (const module of row?.modules || []) {
+      const moduleTitle: string = module?.title || "";
+      const items = module?.pagedList?.items || module?.items || [];
+      for (const item of items) {
+        // A mix item carries a string `id`; a playlist carries a `uuid`.
+        const isMix = typeof item?.id === "string" && !item?.uuid;
+        const rawId = isMix ? item.id : item?.uuid;
+        if (!rawId) continue;
+        const key = `${isMix ? "mix" : "playlist"}:${rawId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push({
+          id: key,
+          title: item.title || moduleTitle || "Untitled",
+          subtitle: isMix ? (item.subTitle || moduleTitle || "Mix") : (moduleTitle || "Playlist"),
+          image: item.image || item.squareImage || item.graphic?.images?.[0]?.url || null,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** Distinct artists for a home-screen entry id (`mix:…` or `playlist:…`). */
+export async function getHomeListArtists(prefixedId: string): Promise<TidalImportArtist[]> {
+  if (prefixedId.startsWith("playlist:")) {
+    return getPlaylistArtists(prefixedId.slice("playlist:".length));
+  }
+  const mixId = prefixedId.startsWith("mix:") ? prefixedId.slice("mix:".length) : prefixedId;
+  return getMixArtists(mixId);
+}
+
 export async function getAlbum(albumId: string) {
   const cc = getCountryCode();
   const data = await tidalApiRequest(`/albums/${albumId}?countryCode=${cc}`) as any;

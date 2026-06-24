@@ -2,8 +2,29 @@ import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/config.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
+import { withWriteSync, withWriteAsync } from "./services/db/write-lock.js";
 
 let _db: Database.Database | null = null;
+
+// Worker writes acquire the cross-thread write mutex so the worker pool + main
+// thread serialise into one effective writer — eliminating the SQLite write-lock
+// racing/starvation that surfaced as `database is locked` under refresh load.
+// The main thread must never block the event loop, so its writes do NOT
+// sync-acquire here; main-thread write sites wrap their writes in the async
+// `withDbWrite` helper (which acquires via Atomics.waitAsync) instead.
+const serializeWrite: <T>(op: () => T) => T = isMainThread
+  ? (op) => op()
+  : (op) => withWriteSync(op);
+
+/**
+ * Run a write (or a group of writes) on the MAIN thread while participating in
+ * the cross-thread write mutex without freezing the event loop. Use this for
+ * user-initiated route writes and the scheduler's command-table writes so they
+ * queue fairly behind worker writes instead of being starved.
+ */
+export function withDbWrite<T>(fn: () => T): Promise<T> {
+  return withWriteAsync(fn);
+}
 
 const SQLITE_BUSY_RETRY_BASE_MS = 50;
 const SQLITE_BUSY_RETRY_MAX_MS = 2000;
@@ -69,6 +90,39 @@ export function runWithSqliteBusyRetry<T>(operation: () => T): T {
   throw lastError;
 }
 
+/**
+ * Async busy-retry for user-initiated writes on the MAIN (request) thread.
+ *
+ * The synchronous `runWithSqliteBusyRetry` is right for workers but on the main
+ * thread it can only fail fast (1 attempt) — otherwise it would freeze the event
+ * loop. That's correct for the background job-claim, but a user action (enqueue
+ * an import, add an artist, toggle monitoring) shouldn't error just because a
+ * refresh worker held the write lock for a moment. This retries the write with
+ * `await setTimeout` backoff, which YIELDS the event loop between attempts, so
+ * the server stays responsive while the write waits its turn. Route handlers are
+ * already async, so they can `await` this.
+ */
+export async function runWithAsyncBusyRetry<T>(
+  operation: () => T,
+  attempts = 10,
+  baseDelayMs = 150,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!isSqliteBusy(error) || attempt >= attempts) {
+        throw error;
+      }
+      lastError = error;
+      const delayMs = Math.min(1000, baseDelayMs * (attempt + 1)) + Math.floor(Math.random() * baseDelayMs);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 function getDbInstance(): Database.Database {
   if (_db) return _db;
 
@@ -114,20 +168,20 @@ export const db = new Proxy({} as any, {
       return (source: string) => {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
-        stmt.run = ((...args: unknown[]) => runWithSqliteBusyRetry(() => originalRun(...args))) as typeof stmt.run;
+        stmt.run = ((...args: unknown[]) => serializeWrite(() => runWithSqliteBusyRetry(() => originalRun(...args)))) as typeof stmt.run;
         return stmt;
       };
     }
     if (prop === "exec") {
-      return (source: string) => runWithSqliteBusyRetry(() => instance.exec(source));
+      return (source: string) => serializeWrite(() => runWithSqliteBusyRetry(() => instance.exec(source)));
     }
     if (prop === "transaction") {
       return (fn: any) => {
         const txn = instance.transaction(fn) as any;
-        const runImmediate = (...args: any[]) => runWithSqliteBusyRetry(() => txn.immediate(...args));
-        const runDeferred = (...args: any[]) => runWithSqliteBusyRetry(() => txn.deferred(...args));
-        const runDefault = (...args: any[]) => runWithSqliteBusyRetry(() => txn.default(...args));
-        const runExclusive = (...args: any[]) => runWithSqliteBusyRetry(() => txn.exclusive(...args));
+        const runImmediate = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.immediate(...args)));
+        const runDeferred = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.deferred(...args)));
+        const runDefault = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.default(...args)));
+        const runExclusive = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.exclusive(...args)));
         const immediateTxn = (...args: any[]) => runImmediate(...args);
         Object.defineProperties(immediateTxn, {
           default: { value: runDefault },
@@ -202,7 +256,7 @@ export function batchRun(sql: string, argsList: unknown[][]): number {
 export function runChunkedWrite<T>(
   items: readonly T[],
   perItem: (item: T, index: number) => void,
-  chunkSize: number = 200,
+  chunkSize: number = 100,
 ): number {
   const size = Math.max(1, chunkSize);
   for (let start = 0; start < items.length; start += size) {

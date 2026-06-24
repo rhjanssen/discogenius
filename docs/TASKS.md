@@ -97,29 +97,68 @@ transitional/provider shadows where they no longer pay for themselves.
   streaming-quality tags only as optional extensions that do not replace the
   canonical MusicBrainz tag set.
 
-## 2.0.11 - Background Import + Responsiveness Follow-Ups
-
-Scope: finish moving long-running, request-triggered work off the HTTP path,
-the way Lidarr runs import-list sync as a scheduled command.
-
-- pending: Convert the TIDAL followed-artists import into a background
-  `ImportFollowedArtists` command. Today `FollowedArtistsImportService.importFollowedArtists`
-  runs the per-artist loop (MusicBrainz identity resolve + `syncArtist` +
-  monitor) inline in the request, so `POST /api/v1/artist/import-followed`
-  blocks for the whole import (~180s for a large follow list). The 2.0.10
-  busy-timeout + chunked-write fixes stop this from freezing the server and the
-  primary UI path already uses the long-lived `import-followed-stream` SSE
-  endpoint, but the work still belongs on a worker: register the command, have
-  the route enqueue and return immediately, and stream worker progress events
-  back over SSE (the worker pool already bridges `appEvents` to the main thread).
-- pending: Audit other request-triggered routes for inline heavy work that
-  should be commands (e.g. bulk monitor/scan/import-list paths), using the same
-  enqueue-and-stream pattern.
-
-## 2.1 - Settings And Provider UX
+## 2.1.0 - Settings, Provider UX, And General Artist Import
 
 Scope: reduce settings overload before adding more provider and metadata-source
-surface area.
+surface area, and replace the followed-only import with a general provider
+artist-import. (The 2.0.11 import/responsibility-follow-up work was folded into
+this release.)
+
+### General artist import (folded from 2.0.11)
+
+Replace the followed-only import with a general "Import artists" entry point that
+pulls artists from any provider list, with the heavy work on a background command
+(the way Lidarr runs import-list sync as a command). TIDAL-first but defined on
+the provider abstraction so a second provider can declare its own sources.
+
+- done: Background command. `ImportProviderArtists` registered (type-exclusive,
+  runs on a worker); generalised `FollowedArtistsImportService.importArtists(selection)`.
+  Routes enqueue and return immediately; the ~180s blocking `POST /import-followed`
+  is gone.
+- done: Provider import-source abstraction on the streaming-provider interface
+  (`listImportSources()`, `getArtistsForImportSource(selection)`), implemented for
+  TIDAL: followed artists, user playlists, favorite tracks, and home/start-screen
+  mixes & featured playlists (all v1 reads, matching Tidarr; v2 only for search).
+- done: Routes. `GET /api/v1/provider/import-sources`; `GET /api/v1/artist/import-stream`
+  (SSE, enqueues the command and relays bridged `IMPORT_ARTISTS_PROGRESS`) and
+  `POST /api/v1/artist/import` (enqueue + 202). Back-compat `import-followed`
+  aliases kept. Full CI green.
+- done: Frontend. A single "Import artists" button (Library empty-state + toolbar)
+  → `ImportArtistsModal`: pick a source category, then (for playlists/mixes) pick a
+  specific list, then run with streamed per-artist progress. SettingsPage import
+  now queues in the background. Replaces the followed-only entry points. Validated
+  live against the real TIDAL API (followed, favorites, 2 user playlists, 30 home
+  mixes/featured all enumerated correctly).
+- done: Main-thread user-write resilience. Route enqueues use a new
+  `runWithAsyncBusyRetry` (async backoff that YIELDS the event loop, vs the
+  worker's synchronous retry) so a user action doesn't fail just because a refresh
+  worker briefly held the write lock. Write chunk size lowered to 100 for more
+  lock-release points.
+- done (foundation): Cross-thread single-writer mutex (`api/src/services/db/write-lock.ts`).
+  Workers acquire synchronously; the main thread acquires via `Atomics.waitAsync`
+  (no event-loop freeze) and takes priority so user writes aren't starved by the
+  worker pool. Wired through the `db` proxy + worker pool. Bounded-wait SAFETY:
+  acquisition degrades to unserialised (SQLite-backstopped) writes on timeout, so
+  a lock bug can only slow down, never deadlock. Import enqueues use `withDbWrite`.
+- pending (the real scale work, validated on a 2453-artist / 743K-track library):
+  individual write transactions hold the lock too long at scale, so the mutex
+  serialises but throughput is gated by slow writes. Two root causes: (1) the
+  per-row catalog FK *triggers* (`trg_*_catalog_fks_ai/au`) run a `SELECT … WHERE
+  mbid=?` per insert/update — multiply that by 743K rows; the TrackFiles trigger's
+  `CAST(provider_id AS TEXT)` also defeats its index. (2) several artist-scale
+  transactions still aren't chunked or do reads inside the write section.
+  Concrete work: chunk ALL artist-scale write transactions (done so far: catalog
+  syncs, provider offers, curation slot-loop), move reads out of write sections,
+  and batch/optimise the FK triggers (or replace the per-row trigger with a
+  batched backfill). Iterative perf work — schedule across focused sessions.
+- pending: Audit other request-triggered routes for inline heavy work that should
+  be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
+  and adopt `runWithAsyncBusyRetry` for their writes.
+
+### Settings and provider UX
+
+Reduce settings overload before adding more provider and metadata-source surface
+area.
 
 - pending: Move editable Discogenius app settings out of `config.toml` into
   DB-backed settings with a UI, using Lidarr's pattern: a small `config`
@@ -141,7 +180,13 @@ surface area.
 - pending: Redesign connected-provider settings so each provider gets a compact
   connection card with status, primary actions, and capability summary. Move
   advanced/token/backend details behind disclosure panels or diagnostics instead
-  of showing them inline by default.
+  of showing them inline by default. DECIDED: collapse the capability "wall of
+  checkmarks" to the few axes that differ between services and that the library
+  quality model curates around — baseline "download" (not a chip), one tiered
+  "Lossless up to 24-bit" quality line (not separate 16-bit/24-bit chips),
+  "Spatial / Dolby Atmos", and "Music videos". Lower-level capabilities (lyrics,
+  artwork, ReplayGain, codecs) live in the card's "Details" disclosure, not as
+  chips.
 - pending: Add multi-provider selection/switching UX once the second provider is
   real. The UI should distinguish default provider, enabled providers, provider
   capability gaps, and per-library-type availability without duplicating raw
@@ -159,7 +204,11 @@ surface area.
   clearly separated Discogenius provider-token additions.
 - pending: Move provider health, catalog-source health, and download-backend
   diagnostics into a dedicated status/diagnostics area so the main Settings page
-  stays task-oriented.
+  stays task-oriented. DECIDED: a dedicated System/Status page (Lidarr-style
+  System → Status/Health) for cross-cutting health (token validity/expiry,
+  download-backend/tiddl health, Servarr Metadata Server reachability, rate-limit
+  metrics, last successful check). Provider cards keep only a one-line status with
+  a "Details" disclosure for provider-specific diagnostics.
 
 ## 2.2 - Streaming Provider Expansion
 

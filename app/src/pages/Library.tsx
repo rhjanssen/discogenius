@@ -50,7 +50,7 @@ import LibraryTrackList from "@/components/LibraryTrackList";
 import VideoGrid from "@/components/VideoGrid";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useLibrary } from "@/hooks/useLibrary";
-import { useFollowedArtistsImport } from "@/hooks/useFollowedArtistsImport";
+import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
 import { useQueueDetails } from "@/hooks/useQueueDetails";
@@ -323,14 +323,13 @@ const Library = () => {
     albumsHasRefreshError,
     albumsRefreshErrorMessage,
   } = useLibrary({ activeTab: selectedTab as 'artists' | 'albums' | 'tracks' | 'videos' });
-  const { importFollowedArtists } = useFollowedArtistsImport();
   const { data: streamingProviders } = useQuery({
     queryKey: ["streamingProviders"],
     queryFn: () => api.getStreamingProviders(),
     staleTime: 60_000,
   });
   const { addToQueue, getProgressByProviderId } = useQueueStatus();
-  const [importing, setImporting] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const { setArtwork } = useUltraBlurContext();
   const artistSentinelRef = useRef<HTMLDivElement | null>(null);
   const albumSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -910,65 +909,18 @@ const Library = () => {
     [streamingProviders],
   );
 
-  const handleImportFollowed = async (providerId?: string | null) => {
-    setImporting(true);
-    try {
-      await importFollowedArtists(undefined, providerId);
-      // Refresh the library to show the new artists and albums
-      await fetchLibrary(undefined, { refreshStats: true });
-    } finally {
-      setImporting(false);
-    }
-  };
+  const importProvider = importableFollowedProviders[0];
 
-  const renderEmptyLibraryAction = () => {
-    const importButton = (() => {
-      if (importableFollowedProviders.length > 1) {
-        return (
-          <Menu>
-            <MenuTrigger disableButtonEnhancement>
-              <Button
-                appearance="secondary"
-                icon={importing ? undefined : <ArrowImport24Regular />}
-                disabled={importing}
-                title="Choose a connected provider to import followed artists"
-              >
-                {importing ? "Importing..." : "Import Followed Artists"}
-              </Button>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                {importableFollowedProviders.map((provider) => (
-                  <MenuItem key={provider.id} onClick={() => handleImportFollowed(provider.id)}>
-                    {provider.name}
-                  </MenuItem>
-                ))}
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-        );
-      }
-
-      const provider = importableFollowedProviders[0];
-      return (
-        <Button
-          appearance="secondary"
-          icon={provider ? <ArrowImport24Regular /> : undefined}
-          onClick={() => provider ? handleImportFollowed(provider.id) : navigate("/settings")}
-          disabled={importing}
-          title={provider ? `Import followed artists from ${provider.name}` : "Connect a provider to import followed artists"}
-        >
-          {importing ? "Importing..." : provider ? `Import from ${provider.name}` : "Connect Provider"}
-        </Button>
-      );
-    })();
-
-    return (
-      <>
-        {importButton}
-      </>
-    );
-  };
+  const renderEmptyLibraryAction = () => (
+    <Button
+      appearance="secondary"
+      icon={importProvider ? <ArrowImport24Regular /> : undefined}
+      onClick={() => (importProvider ? setImportModalOpen(true) : navigate("/settings"))}
+      title={importProvider ? "Import artists from a connected service" : "Connect a provider to import artists"}
+    >
+      {importProvider ? "Import artists" : "Connect Provider"}
+    </Button>
+  );
 
   // Render a single artist card
   const renderArtistCard = (artist: any) => {
@@ -1888,6 +1840,18 @@ const Library = () => {
 
           <div className={styles.mobileControlsRow}>
             <div className={styles.compactActions}>
+              {importProvider ? (
+                <Button
+                  appearance="subtle"
+                  icon={<ArrowImport24Regular />}
+                  onClick={() => setImportModalOpen(true)}
+                  className={styles.menuButtonIconOnly}
+                  title="Import artists from a connected service"
+                  aria-label="Import artists"
+                >
+                  <span className={styles.mobileHiddenLabel}>Import</span>
+                </Button>
+              ) : null}
               {renderSortMenu()}
 
               <FilterMenu
@@ -1921,6 +1885,18 @@ const Library = () => {
 
           <div className={styles.desktopControlsRow}>
             <div className={styles.compactActions}>
+              {importProvider ? (
+                <Button
+                  appearance="subtle"
+                  icon={<ArrowImport24Regular />}
+                  onClick={() => setImportModalOpen(true)}
+                  className={styles.menuButtonIconOnly}
+                  title="Import artists from a connected service"
+                  aria-label="Import artists"
+                >
+                  <span className={styles.mobileHiddenLabel}>Import</span>
+                </Button>
+              ) : null}
               {renderSortMenu()}
 
               <FilterMenu
@@ -2128,6 +2104,13 @@ const Library = () => {
           </div>
         )}
       </div>
+
+      <ImportArtistsModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        providerId={importProvider?.id}
+        onImported={() => fetchLibrary(undefined, { refreshStats: true })}
+      />
     </div>
   );
 };

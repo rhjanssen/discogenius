@@ -13,6 +13,8 @@ import {
   ProviderDeviceLoginResult,
   ProviderDeviceLoginPollResult,
   ProviderDownloadOptions,
+  ProviderImportSource,
+  ProviderImportSelection,
 } from "../streaming-provider.js";
 import { tidalQualityMapping } from "./tidal-quality.js";
 import * as tidal from "./tidal.js";
@@ -215,6 +217,91 @@ export class TidalProvider implements StreamingProvider {
 
   async getFollowedArtists(): Promise<ProviderArtist[]> {
     return (await tidal.getFollowedArtists()).map((artist: any) => this.mapArtist(artist));
+  }
+
+  async listImportSources(): Promise<ProviderImportSource[]> {
+    const sources: ProviderImportSource[] = [
+      {
+        category: "followed-artists",
+        label: "Followed artists",
+        description: "Artists you follow on TIDAL",
+        requiresListSelection: false,
+      },
+      {
+        category: "favorite-tracks",
+        label: "Favorite tracks",
+        description: "Distinct artists from your liked tracks",
+        requiresListSelection: false,
+      },
+    ];
+
+    // Playlists and home-screen mixes are best-effort: a list fetch failing
+    // shouldn't sink the whole source list, it just hides that category.
+    try {
+      const playlists = await tidal.getUserPlaylists();
+      if (playlists.length > 0) {
+        sources.push({
+          category: "playlist",
+          label: "Playlists",
+          description: "Artists from a playlist's tracks",
+          requiresListSelection: true,
+          lists: playlists.map((playlist) => ({
+            id: playlist.id,
+            title: playlist.title,
+            subtitle: playlist.itemCount != null ? `${playlist.itemCount} tracks` : null,
+            image: playlist.image,
+            itemCount: playlist.itemCount,
+          })),
+        });
+      }
+    } catch (error) {
+      console.warn("[TidalProvider] Failed to list user playlists for import:", error);
+    }
+
+    try {
+      const home = await tidal.getHomeImportLists();
+      if (home.length > 0) {
+        sources.push({
+          category: "mix",
+          label: "Mixes & featured",
+          description: "Artists from a mix or featured playlist on your start screen",
+          requiresListSelection: true,
+          lists: home.map((entry) => ({
+            id: entry.id,
+            title: entry.title,
+            subtitle: entry.subtitle,
+            image: entry.image,
+          })),
+        });
+      }
+    } catch (error) {
+      console.warn("[TidalProvider] Failed to list home mixes for import:", error);
+    }
+
+    return sources;
+  }
+
+  async getArtistsForImportSource(selection: ProviderImportSelection): Promise<ProviderArtist[]> {
+    let raw: any[];
+    switch (selection.category) {
+      case "followed-artists":
+        raw = await tidal.getFollowedArtists();
+        break;
+      case "favorite-tracks":
+        raw = await tidal.getFavoriteTrackArtists();
+        break;
+      case "playlist":
+        if (!selection.listId) throw new Error("A playlist must be selected");
+        raw = await tidal.getPlaylistArtists(selection.listId);
+        break;
+      case "mix":
+        if (!selection.listId) throw new Error("A mix or playlist must be selected");
+        raw = await tidal.getHomeListArtists(selection.listId);
+        break;
+      default:
+        throw new Error(`Unsupported import source: ${selection.category}`);
+    }
+    return raw.map((artist) => this.mapArtist(artist));
   }
 
   async listArtistReleaseOffers(id: string | number): Promise<ProviderAlbum[]> {

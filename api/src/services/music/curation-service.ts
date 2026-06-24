@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, runChunkedWrite } from "../../database.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
@@ -395,46 +395,66 @@ export class CurationService {
 
         let slotUpdates = 0;
         let monitoredSlots = 0;
-        const selectMonitoredContext = db.prepare(`
-            SELECT 1
-            FROM ArtistReleaseGroupCuration context
-            JOIN Artists artist ON artist.mbid = context.source_artist_mbid
-            WHERE context.release_group_mbid = ?
-              AND context.included = 1
-              AND artist.monitored = 1
-            LIMIT 1
-        `);
-        db.transaction(() => {
-            for (const releaseGroup of releaseGroups) {
-                const included = includedReleaseGroupIds.has(releaseGroup.mbid);
-                upsertContext.run(artistMbid, releaseGroup.mbid, included ? 1 : 0, included ? "included" : "filtered-or-redundant");
-            }
 
-            for (const slot of slotRows) {
-                if (Number(slot.monitored_lock || 0) === 1) {
-                    if (Number(slot.monitored || 0) === 1) {
-                        monitoredSlots++;
-                    }
-                    continue;
-                }
-                const slotName = String(slot.slot || "").toLowerCase();
-                const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
-                const monitoredContext = selectMonitoredContext.get(slot.release_group_mbid);
-                const monitoredVal = Boolean(monitoredContext)
-                    && (slotName !== "spatial" || includeSpatial)
-                    && (!requireProvider || hasProvider)
-                    ? 1
-                    : 0;
-                
-                if (monitoredVal) {
+        // 1. Persist the curation context (included/reason) for each release group,
+        //    chunked so the write lock isn't held for the whole artist at once.
+        runChunkedWrite(releaseGroups, (releaseGroup) => {
+            const included = includedReleaseGroupIds.has(releaseGroup.mbid);
+            upsertContext.run(artistMbid, releaseGroup.mbid, included ? 1 : 0, included ? "included" : "filtered-or-redundant");
+        });
+
+        // 2. Resolve which release groups are monitored (included by any monitored
+        //    source artist) with ONE read pass per chunk — never a JOIN-per-slot
+        //    inside a write transaction (that held the lock for minutes on large
+        //    libraries). Reads run outside any write section.
+        const monitoredReleaseGroups = new Set<string>();
+        const relevantReleaseGroupMbids = [...new Set(slotRows.map((slot) => slot.release_group_mbid))];
+        for (let start = 0; start < relevantReleaseGroupMbids.length; start += 500) {
+            const chunk = relevantReleaseGroupMbids.slice(start, start + 500);
+            const placeholders = chunk.map(() => "?").join(", ");
+            const rows = db.prepare(`
+                SELECT DISTINCT context.release_group_mbid AS mbid
+                FROM ArtistReleaseGroupCuration context
+                JOIN Artists artist ON artist.mbid = context.source_artist_mbid
+                WHERE context.included = 1
+                  AND artist.monitored = 1
+                  AND context.release_group_mbid IN (${placeholders})
+            `).all(...chunk) as Array<{ mbid: string }>;
+            for (const row of rows) {
+                monitoredReleaseGroups.add(row.mbid);
+            }
+        }
+
+        // 3. Compute slot monitor decisions in memory.
+        const slotUpdatesToApply: Array<{ id: number; monitored: number }> = [];
+        for (const slot of slotRows) {
+            if (Number(slot.monitored_lock || 0) === 1) {
+                if (Number(slot.monitored || 0) === 1) {
                     monitoredSlots++;
                 }
-                if (Number(slot.monitored || 0) !== monitoredVal) {
-                    updateSlot.run(monitoredVal, slot.id);
-                    slotUpdates++;
-                }
+                continue;
             }
-        })();
+            const slotName = String(slot.slot || "").toLowerCase();
+            const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
+            const monitoredVal = monitoredReleaseGroups.has(slot.release_group_mbid)
+                && (slotName !== "spatial" || includeSpatial)
+                && (!requireProvider || hasProvider)
+                ? 1
+                : 0;
+
+            if (monitoredVal) {
+                monitoredSlots++;
+            }
+            if (Number(slot.monitored || 0) !== monitoredVal) {
+                slotUpdatesToApply.push({ id: slot.id, monitored: monitoredVal });
+                slotUpdates++;
+            }
+        }
+
+        // 4. Apply the slot updates in chunked writes.
+        runChunkedWrite(slotUpdatesToApply, (update) => {
+            updateSlot.run(update.monitored, update.id);
+        });
 
         const videoMonitored = curationConfig.include_videos !== false ? 1 : 0;
         const videoMonitorUpdates = artistMbid

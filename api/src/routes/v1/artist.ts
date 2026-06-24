@@ -13,7 +13,12 @@ import {
 } from "../../services/music/artist-monitoring.js";
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
-import { FollowedArtistsImportService } from "../../services/providers/followed-artists-import.js";
+import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
+import { withDbWrite } from "../../database.js";
+import { CommandNames } from "../../services/commands/command-names.js";
+import { appEvents, AppEvent, type ImportArtistsProgressEventPayload, type CommandEventPayload } from "../../services/commands/app-events.js";
+import type { ImportProviderArtistsCommand } from "../../services/commands/command-bodies.js";
+import type { ProviderImportSelection } from "../../services/providers/streaming-provider.js";
 import { servarrMetadataProxy, type LidarrArtist } from "../../services/metadata/servarr-metadata-proxy.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
 import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
@@ -158,10 +163,15 @@ router.get("/lookup", async (req, res) => {
   }
 });
 
-// Lightweight import - just adds artist IDs to database
-// NOTE: Must be before /:artistId route to avoid being matched as a dynamic parameter
-router.get("/import-followed-stream", async (req, res) => {
-  // Set up SSE headers
+/**
+ * SSE artist-import streamer. Enqueues an `ImportProviderArtists` command (which
+ * runs the heavy per-artist loop on a worker thread) and relays its progress
+ * events to the client. The work never runs on this request thread — we only
+ * forward the bridged IMPORT_ARTISTS_PROGRESS events and close on the command's
+ * terminal state. `import-followed-stream` is kept as a back-compat alias.
+ * NOTE: Must be before the /:artistId route to avoid being matched as a param.
+ */
+async function streamArtistImport(req: any, res: any, selection: ProviderImportSelection, label?: string) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -172,40 +182,81 @@ router.get("/import-followed-stream", async (req, res) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  const providerId = typeof req.query.providerId === "string"
+    ? req.query.providerId
+    : typeof req.query.provider === "string"
+      ? req.query.provider
+      : undefined;
+
+  let commandId: number;
   try {
-    // Send heartbeat every 15 seconds to keep connection alive
-    const heartbeat = setInterval(() => {
-      res.write(': heartbeat\n\n');
-    }, 15000);
-
-    try {
-      const providerId = typeof req.query.providerId === "string"
-        ? req.query.providerId
-        : typeof req.query.provider === "string"
-          ? req.query.provider
-          : null;
-      const summary = await FollowedArtistsImportService.importFollowedArtists({
-        providerId,
-        onEvent: (event) => {
-          const { type, ...data } = event;
-          sendEvent(type, data);
-        },
-      });
-
-      sendEvent('complete', summary);
-
-      res.end();
-    } finally {
-      clearInterval(heartbeat);
-    }
+    commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+      providerId,
+      importCategory: selection.category,
+      importListId: selection.listId,
+      importLabel: label,
+    } as ImportProviderArtistsCommand));
   } catch (error: any) {
-    console.error('Error importing followed artists:', error);
-    sendEvent('error', {
-      message: 'Failed to import followed artists',
-      error: error.message
-    });
-    res.end();
+    sendEvent('error', { message: 'Failed to queue artist import', error: error.message });
+    return res.end();
   }
+
+  if (commandId === -1) {
+    sendEvent('error', { message: 'Could not queue artist import' });
+    return res.end();
+  }
+
+  sendEvent('status', { message: 'Queued artist import…', commandId });
+
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    appEvents.off(AppEvent.IMPORT_ARTISTS_PROGRESS, onProgress);
+    appEvents.off(AppEvent.COMMAND_UPDATED, onCommand);
+    if (!res.writableEnded) res.end();
+  };
+
+  const onProgress = (payload: ImportArtistsProgressEventPayload) => {
+    if (payload.commandId !== commandId) return;
+    sendEvent(payload.event, payload.data);
+    if (payload.event === 'complete') cleanup();
+  };
+  // Terminal safety net: if the command fails before emitting 'complete'
+  // (e.g. provider not authenticated, list fetch error), close on its failure.
+  const onCommand = (payload: CommandEventPayload) => {
+    if (payload.id !== commandId) return;
+    if (payload.status === 'failed') {
+      sendEvent('error', { message: 'Artist import failed', error: payload.error || 'Import command failed' });
+      cleanup();
+    } else if (payload.status === 'completed' && !closed) {
+      cleanup();
+    }
+  };
+
+  appEvents.on(AppEvent.IMPORT_ARTISTS_PROGRESS, onProgress);
+  appEvents.on(AppEvent.COMMAND_UPDATED, onCommand);
+  req.on('close', cleanup);
+}
+
+const IMPORT_CATEGORIES = new Set(["followed-artists", "playlist", "favorite-tracks", "mix"]);
+
+router.get("/import-stream", (req, res) => {
+  const category = typeof req.query.category === "string" ? req.query.category : "followed-artists";
+  if (!IMPORT_CATEGORIES.has(category)) {
+    res.status(400).json({ detail: `Unknown import category: ${category}` });
+    return;
+  }
+  const listId = typeof req.query.listId === "string" ? req.query.listId : undefined;
+  const label = typeof req.query.label === "string" ? req.query.label : undefined;
+  void streamArtistImport(req, res, { category: category as ProviderImportSelection["category"], listId }, label);
+});
+
+// Back-compat alias for the followed-artists-only stream.
+router.get("/import-followed-stream", (req, res) => {
+  void streamArtistImport(req, res, { category: "followed-artists" }, "followed artists");
 });
 
 // Monitor an artist: Ensure basic metadata exists + set monitor=1.
@@ -433,17 +484,55 @@ router.delete("/:artistId", (req, res) => {
   }
 });
 
+// Non-streaming import trigger: enqueue the background ImportProviderArtists
+// command and return its id immediately. (Previously this ran the whole import
+// inline and blocked the request for the entire follow list.) Defaults to
+// followed artists; pass `category`/`listId` for other sources.
+router.post("/import", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const providerId = typeof body.providerId === "string"
+      ? body.providerId
+      : typeof body.provider === "string" ? body.provider : undefined;
+    const category = typeof body.category === "string" ? body.category : "followed-artists";
+    if (!IMPORT_CATEGORIES.has(category)) {
+      return res.status(400).json({ detail: `Unknown import category: ${category}` });
+    }
+    const commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+      providerId,
+      importCategory: category as ImportProviderArtistsCommand["importCategory"],
+      importListId: typeof body.listId === "string" ? body.listId : undefined,
+      importLabel: typeof body.label === "string" ? body.label : undefined,
+    } as ImportProviderArtistsCommand));
+    if (commandId === -1) {
+      return res.status(409).json({ detail: "Could not queue artist import" });
+    }
+    res.status(202).json({ commandId, queued: true });
+  } catch (error: any) {
+    console.error('Error queueing artist import:', error);
+    res.status(500).json({ detail: error.message || 'Failed to queue artist import' });
+  }
+});
+
+// Back-compat: followed-artists trigger, now enqueues the same background command.
 router.post("/import-followed", async (req, res) => {
   try {
-    const providerId = typeof (req.body as any)?.providerId === "string"
-      ? (req.body as any).providerId
-      : typeof (req.body as any)?.provider === "string"
-        ? (req.body as any).provider
-        : null;
-    res.json(await FollowedArtistsImportService.importFollowedArtists({ providerId }));
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const providerId = typeof body.providerId === "string"
+      ? body.providerId
+      : typeof body.provider === "string" ? body.provider : undefined;
+    const commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+      providerId,
+      importCategory: "followed-artists",
+      importLabel: "followed artists",
+    } as ImportProviderArtistsCommand));
+    if (commandId === -1) {
+      return res.status(409).json({ detail: "Could not queue artist import" });
+    }
+    res.status(202).json({ commandId, queued: true });
   } catch (error: any) {
-    console.error('Error importing followed artists:', error);
-    res.status(500).json({ detail: error.message || 'Failed to import followed artists' });
+    console.error('Error queueing followed-artists import:', error);
+    res.status(500).json({ detail: error.message || 'Failed to queue followed-artists import' });
   }
 });
 

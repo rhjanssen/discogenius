@@ -36,6 +36,10 @@ export interface StreamingProvider {
   getArtistVideos?(id: string | number): Promise<ProviderVideo[]>;
   getArtistCatalogPage?(id: string | number): Promise<any>;
   getFollowedArtists?(): Promise<ProviderArtist[]>;
+  /** Categories of artist-import lists this provider supports (followed, playlists, mixes, …). */
+  listImportSources?(): Promise<ProviderImportSource[]>;
+  /** Distinct artists for a chosen import source/selection (e.g. a playlist's artists). */
+  getArtistsForImportSource?(selection: ProviderImportSelection): Promise<ProviderArtist[]>;
   listArtistReleaseOffers?(id: string | number): Promise<ProviderAlbum[]>;
   searchReleaseGroup?(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]>;
   getAlbum(id: string | number): Promise<ProviderAlbum>;
@@ -151,6 +155,42 @@ export type ProviderSearchType = "artists" | "albums" | "tracks" | "videos";
 export interface ProviderSearchOptions {
   limit?: number;
   types?: ProviderSearchType[];
+}
+
+/**
+ * Artist-import list categories. `followed-artists` and `favorite-tracks` are
+ * single fixed lists (the category itself is the selection). `playlist` and `mix`
+ * enumerate concrete lists the user picks from (their playlists, the home-screen
+ * mixes/featured playlists). Defined on the provider abstraction so each provider
+ * declares what it supports; TIDAL implements all four today.
+ */
+export type ProviderImportSourceCategory =
+  | "followed-artists"
+  | "playlist"
+  | "favorite-tracks"
+  | "mix";
+
+export interface ProviderImportSourceList {
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  image?: string | null;
+  itemCount?: number | null;
+}
+
+export interface ProviderImportSource {
+  category: ProviderImportSourceCategory;
+  label: string;
+  description?: string;
+  /** When true the UI must have the user pick one of `lists`; otherwise the category is the selection. */
+  requiresListSelection: boolean;
+  lists?: ProviderImportSourceList[];
+}
+
+export interface ProviderImportSelection {
+  category: ProviderImportSourceCategory;
+  /** Required when the source `requiresListSelection` (a specific playlist or mix id). */
+  listId?: string;
 }
 
 export interface ProviderArtist {

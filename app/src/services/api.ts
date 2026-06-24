@@ -114,6 +114,30 @@ const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
 const API_V1_PREFIX = '/api/v1';
 
+export type ImportSourceCategory = 'followed-artists' | 'playlist' | 'favorite-tracks' | 'mix';
+
+export interface ImportSourceList {
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  image?: string | null;
+  itemCount?: number | null;
+}
+
+export interface ImportSource {
+  category: ImportSourceCategory;
+  label: string;
+  description?: string;
+  requiresListSelection: boolean;
+  lists?: ImportSourceList[];
+}
+
+export interface ImportSourcesResponse {
+  providerId: string;
+  providerName: string;
+  sources: ImportSource[];
+}
+
 // Business/resource endpoints are served under a single /api/v1 namespace
 // (Lidarr-style). A small set of infra/streaming endpoints stay un-versioned
 // under /api and must match the backend mounts in server.ts.
@@ -1285,24 +1309,47 @@ class ApiClient {
     return this.request('/monitoring/curate', { method: 'POST' });
   }
 
+  // Artist-import sources (followed artists, playlists, favorite tracks, mixes)
+  // for the connected provider, used by the "Import artists" modal.
+  async getImportSources(providerId?: string | null): Promise<ImportSourcesResponse> {
+    const query = providerId ? `?providerId=${encodeURIComponent(providerId)}` : '';
+    return this.request(`/v1/provider/import-sources${query}`);
+  }
+
   // Streaming endpoints using Server-Sent Events (SSE)
+  // General artist-import stream: enqueues the background ImportProviderArtists
+  // command and relays its progress. `category` selects the source; `listId` is
+  // required for playlist/mix sources.
+  createImportStream(
+    selection: { category: string; listId?: string | null; label?: string | null; providerId?: string | null },
+    onEvent: (event: string, data: any) => void,
+    onError?: (error: Error) => void,
+  ): EventSource {
+    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/import-stream`;
+    const queryParams = new URLSearchParams();
+    queryParams.set('category', selection.category);
+    if (selection.listId) queryParams.set('listId', selection.listId);
+    if (selection.label) queryParams.set('label', selection.label);
+    if (selection.providerId) queryParams.set('providerId', selection.providerId);
+    if (this.authToken) queryParams.set('token', this.authToken);
+    const query = queryParams.toString();
+    if (query) url += `?${query}`;
+    return this.attachImportStreamListeners(createManagedEventSource(url), onEvent, onError);
+  }
+
   createImportFollowedStream(
     onEvent: (event: string, data: any) => void,
     onError?: (error: Error) => void,
     providerId?: string | null,
   ): EventSource {
-    // Add auth token to URL query params since EventSource can't send custom headers
-    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/import-followed-stream`;
-    const queryParams = new URLSearchParams();
-    if (providerId) queryParams.set('providerId', providerId);
-    if (this.authToken) {
-      queryParams.set('token', this.authToken);
-    }
-    const query = queryParams.toString();
-    if (query) {
-      url += `?${query}`;
-    }
-    const eventSource = createManagedEventSource(url);
+    return this.createImportStream({ category: 'followed-artists', providerId }, onEvent, onError);
+  }
+
+  private attachImportStreamListeners(
+    eventSource: EventSource,
+    onEvent: (event: string, data: any) => void,
+    onError?: (error: Error) => void,
+  ): EventSource {
 
     // Set up event listeners for all event types
     const eventTypes = ['status', 'total', 'artist-progress', 'artist-added', 'artist-updated', 'artist-skipped', 'complete', 'error'];

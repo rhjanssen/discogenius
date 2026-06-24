@@ -22,6 +22,7 @@ import type {
     DownloadVideoCommand,
     HousekeepingCommand,
     ImportDownloadCommand,
+    ImportProviderArtistsCommand,
     MoveArtistCommand,
     RefreshAlbumCommand,
     RefreshArtistCommand,
@@ -64,6 +65,7 @@ export interface CommandBodyMap {
     [CommandNames.CompactDatabase]: CompactDatabaseCommand;
     [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
+    [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;
 }
 
 export type AnyCommandBody = CommandBodyMap[CommandName];
