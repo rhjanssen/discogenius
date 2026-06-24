@@ -216,6 +216,45 @@ existing catalog tables; the win is the diff-reconcile write path (port
 `RefreshEntityServiceBase` + `SortedChildren` + `ShouldRefresh*`). Split oversized
 service files + trim comments toward Lidarr's structure in the same passes.
 
+### Schema target: curated columns, drop the raw `data` blobs
+
+Do this WITH the refresh port (above). Today every catalog row stores the entire
+raw metadata response as a `data` TEXT blob (~3KB/row → the 743K-track DB is
+mostly duplicated JSON → ~21ms/upsert). Lidarr stores NO raw blob: it extracts
+~12–15 fields per entity and discards the rest — scalars as real columns, small
+bounded arrays/objects as ONE JSON column per field (its `EmbeddedDocumentConverter`
+pattern), relational sets as child tables.
+
+Decision rule per field: filter/join on individual elements → child table; store
+as a set for display/membership → one JSON column; single value → scalar column.
+
+Target columns = Lidarr's set + our UPC/ISRC/provider value-adds (most scalars
+already exist; the change is dropping the raw blob and adding the per-field JSON
+columns, then computing FK ids in code):
+
+- ArtistMetadata: scalars name, sort_name, type, status, disambiguation, overview;
+  JSON cols images, links, genres, ratings, aliases, members, old_foreign_ids.
+- Albums (release group): scalars title, primary_type, first_release_date,
+  disambiguation, overview; JSON cols secondary_types, images, links, genres,
+  ratings, old_foreign_ids; child table AlbumReleases.
+- AlbumReleases: scalars title, status, duration, date, track_count, media_count,
+  barcode (UPC, 1:1); JSON cols label, country, media (disc structure),
+  old_foreign_ids; child table Tracks.
+- Recordings: scalars title, length_ms, artist_credit; JSON col isrcs (1:many —
+  graduate to indexed child table RecordingISRCs(recording_id, isrc) if ISRC→
+  recording lookup becomes a hot matching path).
+- Tracks: scalars number, absolute_number, title, length_ms, explicit,
+  medium_position, position; JSON col ratings.
+
+UPC vs ISRC shape (why they differ): a release has exactly one barcode → scalar;
+a recording can have many ISRCs (MB returns a list) → set/JSON. Both are our
+value-add beyond Lidarr (Skyhook strips UPC/ISRC — the reason for local-MB) and
+must be preserved as queryable columns, NOT in a blob.
+
+Payoff: rows shrink from ~3KB to a handful of typed fields → fast writes (the
+scale fix) AND cheap diff change-detection (compare a few fields / a content hash,
+never a 3KB blob) — which is exactly what the refresh-port diff-reconcile needs.
+
 ### Settings and provider UX
 
 Reduce settings overload before adding more provider and metadata-source surface
