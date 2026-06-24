@@ -104,6 +104,18 @@ surface area, and replace the followed-only import with a general provider
 artist-import. (The 2.0.11 import/responsibility-follow-up work was folded into
 this release.)
 
+### Fresh-session context (validation status — read before assuming "done")
+
+- Work for 2.1.0 lives on git branch `2.1.0` (3 commits past main; 2.0.10 is
+  released on main). Check out that branch.
+- Import feature: backend + enqueue + `import-sources` are live-validated against
+  TIDAL, but the modal has NOT been click-tested end-to-end in a browser (artists
+  actually added + SSE per-artist progress rendering). Verify that before calling
+  it shippable.
+- Responsiveness under refresh load IS validated (15/15 enqueues, 64ms health);
+  refresh THROUGHPUT is NOT improved yet (a big-artist refresh is still slow).
+- Line numbers in plans below drift — grep, don't trust them.
+
 ### General artist import (folded from 2.0.11)
 
 Replace the followed-only import with a general "Import artists" entry point that
