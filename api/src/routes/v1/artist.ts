@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
-import { db } from "../../database.js";
+import { db, runWithAsyncBusyRetry } from "../../database.js";
 import {
   queueArtistWorkflow,
 } from "../../services/music/artist-workflow.js";
@@ -14,7 +14,6 @@ import {
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
-import { withDbWrite } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { appEvents, AppEvent, type ImportArtistsProgressEventPayload, type CommandEventPayload } from "../../services/commands/app-events.js";
 import type { ImportProviderArtistsCommand } from "../../services/commands/command-bodies.js";
@@ -188,27 +187,31 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
       ? req.query.provider
       : undefined;
 
+  sendEvent('status', { message: 'Queueing artist import…' });
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
+
   let commandId: number;
   try {
-    commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+    commandId = await enqueueProviderArtistImport({
       providerId,
       importCategory: selection.category,
       importListId: selection.listId,
       importLabel: label,
-    } as ImportProviderArtistsCommand));
+    } as ImportProviderArtistsCommand);
   } catch (error: any) {
+    clearInterval(heartbeat);
     sendEvent('error', { message: 'Failed to queue artist import', error: error.message });
     return res.end();
   }
 
   if (commandId === -1) {
+    clearInterval(heartbeat);
     sendEvent('error', { message: 'Could not queue artist import' });
     return res.end();
   }
 
   sendEvent('status', { message: 'Queued artist import…', commandId });
 
-  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
   let closed = false;
   const cleanup = () => {
     if (closed) return;
@@ -242,6 +245,21 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
 }
 
 const IMPORT_CATEGORIES = new Set(["followed-artists", "playlist", "favorite-tracks", "mix"]);
+const MANUAL_IMPORT_PRIORITY = 1000;
+
+function enqueueProviderArtistImport(payload: ImportProviderArtistsCommand): Promise<number> {
+  return runWithAsyncBusyRetry(
+    () => CommandQueueManager.push(
+      CommandNames.ImportProviderArtists,
+      payload,
+      undefined,
+      MANUAL_IMPORT_PRIORITY,
+      CommandTrigger.Manual,
+    ),
+    30,
+    200,
+  );
+}
 
 router.get("/import-stream", (req, res) => {
   const category = typeof req.query.category === "string" ? req.query.category : "followed-artists";
@@ -498,12 +516,12 @@ router.post("/import", async (req, res) => {
     if (!IMPORT_CATEGORIES.has(category)) {
       return res.status(400).json({ detail: `Unknown import category: ${category}` });
     }
-    const commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+    const commandId = await enqueueProviderArtistImport({
       providerId,
       importCategory: category as ImportProviderArtistsCommand["importCategory"],
       importListId: typeof body.listId === "string" ? body.listId : undefined,
       importLabel: typeof body.label === "string" ? body.label : undefined,
-    } as ImportProviderArtistsCommand));
+    } as ImportProviderArtistsCommand);
     if (commandId === -1) {
       return res.status(409).json({ detail: "Could not queue artist import" });
     }
@@ -521,11 +539,11 @@ router.post("/import-followed", async (req, res) => {
     const providerId = typeof body.providerId === "string"
       ? body.providerId
       : typeof body.provider === "string" ? body.provider : undefined;
-    const commandId = await withDbWrite(() => CommandQueueManager.push(CommandNames.ImportProviderArtists, {
+    const commandId = await enqueueProviderArtistImport({
       providerId,
       importCategory: "followed-artists",
       importLabel: "followed artists",
-    } as ImportProviderArtistsCommand));
+    } as ImportProviderArtistsCommand);
     if (commandId === -1) {
       return res.status(409).json({ detail: "Could not queue artist import" });
     }

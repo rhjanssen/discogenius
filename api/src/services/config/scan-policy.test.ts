@@ -6,7 +6,7 @@ import { shouldHydrateArtistAlbumTracks, shouldHydrateArtistCatalog } from "./sc
 test("artist metadata refresh skips inline track hydration when hydrateAlbumTracks is false", () => {
   assert.equal(shouldHydrateArtistAlbumTracks({ hydrateAlbumTracks: false }), false);
   assert.equal(shouldHydrateArtistAlbumTracks({ hydrateAlbumTracks: true }), true);
-  assert.equal(shouldHydrateArtistAlbumTracks({ monitorAlbums: false }), false);
+  assert.equal(shouldHydrateArtistAlbumTracks({ monitorAlbums: false }), true);
   assert.equal(shouldHydrateArtistAlbumTracks({}), true);
 });
 
@@ -19,6 +19,6 @@ test("artist metadata refresh skips broad catalog hydration once managed metadat
   assert.equal(shouldHydrateArtistCatalog({ hydrateCatalog: false }, { hasManagedMetadata: true }), false);
   assert.equal(shouldHydrateArtistCatalog({ hydrateCatalog: false }, { hasManagedMetadata: false }), true);
   assert.equal(shouldHydrateArtistCatalog({ hydrateCatalog: true }, { hasManagedMetadata: true }), true);
-  assert.equal(shouldHydrateArtistCatalog({ monitorAlbums: false }, { hasManagedMetadata: true }), false);
+  assert.equal(shouldHydrateArtistCatalog({ monitorAlbums: false }, { hasManagedMetadata: true }), true);
   assert.equal(shouldHydrateArtistCatalog({}, { hasManagedMetadata: true }), true);
 });

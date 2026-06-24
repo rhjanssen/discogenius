@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
-import { getConfigSection, updateConfig, CONFIG_FILE, Config } from "../../services/config/config.js";
+import { clearConfigCache, getConfigSection, updateConfig, CONFIG_FILE, Config } from "../../services/config/config.js";
 import { streamingProviderManager } from "../../services/providers/index.js";
 import { UpgraderService } from "../../services/mediafiles/upgrader.js";
 import { getAppReleaseInfo } from "../../services/config/app-release.js";
@@ -308,6 +308,7 @@ router.post("/toml", async (req, res) => {
     }
 
     fs.writeFileSync(CONFIG_FILE, toml, "utf-8");
+    clearConfigCache();
     await syncDownloadBackends();
     res.json({ success: true, message: "Config saved successfully" });
   } catch (error: any) {

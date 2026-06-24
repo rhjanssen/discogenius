@@ -243,12 +243,11 @@ function seedCanonicalLibraryFiles() {
     fs.writeFileSync(trackPath, "audio");
     dbModule.db.prepare(`
         INSERT INTO TrackFiles (
-          artist_id, album_id, media_id,
-          canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+          artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
           canonical_track_mbid, canonical_recording_mbid,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
-        ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "100",
         "artist-mbid-100",
@@ -301,11 +300,10 @@ function seedCanonicalLibraryFiles() {
     fs.writeFileSync(videoPath, "video");
     dbModule.db.prepare(`
         INSERT INTO TrackFiles (
-          artist_id, album_id, media_id,
-          canonical_artist_mbid, canonical_recording_mbid,
+          artist_id, canonical_artist_mbid, canonical_recording_mbid,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
-        ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "100",
         "artist-mbid-100",

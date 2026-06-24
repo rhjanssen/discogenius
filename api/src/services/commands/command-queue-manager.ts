@@ -3,6 +3,7 @@ import { db } from "../../database.js";
 import type {
     CommandBodyCommon,
     ImportDownloadCommand,
+    ImportProviderArtistsCommand,
     RefreshArtistCommand,
 } from "./command-bodies.js";
 import {
@@ -178,6 +179,34 @@ function areEquivalentRefreshArtistPayloads(
         && left.expandCreditedArtists === right.expandCreditedArtists;
 }
 
+function findActiveProviderArtistImport(payload: Partial<ImportProviderArtistsCommand>): { id: number; priority: number; status: CommandStatus } | null {
+    const providerId = String(payload.providerId || "").trim();
+    const category = String(payload.importCategory || "followed-artists").trim();
+    const listId = String(payload.importListId || "").trim();
+
+    const rows = db.prepare(`
+        SELECT id, payload, priority, status FROM commands
+        WHERE name = ? AND status IN('queued', 'started')
+    `).all(CommandNames.ImportProviderArtists) as Array<{ id: number; payload: unknown; priority: number; status: CommandStatus }>;
+
+    for (const existing of rows) {
+        const existingPayload = safeParsePayload(existing.payload, existing.id) as Partial<ImportProviderArtistsCommand>;
+        const existingProviderId = String(existingPayload.providerId || "").trim();
+        const existingCategory = String(existingPayload.importCategory || "followed-artists").trim();
+        const existingListId = String(existingPayload.importListId || "").trim();
+
+        if (
+            existingProviderId === providerId
+            && existingCategory === category
+            && existingListId === listId
+        ) {
+            return { id: existing.id, priority: Number(existing.priority) || 0, status: existing.status };
+        }
+    }
+
+    return null;
+}
+
 export class CommandQueueManager {
     /**
      * Add a job to the queue
@@ -196,6 +225,21 @@ export class CommandQueueManager {
             if (!providerId || providerId === 'undefined' || providerId === 'null') {
                 console.warn(`[TaskQueue] Rejecting ${type} job with invalid providerId: `, payload);
                 return -1; // Return invalid ID to indicate rejection
+            }
+        }
+
+        if (type === CommandNames.ImportProviderArtists) {
+            const activeImport = findActiveProviderArtistImport(payload as ImportProviderArtistsCommand);
+            if (activeImport !== null) {
+                if (activeImport.status === "queued" && priority > activeImport.priority) {
+                    db.prepare(`
+                        UPDATE commands
+                        SET priority = ?, trigger = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'queued'
+                    `).run(priority, trigger, activeImport.id);
+                }
+                console.log(`[TaskQueue] ${type} already exists with equivalent source selection, skipping duplicate.`);
+                return activeImport.id;
             }
         }
 

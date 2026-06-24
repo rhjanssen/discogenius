@@ -49,10 +49,10 @@ function insertFile(o: {
   tfId += 1;
   const info = db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, album_id, media_id, canonical_release_group_mbid, canonical_recording_mbid,
+      artist_id, canonical_release_group_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type
-    ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "art1", o.rg ?? null, o.rec ?? null,
     o.providerId ? "tidal" : null, o.providerEntityType ?? null, o.providerId ?? null, o.slot,

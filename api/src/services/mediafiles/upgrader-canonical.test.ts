@@ -59,10 +59,9 @@ function seedArtistAndRelease() {
 }
 
 function insertTrackFile(overrides: Record<string, unknown>) {
+  const legacyMediaId = overrides.media_id;
   const row = {
     artist_id: "artist-local",
-    album_id: null,
-    media_id: null,
     canonical_artist_mbid: null,
     canonical_release_group_mbid: null,
     canonical_release_mbid: null,
@@ -70,7 +69,7 @@ function insertTrackFile(overrides: Record<string, unknown>) {
     canonical_recording_mbid: null,
     provider: null,
     provider_entity_type: null,
-    provider_id: null,
+    provider_id: typeof legacyMediaId === "string" ? legacyMediaId : null,
     library_slot: "stereo",
     file_path: "C:/Music/file.flac",
     relative_path: "file.flac",
@@ -87,13 +86,13 @@ function insertTrackFile(overrides: Record<string, unknown>) {
 
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, album_id, media_id, canonical_artist_mbid, canonical_release_group_mbid,
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
       canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_type,
       quality, codec, bit_depth, sample_rate
     ) VALUES (
-      @artist_id, @album_id, @media_id, @canonical_artist_mbid, @canonical_release_group_mbid,
+      @artist_id, @canonical_artist_mbid, @canonical_release_group_mbid,
       @canonical_release_mbid, @canonical_track_mbid, @canonical_recording_mbid,
       @provider, @provider_entity_type, @provider_id, @library_slot,
       @file_path, @relative_path, @library_root, @filename, @extension, @file_type,

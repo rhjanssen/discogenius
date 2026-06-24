@@ -42,9 +42,7 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-one-mbid", artistPath, 1);
 
-  // Legacy rows retained for TrackFiles FK during the transition (dropped Phase 5).
-
-// Canonical graph + provider availability (naming resolves from these).
+  // Canonical graph + provider availability (naming resolves from these).
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
   dbModule.db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
@@ -134,7 +132,11 @@ test("moveArtist changes the stored folder and produces an artist-scoped rename 
   const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = ?").get("1") as { path: string };
   assert.equal(artist.path, "Artist One");
 
-  const trackedFile = dbModule.db.prepare("SELECT expected_path as expectedPath FROM TrackFiles WHERE media_id = ?").get("100") as { expectedPath: string };
+  const trackedFile = dbModule.db.prepare(`
+    SELECT expected_path as expectedPath
+    FROM TrackFiles
+    WHERE provider = ? AND provider_entity_type = ? AND provider_id = ?
+  `).get("tidal", "track", "100") as { expectedPath: string };
   assert.ok(trackedFile.expectedPath.includes(path.join("Artist One", "Album One", "01 - Track One.flac")));
 });
 
@@ -199,8 +201,8 @@ test("executeMoveArtistJob moves the artist folder and rebases tracked file path
   const trackedFile = dbModule.db.prepare(`
     SELECT file_path as filePath, relative_path as relativePath, expected_path as expectedPath, needs_rename as needsRename
     FROM TrackFiles
-    WHERE media_id = ?
-  `).get("100") as {
+    WHERE provider = ? AND provider_entity_type = ? AND provider_id = ?
+  `).get("tidal", "track", "100") as {
     filePath: string;
     relativePath: string;
     expectedPath: string;

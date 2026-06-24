@@ -155,6 +155,8 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                         break;
                     case "error":
                         setRunError(data.error || data.message || "Import failed");
+                        setPhase("done");
+                        closeStream();
                         break;
                 }
             },

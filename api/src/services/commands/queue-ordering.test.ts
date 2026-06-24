@@ -74,6 +74,72 @@ test("reorderPendingJobs preserves explicit move order deterministically", () =>
     );
 });
 
+test("provider artist imports reuse an active equivalent source selection", () => {
+    const first = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.ImportProviderArtists,
+        {
+            providerId: "tidal",
+            importCategory: "followed-artists",
+            importLabel: "Followed artists",
+        },
+    );
+    const duplicateWithDifferentLabel = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.ImportProviderArtists,
+        {
+            providerId: "tidal",
+            importCategory: "followed-artists",
+            importLabel: "followed artists",
+        },
+    );
+    const differentSource = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.ImportProviderArtists,
+        {
+            providerId: "tidal",
+            importCategory: "playlist",
+            importListId: "playlist-1",
+            importLabel: "Playlist 1",
+        },
+    );
+
+    assert.equal(duplicateWithDifferentLabel, first);
+    assert.notEqual(differentSource, first);
+    const row = dbModule.db.prepare("SELECT COUNT(*) as count FROM commands WHERE name = ?")
+        .get(queueModule.CommandNames.ImportProviderArtists) as { count: number };
+    assert.equal(row.count, 2);
+});
+
+test("provider artist import duplicate can raise queued priority", () => {
+    const first = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.ImportProviderArtists,
+        {
+            providerId: "tidal",
+            importCategory: "playlist",
+            importListId: "playlist-1",
+            importLabel: "Playlist 1",
+        },
+        undefined,
+        10,
+    );
+    const duplicate = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.ImportProviderArtists,
+        {
+            providerId: "tidal",
+            importCategory: "playlist",
+            importListId: "playlist-1",
+            importLabel: "Playlist 1",
+        },
+        undefined,
+        1000,
+        1,
+    );
+
+    assert.equal(duplicate, first);
+    const row = dbModule.db.prepare("SELECT priority, trigger FROM commands WHERE id = ?")
+        .get(first) as { priority: number; trigger: number };
+    assert.equal(row.priority, 1000);
+    assert.equal(row.trigger, 1);
+});
+
 test("reorderPendingJobs rejects invalid reorder sets", () => {
     const first = queuePendingDownload("track", "11");
     const second = queuePendingDownload("track", "12");

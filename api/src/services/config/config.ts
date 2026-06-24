@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import * as TOML from "@iarna/toml";
 import { fileURLToPath } from "url";
+import Database from "better-sqlite3";
+import { appEvents, AppEvent } from "../commands/app-events.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -280,6 +282,40 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   account: {}
 };
 
+const DB_BACKED_CONFIG_SECTIONS = new Set<keyof DiscoGeniusConfig>([
+  "monitoring",
+  "filtering",
+  "path",
+  "naming",
+  "metadata",
+  "quality",
+  "streaming",
+  "account",
+]);
+
+const PARTIAL_DB_BACKED_CONFIG_SECTIONS = new Set<keyof DiscoGeniusConfig>([
+  // `app.admin_password` is a bootstrap secret read before SQLite opens. Keep it
+  // file/env backed; only public editable app settings are eligible for DB storage.
+  "app",
+]);
+
+let configCache: DiscoGeniusConfig | null = null;
+let configCacheFileKey: string | null = null;
+let configDbExecutor: (<T>(operation: (database: Database.Database) => T) => T) | null = null;
+
+function cloneConfig<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function getConfigFileKey(): string | null {
+  try {
+    const stats = fs.statSync(CONFIG_FILE, { bigint: true });
+    return `${stats.mtimeNs}:${stats.size}`;
+  } catch {
+    return null;
+  }
+}
+
 const MUSICBRAINZ_FILTER_KEYS: Array<keyof FilteringConfig> = [
   "include_broadcast",
   "include_other",
@@ -325,6 +361,153 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
   };
 }
 
+function readConfigFile(): DiscoGeniusConfig {
+  ensureConfigExists();
+
+  try {
+    const content = fs.readFileSync(CONFIG_FILE, "utf-8");
+    const parsed = TOML.parse(content) as unknown as DiscoGeniusConfig;
+
+    const metadataFromFile: Partial<MetadataConfig> = { ...(parsed.metadata || {}) };
+    delete (metadataFromFile as Record<string, unknown>).save_album_review;
+    delete (metadataFromFile as Record<string, unknown>).save_artist_bio;
+    if (metadataFromFile.enable_fingerprinting === undefined) {
+      metadataFromFile.enable_fingerprinting = DEFAULT_CONFIG.metadata.enable_fingerprinting;
+    }
+
+    return {
+      app: { ...DEFAULT_CONFIG.app, ...parsed.app },
+      monitoring: { ...DEFAULT_CONFIG.monitoring, ...parsed.monitoring },
+      filtering: normalizeFilteringConfig((parsed as any).filtering),
+      path: { ...DEFAULT_CONFIG.path, ...parsed.path },
+      naming: { ...DEFAULT_CONFIG.naming, ...(parsed as any).naming },
+      metadata: { ...DEFAULT_CONFIG.metadata, ...metadataFromFile },
+      quality: { ...DEFAULT_CONFIG.quality, ...(parsed as any).quality },
+      streaming: { ...DEFAULT_CONFIG.streaming, ...(parsed as any).streaming },
+      account: { ...DEFAULT_CONFIG.account, ...parsed.account },
+    };
+  } catch (error) {
+    console.error("❌ Error reading config.toml:", error);
+    console.log("⚠️  Using default configuration");
+    return cloneConfig(DEFAULT_CONFIG);
+  }
+}
+
+export function registerConfigDbExecutor(
+  executor: <T>(operation: (database: Database.Database) => T) => T,
+): void {
+  configDbExecutor = executor;
+  clearConfigCache();
+}
+
+function withConfigDb<T>(operation: (database: Database.Database) => T): T | null {
+  if (!configDbExecutor) {
+    return null;
+  }
+
+  try {
+    return configDbExecutor(operation);
+  } catch (error) {
+    console.warn("[Config] DB-backed settings unavailable, using config.toml only:", (error as Error).message);
+    return null;
+  }
+}
+
+function readDbConfigOverrides(): Partial<Record<keyof DiscoGeniusConfig, Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>>> {
+  const rows = withConfigDb((database) => database
+    .prepare("SELECT key, value FROM config WHERE key LIKE 'settings.%'")
+    .all() as Array<{ key: string; value: string }>);
+
+  if (!rows) {
+    return {};
+  }
+
+  const overrides: Partial<Record<keyof DiscoGeniusConfig, Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>>> = {};
+  for (const row of rows) {
+    const section = row.key.replace(/^settings\./, "") as keyof DiscoGeniusConfig;
+    if (!DB_BACKED_CONFIG_SECTIONS.has(section) && !PARTIAL_DB_BACKED_CONFIG_SECTIONS.has(section)) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(row.value) as Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>;
+      overrides[section] = parsed;
+    } catch {
+      console.warn(`[Config] Ignoring invalid DB config override for ${row.key}`);
+    }
+  }
+
+  return overrides;
+}
+
+function mergeDbOverrides(fileConfig: DiscoGeniusConfig): DiscoGeniusConfig {
+  const overrides = readDbConfigOverrides();
+  const merged: DiscoGeniusConfig = cloneConfig(fileConfig);
+
+  for (const [section, override] of Object.entries(overrides) as Array<[keyof DiscoGeniusConfig, Record<string, unknown>]>) {
+    if (section === "filtering") {
+      merged.filtering = normalizeFilteringConfig({
+        ...merged.filtering,
+        ...(override as Partial<FilteringConfig>),
+      });
+      continue;
+    }
+
+    if (section === "app") {
+      merged.app = {
+        ...merged.app,
+        acoustid_api_key: typeof override.acoustid_api_key === "string"
+          ? override.acoustid_api_key
+          : merged.app.acoustid_api_key,
+      };
+      continue;
+    }
+
+    (merged as unknown as Record<string, unknown>)[section] = {
+      ...(merged[section] as Record<string, unknown>),
+      ...override,
+    };
+  }
+
+  return merged;
+}
+
+function writeDbConfigSection<K extends keyof DiscoGeniusConfig>(
+  section: K,
+  value: Partial<DiscoGeniusConfig[K]>,
+): boolean {
+  if (!DB_BACKED_CONFIG_SECTIONS.has(section) && !PARTIAL_DB_BACKED_CONFIG_SECTIONS.has(section)) {
+    return false;
+  }
+
+  const storedValue = section === "app"
+    ? { acoustid_api_key: (value as Partial<AppConfig>).acoustid_api_key }
+    : value;
+
+  const written = withConfigDb((database) => {
+    database.prepare(`
+      INSERT INTO config (key, value, description)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      `settings.${String(section)}`,
+      JSON.stringify(storedValue),
+      `Discogenius editable ${String(section)} settings`,
+    );
+    return true;
+  });
+
+  return written === true;
+}
+
+export function clearConfigCache(): void {
+  configCache = null;
+  configCacheFileKey = null;
+}
+
 /**
  * Ensure config directory and default config file exist
  */
@@ -347,38 +530,16 @@ export function ensureConfigExists(): void {
  * Read and parse config.toml
  */
 export function readConfig(): DiscoGeniusConfig {
-  ensureConfigExists();
-
-  try {
-    const content = fs.readFileSync(CONFIG_FILE, "utf-8");
-    const parsed = TOML.parse(content) as unknown as DiscoGeniusConfig;
-
-    // Deep merge with defaults to ensure all nested fields exist
-    const metadataFromFile: Partial<MetadataConfig> = { ...(parsed.metadata || {}) };
-    delete (metadataFromFile as Record<string, unknown>).save_album_review;
-    delete (metadataFromFile as Record<string, unknown>).save_artist_bio;
-    if (metadataFromFile.enable_fingerprinting === undefined) {
-      metadataFromFile.enable_fingerprinting = DEFAULT_CONFIG.metadata.enable_fingerprinting;
-    }
-
-    const config: DiscoGeniusConfig = {
-      app: { ...DEFAULT_CONFIG.app, ...parsed.app },
-      monitoring: { ...DEFAULT_CONFIG.monitoring, ...parsed.monitoring },
-      filtering: normalizeFilteringConfig((parsed as any).filtering),
-      path: { ...DEFAULT_CONFIG.path, ...parsed.path },
-      naming: { ...DEFAULT_CONFIG.naming, ...(parsed as any).naming },
-      metadata: { ...DEFAULT_CONFIG.metadata, ...metadataFromFile },
-      quality: { ...DEFAULT_CONFIG.quality, ...(parsed as any).quality },
-      streaming: { ...DEFAULT_CONFIG.streaming, ...(parsed as any).streaming },
-      account: { ...DEFAULT_CONFIG.account, ...parsed.account },
-    };
-
-    return config;
-  } catch (error) {
-    console.error("❌ Error reading config.toml:", error);
-    console.log("⚠️  Using default configuration");
-    return DEFAULT_CONFIG;
+  const currentFileKey = getConfigFileKey();
+  if (configCache && configCacheFileKey !== currentFileKey) {
+    configCache = null;
   }
+
+  if (!configCache) {
+    configCache = mergeDbOverrides(readConfigFile());
+    configCacheFileKey = getConfigFileKey();
+  }
+  return cloneConfig(configCache);
 }
 
 /**
@@ -390,6 +551,8 @@ export function writeConfig(config: DiscoGeniusConfig): void {
   try {
     const tomlString = TOML.stringify(config as any);
     fs.writeFileSync(CONFIG_FILE, tomlString, "utf-8");
+    configCache = null;
+    configCacheFileKey = null;
     console.log("✅ Config saved to config.toml");
   } catch (error) {
     console.error("❌ Error writing config.toml:", error);
@@ -431,7 +594,12 @@ export function updateConfig<K extends keyof DiscoGeniusConfig>(
     };
   }
 
-  writeConfig(config);
+  if (!writeDbConfigSection(section, config[section])) {
+    writeConfig(config);
+  } else {
+    configCache = null;
+    appEvents.emit(AppEvent.CONFIG_UPDATED, { section, source: "db" });
+  }
 }
 
 export class Config {
