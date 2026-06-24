@@ -151,46 +151,34 @@ export function mapServarrMetadataImages(images?: any[] | null): MediaCover[] {
   });
 }
 
-function extractExternalUrls(rawData?: string | null): string[] {
-  if (!rawData) {
+/**
+ * Collect external URLs from a curated `links` JSON column. The metadata-server
+ * `links` array uses `{ type, target }` (target = the URL). This is the
+ * matching-evidence reader for the curated columns, replacing the old recursive
+ * walk over the raw `data` blob now that the blob is being retired.
+ */
+export function extractLinkUrls(linksJson?: string | null): string[] {
+  if (!linksJson) {
     return [];
   }
-
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawData);
+    parsed = JSON.parse(linksJson);
   } catch {
     return [];
   }
-
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
   const urls = new Set<string>();
-  const visit = (value: unknown): void => {
-    if (typeof value === "string") {
-      const text = value.trim();
-      if (/^https?:\/\//i.test(text)) {
-        urls.add(text);
-      }
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    if (!value || typeof value !== "object") {
-      return;
-    }
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (/^(resource|url|externalUrl|externalUrls|relations?)$/i.test(key)) {
-        visit(child);
-      } else if (key === "target" || key === "target-credit") {
-        continue;
-      } else if (typeof child === "object" && child !== null) {
-        visit(child);
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const value of Object.values(entry as Record<string, unknown>)) {
+      if (typeof value === "string" && /^https?:\/\//i.test(value.trim())) {
+        urls.add(value.trim());
       }
     }
-  };
-
-  visit(parsed);
+  }
   return Array.from(urls);
 }
 
@@ -305,7 +293,7 @@ export class ServarrMetadataProxy {
 
   getCachedReleaseGroupsForArtist(artistMbid: string): MusicBrainzReleaseGroupForMatching[] {
     const rows = db.prepare(`
-      SELECT DISTINCT rg.mbid, rg.title, rg.primary_type, rg.secondary_types, rg.first_release_date, rg.disambiguation
+      SELECT DISTINCT rg.mbid, rg.title, rg.primary_type, rg.secondary_types, rg.first_release_date, rg.disambiguation, rg.links
       FROM Albums rg
       LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
       WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
@@ -316,7 +304,15 @@ export class ServarrMetadataProxy {
       secondary_types: string | null;
       first_release_date: string | null;
       disambiguation: string | null;
+      links: string | null;
     }>;
+
+    // External-link matching evidence lives on the release GROUP (`links`), not
+    // the release — sourced from the curated column, replacing the old
+    // extractExternalUrls(AlbumReleases.data) walk over the retiring raw blob.
+    const externalUrlsByReleaseGroup = new Map<string, string[]>(
+      rows.map((row) => [row.mbid, extractLinkUrls(row.links)]),
+    );
 
     const releaseRows = rows.length === 0
       ? []
@@ -330,7 +326,6 @@ export class ServarrMetadataProxy {
           r.date,
           r.track_count,
           r.media_count,
-          r.data,
           rec.isrcs AS recording_isrcs
         FROM AlbumReleases r
         LEFT JOIN Tracks t ON t.release_mbid = r.mbid
@@ -345,7 +340,6 @@ export class ServarrMetadataProxy {
         date: string | null;
         track_count: number | null;
         media_count: number | null;
-        data: string | null;
         recording_isrcs: string | null;
       }>;
     const releasesByReleaseGroup = new Map<string, Array<NonNullable<MusicBrainzReleaseGroupForMatching["releases"]>[number]>>();
@@ -374,7 +368,7 @@ export class ServarrMetadataProxy {
         externalUrls: new Set<string>(),
         isrcs: new Set<string>(),
       };
-      for (const url of extractExternalUrls(release.data)) {
+      for (const url of externalUrlsByReleaseGroup.get(release.release_group_mbid) ?? []) {
         evidence.externalUrls.add(url);
       }
       const rawIsrcs = String(release.recording_isrcs || "").trim();
@@ -496,44 +490,32 @@ export class ServarrMetadataProxy {
       contentHash,
     );
 
+    // The artist payload carries only SHALLOW album entries (no images, links,
+    // genres, or full release detail). On conflict, update only the shallow
+    // scalar fields it actually has and NEVER overwrite the detail-sourced
+    // columns (data, images, links, genres, overview, content_hash) — those are
+    // owned by syncReleaseGroup when it fetches the full release-group detail.
+    // (This replaces the old read-existing-blob-then-merge dance.)
     const insertRg = db.prepare(`
-      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, ratings, old_foreign_ids, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         primary_type = excluded.primary_type,
         secondary_types = excluded.secondary_types,
         first_release_date = excluded.first_release_date,
         disambiguation = excluded.disambiguation,
-        data = excluded.data,
-        images = excluded.images,
+        ratings = excluded.ratings,
+        old_foreign_ids = excluded.old_foreign_ids,
         updated_at = CURRENT_TIMESTAMP
     `);
-
-    const selectExisting = db.prepare(`SELECT data FROM Albums WHERE mbid = ?`);
 
     // Chunk the per-album upserts: a large artist (hundreds of release groups)
     // would otherwise hold the write lock for the entire catalog and starve
     // concurrent refresh workers + the main-thread job claim.
     const albums = (artist.Albums || []).filter((album) => album.Id);
     runChunkedWrite(albums, (album) => {
-      const existingRow = selectExisting.get(album.Id) as { data: string } | undefined;
-      let mergedData = album;
-      if (existingRow?.data) {
-        try {
-          const existingData = JSON.parse(existingRow.data);
-          if (existingData.images || existingData.Images || existingData.Releases || existingData.releases) {
-            mergedData = {
-              ...album,
-              images: album.images || album.Images || existingData.images || existingData.Images,
-              Releases: album.Releases || album.releases || existingData.Releases || existingData.releases,
-            };
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      }
-
+      const rawAlbum = album as Record<string, any>;
       const albumImages = mapServarrMetadataImages(album.images || album.Images);
 
       insertRg.run(
@@ -544,8 +526,10 @@ export class ServarrMetadataProxy {
         JSON.stringify(album.SecondaryTypes || []),
         album.ReleaseDate || null,
         album.Disambiguation || null,
-        JSON.stringify(mergedData),
+        JSON.stringify(album),
         JSON.stringify(albumImages),
+        JSON.stringify(rawAlbum.Rating ?? rawAlbum.rating ?? null),
+        JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
       );
       MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
     });

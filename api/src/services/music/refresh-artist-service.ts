@@ -933,16 +933,16 @@ export class RefreshArtistService {
     }
 
     private static getLinkedProviderArtistId(artistMbid: string, providerId: string): string | null {
-        const row = db.prepare("SELECT data FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
-            .get(artistMbid) as { data?: string | null } | undefined;
-        if (!row?.data) {
+        const row = db.prepare("SELECT links FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
+            .get(artistMbid) as { links?: string | null } | undefined;
+        if (!row?.links) {
             return null;
         }
 
         try {
-            const artist = JSON.parse(row.data);
+            const parsed = JSON.parse(row.links);
             const linkType = providerId === "apple-music" ? "apple" : providerId;
-            const links = Array.isArray(artist?.links) ? artist.links : [];
+            const links = Array.isArray(parsed) ? parsed : [];
             for (const link of links) {
                 if (String(link?.type || "").trim().toLowerCase() !== linkType) {
                     continue;
