@@ -271,35 +271,50 @@ the remaining row-SIZE win.
 Blob-consumer migration map (grep-verified 2026-06-24 — migrate each off the
 catalog `data` blob to columns BEFORE dropping the blob, or these break). The
 catalog `data` blob (ArtistMetadata/Albums/AlbumReleases/Recordings/Tracks) is
-read in exactly these places; `ProviderItems.data` is a SEPARATE provider blob,
-out of scope here:
+read in these places; `ProviderItems.data` is a SEPARATE provider blob, out of
+scope here.
 
-- `servarr-metadata-proxy.ts` `getCachedReleaseGroupsForArtist`
-  (`extractExternalUrls(AlbumReleases.data)`): needs release external URLs /
-  relations for matching evidence → new `AlbumReleases.relations` (or
-  `external_links`) JSON column.
-- `servarr-metadata-proxy.ts` `syncArtist` (reads existing `Albums.data` to
-  preserve images/Releases on merge): obviated once images live in the existing
-  `images` column and releases come from `syncReleaseGroup` — delete the merge.
-- `refresh-artist-service.ts` `getLinkedProviderArtistId` (`ArtistMetadata.data`
-  → `artist.links`): needs artist external relations → new `ArtistMetadata.links`
-  JSON column.
-- `metadata-files.ts` (NFO build: `rg.data`, `release.data`, `recording.data`,
-  `am.data`): needs label / media (disc structure) / country / relations →
-  `AlbumReleases.label`, `AlbumReleases.country`, `AlbumReleases.media` JSON cols
-  (barcode already a column). Audit exact fields when migrating.
-- `musicbrainz-release-group-read-service.ts` (`r.data`, `t.data`) and
-  `musicbrainz-release-selection-service.ts` (`r.data`): release media/disc
-  structure for edition selection → `AlbumReleases.media` JSON col.
-- `artist-query-service.ts` (`rg.data`, `recording.data`), `track-query-service.ts`
-  (`recording.data`), `routes/search.ts` (`rg.data`), `provider-matches.ts:720`
-  (`album.data`): display/derived fields — audit exact reads when migrating;
-  most are already covered by existing typed columns.
+DONE (step 1 + part of step 2, schema 32→33, on branch `2.1.0`):
+- Step 1: curated columns ADDED + populated in the write path, grounded in real
+  /artist + /album payloads (not guessed): ArtistMetadata +overview,status,links,
+  genres,ratings,aliases,old_foreign_ids; Albums +overview,links,genres,ratings,
+  aliases,old_foreign_ids; AlbumReleases +label,media,old_foreign_ids (and now
+  persists barcode/UPC, which the old write silently dropped). `data` still
+  written so nothing breaks.
+- `getCachedReleaseGroupsForArtist`: external-link evidence now from the release-
+  GROUP `links` column via `extractLinkUrls` (the URLs live on the RG, not the
+  release — old `extractExternalUrls(release.data)` was effectively empty).
+- `getLinkedProviderArtistId`: reads `ArtistMetadata.links`.
+- `syncArtist`: merge dance removed; shallow album no longer clobbers detail cols.
+- `musicbrainz-release-group-read-service` + `musicbrainz-release-selection-service`
+  + `provider-matches`: the three `json_each(...,'$.Media')` reads now iterate the
+  `AlbumReleases.media` column.
+- `artist-query-service`: album-card artwork resolves from the `images` column via
+  `imageContainerFromImagesColumn` (new helper in media-cover-service).
 
-Sequence: (1) add the new JSON columns + populate in the write path (additive,
-blob retained — non-breaking); (2) migrate each consumer above to the columns;
-(3) drop `data` from the catalog tables + bump schema. Tests build a fresh
-schema each run, so only the FINAL live scale validation needs a DB reset.
+REMAINING before dropping `data` (the all-or-nothing finish):
+- `release-group-artwork-service.ts` `resolveHydratedReleaseGroupArtwork` +
+  `musicbrainz-release-group-read-service.ts` `chooseReleaseGroupArtwork`: both
+  `parseJsonObject(releaseGroup.data)` for artwork. They take a CALLER-provided
+  row, so each caller's SELECT must provide `images`; use
+  `imageContainerFromImagesColumn(row.images)`. Trace callers before changing.
+- `routes/search.ts` (`rg.data` at ~145 → `servarrMetadataData` ~176, and
+  `rg.data AS rg_data` ~206 → ~285): artwork image container → `images` column +
+  `imageContainerFromImagesColumn`.
+- `metadata-files.ts` (NFO): `rg.data`/`am.data` → `images` column for artwork;
+  `release.data` (`release_data`) and `recording.data` (`recording_data`) → audit
+  exact fields (label/media now columns; recording.data is only written for
+  videos, not audio).
+- `musicbrainz-release-group-read-service.ts` (`r.data` ~496 recording_data,
+  `t.data` ~497 track_data) + `track-query-service.ts` (`recording.data` ~314/430):
+  audit what they read (mostly cover/explicit, likely already typed columns).
+- `provider-matches.ts:720` (`album.data`): confirm whether this is catalog
+  `Albums.data` or a provider row; migrate or exclude accordingly.
+
+Final steps: drop `data` from the catalog tables + bump schema; reset the dev DB
+(authorized) and re-import; re-measure write throughput on the big library. Tests
+build a fresh schema each run, so only the FINAL live scale validation needs the
+reset — keep iterating green via `yarn test:api` until then.
 
 ### Settings and provider UX
 
