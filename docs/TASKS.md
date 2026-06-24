@@ -399,6 +399,28 @@ These tasks can land in any release above if they unblock that release.
   full filtered-discography coverage with the fewest releases/provider downloads
   and least redundant overlap, then use quality, explicit/clean preference,
   evidence strength, and track count as tie-breakers.
+- pending: Make the artist song-set RECORDING-centric, not release-group-centric.
+  Today curation gathers songs from release groups the artist is primary on OR
+  credited in (`Albums.artist_mbid` OR `ArtistReleaseGroups.scope`), so it can
+  MISS track/recording-level contributions — a featured vocal on one track of
+  someone else's album, a guest verse, a session/remix credit — which are
+  credited at the MusicBrainz *recording* level, not the release group. To "get
+  all individual songs by an artist AND songs they contributed on", gather by
+  recording artist-credit (recording MBID). Blocker: we only store
+  `Recordings.artist_mbid` (the PRIMARY artist) + an `artist_credit`/`credits`
+  TEXT blob, so "all recordings where artist X is any credit" is not queryable.
+  Model recording↔artist-credit as a queryable relation (primary + featured) —
+  fits the curated-column/refresh-port schema work. Identity stays recording MBID
+  (already what curation dedups on); ISRC remains matching evidence only.
+- pending: Remove curation's title-based dedup fallback. `Tracks.recording_mbid`
+  is NOT NULL and MB-sourced, so curation always has the recording MBID — the
+  `normalizedTitles` fallback in `getPreferredReleaseRecordings` /
+  redundancy filter is not just redundant but harmful (two different recordings
+  sharing a title — studio vs. live, or unrelated same-named songs — get wrongly
+  merged, dropping a release group with unique songs). Dedup/redundancy by
+  recording MBID only (guard that it's a valid MBID). KEEP the title+duration/
+  position/version fallback in PROVIDER/import matching, where UPC/ISRC may be
+  absent and a weaker key is a legitimate fallback — different context.
 - pending: Add curation tests for edition choice affecting global coverage:
   verify that a smaller edition plus one EP can beat a larger edition that
   forces multiple singles or leaves recordings unavailable.
