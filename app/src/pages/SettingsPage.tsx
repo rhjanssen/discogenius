@@ -33,7 +33,6 @@ import {
     ArrowSync24Regular,
     ArrowSortDownLines24Regular,
     QuestionCircle24Regular,
-    Checkmark24Regular,
     Dismiss24Regular,
     Open24Regular,
 } from "@fluentui/react-icons";
@@ -41,6 +40,7 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { providerMarkFor } from "@/components/ui/providerMarks";
+import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
@@ -569,51 +569,26 @@ const useStyles = makeStyles({
         height: '30px',
         objectFit: 'contain',
     },
-    capabilityList: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: tokens.spacingHorizontalXS,
-        rowGap: tokens.spacingVerticalXS,
-        justifyContent: 'flex-end',
-        [MEDIA.mobile]: {
-            justifyContent: 'flex-start',
-        },
-    },
-    capabilityGrid: {
+    capabilitySummaryGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(160px, 1fr))',
-        columnGap: tokens.spacingHorizontalL,
-        rowGap: tokens.spacingVerticalXS,
+        gridTemplateColumns: 'repeat(3, minmax(140px, 1fr))',
+        gap: tokens.spacingHorizontalS,
         width: '100%',
         [MEDIA.mobile]: {
             gridTemplateColumns: '1fr',
         },
     },
-    capabilityRow: {
+    capabilitySummaryItem: {
         display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalS,
-        minHeight: '28px',
+        flexDirection: 'column',
+        gap: '2px',
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: tokens.colorNeutralBackground2,
+        minWidth: 0,
     },
-    capabilityLabel: {
-        color: tokens.colorNeutralForeground2,
-    },
-    capabilityIconOn: {
-        color: tokens.colorPaletteGreenForeground1,
-        flexShrink: 0,
-    },
-    capabilityIconOff: {
-        color: tokens.colorPaletteRedForeground1,
-        flexShrink: 0,
-    },
-    capabilityValue: {
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width: '20px',
-        height: '20px',
-        order: -1,
-        flexShrink: 0,
+    capabilitySummaryValue: {
+        fontWeight: tokens.fontWeightSemibold,
     },
     providerActionRow: {
         display: 'flex',
@@ -816,7 +791,7 @@ const SettingsPage = () => {
     const [curationConfig, setCurationConfig] = useState<FilteringConfigContract | null>(null);
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
-    const [importing, setImporting] = useState(false);
+    const [importProviderId, setImportProviderId] = useState<string | null>(null);
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
@@ -1261,24 +1236,12 @@ const SettingsPage = () => {
         navigate("/login");
     };
 
-    const handleImportFollowed = async (provider: StreamingProviderStatus) => {
-        setImporting(true);
-        try {
-            await api.importFollowedArtists(provider.id);
-            toast({
-                title: "Import queued",
-                description: `Importing followed artists from ${provider.name} in the background. Track progress in Activity.`,
-            });
-        } catch (error) {
-            console.error("Error importing followed artists:", error);
-            toast({
-                title: "Import Failed",
-                description: error instanceof Error ? error.message : `Could not import followed artists from ${provider.name}.`,
-                variant: "destructive",
-            });
-        } finally {
-            setImporting(false);
-        }
+    const handleImportComplete = () => {
+        dispatchActivityRefresh();
+        toast({
+            title: "Import complete",
+            description: "The artist list has been refreshed.",
+        });
     };
 
     if (loading || providerLoading || providersLoading) {
@@ -1497,23 +1460,27 @@ const SettingsPage = () => {
         { key: "include_demo", title: "Demo" },
     ] as const;
 
-    const getProviderCapabilities = (provider: StreamingProviderStatus) => [
-        { label: "Catalog search", enabled: Boolean(provider.capabilities.catalogSearch) },
-        { label: "Artist catalog", enabled: Boolean(provider.capabilities.artistCatalog) },
-        { label: "Followed artists", enabled: Boolean(provider.capabilities.followedArtists) },
-        { label: "Track previews", enabled: Boolean(provider.capabilities.audioPreviews) },
-        { label: "Music downloads", enabled: Boolean(provider.capabilities.audioDownloads) },
-        { label: "Lossless FLAC", enabled: Boolean(provider.capabilities.losslessStereo) },
-        { label: "Hi-res FLAC", enabled: Boolean(provider.capabilities.hiResStereo) },
-        { label: "Dolby Atmos", enabled: Boolean(provider.capabilities.spatialAudio) },
-        { label: "Lyrics", enabled: Boolean(provider.capabilities.lyrics) },
-        { label: "Music videos", enabled: Boolean(provider.capabilities.musicVideos) },
-        { label: "Video previews", enabled: Boolean(provider.capabilities.videoPreviews) },
-        { label: "Video downloads", enabled: Boolean(provider.capabilities.videoDownloads) },
-        { label: "Artwork", enabled: Boolean(provider.capabilities.artwork) },
-        { label: "Editorial metadata", enabled: Boolean(provider.capabilities.editorialMetadata) },
-        { label: "Provider IDs", enabled: Boolean(provider.capabilities.providerIds) },
-    ].filter((capability) => capability.enabled);
+    const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
+        const caps = provider.capabilities;
+        const stereo = caps.stereoQuality
+            ?? (caps.hiResStereo
+                ? "Lossless up to 24-bit"
+                : caps.losslessStereo
+                    ? "Lossless"
+                    : caps.lossyStereo
+                        ? "Lossy stereo"
+                        : "Not available");
+        const spatial = caps.spatialQuality
+            ?? (caps.spatialAudio ? "Available" : "Not available");
+        const video = caps.videoQuality
+            ?? ((caps.videoDownloads || caps.musicVideos) ? "Available" : "Not available");
+
+        return [
+            { label: "Stereo quality", value: stereo },
+            { label: "Spatial audio", value: spatial },
+            { label: "Music video", value: video },
+        ];
+    };
 
     const streamingProvidersSection = (
         <SettingsSection
@@ -1625,29 +1592,24 @@ const SettingsPage = () => {
                                         <Button
                                             appearance="outline"
                                             className={styles.signOutButton}
-                                            icon={importing ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
-                                            onClick={() => handleImportFollowed(provider)}
-                                            disabled={importing || !provider.authenticated}
+                                            icon={<ArrowImport24Regular />}
+                                            onClick={() => setImportProviderId(provider.id)}
+                                            disabled={!provider.authenticated}
                                         >
-                                            {importing ? "Importing..." : "Import followed"}
+                                            Import artists
                                         </Button>
                                     ) : null}
                                 </div>
                             </div>
                             <div className={styles.providerActionRow}>
                                 <div className={styles.rowContent}>
-                                    <Text weight="semibold">Capabilities</Text>
-                                    <div className={styles.capabilityGrid}>
-                                        {getProviderCapabilities(provider).length > 0 ? getProviderCapabilities(provider).map((capability) => (
-                                            <div key={capability.label} className={styles.capabilityRow}>
-                                                <span className={styles.capabilityValue}>
-                                                    <Checkmark24Regular className={styles.capabilityIconOn} />
-                                                </span>
-                                                <Text size={200} className={styles.capabilityLabel}>{capability.label}</Text>
+                                    <div className={styles.capabilitySummaryGrid}>
+                                        {getProviderCapabilitySummary(provider).map((capability) => (
+                                            <div key={capability.label} className={styles.capabilitySummaryItem}>
+                                                <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
+                                                <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
                                             </div>
-                                        )) : (
-                                            <Caption1 className={styles.mutedText}>No active provider capabilities are exposed yet.</Caption1>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                             </div>
@@ -2843,6 +2805,12 @@ const SettingsPage = () => {
                         </DialogBody>
                     </DialogSurface>
                 </Dialog>
+                <ImportArtistsModal
+                    open={Boolean(importProviderId)}
+                    onClose={() => setImportProviderId(null)}
+                    providerId={importProviderId}
+                    onImported={handleImportComplete}
+                />
             </div >
         </div >
     );

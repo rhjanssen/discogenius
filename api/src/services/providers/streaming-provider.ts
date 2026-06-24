@@ -20,6 +20,16 @@ export interface ProviderCapabilities {
   editorialMetadata: boolean;
   providerIds: boolean;
   spatialFormats?: string[];
+  /**
+   * Human display strings for the connection card's quality summary. These are
+   * provider facts (e.g. "192 kHz", "1080p") that cannot be derived from the
+   * booleans above, so each provider declares them directly. The card shows
+   * three axes — stereo, spatial, and video quality — and falls back to deriving
+   * a coarse label from the booleans when a string is absent.
+   */
+  stereoQuality?: string;
+  spatialQuality?: string;
+  videoQuality?: string;
 }
 
 export interface StreamingProvider {

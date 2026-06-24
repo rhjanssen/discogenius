@@ -239,6 +239,9 @@ export type StreamingProviderStatus = {
     editorialMetadata: boolean;
     providerIds: boolean;
     spatialFormats?: string[];
+    stereoQuality?: string;
+    spatialQuality?: string;
+    videoQuality?: string;
   };
   management: {
     canAuthenticate: boolean;
