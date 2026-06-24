@@ -6,12 +6,14 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
 import {
     albumProviderArtworkCandidatesFromRow,
+    imageContainerFromImagesColumn,
     normalizeArtworkUrl,
     parseJsonObject,
     resolveAlbumArtwork,
     resolveArtistArtwork,
     resolveMediaCoverProxyUrl,
     type ProviderArtworkCandidate,
+    type ServarrMetadataImageContainer,
 } from "../metadata/media-cover-service.js";
 
 type AlbumProviderItemRow = {
@@ -39,14 +41,14 @@ type AlbumProviderItemRow = {
     release_group_review_text: string | null;
     release_group_review_source: string | null;
     release_group_review_last_updated: string | null;
-    release_group_data: string | null;
+    release_group_overview: string | null;
+    release_group_images: string | null;
     release_title: string | null;
     release_date: string | null;
     barcode: string | null;
     release_copyright: string | null;
     media_count: number | null;
     track_count: number | null;
-    release_data: string | null;
     artist_id: string | null;
     artist_name: string | null;
 };
@@ -70,8 +72,8 @@ type VideoProviderItemRow = {
     recording_release_date: string | null;
     recording_cover_image_id: string | null;
     recording_artist_credit: string | null;
+    recording_credits: string | null;
     recording_length_ms: number | null;
-    recording_data: string | null;
     artist_id: string | null;
     artist_name: string | null;
     album_title: string | null;
@@ -165,14 +167,14 @@ function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
             rg.review_text AS release_group_review_text,
             rg.review_source AS release_group_review_source,
             rg.review_last_updated AS release_group_review_last_updated,
-            rg.data AS release_group_data,
+            rg.overview AS release_group_overview,
+            rg.images AS release_group_images,
             release.title AS release_title,
             release.date AS release_date,
             release.barcode AS barcode,
             release.copyright AS release_copyright,
             release.media_count AS media_count,
             release.track_count AS track_count,
-            release.data AS release_data,
             artist.id AS artist_id,
             COALESCE(artist.name, artist_metadata.name) AS artist_name
         FROM ProviderItems pi
@@ -209,8 +211,8 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
             recording.release_date AS recording_release_date,
             recording.cover_image_id AS recording_cover_image_id,
             recording.artist_credit AS recording_artist_credit,
+            recording.credits AS recording_credits,
             recording.length_ms AS recording_length_ms,
-            recording.data AS recording_data,
             artist.id AS artist_id,
             COALESCE(artist.name, artist_metadata.name) AS artist_name,
             album.title AS album_title,
@@ -275,7 +277,6 @@ async function getAlbumForNfo(albumId: string) {
 
         if (!row) throw error;
         const providerData = parseJsonObject(row.provider_data) || {};
-        const releaseData = parseJsonObject(row.release_data) || {};
         const artistName = row.artist_name || "Unknown Artist";
         const artistId = row.artist_id || row.artist_mbid || "";
         const title = row.release_group_title || row.release_title || row.provider_title || providerData.title || "Unknown Album";
@@ -312,7 +313,7 @@ async function getAlbumForNfo(albumId: string) {
             artist_id: String(artistId),
             artist_name: artistName,
             upc: row.barcode || row.provider_upc || providerData.upc || null,
-            copyright: row.release_copyright || providerData.copyright || releaseData.copyright || null,
+            copyright: row.release_copyright || providerData.copyright || null,
             video_cover: row.release_group_video_cover || providerData.video_cover || providerData.videoCover || null,
             num_videos: providerData.num_videos || providerData.videoCount || 0,
             num_volumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
@@ -332,16 +333,36 @@ async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
 
     const row = loadAlbumProviderItem(albumId);
     const providerData = parseJsonObject(row?.provider_data) || {};
-    const releaseGroupData = parseJsonObject(row?.release_group_data) || {};
     const review = textOrNull(
         row?.release_group_review_text,
+        row?.release_group_overview,
         providerData.review_text,
         providerData.review,
         providerData.description,
-        releaseGroupData.review_text,
-        releaseGroupData.overview,
     );
     return review ? cleanProviderText(review) : "";
+}
+
+function parseRecordingCredits(value: unknown): Array<{ id?: string; name?: string; join_phrase?: string }> {
+    const parsed = parseJsonObject(value);
+    const credits = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.["artist-credit"])
+            ? parsed["artist-credit"]
+            : Array.isArray(parsed?.artistCredits)
+                ? parsed.artistCredits
+                : Array.isArray(parsed?.artist_credits)
+                    ? parsed.artist_credits
+                    : [];
+
+    return credits
+        .filter((credit): credit is Record<string, any> => Boolean(credit && typeof credit === "object"))
+        .map((credit) => ({
+            id: textOrNull(credit.id, credit.artist?.id) || undefined,
+            name: textOrNull(credit.name, credit.artist?.name) || undefined,
+            join_phrase: textOrNull(credit.join_phrase, credit.joinPhrase, credit.joinphrase) || "",
+        }))
+        .filter((credit) => Boolean(credit.name));
 }
 
 async function getVideoForNfo(videoId: string) {
@@ -358,15 +379,12 @@ async function getVideoForNfo(videoId: string) {
         if (!row) throw error;
         const artistId = row.artist_id ? String(row.artist_id) : null;
         const providerData = parseJsonObject(row.provider_data) || {};
-        const recordingData = parseJsonObject(row.recording_data) || {};
         const artistName = row.artist_name || row.recording_artist_credit || null;
         const artists = Array.isArray(providerData.artists)
             ? providerData.artists
             : Array.isArray(providerData.credits)
                 ? providerData.credits
-                : Array.isArray(recordingData.artists)
-                    ? recordingData.artists
-                    : [];
+                : parseRecordingCredits(row.recording_credits);
         return {
             id: String(row.provider_id),
             title: row.recording_title || row.provider_title || providerData.title || "Unknown Video",
@@ -463,7 +481,7 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
 
 function loadAlbumArtworkContext(albumId: string): {
     albumMbid: string | null;
-    servarrMetadataData: Record<string, any> | null;
+    servarrMetadataData: ServarrMetadataImageContainer | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
     const row = db.prepare(`
@@ -476,7 +494,7 @@ function loadAlbumArtworkContext(albumId: string): {
             pi.data AS provider_data,
             rg.mbid AS album_mbid,
             rg.cover_image_id AS release_group_cover,
-            rg.data AS release_group_data,
+            rg.images AS release_group_images,
             stereo.selected_provider AS stereo_provider,
             stereo.selected_provider_id AS stereo_provider_id,
             stereo.provider_data AS stereo_provider_data,
@@ -520,13 +538,13 @@ function loadAlbumArtworkContext(albumId: string): {
 
     return {
         albumMbid: row.album_mbid ? String(row.album_mbid) : null,
-        servarrMetadataData: parseJsonObject(row.release_group_data),
+        servarrMetadataData: imageContainerFromImagesColumn(row.release_group_images),
         providerCandidates,
     };
 }
 
 function loadArtistArtworkContext(artistId: string): {
-    servarrMetadataData: Record<string, any> | null;
+    servarrMetadataData: ServarrMetadataImageContainer | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
     const row = db.prepare(`
@@ -535,7 +553,7 @@ function loadArtistArtworkContext(artistId: string): {
             a.mbid,
             a.picture,
             a.cover_image_url,
-            am.data AS artist_metadata_data,
+            am.images AS artist_metadata_images,
             pi.provider,
             pi.provider_id,
             pi.data AS provider_data
@@ -559,7 +577,7 @@ function loadArtistArtworkContext(artistId: string): {
     }
 
     return {
-        servarrMetadataData: parseJsonObject(row.artist_metadata_data),
+        servarrMetadataData: imageContainerFromImagesColumn(row.artist_metadata_images),
         providerCandidates: [
             {
                 provider: row.provider ? String(row.provider) : "tidal",

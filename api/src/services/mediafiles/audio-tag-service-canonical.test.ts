@@ -58,7 +58,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   `).run("release-group-mbid-1", "album-artist-mbid-1", 0, "Album Artist One", 1);
 
   dbModule.db.prepare(`
-    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, copyright, data)
+    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title, artist_credit, length_ms, copyright, credits)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "recording-mbid-1",

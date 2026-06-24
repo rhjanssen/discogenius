@@ -5,7 +5,7 @@ import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
-    parseJsonObject,
+    imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "../services/metadata/media-cover-service.js";
@@ -142,7 +142,7 @@ router.get("/", async (req, res) => {
               rg.first_release_date AS release_date,
               rg.primary_type,
               a.name AS artist_name,
-              rg.data,
+              rg.images,
               COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
               COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
               stereo.selected_provider AS stereo_provider,
@@ -173,7 +173,7 @@ router.get("/", async (req, res) => {
                         id: row.id,
                         name: row.title,
                         cover_id: chooseCachedAlbumArtwork({
-                            servarrMetadataData: parseJsonObject(row.data),
+                            servarrMetadataData: imageContainerFromImagesColumn(row.images),
                             providerCandidates: albumProviderArtworkCandidatesFromRow(row),
                         }),
                         artist_name: row.artist_name,
@@ -203,7 +203,7 @@ router.get("/", async (req, res) => {
                 json_extract(provider_track.data, '$.cover')
               ) AS album_cover,
               rg.mbid AS release_group_mbid,
-              rg.data AS rg_data,
+              rg.images AS rg_images,
               COALESCE(selected_slot.selected_provider, provider_album.provider, provider_track.provider) AS cover_provider,
               COALESCE(selected_slot.provider_data, provider_album.data, provider_track.data) AS cover_provider_data,
               CASE WHEN EXISTS (
@@ -282,7 +282,7 @@ router.get("/", async (req, res) => {
                     // carries a usable URL, not a raw provider asset id.
                     cover: chooseCachedAlbumArtwork({
                         albumMbid: row.release_group_mbid,
-                        servarrMetadataData: parseJsonObject(row.rg_data),
+                        servarrMetadataData: imageContainerFromImagesColumn(row.rg_images),
                         providerCandidates: row.album_cover
                             ? [{ provider: row.cover_provider, imageId: row.album_cover, data: row.cover_provider_data }]
                             : albumProviderArtworkCandidatesFromRow(row),

@@ -50,7 +50,7 @@ function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {
   dbModule.db.prepare(`
     INSERT INTO AlbumReleases (
       mbid, release_group_mbid, artist_mbid, title,
-      status, country, date, barcode, media_count, track_count, data
+      status, country, date, barcode, media_count, track_count, media
     )
     VALUES (?, 'group-mbid', 'artist-mbid', 'Album', ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -62,7 +62,7 @@ function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {
     input.mediaCount ?? 1,
     trackCount,
     input.format
-      ? JSON.stringify({ Media: [{ Position: 1, Format: input.format, TrackCount: trackCount }] })
+      ? JSON.stringify([{ Position: 1, Format: input.format, TrackCount: trackCount }])
       : null,
   );
 }

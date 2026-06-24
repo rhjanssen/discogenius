@@ -46,15 +46,14 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
     .run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, data)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
   `).run(
     releaseGroupMbid,
     artistMbid,
     "Give Me the Future",
     "Album",
     "2022-02-04",
-    JSON.stringify({ releases: [] }),
   );
   const insertRelease = dbModule.db.prepare(`
     INSERT INTO AlbumReleases (

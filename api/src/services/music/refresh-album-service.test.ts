@@ -200,13 +200,13 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
-  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, data) VALUES (?, ?, ?, ?, ?, ?)").run(
+  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, media) VALUES (?, ?, ?, ?, ?, ?)").run(
     releaseMbid,
     releaseGroupMbid,
     artistMbid,
     "Canonical Album",
     "Official",
-    JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media", TrackCount: 1 }] }),
+    JSON.stringify([{ Position: 1, Format: "Digital Media", TrackCount: 1 }]),
   );
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)").run(recordingMbid, artistMbid, "Track One");
   dbModule.db.prepare(`

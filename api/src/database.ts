@@ -300,7 +300,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 33;
+const BASE_SCHEMA_VERSION = 34;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
@@ -586,7 +586,6 @@ function ensureMusicBrainzProviderSchema(): void {
       popularity INT,
       overview TEXT,
       status TEXT,
-      data TEXT,
       images TEXT,
       -- Curated per-field JSON columns (Lidarr's EmbeddedDocumentConverter
       -- pattern): bounded arrays/objects stored as one JSON column each, replacing
@@ -624,7 +623,6 @@ function ensureMusicBrainzProviderSchema(): void {
       review_last_updated DATETIME,
       disambiguation TEXT,
       overview TEXT,
-      data TEXT,
       images TEXT,
       -- Curated per-field JSON columns sourced from the release-group detail
       -- payload (links carries the external relations used as matching evidence;
@@ -662,7 +660,6 @@ function ensureMusicBrainzProviderSchema(): void {
       disambiguation TEXT,
       media_count INT,
       track_count INT,
-      data TEXT,
       -- Curated per-field JSON columns from the release payload: label[] and the
       -- media[] disc structure (used by NFO writing + edition selection), plus
       -- oldids. country already lives as a JSON-array TEXT column above.
@@ -751,7 +748,6 @@ function ensureMusicBrainzProviderSchema(): void {
       monitored_at DATETIME,
       locked_at DATETIME,
       isrcs TEXT,
-      data TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE SET NULL
@@ -771,7 +767,6 @@ function ensureMusicBrainzProviderSchema(): void {
       number TEXT,
       title TEXT NOT NULL,
       length_ms INT,
-      data TEXT,
       monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, medium_position, position),

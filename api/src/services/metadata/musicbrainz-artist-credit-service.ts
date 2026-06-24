@@ -161,9 +161,9 @@ export class MusicBrainzArtistCreditService {
           db.prepare(`
             INSERT INTO Albums (
               mbid, artist_mbid, title, primary_type, secondary_types,
-              first_release_date, disambiguation, data, updated_at
+              first_release_date, disambiguation, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(mbid) DO UPDATE SET
               artist_mbid = excluded.artist_mbid,
               title = excluded.title,
@@ -171,7 +171,6 @@ export class MusicBrainzArtistCreditService {
               secondary_types = excluded.secondary_types,
               first_release_date = excluded.first_release_date,
               disambiguation = excluded.disambiguation,
-              data = excluded.data,
               updated_at = CURRENT_TIMESTAMP
           `).run(
             releaseGroupMbid,
@@ -181,7 +180,6 @@ export class MusicBrainzArtistCreditService {
             JSON.stringify(releaseGroup["secondary-types"] || []),
             releaseGroup["first-release-date"] || null,
             releaseGroup.disambiguation || null,
-            JSON.stringify(releaseGroup),
           );
 
           replaceAlbumArtists(releaseGroupMbid, credits);

@@ -89,13 +89,12 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
 
   db.prepare(`
     INSERT OR IGNORE INTO ArtistMetadata (
-      foreign_artist_id, mbid, name, data, updated_at
-    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      foreign_artist_id, mbid, name, updated_at
+    ) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
   `).run(
     normalizedArtistMbid,
     normalizedArtistMbid,
     artistName,
-    JSON.stringify(matchingCredit?.artist || fallbackCredit?.artist || { id: normalizedArtistMbid, name: artistName }),
   );
 
   const row = db.prepare(`
@@ -157,8 +156,8 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   db.prepare(`
     INSERT OR IGNORE INTO Recordings (
       foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-      artist_credit, credits, length_ms, is_video, metadata_status, data, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, CURRENT_TIMESTAMP)
+      artist_credit, credits, length_ms, is_video, metadata_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
   `).run(
     recordingMbid,
     recordingMbid,
@@ -169,7 +168,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
-    JSON.stringify(recording),
   );
 
   db.prepare(`
@@ -183,7 +181,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
       length_ms = COALESCE(?, length_ms),
       is_video = CASE WHEN ? = 1 THEN 1 ELSE is_video END,
       metadata_status = 'musicbrainz',
-      data = COALESCE(?, data),
       updated_at = CURRENT_TIMESTAMP
     WHERE foreign_recording_id = ? OR mbid = ?
   `).run(
@@ -194,7 +191,6 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
-    JSON.stringify(recording),
     recordingMbid,
     recordingMbid,
   );

@@ -1,6 +1,6 @@
 import {
     albumProviderArtworkCandidatesFromRow,
-    getServarrMetadataAlbumImageUrl,
+    imageContainerFromImagesColumn,
     parseJsonObject,
     registerMediaCoverProxyUrl,
     resolveAlbumArtwork,
@@ -39,16 +39,11 @@ function rowHasProviderFallbackArtwork(row: Record<string, any>): boolean {
     });
 }
 
-function rowHasServarrMetadataDataArtwork(row: Record<string, any>): boolean {
-    return Boolean(getServarrMetadataAlbumImageUrl(parseJsonObject(row.data)));
-}
-
 export async function ensureReleaseGroupArtworkHydrated(
     releaseGroup: Record<string, any>,
     logPrefix = "ReleaseGroupArtworkService",
 ): Promise<void> {
     if (rowHasCanonicalArtwork(releaseGroup)) return;
-    if (rowHasServarrMetadataDataArtwork(releaseGroup)) return;
     if (rowHasAnyCachedArtwork(releaseGroup) && !rowHasProviderFallbackArtwork(releaseGroup)) return;
 
     const releaseGroupMbid = String(releaseGroup.mbid || "").trim();
@@ -69,7 +64,7 @@ export async function resolveHydratedReleaseGroupArtwork(
     await ensureReleaseGroupArtworkHydrated(releaseGroup, logPrefix);
     const resolvedCoverUrl = await resolveAlbumArtwork({
         albumMbid: releaseGroup.mbid,
-        servarrMetadataData: parseJsonObject(releaseGroup.data),
+        servarrMetadataData: imageContainerFromImagesColumn(releaseGroup.images),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
     return resolvedCoverUrl

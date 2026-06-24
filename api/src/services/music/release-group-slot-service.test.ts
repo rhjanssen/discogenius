@@ -613,9 +613,9 @@ test("provider slot selection matches multiple provider releases to cover a Musi
   // Store MusicBrainz media/disc shape on the release snapshot.
   db.prepare(`
     UPDATE AlbumReleases
-    SET data = ?
+    SET media = ?
     WHERE mbid = ?
-  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-multi");
+  `).run(JSON.stringify([{ Position: 1, Format: "Digital Media" }]), "release-mbid-multi");
 
   // Insert Recordings (3 tracks)
   const insertRecording = db.prepare(`
@@ -761,9 +761,9 @@ test("provider slot selection skips partial provider releases unless they comple
 
   db.prepare(`
     UPDATE AlbumReleases
-    SET data = ?
+    SET media = ?
     WHERE mbid = ?
-  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-incomplete");
+  `).run(JSON.stringify([{ Position: 1, Format: "Digital Media" }]), "release-mbid-incomplete");
 
   const insertRecording = db.prepare(`
     INSERT INTO Recordings (mbid, title, isrcs)
@@ -887,9 +887,9 @@ test("provider slot selection falls back to strong release-shape evidence when n
 
   db.prepare(`
     UPDATE AlbumReleases
-    SET data = ?
+    SET media = ?
     WHERE mbid = ?
-  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-noisy-track-title");
+  `).run(JSON.stringify([{ Position: 1, Format: "Digital Media" }]), "release-mbid-noisy-track-title");
 
   const insertRecording = db.prepare(`
     INSERT INTO Recordings (mbid, title, isrcs)
@@ -1029,9 +1029,9 @@ test("provider slot selection selects available digital release when require_pro
 
   db.prepare(`
     UPDATE AlbumReleases
-    SET data = ?
+    SET media = ?
     WHERE mbid = ?
-  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-digital");
+  `).run(JSON.stringify([{ Position: 1, Format: "Digital Media" }]), "release-digital");
 
   // Insert Recordings for digital release
   const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");

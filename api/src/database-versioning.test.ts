@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 33;
+const CURRENT_SCHEMA_VERSION = 34;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -73,6 +73,13 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     for (const columnName of expectedColumns) {
       assert.ok(columns.includes(columnName), `Expected ${tableName}.${columnName}`);
     }
+  }
+});
+
+test("catalog tables do not retain raw metadata data blobs", () => {
+  for (const tableName of ["ArtistMetadata", "Albums", "AlbumReleases", "Recordings", "Tracks"]) {
+    const columns = tableColumns(tableName);
+    assert.equal(columns.includes("data"), false, `Expected ${tableName}.data to be absent`);
   }
 });
 

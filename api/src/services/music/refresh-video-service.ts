@@ -289,14 +289,13 @@ function ensureProviderVideoRecording(input: {
     const artistMetadataId = getArtistMetadataId(artistMbid);
     const title = nullableText(input.video.title) ?? "Unknown Video";
     const lengthMs = durationMs(input.video.duration);
-    const data = input.video.raw ? JSON.stringify({ raw: input.video.raw }) : null;
 
     if (recordingMbid) {
         db.prepare(`
             INSERT OR IGNORE INTO Recordings (
                 foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-                artist_credit, length_ms, is_video, metadata_status, data, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'musicbrainz', ?, CURRENT_TIMESTAMP)
+                artist_credit, length_ms, is_video, metadata_status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'musicbrainz', CURRENT_TIMESTAMP)
         `).run(
             recordingMbid,
             recordingMbid,
@@ -305,7 +304,6 @@ function ensureProviderVideoRecording(input: {
             title,
             nullableText(input.video.artist_name),
             lengthMs,
-            data,
         );
 
         db.prepare(`
@@ -318,7 +316,6 @@ function ensureProviderVideoRecording(input: {
                 length_ms = COALESCE(?, length_ms),
                 is_video = 1,
                 metadata_status = 'musicbrainz',
-                data = COALESCE(?, data),
                 updated_at = CURRENT_TIMESTAMP
             WHERE foreign_recording_id = ? OR mbid = ?
         `).run(
@@ -327,7 +324,6 @@ function ensureProviderVideoRecording(input: {
             title,
             nullableText(input.video.artist_name),
             lengthMs,
-            data,
             recordingMbid,
             recordingMbid,
         );
@@ -349,7 +345,6 @@ function ensureProviderVideoRecording(input: {
                     WHEN foreign_recording_id IS NULL THEN 'provider_only'
                     ELSE metadata_status
                 END,
-                data = COALESCE(?, data),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `).run(
@@ -358,7 +353,6 @@ function ensureProviderVideoRecording(input: {
             title,
             nullableText(input.video.artist_name),
             lengthMs,
-            data,
             input.existingRecordingId,
         );
         return input.existingRecordingId;
@@ -367,15 +361,14 @@ function ensureProviderVideoRecording(input: {
     const result = db.prepare(`
         INSERT INTO Recordings (
             artist_metadata_id, artist_mbid, title, artist_credit, length_ms,
-            is_video, metadata_status, data, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 1, 'provider_only', ?, CURRENT_TIMESTAMP)
+            is_video, metadata_status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, 'provider_only', CURRENT_TIMESTAMP)
     `).run(
         artistMetadataId,
         artistMbid,
         title,
         nullableText(input.video.artist_name),
         lengthMs,
-        data,
     );
 
     return Number(result.lastInsertRowid);

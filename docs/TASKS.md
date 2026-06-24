@@ -65,9 +65,8 @@ transitional/provider shadows where they no longer pay for themselves.
   compatibility boundaries, and import, manual import, rename/tag, search,
   disk-scan, download-state, stats, and sidecar replication paths were
   converted. Full CI green and runtime-validated in Docker against real data.
-- done: Fold `AlbumReleaseMedia` into `AlbumReleases.data`; release medium/disc
-  summaries now derive from the MusicBrainz release JSON unless a measured hot
-  query later needs an indexed projection.
+- done: Fold `AlbumReleaseMedia` into release metadata; 2.1.0 later moved the
+  release medium/disc summary into the curated `AlbumReleases.media` column.
 - done: Normalized v1 API resource routes against Lidarr's singular controller
   convention. Core catalog routes remain `/api/v1/artist`, `/api/v1/album`,
   `/api/v1/track`, and `/api/v1/video`; system tasks moved to
@@ -274,13 +273,12 @@ catalog `data` blob (ArtistMetadata/Albums/AlbumReleases/Recordings/Tracks) is
 read in these places; `ProviderItems.data` is a SEPARATE provider blob, out of
 scope here.
 
-DONE (step 1 + part of step 2, schema 32→33, on branch `2.1.0`):
+DONE (schema 32→34, on branch `2.1.0`):
 - Step 1: curated columns ADDED + populated in the write path, grounded in real
   /artist + /album payloads (not guessed): ArtistMetadata +overview,status,links,
   genres,ratings,aliases,old_foreign_ids; Albums +overview,links,genres,ratings,
   aliases,old_foreign_ids; AlbumReleases +label,media,old_foreign_ids (and now
-  persists barcode/UPC, which the old write silently dropped). `data` still
-  written so nothing breaks.
+  persists barcode/UPC, which the old write silently dropped).
 - `getCachedReleaseGroupsForArtist`: external-link evidence now from the release-
   GROUP `links` column via `extractLinkUrls` (the URLs live on the RG, not the
   release — old `extractExternalUrls(release.data)` was effectively empty).
@@ -291,38 +289,25 @@ DONE (step 1 + part of step 2, schema 32→33, on branch `2.1.0`):
   `AlbumReleases.media` column.
 - `artist-query-service`: album-card artwork resolves from the `images` column via
   `imageContainerFromImagesColumn` (new helper in media-cover-service).
+- `release-group-artwork-service.ts`, `musicbrainz-release-group-read-service.ts`,
+  and `routes/search.ts`: release-group artwork now resolves from `Albums.images`
+  via `imageContainerFromImagesColumn`.
+- `metadata-files.ts` (NFO/artwork): album and artist artwork now read `images`;
+  album review/overview and release copyright use typed columns; video artist
+  credits use `Recordings.credits`.
+- `musicbrainz-release-group-read-service.ts`, `track-query-service`, and
+  `audio-tag-service`: recording artist credits now read `Recordings.credits`.
+- Fresh schema 34 drops the raw catalog `data` columns from ArtistMetadata,
+  Albums, AlbumReleases, Recordings, and Tracks. Writers no longer populate those
+  blobs.
 
-REMAINING before dropping `data` (the all-or-nothing finish):
-- `release-group-artwork-service.ts` `resolveHydratedReleaseGroupArtwork` +
-  `musicbrainz-release-group-read-service.ts` `chooseReleaseGroupArtwork`: both
-  `parseJsonObject(releaseGroup.data)` for artwork. They take a CALLER-provided
-  row, so each caller's SELECT must provide `images`; use
-  `imageContainerFromImagesColumn(row.images)`. Trace callers before changing.
-- `routes/search.ts` (`rg.data` at ~145 → `servarrMetadataData` ~176, and
-  `rg.data AS rg_data` ~206 → ~285): artwork image container → `images` column +
-  `imageContainerFromImagesColumn`.
-- `metadata-files.ts` (NFO): `rg.data`/`am.data` → `images` column for artwork;
-  `release.data` (`release_data`) and `recording.data` (`recording_data`) → audit
-  exact fields (label/media now columns; recording.data is only written for
-  videos, not audio).
-- `musicbrainz-release-group-read-service.ts` (`r.data`/`t.data` → recording_data/
-  track_data via `parseRecordingArtistCredits`) + `track-query-service.ts`
-  (`recording.data` → `artist-credit`): these read ARTIST CREDITS from the blob.
-  AUDITED 2026-06-24: this is the same data the "recording-centric song-set"
-  backlog item needs as a queryable relation. The blob carries only a primary
-  ArtistId (readers already fall back to `[{primary artist}]`), so do this WITH
-  that item — populate a Recordings credits column / recording↔artist-credit
-  relation and read from it — rather than a throwaway blob→column move. THIS is
-  the real blocker on dropping `data`.
+REMAINING before release validation:
 - `provider-matches.ts:720` (`album.data`): NOT catalog — this is a provider
   album row (`ProviderItems.data`, parses `.tracks`). Out of scope; leave as-is.
-- `metadata-files.ts` release_data/recording_data: NFO fields — audit which are
-  already typed columns (label/media/country now are) vs. still blob-only.
-
-Final steps: drop `data` from the catalog tables + bump schema; reset the dev DB
-(authorized) and re-import; re-measure write throughput on the big library. Tests
-build a fresh schema each run, so only the FINAL live scale validation needs the
-reset — keep iterating green via `yarn test:api` until then.
+- Reset/rebuild the dev DB, re-import, and re-measure refresh write throughput on
+  the big library. Tests build a fresh schema each run, so only the FINAL live
+  scale validation needs the reset — keep iterating green via `yarn test:api`
+  until then.
 
 ### Settings and provider UX
 

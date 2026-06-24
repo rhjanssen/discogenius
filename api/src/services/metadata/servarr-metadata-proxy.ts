@@ -309,7 +309,8 @@ export class ServarrMetadataProxy {
 
     // External-link matching evidence lives on the release GROUP (`links`), not
     // the release — sourced from the curated column, replacing the old
-    // extractExternalUrls(AlbumReleases.data) walk over the retiring raw blob.
+    // extractLinkUrls(Albums.links) reads the curated relation column instead
+    // of walking the retired raw metadata blob.
     const externalUrlsByReleaseGroup = new Map<string, string[]>(
       rows.map((row) => [row.mbid, extractLinkUrls(row.links)]),
     );
@@ -449,9 +450,9 @@ export class ServarrMetadataProxy {
     db.prepare(`
       INSERT INTO ArtistMetadata (
         mbid, name, sort_name, disambiguation, type, overview, status, popularity,
-        data, images, links, genres, ratings, aliases, old_foreign_ids, content_hash, updated_at
+        images, links, genres, ratings, aliases, old_foreign_ids, content_hash, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         name = excluded.name,
         sort_name = excluded.sort_name,
@@ -462,7 +463,6 @@ export class ServarrMetadataProxy {
         -- Keep the Servarr rating when present; otherwise preserve whatever
         -- popularity a provider sync already stored.
         popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
-        data = excluded.data,
         images = excluded.images,
         links = excluded.links,
         genres = excluded.genres,
@@ -480,7 +480,6 @@ export class ServarrMetadataProxy {
       raw.overview ?? null,
       raw.status ?? null,
       popularity,
-      JSON.stringify(artist),
       JSON.stringify(imagesList),
       JSON.stringify(raw.links ?? []),
       JSON.stringify(raw.genres ?? []),
@@ -493,12 +492,12 @@ export class ServarrMetadataProxy {
     // The artist payload carries only SHALLOW album entries (no images, links,
     // genres, or full release detail). On conflict, update only the shallow
     // scalar fields it actually has and NEVER overwrite the detail-sourced
-    // columns (data, images, links, genres, overview, content_hash) — those are
+    // columns (images, links, genres, overview, content_hash) — those are
     // owned by syncReleaseGroup when it fetches the full release-group detail.
     // (This replaces the old read-existing-blob-then-merge dance.)
     const insertRg = db.prepare(`
-      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, ratings, old_foreign_ids, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, images, ratings, old_foreign_ids, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         primary_type = excluded.primary_type,
@@ -526,7 +525,6 @@ export class ServarrMetadataProxy {
         JSON.stringify(album.SecondaryTypes || []),
         album.ReleaseDate || null,
         album.Disambiguation || null,
-        JSON.stringify(album),
         JSON.stringify(albumImages),
         JSON.stringify(rawAlbum.Rating ?? rawAlbum.rating ?? null),
         JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
@@ -561,10 +559,10 @@ export class ServarrMetadataProxy {
     const insertRg = db.prepare(`
       INSERT INTO Albums (
         mbid, artist_mbid, title, primary_type, secondary_types, first_release_date,
-        disambiguation, overview, data, images, links, genres, ratings, aliases,
+        disambiguation, overview, images, links, genres, ratings, aliases,
         old_foreign_ids, content_hash, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         primary_type = excluded.primary_type,
@@ -572,7 +570,6 @@ export class ServarrMetadataProxy {
         first_release_date = excluded.first_release_date,
         disambiguation = excluded.disambiguation,
         overview = excluded.overview,
-        data = excluded.data,
         images = excluded.images,
         links = excluded.links,
         genres = excluded.genres,
@@ -586,10 +583,10 @@ export class ServarrMetadataProxy {
     const insertRelease = db.prepare(`
       INSERT INTO AlbumReleases (
         mbid, release_group_mbid, artist_mbid, title, status, country,
-        date, barcode, disambiguation, media_count, track_count, data,
+        date, barcode, disambiguation, media_count, track_count,
         label, media, old_foreign_ids, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         status = excluded.status,
@@ -599,7 +596,6 @@ export class ServarrMetadataProxy {
         disambiguation = excluded.disambiguation,
         media_count = excluded.media_count,
         track_count = excluded.track_count,
-        data = excluded.data,
         label = excluded.label,
         media = excluded.media,
         old_foreign_ids = excluded.old_foreign_ids,
@@ -616,15 +612,14 @@ export class ServarrMetadataProxy {
     `);
 
     const insertTrack = db.prepare(`
-      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, data, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
         mbid = excluded.mbid,
         recording_mbid = excluded.recording_mbid,
         number = excluded.number,
         title = excluded.title,
         length_ms = excluded.length_ms,
-        data = excluded.data,
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -645,7 +640,6 @@ export class ServarrMetadataProxy {
         detail.releasedate || null,
         detail.disambiguation || null,
         rawDetail.overview ?? null,
-        JSON.stringify(detail),
         JSON.stringify(albumImages),
         JSON.stringify(rawDetail.links ?? []),
         JSON.stringify(rawDetail.genres ?? []),
@@ -670,7 +664,6 @@ export class ServarrMetadataProxy {
           release.Disambiguation || null,
           release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
           release.TrackCount ?? (release.Tracks || []).length,
-          JSON.stringify(release),
           JSON.stringify(release.Label ?? rawRelease.label ?? []),
           JSON.stringify(release.Media ?? rawRelease.media ?? []),
           JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
@@ -698,7 +691,6 @@ export class ServarrMetadataProxy {
         track.TrackNumber,
         track.TrackName,
         track.DurationMs,
-        JSON.stringify(track),
       );
     });
   }

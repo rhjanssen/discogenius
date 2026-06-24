@@ -854,7 +854,7 @@ export class AudioTagService {
         COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid, provider_track.track_mbid) AS canonical_track_mbid,
         COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS canonical_recording_mbid,
         COALESCE(canonical_recording.artist_credit, provider_recording.artist_credit) AS recording_artist_credit,
-        COALESCE(canonical_recording.credits, provider_recording.data) AS recording_data
+        COALESCE(canonical_recording.credits, provider_recording.credits) AS recording_data
       FROM TrackFiles lf
       JOIN Artists artist ON artist.id = lf.artist_id
       LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid

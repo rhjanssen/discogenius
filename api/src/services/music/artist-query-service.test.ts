@@ -256,7 +256,7 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
   const { db } = dbModule;
   const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/first-load.jpg";
 
-  db.prepare(`UPDATE Albums SET images = ?, data = NULL WHERE mbid = ?`)
+  db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
     .run(
       JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, width: 1200, height: 1200 }]),
       "release-group-mbid-1",
@@ -280,7 +280,7 @@ test("artist page uses provider fallback without hydrating missing release-group
   let syncCalled = false;
   const providerFallbackUrl = "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg";
 
-  db.prepare(`UPDATE Albums SET data = NULL, images = ? WHERE mbid = ?`)
+  db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
     .run(
       JSON.stringify([{
         coverType: "Cover",
@@ -316,7 +316,7 @@ test("artist page uses selected provider artwork for blank release-group artwork
   const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
   let syncCalled = false;
 
-  db.prepare(`UPDATE Albums SET data = NULL, images = NULL WHERE mbid = ?`)
+  db.prepare(`UPDATE Albums SET images = NULL WHERE mbid = ?`)
     .run("release-group-mbid-1");
 
   ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async () => {

@@ -10,7 +10,7 @@ import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
-    parseJsonObject,
+    imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "./media-cover-service.js";
@@ -319,7 +319,7 @@ function listMusicBrainzReleaseVersions(
 function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
     return chooseCachedAlbumArtwork({
         albumMbid: releaseGroup.mbid,
-        servarrMetadataData: parseJsonObject(releaseGroup.data),
+        servarrMetadataData: imageContainerFromImagesColumn(releaseGroup.images),
         providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
 }
@@ -942,13 +942,13 @@ export class MusicBrainzReleaseGroupReadService {
             return null;
         }
 
+        // "Hydrated" now means the release-group has AlbumReleases rows — the
+        // curated-column equivalent of the old "data blob contains Releases[]"
+        // check (which is being retired).
         const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
             .get(releaseGroupMbid) as { count: number } | undefined;
 
-        const parsed = parseJsonObject(releaseGroup.data);
-        const isDetailed = parsed && Array.isArray(parsed.Releases || parsed.releases);
-
-        if (Number(releaseCount?.count || 0) === 0 || !isDetailed) {
+        if (Number(releaseCount?.count || 0) === 0) {
             try {
                 await servarrMetadataProxy.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
             } catch (error) {
