@@ -159,6 +159,45 @@ the provider abstraction so a second provider can declare its own sources.
   be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
   and adopt `runWithAsyncBusyRetry` for their writes.
 
+### Architecture decision: keep TypeScript, decompose (not a .NET port)
+
+DECIDED (2026-06-24): do NOT port to .NET/C#. A port would not fix the scale
+bottleneck — SQLite's single-writer limit is language-agnostic (Lidarr hits
+`database is locked` too), and the actual cost is the data model (per-row raw
+JSON `data` blobs → ~21ms/upsert) + write volume, identical in any language.
+.NET's only real edge is responsiveness-under-contention, which we've matched
+with worker_threads + async-retry (validated: 15/15 enqueues, 64ms health under
+Springsteen-scale refresh). Stay on TypeScript; fix scale via decomposition +
+data-model + skip-unchanged, all Lidarr-aligned.
+
+### Decompose the refresh command: intake vs. provider matching
+
+`RefreshArtistService.scanDeep` couples two concerns in one long command. Split
+them into discrete, independently-queued commands (Lidarr-style) so each is a
+short unit the active queue can interleave, with its own progress.
+
+Mapped seam in `scanDeep`:
+- INTAKE (canonical MusicBrainz): `scanShallow` + `syncArtistMusicBrainzCatalog`
+  + `hydrateScopedReleaseGroups` (~lines 1360–1385).
+- PROVIDER MATCHING: the connected-providers loop (fetch provider albums/tracks,
+  `buildProviderReleaseGroupMatches`, `storeProviderAlbumOffers`) + slot selection
+  (`syncProviderAlbumSelections` / `syncProviderSelectionsFromStoredOffers`)
+  (~lines 1386–1550).
+
+Plan:
+- Step 1 (safe, behaviour-preserving): extract the matching block into its own
+  service method/file (e.g. `ArtistProviderMatchService.matchArtist(artistId,
+  artistMbid, options)`); `scanDeep` reads as intake → match. Move the matching
+  helpers (`resolveProviderArtistId`, `buildProviderReleaseGroupMatches`,
+  `storeProviderAlbumOffers`, `slotTrack`, `syncProviderSelectionsFromStoredOffers`)
+  with it. Validate with build + focused tests (this is a big cut — do it with
+  full focus, not at the tail of a long session).
+- Step 2: register a `MatchArtistProviders` command; `RefreshArtist` (intake)
+  chains → `MatchArtistProviders` → `CurateArtist`. Each command short + queued.
+- Then: skip re-syncing unchanged release groups (timestamps); normalise the
+  per-row `data` blobs. Split oversized service files + trim comment density
+  toward Lidarr's structure as part of the same passes.
+
 ### Settings and provider UX
 
 Reduce settings overload before adding more provider and metadata-source surface
