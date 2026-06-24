@@ -2,28 +2,18 @@ import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/config.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
-import { withWriteSync, withWriteAsync } from "./services/db/write-lock.js";
 
 let _db: Database.Database | null = null;
 
-// Worker writes acquire the cross-thread write mutex so the worker pool + main
-// thread serialise into one effective writer — eliminating the SQLite write-lock
-// racing/starvation that surfaced as `database is locked` under refresh load.
-// The main thread must never block the event loop, so its writes do NOT
-// sync-acquire here; main-thread write sites wrap their writes in the async
-// `withDbWrite` helper (which acquires via Atomics.waitAsync) instead.
-const serializeWrite: <T>(op: () => T) => T = isMainThread
-  ? (op) => op()
-  : (op) => withWriteSync(op);
-
 /**
- * Run a write (or a group of writes) on the MAIN thread while participating in
- * the cross-thread write mutex without freezing the event loop. Use this for
- * user-initiated route writes and the scheduler's command-table writes so they
- * queue fairly behind worker writes instead of being starved.
+ * Run a user-initiated write on the MAIN thread with an async busy-retry that
+ * yields the event loop between attempts (never freezes it). Lidarr relies on
+ * SQLite's own locking + a short busy_timeout + retry rather than an app-level
+ * write mutex; this is the main-thread equivalent for route/scheduler writes so
+ * they ride out brief worker write-lock contention instead of failing fast.
  */
 export function withDbWrite<T>(fn: () => T): Promise<T> {
-  return withWriteAsync(fn);
+  return runWithAsyncBusyRetry(fn);
 }
 
 const SQLITE_BUSY_RETRY_BASE_MS = 50;
@@ -48,6 +38,29 @@ const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 const MAIN_THREAD_BUSY_TIMEOUT_MS = 1000;
 const WORKER_THREAD_BUSY_TIMEOUT_MS = 30000;
 const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 8;
+
+// Optional write profiling: log any write transaction that holds the SQLite write
+// lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
+// to find slow writes by data, not guesswork — short writes are what keep the DB
+// responsive under load (Lidarr's model), so this surfaces the ones to shorten.
+const WRITE_PROFILE_MS = (() => {
+  const raw = Number.parseInt(String(process.env.DISCOGENIUS_WRITE_PROFILE_MS ?? ""), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+})();
+
+function profileWrite<T>(op: () => T): T {
+  if (!WRITE_PROFILE_MS) return op();
+  const startedAt = Date.now();
+  try {
+    return op();
+  } finally {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= WRITE_PROFILE_MS) {
+      const stack = new Error().stack?.split("\n").slice(3, 8).join("\n") ?? "";
+      console.warn(`[write-profile] write held ${elapsed}ms\n${stack}`);
+    }
+  }
+}
 
 function isSqliteBusy(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -168,20 +181,20 @@ export const db = new Proxy({} as any, {
       return (source: string) => {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
-        stmt.run = ((...args: unknown[]) => serializeWrite(() => runWithSqliteBusyRetry(() => originalRun(...args)))) as typeof stmt.run;
+        stmt.run = ((...args: unknown[]) => runWithSqliteBusyRetry(() => originalRun(...args))) as typeof stmt.run;
         return stmt;
       };
     }
     if (prop === "exec") {
-      return (source: string) => serializeWrite(() => runWithSqliteBusyRetry(() => instance.exec(source)));
+      return (source: string) => runWithSqliteBusyRetry(() => instance.exec(source));
     }
     if (prop === "transaction") {
       return (fn: any) => {
         const txn = instance.transaction(fn) as any;
-        const runImmediate = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.immediate(...args)));
-        const runDeferred = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.deferred(...args)));
-        const runDefault = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.default(...args)));
-        const runExclusive = (...args: any[]) => serializeWrite(() => runWithSqliteBusyRetry(() => txn.exclusive(...args)));
+        const runImmediate = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.immediate(...args)));
+        const runDeferred = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.deferred(...args)));
+        const runDefault = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.default(...args)));
+        const runExclusive = (...args: any[]) => runWithSqliteBusyRetry(() => profileWrite(() => txn.exclusive(...args)));
         const immediateTxn = (...args: any[]) => runImmediate(...args);
         Object.defineProperties(immediateTxn, {
           default: { value: runDefault },
@@ -256,7 +269,7 @@ export function batchRun(sql: string, argsList: unknown[][]): number {
 export function runChunkedWrite<T>(
   items: readonly T[],
   perItem: (item: T, index: number) => void,
-  chunkSize: number = 100,
+  chunkSize: number = 50,
 ): number {
   const size = Math.max(1, chunkSize);
   for (let start = 0; start < items.length; start += size) {

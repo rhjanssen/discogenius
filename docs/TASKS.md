@@ -134,23 +134,27 @@ the provider abstraction so a second provider can declare its own sources.
   worker's synchronous retry) so a user action doesn't fail just because a refresh
   worker briefly held the write lock. Write chunk size lowered to 100 for more
   lock-release points.
-- done (foundation): Cross-thread single-writer mutex (`api/src/services/db/write-lock.ts`).
-  Workers acquire synchronously; the main thread acquires via `Atomics.waitAsync`
-  (no event-loop freeze) and takes priority so user writes aren't starved by the
-  worker pool. Wired through the `db` proxy + worker pool. Bounded-wait SAFETY:
-  acquisition degrades to unserialised (SQLite-backstopped) writes on timeout, so
-  a lock bug can only slow down, never deadlock. Import enqueues use `withDbWrite`.
-- pending (the real scale work, validated on a 2453-artist / 743K-track library):
-  individual write transactions hold the lock too long at scale, so the mutex
-  serialises but throughput is gated by slow writes. Two root causes: (1) the
-  per-row catalog FK *triggers* (`trg_*_catalog_fks_ai/au`) run a `SELECT … WHERE
-  mbid=?` per insert/update — multiply that by 743K rows; the TrackFiles trigger's
-  `CAST(provider_id AS TEXT)` also defeats its index. (2) several artist-scale
-  transactions still aren't chunked or do reads inside the write section.
-  Concrete work: chunk ALL artist-scale write transactions (done so far: catalog
-  syncs, provider offers, curation slot-loop), move reads out of write sections,
-  and batch/optimise the FK triggers (or replace the per-row trigger with a
-  batched backfill). Iterative perf work — schedule across focused sessions.
+- done: Responsiveness under heavy refresh at scale, the Lidarr way. A hand-rolled
+  cross-thread write mutex was tried and REMOVED (fragile: reentrancy bug,
+  lost-wakeup deadlock, intermittent stalls — and Lidarr has no such thing).
+  Final model matches Lidarr (`BasicRepository`/`ConnectionStringFactory`): SQLite-
+  native locking + retry + SHORT writes. Workers keep `busy_timeout=30s`+8 retries;
+  the main thread uses `busy_timeout=1s` + `withDbWrite`/`runWithAsyncBusyRetry`
+  (async backoff that yields the loop); `runChunkedWrite` (chunk 50) keeps worker
+  write sections short. Validated live under Springsteen-scale refresh (2099 RGs)
+  on the 2453-artist/743K-track DB: 15/15 import enqueues succeeded, max 614ms,
+  health 64ms, zero failures, no deadlock. Profile with
+  `DISCOGENIUS_WRITE_PROFILE_MS=1000`.
+- pending (throughput, NOT responsiveness — validated on the 743K-track library):
+  individual write sections are still ~2–3s, dominated by ~21ms/row upserts whose
+  cost is the large per-row `data` TEXT JSON blobs (the 2.3GB DB is mostly these).
+  Real levers: (1) skip re-syncing UNCHANGED release groups (Lidarr checks
+  timestamps) so a refresh doesn't rewrite all 2099 RGs; (2) shrink/normalise the
+  per-row `data` blobs (Lidarr stores columns, not raw JSON); (3) chunk the
+  remaining `syncReleaseGroup` RG+releases transaction. NOTE: the catalog FK
+  triggers fire only on INSERT / UPDATE OF mbid — NOT on `ON CONFLICT DO UPDATE`
+  re-syncs — so they're a new-row cost, not the re-refresh cost. Background-refresh
+  throughput work for focused future sessions.
 - pending: Audit other request-triggered routes for inline heavy work that should
   be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
   and adopt `runWithAsyncBusyRetry` for their writes.

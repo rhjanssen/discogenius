@@ -3,7 +3,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { readIntEnv } from "../../../utils/env.js";
-import { getSharedWriteLockBuffer } from "../../db/write-lock.js";
 import { appEvents, type AppEvent } from "../app-events.js";
 import type {CommandModel} from "../command-model.js";
 import {
@@ -85,11 +84,7 @@ export class CommandWorkerPool {
     private static resolveSpawn(): { entry: string; workerData: Record<string, unknown> } {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const isCompiled = here.includes(`${path.sep}dist${path.sep}`) || here.endsWith(`${path.sep}dist`);
-        const baseWorkerData: Record<string, unknown> = {
-            [COMMAND_WORKER_MARKER]: true,
-            // Cross-thread write mutex buffer — workers join it to serialise writes.
-            writeLockBuffer: getSharedWriteLockBuffer(),
-        };
+        const baseWorkerData: Record<string, unknown> = { [COMMAND_WORKER_MARKER]: true };
 
         if (isCompiled) {
             return { entry: path.join(here, "command-worker-entry.js"), workerData: baseWorkerData };
