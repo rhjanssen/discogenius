@@ -224,7 +224,7 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   const trackedFile = dbModule.db.prepare(`
     SELECT file_path as filePath, relative_path as relativePath, expected_path as expectedPath, needs_rename as needsRename
     FROM TrackFiles
-    WHERE media_id = ?
+    WHERE provider_id = ?
   `).get("100") as { filePath: string; relativePath: string; expectedPath: string; needsRename: number };
 
   assert.equal(path.resolve(trackedFile.filePath), path.resolve(seeded.expectedPath));
@@ -242,7 +242,7 @@ test("RenameTrackFileService applies the same quality-token path shown in previe
   dbModule.db.prepare(`
     UPDATE TrackFiles
     SET quality = ?, codec = ?, sample_rate = ?, bit_depth = ?, channels = ?
-    WHERE media_id = ?
+    WHERE provider_id = ?
   `).run("HIRES_LOSSLESS", "FLAC", 96000, 24, 2, "100");
 
   const expectedPath = path.join(
@@ -264,7 +264,7 @@ test("RenameTrackFileService applies the same quality-token path shown in previe
   const trackedFile = dbModule.db.prepare(`
     SELECT file_path as filePath, expected_path as expectedPath, needs_rename as needsRename
     FROM TrackFiles
-    WHERE media_id = ?
+    WHERE provider_id = ?
   `).get("100") as { filePath: string; expectedPath: string; needsRename: number };
 
   assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
@@ -305,7 +305,7 @@ test("RenameTrackFileService stores the destination root after a configured root
   const trackedFile = dbModule.db.prepare(`
     SELECT file_path as filePath, relative_path as relativePath, library_root as libraryRoot
     FROM TrackFiles
-    WHERE media_id = ?
+    WHERE provider_id = ?
   `).get("100") as { filePath: string; relativePath: string; libraryRoot: string };
   const expectedPath = path.join(nextMusicRoot, "Artist One", "Album One", "01 - Track One.flac");
 
@@ -408,14 +408,12 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   assert.equal(fs.existsSync(expectedPath), true);
 
   const trackedFile = dbModule.db.prepare(`
-    SELECT file_path as filePath, album_id as albumId, media_id as mediaId, canonical_track_mbid as canonicalTrackMbid
+    SELECT file_path as filePath, canonical_track_mbid as canonicalTrackMbid
     FROM TrackFiles
     WHERE canonical_track_mbid = ?
-  `).get("track-mbid-1") as { filePath: string; albumId: string | null; mediaId: string | null; canonicalTrackMbid: string };
+  `).get("track-mbid-1") as { filePath: string; canonicalTrackMbid: string };
 
   assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
-  assert.equal(trackedFile.albumId, null);
-  assert.equal(trackedFile.mediaId, null);
   assert.equal(trackedFile.canonicalTrackMbid, "track-mbid-1");
 });
 
@@ -473,16 +471,15 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
   assert.equal(fs.existsSync(expectedPath), true);
 
   const trackedFile = dbModule.db.prepare(`
-    SELECT file_path as filePath, provider, provider_entity_type as providerEntityType, provider_id as providerId, media_id as mediaId
+    SELECT file_path as filePath, provider, provider_entity_type as providerEntityType, provider_id as providerId
     FROM TrackFiles
     WHERE provider_id = ?
-  `).get("tidal-video-123") as { filePath: string; provider: string; providerEntityType: string; providerId: string; mediaId: string | null };
+  `).get("tidal-video-123") as { filePath: string; provider: string; providerEntityType: string; providerId: string };
 
   assert.equal(path.resolve(trackedFile.filePath), path.resolve(expectedPath));
   assert.equal(trackedFile.provider, "tidal");
   assert.equal(trackedFile.providerEntityType, "video");
   assert.equal(trackedFile.providerId, "tidal-video-123");
-  assert.equal(trackedFile.mediaId, null);
 });
 
 test("RenameTrackFileService replicates canonical lyrics across separated roots without provider catalog rows", () => {

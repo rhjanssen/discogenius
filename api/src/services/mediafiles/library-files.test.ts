@@ -132,6 +132,15 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     artist_id: "1" as unknown as number,
     album_id: "10" as unknown as number,
     media_id: "100" as unknown as number,
+    canonical_artist_mbid: "artist-mbid-1",
+    canonical_release_group_mbid: "rg-mbid-1",
+    canonical_release_mbid: "release-mbid-1",
+    canonical_track_mbid: "track-mbid-1",
+    canonical_recording_mbid: "recording-mbid-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "100",
+    library_slot: "stereo",
     file_path: path.join(tempDir, "legacy", "Queen", "old.flac"),
     relative_path: null,
     library_root: "music",
@@ -189,8 +198,17 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
     file_path: path.join(tempDir, "legacy.flac"),
     relative_path: null,
     library_root: "music",
+    library_slot: "stereo",
     file_type: "track",
     extension: "flac",
+    canonical_artist_mbid: "artist-mbid-1",
+    canonical_release_group_mbid: "rg-mbid-1",
+    canonical_release_mbid: "release-mbid-1",
+    canonical_track_mbid: "track-mbid-1",
+    canonical_recording_mbid: "recording-mbid-1",
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "100",
   });
 
   assert.equal(
@@ -711,12 +729,12 @@ const root = configModule.Config.getMusicPath();
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, album_id, media_id, file_path, relative_path, library_root,
-      filename, extension, file_size, file_type, quality
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_size, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "1", "10", "101", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
-    "1", "10", "100", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
+    "1", "tidal", "track", "101", "stereo", targetPath, path.relative(root, targetPath), root, path.basename(targetPath), "flac", 5, "track", "LOSSLESS",
+    "1", "tidal", "track", "100", "stereo", stalePath, path.relative(root, stalePath), root, path.basename(stalePath), "flac", 5, "track", "LOSSLESS",
   );
 
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
@@ -730,14 +748,14 @@ const root = configModule.Config.getMusicPath();
   });
 
   const rows = dbModule.db.prepare(`
-    SELECT id, media_id, file_path
+    SELECT id, provider_id, file_path
     FROM TrackFiles
     ORDER BY id
-  `).all() as Array<{ id: number; media_id: string; file_path: string }>;
+  `).all() as Array<{ id: number; provider_id: string; file_path: string }>;
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.id, id);
-  assert.equal(rows[0]?.media_id, "100");
+  assert.equal(rows[0]?.provider_id, "100");
   assert.equal(rows[0]?.file_path, targetPath);
 });
 
@@ -818,11 +836,11 @@ dbModule.db.prepare(`
   });
 
   const rows = dbModule.db.prepare(`
-    SELECT id, media_id, library_slot, file_path
+    SELECT id, provider_id, library_slot, file_path
     FROM TrackFiles
-    WHERE media_id = ?
+    WHERE provider_id = ?
     ORDER BY library_slot
-  `).all("100") as Array<{ id: number; media_id: string; library_slot: string; file_path: string }>;
+  `).all("100") as Array<{ id: number; provider_id: string; library_slot: string; file_path: string }>;
 
   assert.notEqual(stereoId, spatialId);
   assert.deepEqual(rows.map((row) => row.library_slot), ["spatial", "stereo"]);
@@ -1008,11 +1026,12 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, album_id, media_id, file_path, relative_path, library_root,
-      filename, extension, file_size, file_type, quality, canonical_recording_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_size,
+      file_type, quality, canonical_recording_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    2000, "artist-inline-test", "album-inline-test", "track-inline-test",
+    2000, "artist-inline-test", "tidal", "track", "track-inline-test", "stereo",
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii.flac"),
     path.join("Bastille", "Bad Blood", "01 - Pompeii.flac"),
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS", "recording-mbid-pompeii"
@@ -1063,11 +1082,11 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
-      id, artist_id, album_id, media_id, file_path, relative_path, library_root,
-      filename, extension, file_size, file_type, quality
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_size, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    2001, "artist-inline-test", "album-inline-test", "video-inline-test",
+    2001, "artist-inline-test", "tidal", "video", "video-inline-test", "video",
     expectedInlineMonitoredPath,
     path.relative(configModule.Config.getMusicPath(), expectedInlineMonitoredPath),
     "music", path.basename(expectedInlineMonitoredPath), "mp4", 100, "video", "MP4_1080P",

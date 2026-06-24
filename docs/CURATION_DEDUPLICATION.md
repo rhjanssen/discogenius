@@ -44,7 +44,7 @@ Each wanted release group can have independent slots:
    catalog source.
 2. Artist refresh syncs MusicBrainz release groups, release details,
    music-video recordings, and recording relationships into `ArtistMetadata`,
-   `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, `Recordings`, and
+   `Albums`, `AlbumReleases`, `Tracks`, `Recordings`, and
    `RecordingRelations`.
 3. The active streaming provider supplies release offers for the artist.
 4. Provider offers are matched against the artist's MusicBrainz releases, with

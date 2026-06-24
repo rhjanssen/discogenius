@@ -405,7 +405,7 @@ class LibraryMetadataBackfillService {
         SELECT
           lf.id AS track_file_id,
           lf.file_path,
-          lf.media_id,
+          lf.provider_id AS media_id,
           lf.library_root,
           lf.library_slot,
           lf.canonical_artist_mbid,
@@ -415,18 +415,18 @@ class LibraryMetadataBackfillService {
           lf.canonical_recording_mbid,
           COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
           'track' AS provider_entity_type,
-          COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+          COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
           pi.album_id AS album_id
         FROM TrackFiles lf
         LEFT JOIN ProviderItems pi
           ON pi.entity_type = 'track'
          AND (
             (
-              COALESCE(lf.provider_id, lf.media_id) IS NOT NULL
-              AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+              lf.provider_id IS NOT NULL
+              AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
             )
             OR (
-              COALESCE(lf.provider_id, lf.media_id) IS NULL
+              lf.provider_id IS NULL
               AND (
                 (lf.canonical_track_mbid IS NOT NULL AND pi.track_mbid = lf.canonical_track_mbid)
                 OR (lf.canonical_recording_mbid IS NOT NULL AND pi.recording_mbid = lf.canonical_recording_mbid)
@@ -524,27 +524,27 @@ class LibraryMetadataBackfillService {
       SELECT
         lf.id AS track_file_id,
         lf.file_path,
-        lf.media_id,
+        lf.provider_id AS media_id,
         lf.library_root,
         lf.library_slot,
         lf.canonical_artist_mbid,
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
-        COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+        COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
         pi.album_id AS album_id,
         r.cover_image_id AS cover
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       JOIN Recordings r ON r.id = pi.recording_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
         AND r.cover_image_id IS NOT NULL
-        AND COALESCE(lf.provider_id, lf.media_id, pi.provider_id) IS NOT NULL
+        AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM MetadataFiles mf
           WHERE (
-              (mf.provider_entity_type = 'video' AND CAST(mf.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS TEXT))
-              OR CAST(mf.media_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS TEXT)
+              (mf.provider_entity_type = 'video' AND CAST(mf.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, pi.provider_id) AS TEXT))
+              OR CAST(mf.media_id AS TEXT) = CAST(COALESCE(lf.provider_id, pi.provider_id) AS TEXT)
             )
             AND mf.file_type = 'video_thumbnail'
         )
@@ -609,19 +609,19 @@ class LibraryMetadataBackfillService {
       SELECT
         lf.id AS track_file_id,
         lf.file_path,
-        lf.media_id,
+        lf.provider_id AS media_id,
         lf.library_root,
         lf.library_slot,
         lf.canonical_artist_mbid,
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
-        COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS provider_id,
+        COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
         pi.album_id AS album_id
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
-        AND COALESCE(lf.provider_id, lf.media_id, pi.provider_id) IS NOT NULL
+        AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
                 track_file_id: number;
                 file_path: string;
@@ -666,7 +666,7 @@ class LibraryMetadataBackfillService {
         if (metadataConfig.write_audio_tags_policy !== "no") {
             const tagVideos = db.prepare(`
       SELECT lf.file_path,
-             COALESCE(lf.provider_id, lf.media_id, pi.provider_id) AS media_id,
+             COALESCE(lf.provider_id, pi.provider_id) AS media_id,
              r.title AS media_title,
              pi.version AS media_version,
              r.release_date AS media_release_date,
@@ -674,7 +674,7 @@ class LibraryMetadataBackfillService {
              ar.name AS artist_name,
              album.title AS album_title
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       JOIN Recordings r ON r.id = pi.recording_id
       JOIN Artists ar ON ar.id = lf.artist_id
       LEFT JOIN Albums album ON album.mbid = pi.release_group_mbid

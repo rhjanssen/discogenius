@@ -177,6 +177,7 @@ export interface ProviderAlbum {
   type?: "ALBUM" | "EP" | "SINGLE" | string;
   explicit?: boolean | null;
   upc?: string | null;
+  popularity?: number | null;
   quality?: string | null;
   qualityTags?: string[];
   url?: string;

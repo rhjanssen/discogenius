@@ -394,7 +394,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
   if (trackIds.length > 0) {
     const placeholders = trackIds.map(() => "?").join(",");
     const files = db.prepare(`
-      SELECT id, media_id, file_type, file_path, relative_path, filename, extension,
+      SELECT id, provider_id AS media_id, file_type, file_path, relative_path, filename, extension,
              canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
              canonical_track_mbid, canonical_recording_mbid,
              provider, provider_entity_type, provider_id, library_slot,
@@ -402,7 +402,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       FROM TrackFiles
       WHERE (
           canonical_track_mbid IN (${placeholders})
-          OR media_id IN (${placeholders})
+          OR provider_id IN (${placeholders})
         )
         AND file_type IN ('track', 'lyrics')
       ORDER BY file_type ASC, id ASC
@@ -585,7 +585,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
   const rows = db.prepare(`
     SELECT
       id,
-      media_id,
+      provider_id AS media_id,
       file_type,
       file_path,
       relative_path,
@@ -613,7 +613,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       modified_at
     FROM TrackFiles
     WHERE canonical_track_mbid = ?
-       OR media_id = ?
+       OR provider_id = ?
     ORDER BY
       CASE file_type
         WHEN 'track' THEN 0

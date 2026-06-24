@@ -505,7 +505,7 @@ export class DiskScanService {
      */
     private static cleanOrphanedRecords(artistId: string): { removed: number; flagsReset: number } {
         const rows = db.prepare(`
-      SELECT id, file_path, relative_path, library_root, media_id, album_id, file_type
+      SELECT id, file_path, relative_path, library_root, provider_id AS media_id, NULL AS album_id, file_type
       FROM TrackFiles
       WHERE artist_id = ?
     `).all(artistId) as Array<{
@@ -1355,10 +1355,10 @@ export class DiskScanService {
     private static findMediaIdByTrackedSibling(filePath: string, artistId: string): string | null {
         const stem = path.parse(filePath).name;
         const rows = db.prepare(`
-          SELECT media_id, file_path
+          SELECT provider_id AS media_id, file_path
           FROM TrackFiles
           WHERE artist_id = ?
-            AND media_id IS NOT NULL
+            AND provider_id IS NOT NULL
             AND file_type = 'track'
         `).all(artistId) as Array<{ media_id: string; file_path: string }>;
 
@@ -1438,7 +1438,7 @@ export class DiskScanService {
 
         // Check if any track's expected path matches this file
         const match = db.prepare(`
-            SELECT lf.provider_id AS media_id, lf.album_id, pi.quality
+            SELECT lf.provider_id AS media_id, pi.provider_album_id AS album_id, pi.quality
             FROM TrackFiles lf
             JOIN ProviderItems pi ON pi.provider_id = lf.provider_id AND pi.entity_type IN ('track', 'video')
             WHERE lf.artist_id = ? AND lf.expected_path = ?

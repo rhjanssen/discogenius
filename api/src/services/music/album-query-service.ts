@@ -61,6 +61,14 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
 `;
 }
 
+const releaseGroupPopularityExpression = `
+        MAX(
+            COALESCE(rg.popularity, 0),
+            COALESCE(CAST(json_extract(stereo_provider_item.data, '$.popularity') AS REAL), 0),
+            COALESCE(CAST(json_extract(spatial_provider_item.data, '$.popularity') AS REAL), 0)
+        )
+`;
+
 export interface AlbumListQuery {
     limit: number;
     offset: number;
@@ -100,7 +108,8 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
-        spatial.provider_data AS spatial_provider_data
+        spatial.provider_data AS spatial_provider_data,
+        ${releaseGroupPopularityExpression} AS popularity
       FROM ArtistReleaseGroupCuration context
       JOIN Artists managed_artist
         ON managed_artist.mbid = context.source_artist_mbid
@@ -114,6 +123,14 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
       LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
+      LEFT JOIN ProviderItems stereo_provider_item
+        ON stereo_provider_item.provider = stereo.selected_provider
+       AND stereo_provider_item.entity_type = 'album'
+       AND CAST(stereo_provider_item.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
+      LEFT JOIN ProviderItems spatial_provider_item
+        ON spatial_provider_item.provider = spatial.selected_provider
+       AND spatial_provider_item.entity_type = 'album'
+       AND CAST(spatial_provider_item.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
       ${whereClause}
     `;
 }
@@ -125,6 +142,7 @@ function getReleaseGroupOrderBy(sortParam: string | undefined, sortDir: "ASC" | 
         case "scannedAt":
             return ` ORDER BY (rg.updated_at IS NULL) ASC, rg.updated_at ${sortDir}, rg.mbid ASC`;
         case "popularity":
+            return ` ORDER BY popularity ${sortDir}, rg.title ASC, rg.mbid ASC`;
         case "releaseDate":
         default:
             return ` ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date ${sortDir}, rg.title ASC, rg.mbid ASC`;
@@ -151,6 +169,7 @@ function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDow
         spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
         selected_provider_id: row.selected_provider_id || null,
         source: "musicbrainz",
+        popularity: Number(row.popularity || 0),
     } as AlbumContract;
 }
 
@@ -238,6 +257,14 @@ export class AlbumQueryService {
             LEFT JOIN ReleaseGroupSlots spatial
               ON spatial.release_group_mbid = rg.mbid
              AND spatial.slot = 'spatial'
+            LEFT JOIN ProviderItems stereo_provider_item
+              ON stereo_provider_item.provider = stereo.selected_provider
+             AND stereo_provider_item.entity_type = 'album'
+             AND CAST(stereo_provider_item.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
+            LEFT JOIN ProviderItems spatial_provider_item
+              ON spatial_provider_item.provider = spatial.selected_provider
+             AND spatial_provider_item.entity_type = 'album'
+             AND CAST(spatial_provider_item.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
             ${whereClause}
             GROUP BY rg.mbid
           ) counted

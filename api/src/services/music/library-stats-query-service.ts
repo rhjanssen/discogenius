@@ -50,11 +50,11 @@ export class LibraryStatsQueryService {
             SELECT COUNT(DISTINCT COALESCE(
                 CAST(release_group_id AS TEXT),
                 canonical_release_group_mbid,
-                album_id
+                canonical_release_mbid
             )) AS count
             FROM TrackFiles
             WHERE file_type = 'track'
-              AND (release_group_id IS NOT NULL OR canonical_release_group_mbid IS NOT NULL OR album_id IS NOT NULL)
+              AND (release_group_id IS NOT NULL OR canonical_release_group_mbid IS NOT NULL OR canonical_release_mbid IS NOT NULL)
         `).get() as { count: number } | undefined)?.count ?? 0;
 
         const stats: LibraryStatsContract = {

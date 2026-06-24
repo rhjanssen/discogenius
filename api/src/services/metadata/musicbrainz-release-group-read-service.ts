@@ -176,9 +176,13 @@ function listMusicBrainzReleaseVersions(
         r.disambiguation,
         CASE
           WHEN EXISTS (
-            SELECT 1 FROM AlbumReleaseMedia m
-            WHERE m.release_mbid = r.mbid
-              AND LOWER(COALESCE(m.format, '')) LIKE '%digital%'
+            SELECT 1
+            FROM json_each(r.data, '$.Media') m
+            WHERE LOWER(COALESCE(
+              json_extract(m.value, '$.Format'),
+              json_extract(m.value, '$.format'),
+              ''
+            )) LIKE '%digital%'
           ) THEN 1 ELSE 0
         END AS digital_score
       FROM AlbumReleases r
@@ -607,8 +611,8 @@ function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackC
       SELECT
         lf.id AS file_id,
         lf.artist_id,
-        lf.album_id AS file_album_id,
-        lf.media_id AS file_media_id,
+        NULL AS file_album_id,
+        lf.provider_id AS file_media_id,
         lf.canonical_artist_mbid,
         lf.canonical_release_group_mbid,
         lf.canonical_release_mbid,

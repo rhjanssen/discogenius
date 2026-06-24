@@ -107,7 +107,7 @@ function calculateArtistStatistics(artistIds?: string[]): ArtistStatisticsRow[] 
                canonical_track_mbid,
                CAST(recording_id AS TEXT),
                canonical_recording_mbid,
-               CAST(media_id AS TEXT),
+               CAST(provider_id AS TEXT),
                CAST(id AS TEXT)
              )) AS track_file_count,
              SUM(COALESCE(file_size, 0)) AS size_on_disk

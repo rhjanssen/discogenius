@@ -23,7 +23,9 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: T
         const existingRows = db.prepare(`
             SELECT file_path, relative_path, library_root
             FROM TrackFiles
-            WHERE media_id = ? AND file_type = 'video'
+            WHERE provider_entity_type = 'video'
+              AND provider_id = ?
+              AND file_type = 'video'
         `).all(mediaId) as LibraryRow[];
         rows.push(...existingRows);
     } else {
@@ -37,7 +39,8 @@ export function getExistingImportedMediaConflictPath(group: LocalGroup, match: T
             SELECT file_path, relative_path, library_root
             FROM TrackFiles
             WHERE file_type = 'track'
-              AND media_id IN (${placeholders})
+              AND provider_entity_type = 'track'
+              AND provider_id IN (${placeholders})
         `).all(...trackIds) as LibraryRow[];
         rows.push(...existingRows);
     }

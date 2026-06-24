@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.10] - 2026-06-24
+
+### Fixed
+- **The container no longer freezes and goes `unhealthy` under heavy refresh load.** `better-sqlite3` is synchronous, so any wait on the single SQLite write lock blocks the entire Node event loop. The main (HTTP/SSE) thread used a 15s `busy_timeout` plus a synchronous retry backoff, so one contended write (chiefly the `markProcessing` job-claim) froze every request, SSE stream, and `/health` probe for ~30s while worker threads held the lock during a large refresh — exactly the "scanned 1000 artists then became unreachable" symptom, and the source of the `database is locked` errors on big-discography artists. The main thread now fails fast (`busy_timeout = 1000ms`, a single quick retry) and is retried at the next scheduler tick instead of freezing, mirroring Lidarr's 100ms request-path `busy_timeout`. Worker threads keep the generous 30s timeout + 8 retries because they run off the event loop. Measured under live refresh load: `/health` ~85ms (was timing out at 30s), event-loop lag p99 ~20ms / max bounded ~2s (was 25–30s), zero `database is locked`.
+
+### Changed
+- **Large catalog write transactions are chunked (`runChunkedWrite`).** A big artist's refresh previously upserted its entire catalog (hundreds of release groups, thousands of tracks) in one transaction, holding the write lock long enough to starve concurrent workers and time out the main-thread claim. The MusicBrainz catalog hydration (`servarr-metadata-proxy` artist/release-group sync) and provider-album offer writes now commit in bounded chunks so the lock is released between batches.
+- **`AlbumReleaseMedia` folded into `AlbumReleases.data`.** Release medium/disc summaries now derive from the MusicBrainz release JSON instead of a separate table.
+- **`TrackFiles` no longer carries provider-shadow `album_id`/`media_id` columns.** File/sidecar joins resolve through canonical MusicBrainz identity and provider `ProviderItems` provenance; the legacy columns are removed from the fresh schema, with provider identity aliased only at API compatibility boundaries. Import, manual import, rename/tag, search, disk-scan, download-state, stats, and sidecar replication paths were converted.
+- **v1 API resource routes normalized to Lidarr's singular-controller convention.** System tasks moved to `/api/v1/system/task`, managed playable files to `/api/v1/mediaFile`, streaming provider status to `/api/v1/provider`.
+- **Artist page reads are now read-only projections.** `getArtistPageDb` no longer runs a provider-selection write pass or per-card Servarr metadata hydration on the request thread — first-load artwork hydration is left to refresh workers — fixing multi-second artist-page loads under refresh load.
+- **Popularity sort works for artists and albums.** TIDAL album popularity is carried through provider mapping/refresh into `Albums.popularity` (with provider-snapshot fallback), exposed in the album/artist list contracts, and album sort uses a real popularity expression instead of falling back to release date.
+
 ## [2.0.9] - 2026-06-23
 
 ### Changed

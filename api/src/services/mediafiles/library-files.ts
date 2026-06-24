@@ -8,7 +8,7 @@ import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js"
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "../commands/app-events.js";
 import { resolveLibraryFileIdentity, type library_slot } from "./library-file-identity.js";
-import { resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
+import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
@@ -577,7 +577,7 @@ export class LibraryFilesService {
     destinationPath: string;
   }): { updated: number } {
     const rows = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+      SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
       FROM TrackFiles
       WHERE artist_id = ?
     `).all(options.artistId) as RebaseLibraryFileRow[];
@@ -738,7 +738,7 @@ export class LibraryFilesService {
         // we fall back to the canonical title-based resolver below.
         const audioTrack = recordingMbid
           ? db.prepare(`
-            SELECT id, artist_id, album_id, media_id,
+            SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                    canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                    file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
             FROM TrackFiles
@@ -769,11 +769,11 @@ export class LibraryFilesService {
             }
           const trackedVideo = row.file_type !== "video"
             ? db.prepare(`
-                SELECT id, artist_id, album_id, media_id,
+                SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                        file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
                 FROM TrackFiles
-                WHERE media_id = ? AND file_type = 'video'
+                WHERE provider_id = ? AND file_type = 'video'
                 LIMIT 1
               `).get(row.media_id) as LibraryFileRow | undefined
             : undefined;
@@ -909,7 +909,7 @@ export class LibraryFilesService {
     }
 
     // Album-scoped types (track, lyrics, cover, NFO)
-    if (!row.album_id && !canonicalIdentity.canonicalReleaseGroupMbid) {
+    if (!canonicalIdentity.canonicalReleaseGroupMbid) {
       // Artist-scoped types (artist NFO and artist picture cover)
       if (row.file_type === "nfo") {
         return { expectedPath: path.join(libraryRootPath, artistFolder, "artist.nfo") };
@@ -930,7 +930,7 @@ export class LibraryFilesService {
       ? db.prepare(`
           SELECT canonical_release_group_mbid, canonical_release_mbid
           FROM TrackFiles
-          WHERE media_id = ?
+          WHERE provider_id = ?
             AND file_type = 'track'
             AND canonical_release_group_mbid IS NOT NULL
           ORDER BY CASE WHEN library_slot = ? THEN 0 ELSE 1 END, id ASC
@@ -950,7 +950,7 @@ export class LibraryFilesService {
     const releaseYear = getReleaseYear(canonicalAlbum.releaseDate);
     const albumContext: NamingContext = {
       ...contextBase,
-      albumId: String(row.album_id ?? releaseGroupMbid ?? ""),
+      albumId: String(releaseGroupMbid ?? ""),
       albumTitle: canonicalAlbum.title || "Unknown Album",
       albumType: canonicalAlbum.albumType || null,
       albumMbId: canonicalAlbum.albumMbid || releaseGroupMbid || null,
@@ -1010,15 +1010,7 @@ export class LibraryFilesService {
         : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
-      const canonicalPosition = resolveCanonicalTrackPosition({
-        artistId: row.artist_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        quality: row.quality,
-        libraryRoot: row.library_root,
-        librarySlot: row.library_slot,
-      });
+      const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
@@ -1065,7 +1057,7 @@ export class LibraryFilesService {
       const trackFile = db.prepare(`
         SELECT extension FROM TrackFiles
         WHERE (
-            (media_id IS NOT NULL AND media_id = ?)
+            (provider_id IS NOT NULL AND provider_id = ?)
             OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
           )
           AND file_type = 'track' AND library_slot = ?
@@ -1074,7 +1066,7 @@ export class LibraryFilesService {
       `).get(row.media_id, canonicalIdentity.canonicalTrackMbid, row.library_slot || "stereo") as any || db.prepare(`
         SELECT extension FROM TrackFiles
         WHERE (
-            (media_id IS NOT NULL AND media_id = ?)
+            (provider_id IS NOT NULL AND provider_id = ?)
             OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
           )
           AND file_type = 'track'
@@ -1090,15 +1082,7 @@ export class LibraryFilesService {
         : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
-      const canonicalPosition = resolveCanonicalTrackPosition({
-        artistId: row.artist_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        quality: row.quality,
-        libraryRoot: row.library_root,
-        librarySlot: row.library_slot,
-      });
+      const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
@@ -1266,7 +1250,7 @@ export class LibraryFilesService {
     const filename = path.basename(params.filePath);
     const extension = path.extname(params.filePath).replace(".", "");
     const existingPathRow = db.prepare(`
-      SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+      SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
       FROM TrackFiles
       WHERE file_path = ?
       LIMIT 1
@@ -1345,14 +1329,26 @@ export class LibraryFilesService {
       return insertedId;
     }
 
-    if (params.mediaId && (params.fileType === "track" || params.fileType === "video")) {
+    if (canonicalIdentity.providerId && canonicalIdentity.providerEntityType && (params.fileType === "track" || params.fileType === "video")) {
       const existingRow = db.prepare(`
-        SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+        SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
         FROM TrackFiles
-        WHERE media_id = ? AND file_type = ? AND library_slot = ?
+        WHERE (? = '' OR provider = ?)
+          AND provider_entity_type = ?
+          AND provider_id = ?
+          AND file_type = ?
+          AND library_slot = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
         LIMIT 1
-      `).get(params.mediaId, params.fileType, canonicalIdentity.librarySlot, params.filePath) as ExistingLibraryFileIdentity | undefined;
+      `).get(
+        canonicalIdentity.provider || "",
+        canonicalIdentity.provider || "",
+        canonicalIdentity.providerEntityType,
+        canonicalIdentity.providerId,
+        params.fileType,
+        canonicalIdentity.librarySlot,
+        params.filePath,
+      ) as ExistingLibraryFileIdentity | undefined;
 
       if (existingRow) {
         const rowToUpdate = existingPathRow && existingPathRow.id !== existingRow.id
@@ -1366,8 +1362,6 @@ export class LibraryFilesService {
         db.prepare(`
           UPDATE TrackFiles
           SET artist_id = ?,
-              album_id = ?,
-              media_id = ?,
               canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
               canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
               canonical_release_mbid = COALESCE(?, canonical_release_mbid),
@@ -1399,8 +1393,6 @@ export class LibraryFilesService {
           WHERE id = ?
         `).run(
           params.artistId,
-          params.albumId || null,
-          params.mediaId || null,
           canonicalIdentity.canonicalArtistMbid,
           canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalIdentity.canonicalReleaseMbid,
@@ -1435,8 +1427,21 @@ export class LibraryFilesService {
 
         db.prepare(`
           DELETE FROM TrackFiles
-          WHERE media_id = ? AND file_type = ? AND library_slot = ? AND id != ?
-        `).run(params.mediaId, params.fileType, canonicalIdentity.librarySlot, rowToUpdate.id);
+          WHERE (? = '' OR provider = ?)
+            AND provider_entity_type = ?
+            AND provider_id = ?
+            AND file_type = ?
+            AND library_slot = ?
+            AND id != ?
+        `).run(
+          canonicalIdentity.provider || "",
+          canonicalIdentity.provider || "",
+          canonicalIdentity.providerEntityType,
+          canonicalIdentity.providerId,
+          params.fileType,
+          canonicalIdentity.librarySlot,
+          rowToUpdate.id,
+        );
 
         if (params.removeFromUnmapped !== false) {
           db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(params.filePath);
@@ -1482,7 +1487,7 @@ export class LibraryFilesService {
 
       if (existingTrackedAssetId !== null) {
         const existingTrackedAsset = db.prepare(`
-          SELECT id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, quality
+          SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, quality
           FROM TrackFiles
           WHERE id = ?
           LIMIT 1
@@ -1502,8 +1507,6 @@ export class LibraryFilesService {
         db.prepare(`
           UPDATE TrackFiles
           SET artist_id = ?,
-              album_id = ?,
-              media_id = ?,
               canonical_artist_mbid = COALESCE(?, canonical_artist_mbid),
               canonical_release_group_mbid = COALESCE(?, canonical_release_group_mbid),
               canonical_release_mbid = COALESCE(?, canonical_release_mbid),
@@ -1535,8 +1538,6 @@ export class LibraryFilesService {
           WHERE id = ?
         `).run(
           params.artistId,
-          params.albumId || null,
-          params.mediaId || null,
           canonicalIdentity.canonicalArtistMbid,
           canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalIdentity.canonicalReleaseMbid,
@@ -1614,7 +1615,7 @@ export class LibraryFilesService {
 
     const insert = db.prepare(`
       INSERT INTO TrackFiles (
-        artist_id, album_id, media_id,
+        artist_id,
         canonical_artist_mbid, canonical_release_group_mbid,
         canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
         provider, provider_entity_type, provider_id, library_slot,
@@ -1626,7 +1627,7 @@ export class LibraryFilesService {
         bit_depth, sample_rate, bitrate, codec, channels,
         fingerprint
       ) VALUES (
-        ?, ?, ?,
+        ?,
         ?, ?,
         ?, ?, ?,
         ?, ?, ?, ?,
@@ -1639,8 +1640,6 @@ export class LibraryFilesService {
       )
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
-        album_id = excluded.album_id,
-        media_id = excluded.media_id,
         canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, TrackFiles.canonical_artist_mbid),
         canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, TrackFiles.canonical_release_group_mbid),
         canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, TrackFiles.canonical_release_mbid),
@@ -1672,8 +1671,6 @@ export class LibraryFilesService {
 
     const info = insert.run(
       params.artistId,
-      params.albumId || null,
-      params.mediaId || null,
       canonicalIdentity.canonicalArtistMbid,
       canonicalIdentity.canonicalReleaseGroupMbid,
       canonicalIdentity.canonicalReleaseMbid,
@@ -2071,7 +2068,7 @@ export class LibraryFilesService {
     media_id: number | null;
   }> {
     return db.prepare(`
-      SELECT lf.id, lf.artist_id, lf.album_id, lf.media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
+      SELECT lf.id, lf.artist_id, NULL AS album_id, lf.provider_id AS media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
       FROM TrackFiles lf
       JOIN Artists art ON art.id = lf.artist_id
       LEFT JOIN ReleaseGroupSlots rgs

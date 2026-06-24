@@ -346,10 +346,14 @@ export class ManualImportService {
                 // Check for existing library file
                 const existingLibraryFile = db.prepare(`
                     SELECT id, file_path, relative_path, library_root FROM TrackFiles
-                    WHERE media_id = ? AND file_type = ?
+                    WHERE provider = ?
+                      AND provider_entity_type = ?
+                      AND provider_id = ?
+                      AND file_type = ?
+                      AND library_slot = ?
                     ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
                     LIMIT 1
-                `).get(c.providerId, c.fileType, c.file.file_path) as {
+                `).get(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", c.file.file_path) as {
                     id: number; file_path: string; relative_path: string | null; library_root: string | null;
                 } | undefined;
 
@@ -376,7 +380,9 @@ export class ManualImportService {
                 if (existingLibraryFile && sameTrackedPath) {
                     db.prepare(`
                         UPDATE TrackFiles SET
-                            artist_id=?, album_id=?, media_id=?, file_path=?, relative_path=?,
+                            artist_id=?,
+                            provider=?, provider_entity_type=?, provider_id=?, library_slot=?,
+                            file_path=?, relative_path=?,
                             library_root=?, filename=?, extension=?, file_size=?, duration=?,
                             file_type=?, quality=?, needs_rename=?, naming_template=?,
                             expected_path=?, original_filename=?,
@@ -384,19 +390,29 @@ export class ManualImportService {
                             modified_at=?, verified_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     `).run(
-                        c.artistId, c.albumId, c.providerId, c.file.file_path, c.relativePath,
+                        c.artistId,
+                        provider.id, c.fileType, c.providerId, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
+                        c.file.file_path, c.relativePath,
                         c.libraryRootKey, c.file.filename, c.extension, c.stats.size,
                         c.trackData.duration || 0, c.fileType, c.quality, c.needsRename,
                         c.fullPathTemplate, c.expectedPath, c.file.filename,
                         c.fingerprint, c.stats.mtime.toISOString(),
                         existingLibraryFile.id,
                     );
-                    db.prepare(`DELETE FROM TrackFiles WHERE media_id = ? AND file_type = ? AND id != ?`)
-                        .run(c.providerId, c.fileType, existingLibraryFile.id);
+                    db.prepare(`
+                        DELETE FROM TrackFiles
+                        WHERE provider = ?
+                          AND provider_entity_type = ?
+                          AND provider_id = ?
+                          AND file_type = ?
+                          AND library_slot = ?
+                          AND id != ?
+                    `).run(provider.id, c.fileType, c.providerId, c.fileType, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo", existingLibraryFile.id);
                 } else {
                     db.prepare(`
                         INSERT INTO TrackFiles (
-                            artist_id, album_id, media_id,
+                            artist_id,
+                            provider, provider_entity_type, provider_id, library_slot,
                             file_path, relative_path, library_root,
                             filename, extension, file_size, duration,
                             file_type, quality, needs_rename,
@@ -404,7 +420,8 @@ export class ManualImportService {
                             original_filename, fingerprint,
                             modified_at, verified_at
                         ) VALUES (
-                            @artistId, @albumId, @mediaId,
+                            @artistId,
+                            @provider, @providerEntityType, @providerIdValue, @librarySlot,
                             @filePath, @relativePath, @libraryRoot,
                             @filename, @extension, @fileSize, @duration,
                             @fileType, @quality, @needsRename,
@@ -413,12 +430,17 @@ export class ManualImportService {
                             @modifiedAt, CURRENT_TIMESTAMP
                         )
                         ON CONFLICT(file_path) DO UPDATE SET
-                            media_id = excluded.media_id, album_id = excluded.album_id,
+                            provider = COALESCE(excluded.provider, provider),
+                            provider_entity_type = COALESCE(excluded.provider_entity_type, provider_entity_type),
+                            provider_id = COALESCE(excluded.provider_id, provider_id),
+                            library_slot = COALESCE(excluded.library_slot, library_slot),
                             artist_id = excluded.artist_id, needs_rename = excluded.needs_rename,
                             expected_path = excluded.expected_path, fingerprint = excluded.fingerprint,
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
                         artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
+                        provider: provider.id, providerEntityType: c.fileType, providerIdValue: c.providerId,
+                        librarySlot: c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         filePath: c.file.file_path, relativePath: c.relativePath,
                         libraryRoot: c.libraryRootKey, filename: c.file.filename,
                         extension: c.extension, fileSize: c.stats.size,

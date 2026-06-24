@@ -625,6 +625,7 @@ export class TidalProvider implements StreamingProvider {
       type: album.type,
       explicit: album.explicit == null ? null : Boolean(album.explicit),
       upc: album.upc || null,
+      popularity: album.popularity ?? null,
       quality: album.quality || album.audioQuality || qualityTags[0] || null,
       qualityTags,
       url: album.url,

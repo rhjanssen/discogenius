@@ -49,7 +49,7 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
         explicit: providerAlbum.explicit || false,
         quality: providerAlbum.quality || "LOSSLESS",
         url: providerAlbum.url,
-        popularity: 0,
+        popularity: providerAlbum.popularity ?? 0,
         copyright: null,
         upc: providerAlbum.upc || null,
     };
@@ -165,7 +165,7 @@ export class RefreshAlbumService {
                     cover_image_id = COALESCE(NULLIF(?, ''), cover_image_id),
                     vibrant_color = COALESCE(NULLIF(?, ''), vibrant_color),
                     video_cover = COALESCE(NULLIF(?, ''), video_cover),
-                    popularity = COALESCE(?, popularity),
+                    popularity = MAX(COALESCE(popularity, 0), COALESCE(?, 0)),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE mbid = ?
             `).run(

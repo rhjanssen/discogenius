@@ -21,7 +21,6 @@ import {
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "../metadata/media-cover-service.js";
-import { resolveHydratedReleaseGroupArtwork } from "../metadata/release-group-artwork-service.js";
 import { getConfigSection } from "../config/config.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
@@ -380,14 +379,14 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
     };
 }
 
-async function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
+function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
     artistId: string;
     artistName: string;
     includeSpatial: boolean;
     downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
-}): Promise<any> {
+}): any {
     const card = mapReleaseGroupCard(row, options);
-    const coverUrl = await resolveHydratedReleaseGroupArtwork(row, "ArtistQueryService") || card.cover_art_url;
+    const coverUrl = card.cover_art_url;
 
     return {
         ...card,
@@ -798,9 +797,6 @@ export class ArtistQueryService {
         if (!artist) {
             return null;
         }
-        if (artist.mbid) {
-            RefreshArtistService.syncProviderSelectionsFromStoredOffers(String(artist.mbid));
-        }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
         const videos = db.prepare(`
@@ -833,7 +829,7 @@ export class ArtistQueryService {
              FROM TrackFiles lf
              WHERE lf.file_type = 'video'
                AND (
-                 lf.media_id = recording.id
+                 lf.recording_id = recording.id
                  OR lf.canonical_recording_mbid = recording.mbid
                  OR CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT)
                )
@@ -1054,12 +1050,12 @@ export class ArtistQueryService {
         // Exclude raw provider albums from modules to restrict discography entirely to MusicBrainz release groups.
 
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        const releaseGroupCards = await Promise.all(musicBrainzReleaseGroups.map((row) => mapReleaseGroupCardForArtistPage(row, {
+        const releaseGroupCards = musicBrainzReleaseGroups.map((row) => mapReleaseGroupCardForArtistPage(row, {
             artistId: String(artist.id),
             artistName: String(artist.name || "Unknown Artist"),
             includeSpatial,
             downloadStats: releaseGroupDownloadStats.get(String(row.mbid)),
-        })));
+        }));
 
         for (const releaseGroup of releaseGroupCards) {
             const bucket = RELEASE_GROUP_BUCKETS[releaseGroup.module as keyof typeof RELEASE_GROUP_BUCKETS] || "ARTIST_ALBUMS";

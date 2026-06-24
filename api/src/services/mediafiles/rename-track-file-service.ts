@@ -107,8 +107,19 @@ export class RenameTrackFileService {
       params.push(options.artistId);
     }
     if (options.albumId) {
-      where.push("lf.album_id = ?");
-      params.push(options.albumId);
+      where.push(`(
+        lf.canonical_release_group_mbid = ?
+        OR lf.canonical_release_mbid = ?
+        OR EXISTS (
+          SELECT 1
+          FROM ProviderItems scope_item
+          WHERE scope_item.entity_type IN ('track', 'video')
+            AND lf.provider_entity_type = scope_item.entity_type
+            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+        )
+      )`);
+      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
     }
     if (options.libraryRoot) {
       const rootValues = getLibraryRootFilterValues(options.libraryRoot);
@@ -129,7 +140,7 @@ export class RenameTrackFileService {
              provider, provider_entity_type, provider_id,
              quality, codec, bitrate, sample_rate, bit_depth, channels
       FROM (
-        SELECT id, artist_id, album_id, media_id,
+        SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                file_path, relative_path, library_root, file_type, extension, library_slot,
                provider, provider_entity_type, provider_id,
@@ -311,7 +322,7 @@ export class RenameTrackFileService {
       const decoded = decodeSyntheticId(syntheticId);
       if (decoded.tableName === "TrackFiles") {
         const row = db.prepare(`
-          SELECT id, artist_id, album_id, media_id,
+          SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                  canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                  file_path, relative_path, library_root, file_type, extension, library_slot,
                  provider, provider_entity_type, provider_id,
@@ -619,11 +630,16 @@ export class RenameTrackFileService {
     }
 
     const tracks = db.prepare(`
-      SELECT tf.id, tf.artist_id, tf.album_id, tf.media_id, tf.library_slot, tf.quality, tf.file_type,
+      SELECT tf.id, tf.artist_id, COALESCE(provider_track.provider_album_id, provider_track.album_id) AS album_id,
+             tf.provider_id AS media_id, tf.library_slot, tf.quality, tf.file_type,
              tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
              tf.canonical_track_mbid, tf.canonical_recording_mbid,
              tf.provider, tf.provider_entity_type, tf.provider_id
       FROM TrackFiles tf
+      LEFT JOIN ProviderItems provider_track
+        ON provider_track.entity_type = tf.provider_entity_type
+       AND (tf.provider IS NULL OR provider_track.provider = tf.provider)
+       AND CAST(provider_track.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
       WHERE tf.file_type IN ('track', 'video')
         AND (tf.library_slot IN ('stereo', 'spatial') OR tf.file_type = 'video')
     `).all() as Array<{

@@ -66,7 +66,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 #### Library List Filter Contract
 
-- `/api/albums`, `/api/tracks`, and `/api/videos` support optional list filters: `monitored`, `downloaded`, and `locked`.
+- `/api/v1/album`, `/api/v1/track`, and `/api/v1/video` support optional list filters: `monitored`, `downloaded`, and `locked`.
 - These list endpoints keep existing pagination/search/sort behavior (`limit`, `offset`, `search`, `sort`, `dir`), and media-specific filters such as `library_filter` where applicable.
 - Boolean query parsing is normalized to accept `1|true|yes|on` and `0|false|no|off` (case-insensitive). Unknown boolean values are treated as not provided.
 - `locked` maps to `monitor_lock` filtering and is used to keep intentional user lock state queryable across library list surfaces.
@@ -80,7 +80,7 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 
 #### Command Summary
 
-**Manual operator commands** (via POST `/api/command` with `{ "name": "CommandName" }`; case-insensitive, and available through `/api/system-task`, with selected run-now actions surfaced in the Dashboard overflow menu):
+**Manual operator commands** (via POST `/api/v1/command` with `{ "name": "CommandName" }`; case-insensitive, and available through `/api/v1/system/task`, with selected run-now actions surfaced in the Dashboard overflow menu):
 
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
@@ -104,6 +104,38 @@ Discogenius is a monorepo with a TypeScript backend and frontend:
 | `CheckUpgrades` | Check for upgrade candidates in library |
 | `Housekeeping` | General system cleanup and maintenance |
 | `RescanFolders` | Disk scan for root folders with minimal reprocessing |
+
+### SQLite Concurrency and Main-Thread Responsiveness
+
+`better-sqlite3` is synchronous, so every query runs to completion on the calling
+thread. SQLite also allows only one writer at a time, and the app has up to four
+writers contending for that lock: the three command-worker threads and the main
+HTTP/SSE thread. The hard constraint is that the **main thread is the event loop**
+— any synchronous wait there freezes all requests, SSE streams, and `/health`.
+
+The model in [api/src/database.ts](../api/src/database.ts):
+
+- **Main thread fails fast.** `busy_timeout = 1000ms` and a single quick retry. A
+  contended main-thread write (chiefly the `markProcessing` job-claim) gives up in
+  ~2s and is retried at the next scheduler tick rather than blocking the event
+  loop. This mirrors Lidarr's 100ms request-path `busy_timeout` (Lidarr can afford
+  fail-fast because its request handling is multi-threaded and pooled; we achieve
+  the same end — a stalled write never freezes the server — by retrying off the
+  request path). The `trySyncScheduledTasks` SQLITE_BUSY catch in `scheduler.ts`
+  is the canonical graceful-skip pattern.
+- **Workers wait.** Worker threads run off the event loop, so they keep a generous
+  `busy_timeout = 30000ms` + 8 retries: heavy refresh writes wait their turn
+  instead of erroring with `database is locked`.
+- **Chunked catalog writes (`runChunkedWrite`).** Large refresh/catalog hydration
+  (a big artist is hundreds of release groups and thousands of tracks) commits in
+  bounded chunks so a single transaction never holds the write lock long enough to
+  starve peers or time out the main-thread claim.
+- **Bounded WAL.** `journal_size_limit = 64MB`, `wal_autocheckpoint = 400`, and a
+  periodic `PASSIVE` checkpoint keep the WAL from growing into the hundreds of MB
+  under a write storm and slowing every reader.
+
+Long-running, request-triggered work belongs on the command queue/worker pool, not
+inline in a route handler (Lidarr runs import-list sync as a scheduled command).
 
 ### Persistent History
 
@@ -197,7 +229,7 @@ Primary persisted entities:
 
 - `Artists`, `ArtistMetadata`
 - `ArtistStatistics`
-- `Albums`, `AlbumReleases`, `AlbumReleaseMedia`, `Tracks`, `Recordings`
+- `Albums`, `AlbumReleases`, `Tracks`, `Recordings`
 - `ProviderItems`, `ProviderItemMatches`, `ReleaseGroupSlots`
 - `TrackFiles`
 - `MetadataFiles`, `LyricFiles`, `ExtraFiles`
@@ -239,8 +271,8 @@ Operationally important semantics:
 
 - Monitoring scheduler drives periodic metadata/root-scan passes.
 - Follow-up pass chaining is explicit (refresh -> root scan -> curation -> download missing).
-- System task state is exposed through scheduled task snapshots, the `/api/system-task` operator surface, and status APIs.
-- `/api/system-task` now projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, and run-now capability, plus schedule metadata for supported scheduled tasks.
+- System task state is exposed through scheduled task snapshots, the `/api/v1/system/task` operator surface, and status APIs.
+- `/api/v1/system/task` projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, and run-now capability, plus schedule metadata for supported scheduled tasks.
 - The current frontend uses that surface selectively: operator run-now actions are available from the Dashboard overflow menu, while Settings remains focused on monitoring configuration and the monitoring-cycle trigger rather than a general system-task control plane.
 
 ### Frontend Activity/Status Refresh Semantics

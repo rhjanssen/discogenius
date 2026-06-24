@@ -422,7 +422,7 @@ export class ImportMatcherService {
                         WHERE album_item.entity_type = 'album'
                           AND (lf.provider IS NULL OR album_item.provider = lf.provider)
                           AND (
-                            (lf.album_id IS NOT NULL AND album_item.provider_id = lf.album_id)
+                            (lf.provider_entity_type = 'album' AND lf.provider_id IS NOT NULL AND album_item.provider_id = lf.provider_id)
                             OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
                             OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
                           )
@@ -443,7 +443,7 @@ export class ImportMatcherService {
                         WHERE track_item.entity_type = 'track'
                           AND (lf.provider IS NULL OR track_item.provider = lf.provider)
                           AND (
-                            (lf.media_id IS NOT NULL AND track_item.provider_id = lf.media_id)
+                            (lf.provider_entity_type = 'track' AND lf.provider_id IS NOT NULL AND track_item.provider_id = lf.provider_id)
                             OR (lf.canonical_track_mbid IS NOT NULL AND track_item.track_mbid = lf.canonical_track_mbid)
                             OR (lf.canonical_recording_mbid IS NOT NULL AND track_item.recording_mbid = lf.canonical_recording_mbid)
                           )
@@ -451,7 +451,7 @@ export class ImportMatcherService {
                           track_item.updated_at DESC
                         LIMIT 1
                     ),
-                    lf.album_id
+                    NULL
                 ) AS album_id
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'track'

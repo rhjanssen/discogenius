@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, runChunkedWrite } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import { shouldHydrateArtistCatalog } from "../config/scan-policy.js";
 import {
@@ -739,14 +739,16 @@ export class RefreshArtistService {
                 updated_at = CURRENT_TIMESTAMP
         `);
 
-        db.transaction(() => {
-            for (const album of albums) {
+        const selectCanonicalOwner = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?");
+
+        // Chunk the per-album upserts so a prolific artist's provider catalog
+        // doesn't hold the write lock for the whole batch and starve peers.
+        runChunkedWrite(albums, (album) => {
                 const providerAlbumId = String(album.provider_id);
                 const match = matches.get(providerAlbumId);
                 const matchedReleaseGroup = match?.status !== "unmatched" ? match?.releaseGroup : null;
                 const canonicalOwner = matchedReleaseGroup?.mbid
-                    ? db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
-                        .get(matchedReleaseGroup.mbid) as { artist_mbid?: string | null } | undefined
+                    ? selectCanonicalOwner.get(matchedReleaseGroup.mbid) as { artist_mbid?: string | null } | undefined
                     : null;
                 const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(match);
                 upsert.run(
@@ -788,9 +790,7 @@ export class RefreshArtistService {
                         evidence: JSON.stringify(match.evidence),
                     });
                 }
-
-            }
-        })();
+        });
     }
 
     private static buildStoredProviderAlbumSelections(

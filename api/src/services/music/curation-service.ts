@@ -395,6 +395,15 @@ export class CurationService {
 
         let slotUpdates = 0;
         let monitoredSlots = 0;
+        const selectMonitoredContext = db.prepare(`
+            SELECT 1
+            FROM ArtistReleaseGroupCuration context
+            JOIN Artists artist ON artist.mbid = context.source_artist_mbid
+            WHERE context.release_group_mbid = ?
+              AND context.included = 1
+              AND artist.monitored = 1
+            LIMIT 1
+        `);
         db.transaction(() => {
             for (const releaseGroup of releaseGroups) {
                 const included = includedReleaseGroupIds.has(releaseGroup.mbid);
@@ -410,15 +419,7 @@ export class CurationService {
                 }
                 const slotName = String(slot.slot || "").toLowerCase();
                 const hasProvider = slot.selected_provider_id != null && slot.selected_provider_id !== "";
-                const monitoredContext = db.prepare(`
-                    SELECT 1
-                    FROM ArtistReleaseGroupCuration context
-                    JOIN Artists artist ON artist.mbid = context.source_artist_mbid
-                    WHERE context.release_group_mbid = ?
-                      AND context.included = 1
-                      AND artist.monitored = 1
-                    LIMIT 1
-                `).get(slot.release_group_mbid);
+                const monitoredContext = selectMonitoredContext.get(slot.release_group_mbid);
                 const monitoredVal = Boolean(monitoredContext)
                     && (slotName !== "spatial" || includeSpatial)
                     && (!requireProvider || hasProvider)

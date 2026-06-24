@@ -778,7 +778,7 @@ const FileDetailDialog: React.FC<FileDetailDialogProps> = ({
         if (file?.file_type === "lyrics" && file.file_path) {
             setLoadingText(true);
             // Fetch text content via API
-            fetch(`/api/v1/library-files/content?path=${encodeURIComponent(file.file_path)}`)
+            fetch(`/api/v1/mediaFile/content?path=${encodeURIComponent(file.file_path)}`)
                 .then(res => res.ok ? res.text() : Promise.reject("Failed to load"))
                 .then(text => setTextContent(text))
                 .catch(() => setTextContent(null))
@@ -796,7 +796,7 @@ const FileDetailDialog: React.FC<FileDetailDialogProps> = ({
     const isText = file.file_type === "lyrics";
 
     // Build preview URL using the streaming endpoint with file ID
-    const previewUrl = `/api/v1/library-files/stream/${file.id}`;
+    const previewUrl = `/api/v1/mediaFile/stream/${file.id}`;
 
     return (
         <Dialog open={!!file} onOpenChange={(_, data) => !data.open && onClose()}>

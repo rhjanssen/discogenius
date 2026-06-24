@@ -313,7 +313,8 @@ export class ImportService {
 
         const insertLibraryFile = db.prepare(`
             INSERT INTO TrackFiles (
-                artist_id, album_id, media_id,
+                artist_id,
+                provider, provider_entity_type, provider_id, library_slot,
                 file_path, relative_path, library_root,
                 filename, extension, file_size, duration,
                 file_type, quality, needs_rename,
@@ -322,7 +323,8 @@ export class ImportService {
                 original_filename, release_group, fingerprint,
                 modified_at, verified_at
             ) VALUES (
-                @artistId, @albumId, @mediaId,
+                @artistId,
+                @provider, @providerEntityType, @providerId, @librarySlot,
                 @filePath, @relativePath, @libraryRoot,
                 @filename, @extension, @fileSize, @duration,
                 @fileType, @quality, @needsRename,
@@ -333,8 +335,10 @@ export class ImportService {
             )
             ON CONFLICT(file_path) DO UPDATE SET
                 artist_id = excluded.artist_id,
-                album_id = excluded.album_id,
-                media_id = excluded.media_id,
+                provider = COALESCE(excluded.provider, provider),
+                provider_entity_type = COALESCE(excluded.provider_entity_type, provider_entity_type),
+                provider_id = COALESCE(excluded.provider_id, provider_id),
+                library_slot = COALESCE(excluded.library_slot, library_slot),
                 relative_path = excluded.relative_path,
                 library_root = excluded.library_root,
                 filename = excluded.filename,
@@ -360,15 +364,17 @@ export class ImportService {
         const findExistingMediaLibraryFile = db.prepare(`
             SELECT id
             FROM TrackFiles
-            WHERE media_id = ? AND file_type = ?
+            WHERE provider = ? AND provider_entity_type = ? AND provider_id = ? AND file_type = ? AND library_slot = ?
             ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
             LIMIT 1
         `);
         const updateExistingLibraryFile = db.prepare(`
             UPDATE TrackFiles
             SET artist_id = @artistId,
-                album_id = @albumId,
-                media_id = @mediaId,
+                provider = COALESCE(@provider, provider),
+                provider_entity_type = COALESCE(@providerEntityType, provider_entity_type),
+                provider_id = COALESCE(@providerId, provider_id),
+                library_slot = COALESCE(@librarySlot, library_slot),
                 file_path = @filePath,
                 relative_path = @relativePath,
                 library_root = @libraryRoot,
@@ -395,7 +401,7 @@ export class ImportService {
         `);
         const deleteDuplicateMediaLibraryFiles = db.prepare(`
             DELETE FROM TrackFiles
-            WHERE media_id = ? AND file_type = ? AND id != ?
+            WHERE provider = ? AND provider_entity_type = ? AND provider_id = ? AND file_type = ? AND library_slot = ? AND id != ?
         `);
         const updateImportedLibraryFileIdentity = db.prepare(`
             UPDATE TrackFiles
@@ -436,21 +442,50 @@ export class ImportService {
             const mediaId = String(params.mediaId || "");
             const fileType = String(params.fileType || "");
             const filePath = String(params.filePath || "");
-            if (mediaId && (fileType === "track" || fileType === "video")) {
-                const existingRow = findExistingMediaLibraryFile.get(mediaId, fileType, filePath) as { id: number } | undefined;
+            const identity = resolveLibraryFileIdentity({
+                artistId: String(params.artistId || ""),
+                albumId: String(params.albumId || ""),
+                mediaId,
+                fileType,
+                quality: params.quality == null ? null : String(params.quality),
+                libraryRoot: params.libraryRoot == null ? null : String(params.libraryRoot),
+            });
+            const hydratedParams = {
+                ...params,
+                provider: identity.provider,
+                providerEntityType: identity.providerEntityType,
+                providerId: identity.providerId,
+                librarySlot: identity.librarySlot,
+            };
+            if (identity.provider && identity.providerEntityType && identity.providerId && (fileType === "track" || fileType === "video")) {
+                const existingRow = findExistingMediaLibraryFile.get(
+                    identity.provider,
+                    identity.providerEntityType,
+                    identity.providerId,
+                    fileType,
+                    identity.librarySlot,
+                    filePath,
+                ) as { id: number } | undefined;
                 if (existingRow) {
-                    updateExistingLibraryFile.run({ ...params, id: existingRow.id });
-                    deleteDuplicateMediaLibraryFiles.run(mediaId, fileType, existingRow.id);
-                    enrichImportedLibraryFileIdentity(existingRow.id, params);
+                    updateExistingLibraryFile.run({ ...hydratedParams, id: existingRow.id });
+                    deleteDuplicateMediaLibraryFiles.run(
+                        identity.provider,
+                        identity.providerEntityType,
+                        identity.providerId,
+                        fileType,
+                        identity.librarySlot,
+                        existingRow.id,
+                    );
+                    enrichImportedLibraryFileIdentity(existingRow.id, hydratedParams);
                     return;
                 }
             }
 
-            insertLibraryFile.run(params);
+            insertLibraryFile.run(hydratedParams);
             const insertedRow = db.prepare("SELECT id FROM TrackFiles WHERE file_path = ?")
                 .get(filePath) as { id?: number } | undefined;
             if (insertedRow?.id != null) {
-                enrichImportedLibraryFileIdentity(insertedRow.id, params);
+                enrichImportedLibraryFileIdentity(insertedRow.id, hydratedParams);
             }
         };
 

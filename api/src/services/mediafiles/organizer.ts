@@ -438,10 +438,22 @@ export class OrganizerService {
         json_extract(rgs.provider_data, '$.video_cover') AS videoCover,
         selected_release.date AS releaseDate,
         rg.primary_type AS albumType,
-        (
-          SELECT COUNT(DISTINCT media.position)
-          FROM AlbumReleaseMedia media
-          WHERE media.release_mbid = COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?)
+        COALESCE(
+          NULLIF(selected_release.media_count, 0),
+          (
+            SELECT COUNT(DISTINCT CAST(COALESCE(
+              json_extract(media.value, '$.Position'),
+              json_extract(media.value, '$.position'),
+              0
+            ) AS INTEGER))
+            FROM json_each(selected_release.data, '$.Media') media
+            WHERE CAST(COALESCE(
+              json_extract(media.value, '$.Position'),
+              json_extract(media.value, '$.position'),
+              0
+            ) AS INTEGER) > 0
+          ),
+          1
         ) AS volumeCount
       FROM ProviderItems pi
       LEFT JOIN ReleaseGroupSlots rgs
@@ -469,7 +481,6 @@ export class OrganizerService {
       providerAlbumId,
       raw.releaseMbid || null,
       requestedSlot || "stereo",
-      raw.releaseMbid || null,
       requestedSlot,
       requestedSlot,
       releaseGroupMbid || null,
@@ -898,11 +909,25 @@ export class OrganizerService {
     fileType: "track" | "video",
     librarySlot: string | null,
   ) {
+    const identity = resolveLibraryFileIdentity({
+      mediaId,
+      fileType,
+      librarySlot,
+    });
+    if (!identity.provider || !identity.providerEntityType || !identity.providerId) {
+      return;
+    }
+
     const oldFiles = db.prepare(
-      `SELECT id, artist_id, album_id, media_id, file_path, library_root, quality
+      `SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, library_root, quality
        FROM TrackFiles
-       WHERE media_id = ? AND file_type = ? AND library_slot IS ? AND file_path != ?`
-    ).all(mediaId, fileType, librarySlot, newFilePath) as Array<{
+       WHERE provider = ?
+         AND provider_entity_type = ?
+         AND provider_id = ?
+         AND file_type = ?
+         AND library_slot IS ?
+         AND file_path != ?`
+    ).all(identity.provider, identity.providerEntityType, identity.providerId, fileType, librarySlot, newFilePath) as Array<{
       id: number;
       artist_id: number;
       album_id: number | null;
@@ -997,9 +1022,20 @@ export class OrganizerService {
     const sidecars = db.prepare(`
       SELECT id, file_path, library_root
       FROM TrackFiles
-      WHERE media_id = ? AND file_type = ? AND library_slot IS ?
+      WHERE provider = ?
+        AND provider_entity_type = ?
+        AND provider_id = ?
+        AND file_type = ?
+        AND library_slot IS ?
       ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
-    `).all(params.mediaId, params.fileType, librarySlot, expectedPath) as Array<{
+    `).all(
+      canonicalIdentity.provider || "",
+      canonicalIdentity.providerEntityType || params.fileType,
+      canonicalIdentity.providerId || params.mediaId,
+      params.fileType,
+      librarySlot,
+      expectedPath,
+    ) as Array<{
       id: number;
       file_path: string;
       library_root: string;
@@ -1061,8 +1097,20 @@ export class OrganizerService {
 
       db.prepare(`
         DELETE FROM TrackFiles
-        WHERE media_id = ? AND file_type = ? AND library_slot IS ? AND file_path != ?
-      `).run(params.mediaId, params.fileType, librarySlot, expectedPath);
+        WHERE provider = ?
+          AND provider_entity_type = ?
+          AND provider_id = ?
+          AND file_type = ?
+          AND library_slot IS ?
+          AND file_path != ?
+      `).run(
+        canonicalIdentity.provider || "",
+        canonicalIdentity.providerEntityType || params.fileType,
+        canonicalIdentity.providerId || params.mediaId,
+        params.fileType,
+        librarySlot,
+        expectedPath,
+      );
     }
 
     return expectedPath;
@@ -1201,7 +1249,7 @@ export class OrganizerService {
 
       try {
         const siblingLibraryFiles = db.prepare(
-          `SELECT id, artist_id, album_id, media_id, quality
+          `SELECT id, artist_id, NULL AS album_id, provider_id AS media_id, quality
            FROM TrackFiles
            WHERE file_path = ? AND file_type = ?`
         ).all(siblingPath, fileType) as Array<{
@@ -1247,7 +1295,7 @@ export class OrganizerService {
     }
 
     const existing = db.prepare(`
-      SELECT media_id
+      SELECT provider_id AS media_id
       FROM TrackFiles
       WHERE file_path = ? AND file_type = ?
       LIMIT 1

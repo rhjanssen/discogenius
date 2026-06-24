@@ -259,8 +259,23 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
   let baseValue: string | null = null;
   let isNumericToken = false;
   let numericValue: number | null = null;
+  let numericFormat = customFormat;
 
-  switch (normalizedName) {
+  const trackNumberMatch = normalizedName.match(/^(?:tracknumber|track)(0+)$/);
+  if (trackNumberMatch) {
+    isNumericToken = true;
+    numericValue = derived.trackNumber;
+    numericFormat = trackNumberMatch[1];
+  }
+
+  const volumeNumberMatch = normalizedName.match(/^(?:volumenumber|medium)(0+)$/);
+  if (!isNumericToken && volumeNumberMatch) {
+    isNumericToken = true;
+    numericValue = derived.volumeNumber;
+    numericFormat = volumeNumberMatch[1];
+  }
+
+  switch (isNumericToken ? "__numeric_suffix__" : normalizedName) {
     // Artist names - all variants
     case "artistname":
       baseValue = derived.artistName;
@@ -461,6 +476,8 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
     case "channels":
       baseValue = context.channels ? String(context.channels) : "";
       break;
+    case "__numeric_suffix__":
+      break;
 
     default:
       return "";
@@ -468,7 +485,7 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
 
   // Handle numeric tokens with format specifier
   if (isNumericToken && numericValue !== null) {
-    return applyNumberFormat(numericValue, customFormat);
+    return applyNumberFormat(numericValue, numericFormat);
   }
 
   return baseValue || "";
@@ -510,6 +527,19 @@ function renderTokens(template: string, context: NamingContext): string {
     const combinedIds = parts.join("; ");
     const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
     literalPlaceholders.push(`{${val1}-${combinedIds}}`);
+    return placeholder;
+  });
+
+  // Preserve older single-brace wrappers used by existing configs, e.g.
+  // {mbid-{artistMbId}} -> {mbid-7808...}. The main token regex deliberately
+  // stays simple, so handle this explicit wrapper before generic tokenization.
+  processedTemplate = processedTemplate.replace(/\{mbid-\{([^{}]+)\}\}/gi, (_match, token: string) => {
+    const value = resolveToken(token, context);
+    if (!value) {
+      return "";
+    }
+    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
+    literalPlaceholders.push(`{mbid-${value}}`);
     return placeholder;
   });
 

@@ -28,7 +28,7 @@ Core catalog tables:
 
 - `ArtistMetadata`, `Artists`, `ArtistStatistics`
 - `Albums` for MusicBrainz release groups
-- `AlbumReleases`, `AlbumReleaseMedia`
+- `AlbumReleases`; release medium/disc shape is stored in `AlbumReleases.data`
 - `Tracks` for release-specific track positions
 - `Recordings` for recording-level identity, audio recordings, MusicBrainz
   video recordings, and provider-only provisional videos
@@ -64,10 +64,18 @@ slots must not be collapsed to one release-group-wide representative.
 Future configurable library types should replace fixed slot names with
 library-type ids while preserving monitored and lock semantics.
 
+MusicBrainz release medium/disc shape is release-local data. It is stored in
+`AlbumReleases.data` under the upstream release snapshot (`Media`) and medium
+summaries are derived from that JSON unless a measured hot path later needs a
+separate indexed projection.
+
 ### File And Sidecar Inventory
 
-`TrackFiles` is the playable media inventory. It stores file facts, provider
-provenance, canonical identity, quality, and the library slot.
+`TrackFiles` is the playable media inventory. The name is intentionally
+Lidarr-aligned: Lidarr uses `TrackFile` for managed playable music files. In
+Discogenius it also covers playable music videos because videos are first-class
+downloaded media, not sidecars. It stores file facts, provider provenance,
+canonical identity, quality, and the library slot.
 
 `MetadataFiles`, `LyricFiles`, and `ExtraFiles` are the Lidarr-style sidecar
 inventories for artwork, NFO, lyrics, and other extra files.
@@ -76,6 +84,10 @@ Existing `canonical_*` file columns and nullable provider-resource shadow ids
 are transitional debt. New work should prefer clear provider provenance fields,
 integer FKs where they are already available, and neutral MBID names only where
 file-level MBID provenance is required.
+
+Do not rename `TrackFiles` to `MediaFiles` as part of cleanup unless there is a
+specific maintenance win that outweighs Lidarr parity and churn across import,
+rename, sidecar, and query services.
 
 ## Provider Abstraction Direction
 

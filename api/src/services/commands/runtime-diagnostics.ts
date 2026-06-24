@@ -40,7 +40,7 @@ function isStreamingLikePath(path: string) {
     path === "/api/v1/queue/progress-stream" ||
     path === "/api/v1/monitoring/check-stream" ||
     path === "/api/v1/artist/import-followed-stream" ||
-    path === "/api/v1/library-files/scan-roots-now"
+    path === "/api/v1/mediaFile/scan-roots-now"
   );
 }
 

@@ -717,8 +717,19 @@ export class AudioTagService {
       params.push(options.artistId);
     }
     if (options.albumId) {
-      where.push("lf.album_id = ?");
-      params.push(options.albumId);
+      where.push(`(
+        lf.canonical_release_group_mbid = ?
+        OR lf.canonical_release_mbid = ?
+        OR EXISTS (
+          SELECT 1
+          FROM ProviderItems scope_item
+          WHERE scope_item.entity_type = 'track'
+            AND lf.provider_entity_type = 'track'
+            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+        )
+      )`);
+      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
     }
 
     const row = db.prepare(`
@@ -741,8 +752,19 @@ export class AudioTagService {
       params.push(options.artistId);
     }
     if (options.albumId) {
-      where.push("lf.album_id = ?");
-      params.push(options.albumId);
+      where.push(`(
+        lf.canonical_release_group_mbid = ?
+        OR lf.canonical_release_mbid = ?
+        OR EXISTS (
+          SELECT 1
+          FROM ProviderItems scope_item
+          WHERE scope_item.entity_type = 'track'
+            AND lf.provider_entity_type = 'track'
+            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+        )
+      )`);
+      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
     }
 
     const sql = this.buildTrackRowsSql(where.join(" AND "), includePaging);
@@ -759,8 +781,8 @@ export class AudioTagService {
       SELECT
         lf.id,
         lf.artist_id,
-        lf.album_id,
-        lf.media_id,
+        NULL AS album_id,
+        lf.provider_id AS media_id,
         lf.file_path,
         lf.relative_path,
         lf.library_root,
@@ -843,12 +865,12 @@ export class AudioTagService {
           WHERE candidate.entity_type = 'track'
             AND (
               (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) IS NOT NULL
-                AND CAST(candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) AS TEXT)
+                CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
+                AND CAST(candidate.provider_id AS TEXT) = CAST(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END AS TEXT)
                 AND (lf.provider IS NULL OR candidate.provider = lf.provider)
               )
               OR (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END, lf.media_id) IS NULL
+                CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NULL
                 AND (
                   (lf.canonical_track_mbid IS NOT NULL AND candidate.track_mbid = lf.canonical_track_mbid)
                   OR (lf.canonical_recording_mbid IS NOT NULL AND candidate.recording_mbid = lf.canonical_recording_mbid)
@@ -877,12 +899,12 @@ export class AudioTagService {
           WHERE album_candidate.entity_type = 'album'
             AND (
               (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) IS NOT NULL
-                AND CAST(album_candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) AS TEXT)
+                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) IS NOT NULL
+                AND CAST(album_candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) AS TEXT)
                 AND (COALESCE(lf.provider, provider_track.provider) IS NULL OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider))
               )
               OR (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, lf.album_id, provider_track.album_id) IS NULL
+                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) IS NULL
                 AND (
                   (lf.canonical_release_mbid IS NOT NULL AND album_candidate.release_mbid = lf.canonical_release_mbid)
                   OR (lf.canonical_release_group_mbid IS NOT NULL AND album_candidate.release_group_mbid = lf.canonical_release_group_mbid)
@@ -903,7 +925,7 @@ export class AudioTagService {
       LEFT JOIN Albums alb ON alb.mbid = COALESCE(provider_album.release_group_mbid, provider_track.release_group_mbid)
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
-      ORDER BY lf.artist_id, lf.album_id, COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
+      ORDER BY lf.artist_id, COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
   }

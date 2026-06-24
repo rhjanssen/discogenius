@@ -38,7 +38,6 @@ beforeEach(() => {
     db.prepare("DELETE FROM Tracks").run();
     db.prepare("DELETE FROM RecordingRelations").run();
     db.prepare("DELETE FROM Recordings").run();
-    db.prepare("DELETE FROM AlbumReleaseMedia").run();
     db.prepare("DELETE FROM AlbumReleases").run();
     db.prepare("DELETE FROM AlbumArtists").run();
     db.prepare("DELETE FROM ArtistReleaseGroups").run();

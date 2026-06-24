@@ -22,7 +22,6 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleaseMedia").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -201,8 +200,14 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
-  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
-  dbModule.db.prepare("INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count) VALUES (?, 1, 'Digital Media', 1)").run(releaseMbid);
+  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, data) VALUES (?, ?, ?, ?, ?, ?)").run(
+    releaseMbid,
+    releaseGroupMbid,
+    artistMbid,
+    "Canonical Album",
+    "Official",
+    JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media", TrackCount: 1 }] }),
+  );
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)").run(recordingMbid, artistMbid, "Track One");
   dbModule.db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)

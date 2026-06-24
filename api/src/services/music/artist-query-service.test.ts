@@ -273,30 +273,25 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
   assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
 });
 
-test("artist page hydrates missing release-group artwork before using provider fallback", async () => {
+test("artist page uses provider fallback without hydrating missing release-group artwork", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/hydrated.jpg";
   const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  let syncCalled = false;
+  const providerFallbackUrl = "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg";
 
   db.prepare(`UPDATE Albums SET data = NULL, images = ? WHERE mbid = ?`)
     .run(
       JSON.stringify([{
         coverType: "Cover",
-        url: "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg",
+        url: providerFallbackUrl,
         source: "provider-fallback",
       }]),
       "release-group-mbid-1",
     );
 
-  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
-    assert.equal(releaseGroupMbid, "release-group-mbid-1");
-    assert.equal(artistMbid, "artist-mbid-1");
-    db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
-      .run(
-        JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, source: "Servarr Metadata Server" }]),
-        "release-group-mbid-1",
-      );
+  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async () => {
+    syncCalled = true;
   }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   try {
@@ -307,30 +302,25 @@ test("artist page hydrates missing release-group artwork before using provider f
 
     assert.equal(albums.length, 1);
     const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
-    assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), providerFallbackUrl);
+    assert.equal(albums[0].provider_cover_id, providerFallbackUrl);
+    assert.equal(syncCalled, false);
   } finally {
     ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
   }
 });
 
-test("artist page hydrates blank release-group artwork from Servarr Metadata Server", async () => {
+test("artist page uses selected provider artwork for blank release-group artwork without read-time hydration", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/blank-card.jpg";
   const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  let syncCalled = false;
 
   db.prepare(`UPDATE Albums SET data = NULL, images = NULL WHERE mbid = ?`)
     .run("release-group-mbid-1");
 
-  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async (releaseGroupMbid: string, artistMbid: string) => {
-    assert.equal(releaseGroupMbid, "release-group-mbid-1");
-    assert.equal(artistMbid, "artist-mbid-1");
-    db.prepare(`UPDATE Albums SET images = ? WHERE mbid = ?`)
-      .run(
-        JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, source: "Servarr Metadata Server" }]),
-        "release-group-mbid-1",
-      );
+  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async () => {
+    syncCalled = true;
   }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
 
   try {
@@ -341,8 +331,12 @@ test("artist page hydrates blank release-group artwork from Servarr Metadata Ser
 
     assert.equal(albums.length, 1);
     const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
+    assert.equal(
+      mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash),
+      "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg",
+    );
     assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+    assert.equal(syncCalled, false);
   } finally {
     ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
   }

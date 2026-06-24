@@ -610,11 +610,12 @@ test("provider slot selection matches multiple provider releases to cover a Musi
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("release-mbid-multi", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 3, 1);
 
-  // Insert AlbumReleaseMedia
+  // Store MusicBrainz media/disc shape on the release snapshot.
   db.prepare(`
-    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
-    VALUES (?, ?, ?)
-  `).run("release-mbid-multi", "Digital Media", 1);
+    UPDATE AlbumReleases
+    SET data = ?
+    WHERE mbid = ?
+  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-multi");
 
   // Insert Recordings (3 tracks)
   const insertRecording = db.prepare(`
@@ -759,9 +760,10 @@ test("provider slot selection skips partial provider releases unless they comple
   `).run("release-mbid-incomplete", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 3, 1);
 
   db.prepare(`
-    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
-    VALUES (?, ?, ?)
-  `).run("release-mbid-incomplete", "Digital Media", 1);
+    UPDATE AlbumReleases
+    SET data = ?
+    WHERE mbid = ?
+  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-incomplete");
 
   const insertRecording = db.prepare(`
     INSERT INTO Recordings (mbid, title, isrcs)
@@ -884,9 +886,10 @@ test("provider slot selection falls back to strong release-shape evidence when n
   `).run("release-mbid-noisy-track-title", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 3, 1);
 
   db.prepare(`
-    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
-    VALUES (?, ?, ?)
-  `).run("release-mbid-noisy-track-title", "Digital Media", 1);
+    UPDATE AlbumReleases
+    SET data = ?
+    WHERE mbid = ?
+  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-mbid-noisy-track-title");
 
   const insertRecording = db.prepare(`
     INSERT INTO Recordings (mbid, title, isrcs)
@@ -1025,9 +1028,10 @@ test("provider slot selection selects available digital release when require_pro
   `).run("release-digital", releaseGroupMbid, "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 12, 1);
 
   db.prepare(`
-    INSERT INTO AlbumReleaseMedia (release_mbid, format, position)
-    VALUES (?, ?, ?)
-  `).run("release-digital", "Digital Media", 1);
+    UPDATE AlbumReleases
+    SET data = ?
+    WHERE mbid = ?
+  `).run(JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media" }] }), "release-digital");
 
   // Insert Recordings for digital release
   const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");

@@ -50,9 +50,9 @@ function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {
   dbModule.db.prepare(`
     INSERT INTO AlbumReleases (
       mbid, release_group_mbid, artist_mbid, title,
-      status, country, date, barcode, media_count, track_count
+      status, country, date, barcode, media_count, track_count, data
     )
-    VALUES (?, 'group-mbid', 'artist-mbid', 'Album', ?, ?, ?, ?, ?, ?)
+    VALUES (?, 'group-mbid', 'artist-mbid', 'Album', ?, ?, ?, ?, ?, ?, ?)
   `).run(
     mbid,
     input.status ?? null,
@@ -61,14 +61,10 @@ function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {
     input.barcode ?? null,
     input.mediaCount ?? 1,
     trackCount,
+    input.format
+      ? JSON.stringify({ Media: [{ Position: 1, Format: input.format, TrackCount: trackCount }] })
+      : null,
   );
-
-  if (input.format) {
-    dbModule.db.prepare(`
-      INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count)
-      VALUES (?, 1, ?, ?)
-    `).run(mbid, input.format, trackCount);
-  }
 }
 
 test("representative release defaults to the MusicBrainz release with the most tracks", () => {

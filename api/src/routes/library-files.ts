@@ -309,7 +309,7 @@ router.get("/stream/:id", async (req, res) => {
 });
 
 /**
- * POST /library-files/scan/:artistId
+ * POST /api/v1/mediaFile/scan/:artistId
  * Trigger a library scan for a specific artist.
  * Queues the local scan/import phase only.
  */
@@ -335,7 +335,7 @@ router.post("/scan/:artistId", (req, res) => {
 });
 
 /**
- * POST /library-files/scan-roots
+ * POST /api/v1/mediaFile/scan-roots
  * Queue a root folder scan that discovers unknown folders in all library roots,
  * runs the shared import decision pipeline, and imports anything it can identify.
  */
@@ -353,7 +353,7 @@ router.post("/scan-roots", (req, res) => {
 });
 
 /**
- * POST /library-files/scan-roots-now
+ * POST /api/v1/mediaFile/scan-roots-now
  * Run an immediate root folder scan with SSE progress streaming.
  * Discovers unknown folders, runs the shared import decision pipeline, and streams progress.
  */

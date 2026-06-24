@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, runChunkedWrite } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
@@ -424,89 +424,87 @@ export class ServarrMetadataProxy {
   async syncArtist(mbid: string): Promise<LidarrArtist> {
     const artist = await this.getArtistInfo(mbid);
 
-    db.transaction(() => {
-      const imagesList = mapServarrMetadataImages(artist.images);
+    const imagesList = mapServarrMetadataImages(artist.images);
+    const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
 
-      const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
+    db.prepare(`
+      INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        name = excluded.name,
+        sort_name = excluded.sort_name,
+        disambiguation = excluded.disambiguation,
+        type = excluded.type,
+        -- Keep the Servarr rating when present; otherwise preserve whatever
+        -- popularity a provider sync already stored.
+        popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
+        data = excluded.data,
+        images = excluded.images,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      artist.id,
+      artist.artistname,
+      artist.sortname,
+      artist.disambiguation || null,
+      artist.type || null,
+      popularity,
+      JSON.stringify(artist),
+      JSON.stringify(imagesList),
+    );
 
-      db.prepare(`
-        INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(mbid) DO UPDATE SET
-          name = excluded.name,
-          sort_name = excluded.sort_name,
-          disambiguation = excluded.disambiguation,
-          type = excluded.type,
-          -- Keep the Servarr rating when present; otherwise preserve whatever
-          -- popularity a provider sync already stored.
-          popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
-          data = excluded.data,
-          images = excluded.images,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        artist.id,
-        artist.artistname,
-        artist.sortname,
-        artist.disambiguation || null,
-        artist.type || null,
-        popularity,
-        JSON.stringify(artist),
-        JSON.stringify(imagesList),
-      );
+    const insertRg = db.prepare(`
+      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        title = excluded.title,
+        primary_type = excluded.primary_type,
+        secondary_types = excluded.secondary_types,
+        first_release_date = excluded.first_release_date,
+        disambiguation = excluded.disambiguation,
+        data = excluded.data,
+        images = excluded.images,
+        updated_at = CURRENT_TIMESTAMP
+    `);
 
-      const insertRg = db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(mbid) DO UPDATE SET
-          title = excluded.title,
-          primary_type = excluded.primary_type,
-          secondary_types = excluded.secondary_types,
-          first_release_date = excluded.first_release_date,
-          disambiguation = excluded.disambiguation,
-          data = excluded.data,
-          images = excluded.images,
-          updated_at = CURRENT_TIMESTAMP
-      `);
+    const selectExisting = db.prepare(`SELECT data FROM Albums WHERE mbid = ?`);
 
-      const selectExisting = db.prepare(`SELECT data FROM Albums WHERE mbid = ?`);
-      for (const album of artist.Albums || []) {
-        if (!album.Id) {
-          continue;
-        }
-
-        const existingRow = selectExisting.get(album.Id) as { data: string } | undefined;
-        let mergedData = album;
-        if (existingRow?.data) {
-          try {
-            const existingData = JSON.parse(existingRow.data);
-            if (existingData.images || existingData.Images || existingData.Releases || existingData.releases) {
-              mergedData = {
-                ...album,
-                images: album.images || album.Images || existingData.images || existingData.Images,
-                Releases: album.Releases || album.releases || existingData.Releases || existingData.releases,
-              };
-            }
-          } catch {
-            // Ignore parse errors
+    // Chunk the per-album upserts: a large artist (hundreds of release groups)
+    // would otherwise hold the write lock for the entire catalog and starve
+    // concurrent refresh workers + the main-thread job claim.
+    const albums = (artist.Albums || []).filter((album) => album.Id);
+    runChunkedWrite(albums, (album) => {
+      const existingRow = selectExisting.get(album.Id) as { data: string } | undefined;
+      let mergedData = album;
+      if (existingRow?.data) {
+        try {
+          const existingData = JSON.parse(existingRow.data);
+          if (existingData.images || existingData.Images || existingData.Releases || existingData.releases) {
+            mergedData = {
+              ...album,
+              images: album.images || album.Images || existingData.images || existingData.Images,
+              Releases: album.Releases || album.releases || existingData.Releases || existingData.releases,
+            };
           }
+        } catch {
+          // Ignore parse errors
         }
-
-        const albumImages = mapServarrMetadataImages(album.images || album.Images);
-
-        insertRg.run(
-          album.Id,
-          artist.id,
-          album.Title,
-          album.Type || null,
-          JSON.stringify(album.SecondaryTypes || []),
-          album.ReleaseDate || null,
-          album.Disambiguation || null,
-          JSON.stringify(mergedData),
-          JSON.stringify(albumImages),
-        );
-        MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
       }
-    })();
+
+      const albumImages = mapServarrMetadataImages(album.images || album.Images);
+
+      insertRg.run(
+        album.Id,
+        artist.id,
+        album.Title,
+        album.Type || null,
+        JSON.stringify(album.SecondaryTypes || []),
+        album.ReleaseDate || null,
+        album.Disambiguation || null,
+        JSON.stringify(mergedData),
+        JSON.stringify(albumImages),
+      );
+      MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
+    });
 
     return artist;
   }
@@ -515,95 +513,81 @@ export class ServarrMetadataProxy {
     const detail = await this.getAlbumInfo(releaseGroupMbid);
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
+    const insertRg = db.prepare(`
+      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        title = excluded.title,
+        primary_type = excluded.primary_type,
+        secondary_types = excluded.secondary_types,
+        first_release_date = excluded.first_release_date,
+        disambiguation = excluded.disambiguation,
+        data = excluded.data,
+        images = excluded.images,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const insertRelease = db.prepare(`
+      INSERT INTO AlbumReleases (
+        mbid, release_group_mbid, artist_mbid, title, status, country,
+        date, disambiguation, media_count, track_count, data, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        title = excluded.title,
+        status = excluded.status,
+        country = excluded.country,
+        date = excluded.date,
+        disambiguation = excluded.disambiguation,
+        media_count = excluded.media_count,
+        track_count = excluded.track_count,
+        data = excluded.data,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const insertRecording = db.prepare(`
+      INSERT INTO Recordings (mbid, title, length_ms, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        title = excluded.title,
+        length_ms = excluded.length_ms,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const insertTrack = db.prepare(`
+      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, data, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
+        mbid = excluded.mbid,
+        recording_mbid = excluded.recording_mbid,
+        number = excluded.number,
+        title = excluded.title,
+        length_ms = excluded.length_ms,
+        data = excluded.data,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    const releases = detail.Releases || [];
+
+    // Release group + its release rows are bounded and share one transaction.
     db.transaction(() => {
       MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
-      const insertRg = db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(mbid) DO UPDATE SET
-          title = excluded.title,
-          primary_type = excluded.primary_type,
-          secondary_types = excluded.secondary_types,
-          first_release_date = excluded.first_release_date,
-          disambiguation = excluded.disambiguation,
-          data = excluded.data,
-          images = excluded.images,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-
-      const title = detail.title || "";
-      const primaryType = detail.type || null;
-      const secondaryTypes = JSON.stringify(detail.secondarytypes || []);
-      const firstReleaseDate = detail.releasedate || null;
-      const disambiguation = detail.disambiguation || null;
 
       const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
-
       insertRg.run(
         releaseGroupMbid,
         ownerArtistMbid,
-        title,
-        primaryType,
-        secondaryTypes,
-        firstReleaseDate,
-        disambiguation,
+        detail.title || "",
+        detail.type || null,
+        JSON.stringify(detail.secondarytypes || []),
+        detail.releasedate || null,
+        detail.disambiguation || null,
         JSON.stringify(detail),
         JSON.stringify(albumImages),
       );
       MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
 
-      const insertRelease = db.prepare(`
-        INSERT INTO AlbumReleases (
-          mbid, release_group_mbid, artist_mbid, title, status, country,
-          date, disambiguation, media_count, track_count, data, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(mbid) DO UPDATE SET
-          title = excluded.title,
-          status = excluded.status,
-          country = excluded.country,
-          date = excluded.date,
-          disambiguation = excluded.disambiguation,
-          media_count = excluded.media_count,
-          track_count = excluded.track_count,
-          data = excluded.data,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-
-      const insertMedium = db.prepare(`
-        INSERT INTO AlbumReleaseMedia (release_mbid, position, format, title, track_count, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(release_mbid, position) DO UPDATE SET
-          format = excluded.format,
-          title = excluded.title,
-          track_count = excluded.track_count,
-          data = excluded.data,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-
-      const insertRecording = db.prepare(`
-        INSERT INTO Recordings (mbid, title, length_ms, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(mbid) DO UPDATE SET
-          title = excluded.title,
-          length_ms = excluded.length_ms,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-
-      const insertTrack = db.prepare(`
-        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
-          mbid = excluded.mbid,
-          recording_mbid = excluded.recording_mbid,
-          number = excluded.number,
-          title = excluded.title,
-          length_ms = excluded.length_ms,
-          data = excluded.data,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-
-      for (const release of detail.Releases || []) {
+      for (const release of releases) {
         insertRelease.run(
           release.Id,
           releaseGroupMbid,
@@ -617,34 +601,32 @@ export class ServarrMetadataProxy {
           release.TrackCount ?? (release.Tracks || []).length,
           JSON.stringify(release),
         );
-
-        for (const media of release.Media || []) {
-          insertMedium.run(
-            release.Id,
-            media.Position,
-            media.Format || null,
-            media.Name || null,
-            (release.Tracks || []).filter((track) => track.MediumNumber === media.Position).length || null,
-            JSON.stringify(media),
-          );
-        }
-
-        for (const track of release.Tracks || []) {
-          insertRecording.run(track.RecordingId, track.TrackName, track.DurationMs);
-          insertTrack.run(
-            track.Id,
-            release.Id,
-            track.RecordingId,
-            track.MediumNumber,
-            track.TrackPosition,
-            track.TrackNumber,
-            track.TrackName,
-            track.DurationMs,
-            JSON.stringify(track),
-          );
-        }
       }
     })();
+
+    // Tracks/recordings scale with the whole release group (a popular RG can have
+    // dozens of editions × many tracks). Chunk them so the write lock isn't held
+    // for the entire tracklist while concurrent workers wait.
+    const trackRows: Array<{ release: typeof releases[number]; track: any }> = [];
+    for (const release of releases) {
+      for (const track of release.Tracks || []) {
+        trackRows.push({ release, track });
+      }
+    }
+    runChunkedWrite(trackRows, ({ release, track }) => {
+      insertRecording.run(track.RecordingId, track.TrackName, track.DurationMs);
+      insertTrack.run(
+        track.Id,
+        release.Id,
+        track.RecordingId,
+        track.MediumNumber,
+        track.TrackPosition,
+        track.TrackNumber,
+        track.TrackName,
+        track.DurationMs,
+        JSON.stringify(track),
+      );
+    });
   }
 }
 

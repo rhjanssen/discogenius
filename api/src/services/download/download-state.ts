@@ -161,8 +161,7 @@ export function getMediaDownloadStateMap(
           FROM TrackFiles lf
           WHERE lf.file_type = ?
             AND (
-              CAST(lf.media_id AS TEXT) = CAST(target_ids.id AS TEXT)
-              OR CAST(lf.provider_id AS TEXT) = CAST(target_ids.id AS TEXT)
+              CAST(lf.provider_id AS TEXT) = CAST(target_ids.id AS TEXT)
               OR (? = 'track' AND lf.canonical_track_mbid = CAST(target_ids.id AS TEXT))
               OR lf.canonical_recording_mbid = CAST(target_ids.id AS TEXT)
               OR CAST(lf.canonical_recording_mbid AS TEXT) = (

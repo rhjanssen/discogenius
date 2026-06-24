@@ -20,6 +20,7 @@ export interface ArtistContract {
   is_monitored: boolean;
   last_scanned: string | null;
   album_count?: number;
+  popularity?: number;
   bio?: string | null;
   biography?: string | null;
   downloaded?: number;
@@ -38,6 +39,7 @@ export interface AlbumContract {
   type?: string;
   album_type?: string;
   quality?: string | null;
+  popularity?: number;
   stereo_provider?: string | null;
   stereo_provider_id?: string | null;
   stereo_quality?: string | null;
@@ -173,6 +175,7 @@ function parseArtistContract(value: unknown, index: number): ArtistContract {
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     last_scanned: expectNullableString(record.last_scanned, `${label}.last_scanned`) ?? null,
     album_count: expectOptionalNumber(record.album_count, `${label}.album_count`),
+    popularity: expectOptionalNumber(record.popularity, `${label}.popularity`),
     bio: expectNullableString(record.bio, `${label}.bio`),
     biography: expectNullableString(record.biography, `${label}.biography`),
     downloaded: expectOptionalNumber(record.downloaded, `${label}.downloaded`),
@@ -195,6 +198,7 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     type: expectOptionalString(record.type, `${label}.type`),
     album_type: expectOptionalString(record.album_type, `${label}.album_type`),
     quality: expectNullableString(record.quality, `${label}.quality`),
+    popularity: expectOptionalNumber(record.popularity, `${label}.popularity`),
     stereo_provider: expectOptionalString(record.stereo_provider, `${label}.stereo_provider`) ?? null,
     stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,

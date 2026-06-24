@@ -314,8 +314,7 @@ router.get("/", async (req, res) => {
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'video'
                   AND (
-                    CAST(lf.media_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
-                    OR CAST(lf.provider_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
+                    CAST(lf.provider_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
                     OR (
                       recording.mbid IS NOT NULL
                       AND lf.canonical_recording_mbid = recording.mbid
@@ -331,7 +330,7 @@ router.get("/", async (req, res) => {
                 SELECT lf.quality
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'video'
-                  AND CAST(lf.media_id AS TEXT) = CAST(recording.id AS TEXT)
+                  AND lf.recording_id = recording.id
                 ORDER BY lf.verified_at DESC, lf.id DESC
                 LIMIT 1
               ), provider_video.quality) AS current_quality

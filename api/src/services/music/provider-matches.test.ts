@@ -22,12 +22,22 @@ function seedReleaseGroup() {
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-mbid-1", "Queen");
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
     .run("rg-1", "artist-mbid-1", "A Night at the Opera", "album");
-  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count, disambiguation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run("rel-stereo", "rg-1", "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", "GB", 1, 12, "deluxe edition");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count, disambiguation, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      "rel-stereo",
+      "rg-1",
+      "artist-mbid-1",
+      "A Night at the Opera",
+      "Official",
+      "1975-11-21",
+      "GB",
+      1,
+      12,
+      "deluxe edition",
+      JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media", TrackCount: 12 }] }),
+    );
   db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country) VALUES (?, ?, ?, ?, ?, ?)`)
     .run("rel-atmos", "rg-1", "artist-mbid-1", "A Night at the Opera (Dolby Atmos)", "2022-01-01", "US");
-  db.prepare(`INSERT INTO AlbumReleaseMedia (release_mbid, position, format, track_count) VALUES (?, 1, 'Digital Media', 12)`)
-    .run("rel-stereo");
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms) VALUES (?, ?, ?, ?)`)
     .run("rec-1", "artist-mbid-1", "Bohemian Rhapsody", 354000);
   db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms) VALUES (?, ?, ?, ?, 1, 1, ?)`)
@@ -41,7 +51,7 @@ function seedReleaseGroup() {
 
 beforeEach(() => {
   const { db } = dbModule;
-  for (const t of ["ProviderItemMatches", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings", "AlbumReleaseMedia", "AlbumReleases", "Albums", "ArtistMetadata"]) {
+  for (const t of ["ProviderItemMatches", "ProviderItems", "ReleaseGroupSlots", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata"]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 });

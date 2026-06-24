@@ -56,9 +56,12 @@ export class MusicBrainzReleaseSelectionService {
                 CASE WHEN LOWER(COALESCE(r.status, '')) = 'official' THEN 1 ELSE 0 END DESC,
                 CASE WHEN EXISTS (
                     SELECT 1
-                    FROM AlbumReleaseMedia medium
-                    WHERE medium.release_mbid = r.mbid
-                      AND LOWER(COALESCE(medium.format, '')) IN ('digital media', 'digital')
+                    FROM json_each(r.data, '$.Media') medium
+                    WHERE LOWER(COALESCE(
+                        json_extract(medium.value, '$.Format'),
+                        json_extract(medium.value, '$.format'),
+                        ''
+                    )) IN ('digital media', 'digital')
                 ) THEN 1 ELSE 0 END DESC,
                 CASE
                     WHEN UPPER(COALESCE(r.country, '')) = 'XW'

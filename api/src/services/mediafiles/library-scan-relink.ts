@@ -35,7 +35,7 @@ export function relinkUnresolvedLibraryFiles(params: RelinkUnresolvedLibraryFile
         SELECT id, file_path, relative_path, library_root, extension, file_type
         FROM TrackFiles
         WHERE artist_id = ?
-          AND media_id IS NULL
+          AND provider_id IS NULL
           AND (
             file_type IN ('track', 'video')
             OR LOWER(COALESCE(extension, '')) IN ('flac', 'alac', 'wav', 'aiff', 'mp3', 'm4a', 'aac', 'ogg', 'opus', 'wma', 'mp4', 'm4v', 'mkv', 'mov', 'avi', 'ts', 'webm')

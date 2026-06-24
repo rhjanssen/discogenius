@@ -387,11 +387,11 @@ class ApiClient {
   }
 
   async getStreamingProviders(): Promise<{ providers: StreamingProviderStatus[]; defaultProviderId: string }> {
-    return this.request('/providers');
+    return this.request('/provider');
   }
 
   async logoutProvider(providerId: string) {
-    return this.request(`/providers/${providerId}/logout`, { method: 'POST' });
+    return this.request(`/provider/${providerId}/logout`, { method: 'POST' });
   }
 
   // Config endpoints
@@ -633,7 +633,7 @@ class ApiClient {
   }
 
   async getProviderAlbumTracks(providerId: string, albumId: string) {
-    const tracks = await this.request(`/providers/${providerId}/albums/${albumId}/tracks`) as any[];
+    const tracks = await this.request(`/provider/${providerId}/albums/${albumId}/tracks`) as any[];
     return Array.isArray(tracks)
       ? tracks.map((track) => ({
         ...track,
@@ -835,7 +835,7 @@ class ApiClient {
     return this.request(`/v1/video/${videoId}`, { method: 'DELETE' });
   }
 
-  // Library files endpoints
+  // Managed media-file endpoints
   async getLibraryFiles(params?: { mediaId?: string; albumId?: string; artistId?: string; fileType?: string }): Promise<LibraryFilesListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.mediaId) queryParams.set('mediaId', params.mediaId);
@@ -843,7 +843,7 @@ class ApiClient {
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.fileType) queryParams.set('fileType', params.fileType);
     const query = queryParams.toString();
-    return this.request(`/library-files${query ? `?${query}` : ''}`, {}, parseLibraryFilesListResponseContract);
+    return this.request(`/mediaFile${query ? `?${query}` : ''}`, {}, parseLibraryFilesListResponseContract);
   }
 
   async getLibraryRenameStatus(params?: {
@@ -860,7 +860,7 @@ class ApiClient {
     if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
     const query = queryParams.toString();
-    return this.request(`/library-files/rename/status${query ? `?${query}` : ''}`);
+    return this.request(`/mediaFile/rename/status${query ? `?${query}` : ''}`);
   }
 
   async getLibraryRenamePreview(params?: {
@@ -877,7 +877,7 @@ class ApiClient {
     if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     const query = queryParams.toString();
-    return this.request(`/library-files/rename/preview${query ? `?${query}` : ''}`);
+    return this.request(`/mediaFile/rename/preview${query ? `?${query}` : ''}`);
   }
 
   async applyLibraryRenames(params: {
@@ -888,7 +888,7 @@ class ApiClient {
     fileTypes?: string[];
     applyAll?: boolean;
   }) {
-    return this.request('/library-files/rename/apply', {
+    return this.request('/mediaFile/rename/apply', {
       method: 'POST',
       body: JSON.stringify(params),
     });
@@ -937,7 +937,7 @@ class ApiClient {
     skipCuration?: boolean;
     skipMetadataBackfill?: boolean;
   }) {
-    return this.request(`/library-files/scan/${artistId}`, {
+    return this.request(`/mediaFile/scan/${artistId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(options || {}),
@@ -945,7 +945,7 @@ class ApiClient {
   }
 
   async scanRootFolders(options?: { monitorArtist?: boolean }) {
-    return this.request('/library-files/scan-roots', {
+    return this.request('/mediaFile/scan-roots', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(options || {}),
@@ -959,11 +959,11 @@ class ApiClient {
   }
 
   getScanRootFoldersUrl(): string {
-    return `${this.baseUrl}${API_V1_PREFIX}/library-files/scan-roots-now`;
+    return `${this.baseUrl}${API_V1_PREFIX}/mediaFile/scan-roots-now`;
   }
 
   getStreamUrl(fileId: number): string {
-    const base = `${this.baseUrl}${API_V1_PREFIX}/library-files/stream/${fileId}`;
+    const base = `${this.baseUrl}${API_V1_PREFIX}/mediaFile/stream/${fileId}`;
     // Append auth token as query param since <audio>/<video> elements can't send headers
     if (this.authToken) {
       return `${base}?token=${encodeURIComponent(this.authToken)}`;
@@ -1010,7 +1010,7 @@ class ApiClient {
   }
 
   async getFileContent(filePath: string): Promise<string> {
-    const url = `${this.baseUrl}${API_PREFIX}/library-files/content?path=${encodeURIComponent(filePath)}`;
+    const url = `${this.baseUrl}${API_V1_PREFIX}/mediaFile/content?path=${encodeURIComponent(filePath)}`;
     const headers = new Headers();
     if (this.authToken) {
       headers.set('Authorization', `Bearer ${this.authToken}`);
@@ -1173,18 +1173,18 @@ class ApiClient {
   }
 
   async getSystemTasks(): Promise<SystemTaskContract[]> {
-    return this.request('/system-task', {}, parseSystemTaskListContract);
+    return this.request('/v1/system/task', {}, parseSystemTaskListContract);
   }
 
   async updateSystemTask(id: string, updates: UpdateSystemTaskRequestContract): Promise<SystemTaskContract> {
-    return this.request(`/system-task/${id}`, {
+    return this.request(`/v1/system/task/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     }, parseSystemTaskContract);
   }
 
   async runSystemTask(id: string): Promise<RunSystemTaskResponseContract> {
-    return this.request(`/system-task/${id}/run`, {
+    return this.request(`/v1/system/task/${id}/run`, {
       method: 'POST',
     }, parseRunSystemTaskResponseContract);
   }
@@ -1292,7 +1292,7 @@ class ApiClient {
     providerId?: string | null,
   ): EventSource {
     // Add auth token to URL query params since EventSource can't send custom headers
-    let url = `${this.baseUrl}${API_PREFIX}/artists/import-followed-stream`;
+    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/import-followed-stream`;
     const queryParams = new URLSearchParams();
     if (providerId) queryParams.set('providerId', providerId);
     if (this.authToken) {
@@ -1372,7 +1372,7 @@ class ApiClient {
 
   createArtistScanStream(artistId: string, onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
     // Add auth token to URL query params since EventSource can't send custom headers
-    let url = `${this.baseUrl}${API_PREFIX}/artists/${artistId}/scan`;
+    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/${artistId}/scan`;
     if (this.authToken) {
       url += `?token=${encodeURIComponent(this.authToken)}`;
     }
@@ -1502,9 +1502,9 @@ class ApiClient {
   }
 
 
-  /**
+   /**
    * Execute a system command (Phase 1 scheduler commands)
-   * POST /api/command
+   * POST /api/v1/command
    * Examples: BulkRefreshArtist, DownloadMissingForce, RescanAllRoots, CheckHealth,
    * CompactDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune
    */

@@ -5,7 +5,6 @@ import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 
 let _db: Database.Database | null = null;
 
-const SQLITE_BUSY_RETRY_ATTEMPTS = 8;
 const SQLITE_BUSY_RETRY_BASE_MS = 50;
 const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 // SQLite serialises writers. Under multithreaded execution (worker pool + main
@@ -14,8 +13,20 @@ const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 // plus a JS-level retry backstop. If a write throws SQLITE_BUSY uncaught,
 // better-sqlite3 can hard-abort the process (v8::ToLocalChecked) — so every
 // write must go through the retry.
-const MAIN_THREAD_BUSY_TIMEOUT_MS = 15000;
+//
+// The crucial asymmetry: worker threads run OFF the HTTP/SSE event loop, so they
+// can afford to block — a generous timeout + many retries means heavy refresh
+// writes wait their turn instead of erroring. The MAIN thread *is* the event
+// loop, and better-sqlite3 is synchronous, so any wait here freezes every HTTP
+// request, SSE stream, and /health probe for its full duration. Lidarr keeps a
+// 100ms busy_timeout on its (multi-threaded, pooled) request path for exactly
+// this reason. We keep the main thread's timeout small and its retry to a single
+// quick attempt so a contended main-thread write (chiefly the markProcessing
+// job-claim, occasionally a route write) fails fast and is retried at the next
+// scheduler tick — never freezing the server for tens of seconds.
+const MAIN_THREAD_BUSY_TIMEOUT_MS = 1000;
 const WORKER_THREAD_BUSY_TIMEOUT_MS = 30000;
+const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 8;
 
 function isSqliteBusy(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -175,6 +186,38 @@ export function batchRun(sql: string, argsList: unknown[][]): number {
 }
 
 /**
+ * Run `items` through `perItem` inside transactions of at most `chunkSize` items,
+ * committing between chunks. SQLite serialises writers, and the main (HTTP/SSE)
+ * thread claims jobs with a deliberately short busy_timeout — so a single
+ * transaction that upserts an entire large artist's catalog (hundreds of release
+ * groups, thousands of tracks) holds the write lock long enough to starve other
+ * writers into "database is locked" and to make the main thread's claim time out.
+ * Committing every `chunkSize` rows bounds how long the lock is held, letting
+ * peers (and the main thread) interleave between chunks.
+ *
+ * Callers must ensure each chunk is independently consistent. Idempotent upserts
+ * (the catalog hydration paths) are; operations with cross-row invariants that
+ * must all-or-nothing should keep using a single `db.transaction`.
+ */
+export function runChunkedWrite<T>(
+  items: readonly T[],
+  perItem: (item: T, index: number) => void,
+  chunkSize: number = 200,
+): number {
+  const size = Math.max(1, chunkSize);
+  for (let start = 0; start < items.length; start += size) {
+    const end = Math.min(items.length, start + size);
+    const runChunk = db.transaction(() => {
+      for (let i = start; i < end; i += 1) {
+        perItem(items[i], i);
+      }
+    });
+    runChunk();
+  }
+  return items.length;
+}
+
+/**
  * Delete rows by ID list in a single transaction.
  */
 export function batchDelete(table: string, ids: Array<string | number>): number {
@@ -203,7 +246,6 @@ function ensureCatalogForeignKeyIndexes(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_metadata_id ON Albums(artist_metadata_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_releases_release_group_id ON AlbumReleases(release_group_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_releases_artist_metadata_id ON AlbumReleases(artist_metadata_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_album_release_media_album_release_id ON AlbumReleaseMedia(album_release_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_release_group_id ON AlbumArtists(release_group_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_artist_metadata_id ON AlbumArtists(artist_metadata_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_groups_artist_metadata_id ON ArtistReleaseGroups(artist_metadata_id)");
@@ -254,16 +296,6 @@ function ensureCatalogForeignKeyTriggers(): void {
       UPDATE AlbumReleases SET
         release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid),
         artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid)
-      WHERE id = NEW.id;
-    END;
-  `);
-
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_album_release_media_catalog_fks_ai
-    AFTER INSERT ON AlbumReleaseMedia
-    BEGIN
-      UPDATE AlbumReleaseMedia
-      SET album_release_id = COALESCE(NEW.album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = NEW.release_mbid))
       WHERE id = NEW.id;
     END;
   `);
@@ -592,21 +624,6 @@ function ensureMusicBrainzProviderSchema(): void {
       FOREIGN KEY(redundant_to_release_group_mbid) REFERENCES Albums(mbid) ON DELETE SET NULL
     );
 
-    CREATE TABLE IF NOT EXISTS AlbumReleaseMedia (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      album_release_id INTEGER,
-      release_mbid TEXT NOT NULL,
-      position INT NOT NULL,
-      format TEXT,
-      title TEXT,
-      track_count INT,
-      data TEXT,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(release_mbid, position),
-      FOREIGN KEY(album_release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
-      FOREIGN KEY(release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS Recordings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       foreign_recording_id TEXT UNIQUE,
@@ -909,8 +926,6 @@ export function initDatabase() {
       
       -- Linkage
       artist_id TEXT NOT NULL,           -- Managed artist id
-      album_id TEXT,
-      media_id TEXT,
 
       -- MusicBrainz identity captured when the file was imported/downloaded
       canonical_artist_mbid TEXT,

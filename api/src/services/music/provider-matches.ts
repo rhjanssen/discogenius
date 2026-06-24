@@ -387,16 +387,28 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       ar.track_count      AS track_count,
       (
         SELECT GROUP_CONCAT(format_label, ', ')
-        FROM (
+          FROM (
           SELECT
             CASE
               WHEN COUNT(*) > 1 THEN CAST(COUNT(*) AS TEXT) || 'x' || COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
               ELSE COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
             END AS format_label,
             MIN(position) AS first_position
-          FROM AlbumReleaseMedia
-          WHERE release_mbid = ar.mbid
-            AND position > 0
+          FROM (
+            SELECT
+              CAST(COALESCE(
+                json_extract(medium.value, '$.Position'),
+                json_extract(medium.value, '$.position'),
+                0
+              ) AS INTEGER) AS position,
+              COALESCE(
+                json_extract(medium.value, '$.Format'),
+                json_extract(medium.value, '$.format'),
+                ''
+              ) AS format
+            FROM json_each(ar.data, '$.Media') medium
+          )
+          WHERE position > 0
           GROUP BY COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
           ORDER BY first_position
         )

@@ -31,7 +31,7 @@ test("fresh database initializes the current development baseline", () => {
   assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
 
   const coreTables = [
-    "Artists", "ArtistMetadata", "Albums", "AlbumReleases", "AlbumReleaseMedia",
+    "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
@@ -59,13 +59,12 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
   const expectedColumnsByTable = new Map<string, string[]>([
     ["Albums", ["id", "artist_metadata_id", "mbid", "artist_mbid"]],
     ["AlbumReleases", ["id", "release_group_id", "artist_metadata_id", "mbid", "release_group_mbid", "artist_mbid"]],
-    ["AlbumReleaseMedia", ["id", "album_release_id", "release_mbid"]],
     ["AlbumArtists", ["release_group_id", "artist_metadata_id", "release_group_mbid", "artist_mbid"]],
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
     ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid"]],
-    ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid"]],
+    ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
   ]);
 
   for (const [tableName, expectedColumns] of expectedColumnsByTable) {
@@ -81,6 +80,7 @@ test("retired provider catalog tables are absent from the baseline", () => {
     "ProviderAlbums", "ProviderMedia", "ProviderAlbumArtists", "ProviderMediaArtists",
     "local_entities", "provider_entity_ids", "artist_metadata", "artwork_cache",
     "provider_video_identity", "provider_video_items", "provider_ids", "upgrade_queue",
+    "AlbumReleaseMedia",
   ];
 
   for (const tableName of retiredTables) {

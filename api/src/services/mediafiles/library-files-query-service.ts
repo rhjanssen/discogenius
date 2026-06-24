@@ -247,12 +247,12 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
     params.push(options.artistId);
   }
   if (options.albumId) {
-    where.push("lf.album_id = ?");
-    params.push(options.albumId);
+    where.push("(lf.album_id = ? OR lf.canonical_release_group_mbid = ? OR lf.canonical_release_mbid = ?)");
+    params.push(options.albumId, options.albumId, options.albumId);
   }
   if (options.mediaId) {
-    where.push("lf.media_id = ?");
-    params.push(options.mediaId);
+    where.push("(lf.media_id = ? OR lf.provider_id = ? OR lf.canonical_track_mbid = ? OR lf.canonical_recording_mbid = ?)");
+    params.push(options.mediaId, options.mediaId, options.mediaId, options.mediaId);
   }
   if (options.libraryRoot) {
     where.push("lf.library_root = ?");
@@ -278,7 +278,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       ${canonicalAlbumQualitySql} AS album_quality
     FROM (
       SELECT
-        id, artist_id, album_id, media_id, file_path, relative_path, library_root, file_type, filename, extension,
+        id, artist_id, NULL AS album_id, provider_id AS media_id, file_path, relative_path, library_root, file_type, filename, extension,
         quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
