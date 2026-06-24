@@ -956,7 +956,6 @@ export class ArtistQueryService {
         track.updated_at AS last_scanned,
         track.updated_at AS created_at,
         track.updated_at AS updated_at,
-        recording.data AS recording_data,
         provider_track.provider AS preview_provider,
         provider_track.provider_id AS preview_provider_track_id,
         track.mbid AS musicbrainz_track_id,
