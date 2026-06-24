@@ -56,10 +56,10 @@ function seedCanonicalArtistPage() {
   `).run();
 
   db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, data)
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
     VALUES (
       'release-group-mbid-1', 'artist-mbid-1', 'Canonical Album', 'Album', '2024-01-01',
-      '{"images":[{"coverType":"Cover","url":"https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/seed.jpg"}]}'
+      '[{"coverType":"Cover","url":"https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/seed.jpg"}]'
     )
   `).run();
 
@@ -256,9 +256,9 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
   const { db } = dbModule;
   const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/release-mbid-1/first-load.jpg";
 
-  db.prepare(`UPDATE Albums SET data = ?, images = NULL WHERE mbid = ?`)
+  db.prepare(`UPDATE Albums SET images = ?, data = NULL WHERE mbid = ?`)
     .run(
-      JSON.stringify({ images: [{ coverType: "Cover", url: servarrMetadataUrl, width: 1200, height: 1200 }] }),
+      JSON.stringify([{ coverType: "Cover", url: servarrMetadataUrl, width: 1200, height: 1200 }]),
       "release-group-mbid-1",
     );
 

@@ -144,6 +144,19 @@ export function resolveMediaCoverProxyUrl(value: unknown): string | null {
   return normalizeArtworkUrl(text);
 }
 
+/**
+ * Build a ServarrMetadataImageContainer from a catalog row's curated `images`
+ * JSON column (an array of mapped images), replacing the old practice of passing
+ * the whole raw `data` blob just so the artwork resolver could read its images.
+ */
+export function imageContainerFromImagesColumn(imagesJson: unknown): ServarrMetadataImageContainer | null {
+  const parsed = parseJsonObject(imagesJson);
+  if (Array.isArray(parsed)) {
+    return { images: parsed as ServarrMetadataImage[] };
+  }
+  return parsed as ServarrMetadataImageContainer | null;
+}
+
 export function parseJsonObject(value: unknown): Record<string, any> | null {
   if (!value) {
     return null;

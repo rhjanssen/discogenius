@@ -17,7 +17,7 @@ import {
     albumProviderArtworkCandidatesFromRow,
     chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
-    parseJsonObject,
+    imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "../metadata/media-cover-service.js";
@@ -339,7 +339,7 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         || null;
     const coverUrl = chooseCachedAlbumArtwork({
         albumMbid: row.mbid,
-        servarrMetadataData: parseJsonObject(row.data),
+        servarrMetadataData: imageContainerFromImagesColumn(row.images),
         providerCandidates,
     });
 
@@ -886,7 +886,7 @@ export class ArtistQueryService {
              WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
              ELSE 0
            END AS wanted,
-           rg.data
+           rg.images
          FROM Albums rg
          LEFT JOIN ReleaseGroupSlots stereo
            ON stereo.release_group_mbid = rg.mbid
