@@ -56,7 +56,7 @@ export class MusicBrainzReleaseSelectionService {
                 CASE WHEN LOWER(COALESCE(r.status, '')) = 'official' THEN 1 ELSE 0 END DESC,
                 CASE WHEN EXISTS (
                     SELECT 1
-                    FROM json_each(r.data, '$.Media') medium
+                    FROM json_each(r.media) medium
                     WHERE LOWER(COALESCE(
                         json_extract(medium.value, '$.Format'),
                         json_extract(medium.value, '$.format'),

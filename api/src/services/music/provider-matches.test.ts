@@ -22,7 +22,7 @@ function seedReleaseGroup() {
   db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-mbid-1", "Queen");
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
     .run("rg-1", "artist-mbid-1", "A Night at the Opera", "album");
-  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count, disambiguation, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count, disambiguation, media) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
       "rel-stereo",
       "rg-1",
@@ -34,7 +34,7 @@ function seedReleaseGroup() {
       1,
       12,
       "deluxe edition",
-      JSON.stringify({ Media: [{ Position: 1, Format: "Digital Media", TrackCount: 12 }] }),
+      JSON.stringify([{ Position: 1, Format: "Digital Media", TrackCount: 12 }]),
     );
   db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country) VALUES (?, ?, ?, ?, ?, ?)`)
     .run("rel-atmos", "rg-1", "artist-mbid-1", "A Night at the Opera (Dolby Atmos)", "2022-01-01", "US");

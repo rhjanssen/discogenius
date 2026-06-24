@@ -177,7 +177,7 @@ function listMusicBrainzReleaseVersions(
         CASE
           WHEN EXISTS (
             SELECT 1
-            FROM json_each(r.data, '$.Media') m
+            FROM json_each(r.media) m
             WHERE LOWER(COALESCE(
               json_extract(m.value, '$.Format'),
               json_extract(m.value, '$.format'),

@@ -406,7 +406,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
                 json_extract(medium.value, '$.format'),
                 ''
               ) AS format
-            FROM json_each(ar.data, '$.Media') medium
+            FROM json_each(ar.media) medium
           )
           WHERE position > 0
           GROUP BY COALESCE(NULLIF(TRIM(format), ''), 'Unknown')
