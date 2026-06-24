@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 32;
+const CURRENT_SCHEMA_VERSION = 33;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -57,9 +57,9 @@ test("upgrade queue table is absent from the fresh schema", () => {
 
 test("catalog tables expose integer foreign-key links as the authoritative join path", () => {
   const expectedColumnsByTable = new Map<string, string[]>([
-    ["Albums", ["id", "artist_metadata_id", "mbid", "artist_mbid", "content_hash"]],
-    ["AlbumReleases", ["id", "release_group_id", "artist_metadata_id", "mbid", "release_group_mbid", "artist_mbid"]],
-    ["ArtistMetadata", ["id", "mbid", "content_hash"]],
+    ["Albums", ["id", "artist_metadata_id", "mbid", "artist_mbid", "content_hash", "links", "genres", "ratings", "old_foreign_ids"]],
+    ["AlbumReleases", ["id", "release_group_id", "artist_metadata_id", "mbid", "release_group_mbid", "artist_mbid", "label", "media", "old_foreign_ids"]],
+    ["ArtistMetadata", ["id", "mbid", "content_hash", "links", "genres", "ratings", "aliases", "old_foreign_ids", "overview", "status"]],
     ["AlbumArtists", ["release_group_id", "artist_metadata_id", "release_group_mbid", "artist_mbid"]],
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],

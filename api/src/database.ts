@@ -300,7 +300,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 32;
+const BASE_SCHEMA_VERSION = 33;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
@@ -584,8 +584,19 @@ function ensureMusicBrainzProviderSchema(): void {
       picture TEXT,
       cover_image_url TEXT,
       popularity INT,
+      overview TEXT,
+      status TEXT,
       data TEXT,
       images TEXT,
+      -- Curated per-field JSON columns (Lidarr's EmbeddedDocumentConverter
+      -- pattern): bounded arrays/objects stored as one JSON column each, replacing
+      -- the raw data blob. Sourced from the metadata-server artist payload
+      -- (links, genres, artistaliases, rating, oldids).
+      links TEXT,
+      genres TEXT,
+      ratings TEXT,
+      aliases TEXT,
+      old_foreign_ids TEXT,
       -- Cheap change-key over the remote payload. Refresh compares this instead
       -- of the multi-KB data blob to decide whether a row actually changed, so an
       -- unchanged artist is never rewritten (Lidarr's UpdateMany-only-changed
@@ -612,8 +623,17 @@ function ensureMusicBrainzProviderSchema(): void {
       review_source TEXT,
       review_last_updated DATETIME,
       disambiguation TEXT,
+      overview TEXT,
       data TEXT,
       images TEXT,
+      -- Curated per-field JSON columns sourced from the release-group detail
+      -- payload (links carries the external relations used as matching evidence;
+      -- genres/rating/aliases/oldids round out the discarded raw blob).
+      links TEXT,
+      genres TEXT,
+      ratings TEXT,
+      aliases TEXT,
+      old_foreign_ids TEXT,
       -- Change-key over the full release-group detail (release group + its
       -- releases + tracks). syncReleaseGroup compares this to skip rewriting an
       -- unchanged release group's entire tracklist. Owned by syncReleaseGroup
@@ -643,6 +663,12 @@ function ensureMusicBrainzProviderSchema(): void {
       media_count INT,
       track_count INT,
       data TEXT,
+      -- Curated per-field JSON columns from the release payload: label[] and the
+      -- media[] disc structure (used by NFO writing + edition selection), plus
+      -- oldids. country already lives as a JSON-array TEXT column above.
+      label TEXT,
+      media TEXT,
+      old_foreign_ids TEXT,
       monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE,

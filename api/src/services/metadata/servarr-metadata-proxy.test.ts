@@ -214,6 +214,50 @@ test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async ()
   assert.equal(artist.name, "SENTINEL", "unchanged artist should be skipped, not rewritten");
 });
 
+test("syncReleaseGroup populates curated release columns from the payload", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning(DOOM_DAYS_PAYLOAD);
+  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+
+  const rel = db.prepare("SELECT country, label, media FROM AlbumReleases WHERE mbid = ?")
+    .get("rel-1") as { country: string; label: string; media: string };
+  assert.deepEqual(JSON.parse(rel.country), ["GB"]);
+  assert.deepEqual(JSON.parse(rel.label), []);
+  assert.deepEqual(JSON.parse(rel.media), [{ Position: 1, Format: "Digital", Name: "" }]);
+});
+
+test("syncArtist populates curated artist columns from the payload", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning({
+    id: "artist-mbid",
+    artistname: "Bastille",
+    sortname: "Bastille",
+    images: [],
+    overview: "An English band",
+    status: "active",
+    links: [{ type: "apple", target: "https://music.apple.com/x" }],
+    genres: ["indie pop"],
+    artistaliases: ["BSTILLE"],
+    oldids: ["old-1"],
+    Albums: [],
+  });
+
+  await servarrMetadataModule.servarrMetadataProxy.syncArtist("artist-mbid");
+
+  const am = db.prepare(`
+    SELECT overview, status, links, genres, aliases, old_foreign_ids
+    FROM ArtistMetadata WHERE mbid = ?
+  `).get("artist-mbid") as Record<string, string>;
+  assert.equal(am.overview, "An English band");
+  assert.equal(am.status, "active");
+  assert.deepEqual(JSON.parse(am.links), [{ type: "apple", target: "https://music.apple.com/x" }]);
+  assert.deepEqual(JSON.parse(am.genres), ["indie pop"]);
+  assert.deepEqual(JSON.parse(am.aliases), ["BSTILLE"]);
+  assert.deepEqual(JSON.parse(am.old_foreign_ids), ["old-1"]);
+});
+
 test("searchAll ranks the substantial exact-name artist ahead of same-name collisions", async () => {
   globalThis.fetch = (async () => ({
     ok: true,

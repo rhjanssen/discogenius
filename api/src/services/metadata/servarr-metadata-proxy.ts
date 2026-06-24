@@ -450,20 +450,31 @@ export class ServarrMetadataProxy {
 
     const imagesList = mapServarrMetadataImages(artist.images);
     const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
+    const raw = artist as Record<string, any>;
 
     db.prepare(`
-      INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, content_hash, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO ArtistMetadata (
+        mbid, name, sort_name, disambiguation, type, overview, status, popularity,
+        data, images, links, genres, ratings, aliases, old_foreign_ids, content_hash, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         name = excluded.name,
         sort_name = excluded.sort_name,
         disambiguation = excluded.disambiguation,
         type = excluded.type,
+        overview = excluded.overview,
+        status = excluded.status,
         -- Keep the Servarr rating when present; otherwise preserve whatever
         -- popularity a provider sync already stored.
         popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
         data = excluded.data,
         images = excluded.images,
+        links = excluded.links,
+        genres = excluded.genres,
+        ratings = excluded.ratings,
+        aliases = excluded.aliases,
+        old_foreign_ids = excluded.old_foreign_ids,
         content_hash = excluded.content_hash,
         updated_at = CURRENT_TIMESTAMP
     `).run(
@@ -472,9 +483,16 @@ export class ServarrMetadataProxy {
       artist.sortname,
       artist.disambiguation || null,
       artist.type || null,
+      raw.overview ?? null,
+      raw.status ?? null,
       popularity,
       JSON.stringify(artist),
       JSON.stringify(imagesList),
+      JSON.stringify(raw.links ?? []),
+      JSON.stringify(raw.genres ?? []),
+      JSON.stringify(raw.rating ?? raw.Rating ?? null),
+      JSON.stringify(raw.artistaliases ?? raw.aliases ?? []),
+      JSON.stringify(raw.oldids ?? raw.oldIds ?? []),
       contentHash,
     );
 
@@ -557,16 +575,26 @@ export class ServarrMetadataProxy {
     }
 
     const insertRg = db.prepare(`
-      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, content_hash, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Albums (
+        mbid, artist_mbid, title, primary_type, secondary_types, first_release_date,
+        disambiguation, overview, data, images, links, genres, ratings, aliases,
+        old_foreign_ids, content_hash, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         primary_type = excluded.primary_type,
         secondary_types = excluded.secondary_types,
         first_release_date = excluded.first_release_date,
         disambiguation = excluded.disambiguation,
+        overview = excluded.overview,
         data = excluded.data,
         images = excluded.images,
+        links = excluded.links,
+        genres = excluded.genres,
+        ratings = excluded.ratings,
+        aliases = excluded.aliases,
+        old_foreign_ids = excluded.old_foreign_ids,
         content_hash = excluded.content_hash,
         updated_at = CURRENT_TIMESTAMP
     `);
@@ -574,18 +602,23 @@ export class ServarrMetadataProxy {
     const insertRelease = db.prepare(`
       INSERT INTO AlbumReleases (
         mbid, release_group_mbid, artist_mbid, title, status, country,
-        date, disambiguation, media_count, track_count, data, updated_at
+        date, barcode, disambiguation, media_count, track_count, data,
+        label, media, old_foreign_ids, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         status = excluded.status,
         country = excluded.country,
         date = excluded.date,
+        barcode = excluded.barcode,
         disambiguation = excluded.disambiguation,
         media_count = excluded.media_count,
         track_count = excluded.track_count,
         data = excluded.data,
+        label = excluded.label,
+        media = excluded.media,
+        old_foreign_ids = excluded.old_foreign_ids,
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -618,6 +651,7 @@ export class ServarrMetadataProxy {
       MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
 
       const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
+      const rawDetail = detail as Record<string, any>;
       insertRg.run(
         releaseGroupMbid,
         ownerArtistMbid,
@@ -626,13 +660,20 @@ export class ServarrMetadataProxy {
         JSON.stringify(detail.secondarytypes || []),
         detail.releasedate || null,
         detail.disambiguation || null,
+        rawDetail.overview ?? null,
         JSON.stringify(detail),
         JSON.stringify(albumImages),
+        JSON.stringify(rawDetail.links ?? []),
+        JSON.stringify(rawDetail.genres ?? []),
+        JSON.stringify(rawDetail.rating ?? rawDetail.Rating ?? null),
+        JSON.stringify(rawDetail.aliases ?? []),
+        JSON.stringify(rawDetail.oldids ?? rawDetail.oldIds ?? []),
         contentHash,
       );
       MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
 
       for (const release of releases) {
+        const rawRelease = release as Record<string, any>;
         insertRelease.run(
           release.Id,
           releaseGroupMbid,
@@ -641,10 +682,14 @@ export class ServarrMetadataProxy {
           release.Status || null,
           JSON.stringify(release.Country || []),
           release.ReleaseDate || null,
+          release.Barcode ?? rawRelease.barcode ?? null,
           release.Disambiguation || null,
           release.MediaCount ?? release.MediumCount ?? (release.Media || []).length,
           release.TrackCount ?? (release.Tracks || []).length,
           JSON.stringify(release),
+          JSON.stringify(release.Label ?? rawRelease.label ?? []),
+          JSON.stringify(release.Media ?? rawRelease.media ?? []),
+          JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
         );
       }
     })();
