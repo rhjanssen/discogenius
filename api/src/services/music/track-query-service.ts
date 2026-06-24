@@ -125,7 +125,7 @@ export interface TrackRow {
   last_scanned?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  recording_data?: string | null;
+  recording_credits?: string | null;
   preview_provider?: string | null;
   preview_provider_track_id?: string | null;
   musicbrainz_track_id?: string | null;
@@ -311,7 +311,7 @@ function getTrackSelectSql(whereClause: string): string {
       artist.mbid AS artist_id,
       release_group.title AS album_title,
       provider_album.asset_id AS album_cover,
-      recording.data AS recording_data,
+      recording.credits AS recording_credits,
       provider_track.provider AS preview_provider,
       provider_track.provider_id AS preview_provider_track_id,
       track.mbid AS musicbrainz_track_id,
@@ -425,24 +425,21 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     const isDownloaded = Boolean(track.is_downloaded) || files.some((file) => file.file_type === "track");
 
     let artist_credits: Array<{ id: string; name: string; join_phrase: string }> = [];
-    if (track.recording_data) {
+    if (track.recording_credits) {
       try {
-        const parsed = JSON.parse(track.recording_data);
-        const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+        const parsed = JSON.parse(track.recording_credits);
+        // Structured `Recordings.credits` is `[{id,name,join_phrase}]`; tolerate
+        // a legacy MB `artist-credit` object shape just in case.
+        const credits = Array.isArray(parsed) ? parsed : (parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits);
         if (Array.isArray(credits) && credits.length > 0) {
-          artist_credits = credits.map((credit: any) => {
-            const artistId = credit.artist?.id || credit.artistId || "";
-            const name = credit.name || credit.artist?.name || "";
-            const joinPhrase = credit.joinphrase || credit.join_phrase || "";
-            return {
-              id: artistId,
-              name,
-              join_phrase: joinPhrase,
-            };
-          }).filter(credit => credit.name);
+          artist_credits = credits.map((credit: any) => ({
+            id: credit.id || credit.artist?.id || credit.artistId || "",
+            name: credit.name || credit.artist?.name || "",
+            join_phrase: credit.join_phrase || credit.joinphrase || "",
+          })).filter(credit => credit.name);
         }
       } catch {
-        // Ignore malformed MusicBrainz recording data.
+        // Ignore malformed recording credits and fall back to the primary artist.
       }
     }
 

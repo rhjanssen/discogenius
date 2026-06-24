@@ -444,35 +444,28 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     };
 }
 
-function parseRecordingArtistCredits(recordingDataStr: string | null | undefined, trackDataStr?: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
-    const tryParse = (str: string | null | undefined) => {
-        if (!str) return null;
-        try {
-            const parsed = JSON.parse(str);
-            const credits = parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
-            if (Array.isArray(credits) && credits.length > 0) {
-                return credits.map((c: any) => {
-                    const artistId = c.artist?.id || c.artistId || "";
-                    const name = c.name || c.artist?.name || "";
-                    const joinPhrase = c.joinphrase || c.join_phrase || "";
-                    return {
-                        id: artistId,
-                        name: name,
-                        join_phrase: joinPhrase,
-                    };
-                }).filter(c => c.name);
-            }
-        } catch {
-            // Ignore
+/**
+ * Parse the structured `Recordings.credits` column (`[{id, name, join_phrase}]`)
+ * into the artist-credit shape the album page uses. Replaces the old dig through
+ * the raw track/recording `data` blob; tolerant of the legacy MB `artist-credit`
+ * object shape in case an older row's credits were stored that way.
+ */
+function parseRecordingArtistCredits(creditsStr: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
+    if (!creditsStr) return null;
+    try {
+        const parsed = JSON.parse(creditsStr);
+        const credits = Array.isArray(parsed) ? parsed : (parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits);
+        if (Array.isArray(credits) && credits.length > 0) {
+            return credits.map((c: any) => ({
+                id: c.id || c.artist?.id || c.artistId || "",
+                name: c.name || c.artist?.name || "",
+                join_phrase: c.join_phrase || c.joinphrase || "",
+            })).filter((c) => c.name);
         }
-        return null;
-    };
-
-    const trackCredits = tryParse(trackDataStr);
-    if (trackCredits) {
-        return trackCredits;
+    } catch {
+        // Ignore malformed credits and fall back to the primary artist.
     }
-    return tryParse(recordingDataStr);
+    return null;
 }
 
 function getReleaseTrackContracts(
@@ -493,8 +486,7 @@ function getReleaseTrackContracts(
         t.position,
         t.medium_position,
         t.length_ms,
-        r.data AS recording_data,
-        t.data AS track_data
+        r.credits AS recording_credits
       FROM Tracks t
       LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
       WHERE t.release_mbid = ?
@@ -502,7 +494,7 @@ function getReleaseTrackContracts(
     `).all(releaseMbid) as any[];
 
     return rows.map((track) => {
-        const parsedCredits = parseRecordingArtistCredits(track.recording_data, track.track_data);
+        const parsedCredits = parseRecordingArtistCredits(track.recording_credits);
         const artist_credits = parsedCredits && parsedCredits.length > 0
             ? parsedCredits
             : [{ id: artistMbid, name: artistName, join_phrase: "" }];

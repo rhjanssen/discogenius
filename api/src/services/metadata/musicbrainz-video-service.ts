@@ -44,6 +44,23 @@ function artistCredit(recording: MusicBrainzRecording): string | null {
   return names.length > 0 ? names.join(", ") : null;
 }
 
+/**
+ * Structured recording credits for the `Recordings.credits` column —
+ * `[{id, name, join_phrase}]`. This is the queryable form readers use (instead
+ * of digging artist-credit out of the raw `data` blob), and the shape both the
+ * recording-centric curation gather and MB-local's richer credits feed into.
+ */
+function structuredArtistCredits(recording: MusicBrainzRecording): string | null {
+  const credits = (recording["artist-credit"] || [])
+    .map((credit) => ({
+      id: nullableText(credit.artist?.id) ?? "",
+      name: nullableText(credit.name) ?? nullableText(credit.artist?.name) ?? "",
+      join_phrase: nullableText((credit as { joinphrase?: string }).joinphrase) ?? "",
+    }))
+    .filter((credit) => credit.name);
+  return credits.length > 0 ? JSON.stringify(credits) : null;
+}
+
 function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artistMbid: string | null): number | null {
   const normalizedArtistMbid = nullableText(artistMbid);
   if (!normalizedArtistMbid) {
@@ -140,8 +157,8 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   db.prepare(`
     INSERT OR IGNORE INTO Recordings (
       foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-      artist_credit, length_ms, is_video, metadata_status, data, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, CURRENT_TIMESTAMP)
+      artist_credit, credits, length_ms, is_video, metadata_status, data, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', ?, CURRENT_TIMESTAMP)
   `).run(
     recordingMbid,
     recordingMbid,
@@ -149,6 +166,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     recordingArtistMbid,
     title,
     artistCredit(recording),
+    structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
     JSON.stringify(recording),
@@ -161,6 +179,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
       artist_mbid = COALESCE(artist_mbid, ?),
       title = COALESCE(NULLIF(?, ''), title),
       artist_credit = COALESCE(artist_credit, ?),
+      credits = COALESCE(credits, ?),
       length_ms = COALESCE(?, length_ms),
       is_video = CASE WHEN ? = 1 THEN 1 ELSE is_video END,
       metadata_status = 'musicbrainz',
@@ -172,6 +191,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     recordingArtistMbid,
     title,
     artistCredit(recording),
+    structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
     JSON.stringify(recording),
