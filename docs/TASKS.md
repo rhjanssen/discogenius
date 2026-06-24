@@ -170,33 +170,39 @@ with worker_threads + async-retry (validated: 15/15 enqueues, 64ms health under
 Springsteen-scale refresh). Stay on TypeScript; fix scale via decomposition +
 data-model + skip-unchanged, all Lidarr-aligned.
 
-### Decompose the refresh command: intake vs. provider matching
+### Port Lidarr's refresh model; drop shallow/deep; separate provider matching
 
-`RefreshArtistService.scanDeep` couples two concerns in one long command. Split
-them into discrete, independently-queued commands (Lidarr-style) so each is a
-short unit the active queue can interleave, with its own progress.
+Our shallow/deep scan split is a pre-2.0 artifact from when the catalog WAS the
+provider (TIDAL) and rate limits forced partial scans. Now the catalog is
+MusicBrainz/metadata-server, so we should port Lidarr's refresh model instead.
 
-Mapped seam in `scanDeep`:
-- INTAKE (canonical MusicBrainz): `scanShallow` + `syncArtistMusicBrainzCatalog`
-  + `hydrateScopedReleaseGroups` (~lines 1360–1385).
-- PROVIDER MATCHING: the connected-providers loop (fetch provider albums/tracks,
-  `buildProviderReleaseGroupMatches`, `storeProviderAlbumOffers`) + slot selection
-  (`syncProviderAlbumSelections` / `syncProviderSelectionsFromStoredOffers`)
-  (~lines 1386–1550).
+Lidarr's model (studied in `.ref_lidarr/src/NzbDrone.Core/Music/Services/`):
+- `RefreshEntityServiceBase<TEntity,TChild>` — a template method: `GetRemoteData`
+  (fetch from metadata source) → `UpdateEntity` (upsert) → reconcile children into
+  Added/Updated/Removed (`SortedChildren`) → `InsertMany`/`UpdateMany` ONLY the
+  changed rows → `RefreshChildren` cascade. Hierarchy: RefreshArtist → RefreshAlbum
+  → RefreshAlbumRelease → RefreshTrack, each its own service + command.
+- `ShouldRefreshArtist` staleness (no shallow/deep): new / >30d / <12h-skip /
+  not-ended+>2d / last-release<30d → refresh; else skip. Optional MB
+  changed-since (`GetChangedArtists`) to refresh only what MB says changed.
+- Disk rescan (`RescanArtists`) is a SEPARATE, config-gated concern after refresh.
 
-Plan:
-- Step 1 (safe, behaviour-preserving): extract the matching block into its own
-  service method/file (e.g. `ArtistProviderMatchService.matchArtist(artistId,
-  artistMbid, options)`); `scanDeep` reads as intake → match. Move the matching
-  helpers (`resolveProviderArtistId`, `buildProviderReleaseGroupMatches`,
-  `storeProviderAlbumOffers`, `slotTrack`, `syncProviderSelectionsFromStoredOffers`)
-  with it. Validate with build + focused tests (this is a big cut — do it with
-  full focus, not at the tail of a long session).
-- Step 2: register a `MatchArtistProviders` command; `RefreshArtist` (intake)
-  chains → `MatchArtistProviders` → `CurateArtist`. Each command short + queued.
-- Then: skip re-syncing unchanged release groups (timestamps); normalise the
-  per-row `data` blobs. Split oversized service files + trim comment density
-  toward Lidarr's structure as part of the same passes.
+Target Discogenius design:
+- `RefreshArtist` (Lidarr-port): fetch MB artist + release groups, **diff** vs
+  local (Added/Updated/Removed), batch-write only changes, cascade to release/
+  track refresh when changed. Gated by a `ShouldRefreshArtist` staleness check.
+  Removes scanShallow/scanDeep AND the full re-upsert every refresh — the
+  diff-only writes are exactly the short-write / skip-unchanged scale fix.
+- `MatchArtistProviders` (our provider feature, kept separate): the connected-
+  providers loop + provider↔MB matching + slot selection, extracted from
+  `scanDeep` (~lines 1386–1550) into its own service/command, run AFTER refresh.
+- Chain: `RefreshArtist` → `MatchArtistProviders` → `RescanFolders` →
+  `CurateArtist`. Each a short, independently-queued unit.
+
+Execution notes: big redesign — do with full focus, build/test-gated. Reuse the
+existing catalog tables; the win is the diff-reconcile write path (port
+`RefreshEntityServiceBase` + `SortedChildren` + `ShouldRefresh*`). Split oversized
+service files + trim comments toward Lidarr's structure in the same passes.
 
 ### Settings and provider UX
 
