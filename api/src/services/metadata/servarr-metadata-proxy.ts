@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { db, runChunkedWrite } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
@@ -104,6 +105,17 @@ export interface MediaCover {
   coverType: string;
   remoteUrl: string;
   extension?: string;
+}
+
+/**
+ * Cheap change-key over a remote metadata payload. Refresh compares this to the
+ * stored `content_hash` to decide whether a row actually changed — Lidarr's
+ * diff-reconcile (UpdateMany writes only changed rows). SHA-1 is plenty: this is
+ * a change detector, not a security primitive, and it's the cheapest hash that
+ * won't collide across a library's worth of payloads.
+ */
+export function computeContentHash(payload: unknown): string {
+  return createHash("sha1").update(JSON.stringify(payload)).digest("hex");
 }
 
 export function mapServarrMetadataImages(images?: any[] | null): MediaCover[] {
@@ -424,12 +436,24 @@ export class ServarrMetadataProxy {
   async syncArtist(mbid: string): Promise<LidarrArtist> {
     const artist = await this.getArtistInfo(mbid);
 
+    // Diff-reconcile: if the remote payload is byte-for-byte what we last stored,
+    // the artist row and every release-group row it owns are already current —
+    // skip the whole write (artist + N album upserts) instead of rewriting rows
+    // to identical values. This is the throughput fix for re-refreshes: an
+    // unchanged artist costs one hash + one indexed read, not hundreds of upserts.
+    const contentHash = computeContentHash(artist);
+    const existingHash = (db.prepare("SELECT content_hash FROM ArtistMetadata WHERE mbid = ?")
+      .get(artist.id) as { content_hash?: string | null } | undefined)?.content_hash ?? null;
+    if (existingHash && existingHash === contentHash) {
+      return artist;
+    }
+
     const imagesList = mapServarrMetadataImages(artist.images);
     const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
 
     db.prepare(`
-      INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO ArtistMetadata (mbid, name, sort_name, disambiguation, type, popularity, data, images, content_hash, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         name = excluded.name,
         sort_name = excluded.sort_name,
@@ -440,6 +464,7 @@ export class ServarrMetadataProxy {
         popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
         data = excluded.data,
         images = excluded.images,
+        content_hash = excluded.content_hash,
         updated_at = CURRENT_TIMESTAMP
     `).run(
       artist.id,
@@ -450,6 +475,7 @@ export class ServarrMetadataProxy {
       popularity,
       JSON.stringify(artist),
       JSON.stringify(imagesList),
+      contentHash,
     );
 
     const insertRg = db.prepare(`
@@ -513,9 +539,26 @@ export class ServarrMetadataProxy {
     const detail = await this.getAlbumInfo(releaseGroupMbid);
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
+    // Diff-reconcile: skip rewriting an unchanged release group's entire
+    // tracklist (a popular RG is many editions × many tracks → the dominant
+    // write cost). Only skip when the remote payload is unchanged AND the
+    // releases are actually present locally — so a hash match never suppresses
+    // re-hydration of a release group whose child rows were pruned/never written.
+    const contentHash = computeContentHash(detail);
+    const existing = db.prepare(`
+      SELECT
+        rg.content_hash AS contentHash,
+        EXISTS(SELECT 1 FROM AlbumReleases ar WHERE ar.release_group_mbid = rg.mbid) AS hasReleases
+      FROM Albums rg
+      WHERE rg.mbid = ?
+    `).get(releaseGroupMbid) as { contentHash?: string | null; hasReleases?: number } | undefined;
+    if (existing?.contentHash && existing.contentHash === contentHash && existing.hasReleases) {
+      return;
+    }
+
     const insertRg = db.prepare(`
-      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, data, images, content_hash, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         primary_type = excluded.primary_type,
@@ -524,6 +567,7 @@ export class ServarrMetadataProxy {
         disambiguation = excluded.disambiguation,
         data = excluded.data,
         images = excluded.images,
+        content_hash = excluded.content_hash,
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -584,6 +628,7 @@ export class ServarrMetadataProxy {
         detail.disambiguation || null,
         JSON.stringify(detail),
         JSON.stringify(albumImages),
+        contentHash,
       );
       MusicBrainzArtistCreditService.ensurePrimaryScope(releaseGroupMbid, ownerArtistMbid);
 

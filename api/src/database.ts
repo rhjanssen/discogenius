@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
-import { DB_PATH } from "./services/config/config.js";
+import { DB_PATH, registerConfigDbExecutor } from "./services/config/config.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 
 let _db: Database.Database | null = null;
@@ -300,7 +300,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 31;
+const BASE_SCHEMA_VERSION = 32;
 const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
 const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
@@ -586,6 +586,11 @@ function ensureMusicBrainzProviderSchema(): void {
       popularity INT,
       data TEXT,
       images TEXT,
+      -- Cheap change-key over the remote payload. Refresh compares this instead
+      -- of the multi-KB data blob to decide whether a row actually changed, so an
+      -- unchanged artist is never rewritten (Lidarr's UpdateMany-only-changed
+      -- diff-reconcile). NULL means "force a write" (never synced).
+      content_hash TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -609,6 +614,11 @@ function ensureMusicBrainzProviderSchema(): void {
       disambiguation TEXT,
       data TEXT,
       images TEXT,
+      -- Change-key over the full release-group detail (release group + its
+      -- releases + tracks). syncReleaseGroup compares this to skip rewriting an
+      -- unchanged release group's entire tracklist. Owned by syncReleaseGroup
+      -- (the only writer with the full detail); syncArtist leaves it untouched.
+      content_hash TEXT,
       monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
@@ -1273,6 +1283,7 @@ export function initDatabase() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_artists_path ON Artists(path)");
 
   console.log("✅ Database schema initialized");
+  registerConfigDbExecutor((operation) => operation(db as unknown as Database.Database));
 
   // ====================================================================
   // DEFAULT DATA
