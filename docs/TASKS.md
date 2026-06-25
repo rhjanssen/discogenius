@@ -223,11 +223,17 @@ Target Discogenius design:
     shouldHydrateCatalog)` — the standalone method seam. Behaviour-preserving
     (scanDeep does metadata intake → calls matchArtistProviders → stamps
     last_scanned; full suite 394/394). `scanDeep` still calls it INLINE.
-  - REMAINING: promote to its own queued command (command-names/bodies/model/
-    registry + handler calling `matchArtistProviders`), have `scanDeep`/
-    RefreshArtist ENQUEUE it instead of calling inline, and wire the chain. This
-    is a command-system change (timing, SSE progress, scheduler) — do it as its
-    own focused, live-validated pass.
+  - DONE (commit f3034b0): promoted to its own queued command (name/body/model/
+    registry/handler + `buildMatchArtistProvidersCommand`). `scanDeep` gained
+    `deferProviderMatching` and returns `{artistMbid, shouldHydrateCatalog}`; the
+    RefreshArtist handler runs intake-only then ENQUEUES MatchArtistProviders
+    with that context; `ARTIST_REFRESH_COMPLETED` now fires from the match
+    handler so RescanFolders→CurateArtist still chain AFTER slots are selected.
+    Direct callers (scheduler, bulk RefreshMetadata) keep inline matching. The
+    enqueue is a DB-backed queue write (worker-safe; scheduler claims on next
+    tick). LIVE-VALIDATED in Docker on Bastille: RefreshArtist (intake, 109 RGs)
+    → MatchArtistProviders #35 (192 TIDAL albums → 82 stereo + 18 spatial slots)
+    → RescanFolders, event chain intact, 0 errors, 113 albums visible.
 - Chain: `RefreshArtist` → `MatchArtistProviders` → `RescanFolders` →
   `CurateArtist`. Each a short, independently-queued unit.
 - Drop the shallow/deep naming: `scanBasic`/`scanShallow`/`scanDeep` are called
