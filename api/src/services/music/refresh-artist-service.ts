@@ -6,7 +6,7 @@ import {
     shouldReapplyArtistPathTemplate,
 } from "./artist-paths.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
-import { ScanLevel, type ScanOptions, type ScanDeepResult } from "./scan-types.js";
+import { type ScanOptions, type ScanDeepResult } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { shouldRefreshArtist } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
@@ -1101,102 +1101,18 @@ export class RefreshArtistService {
         db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(nextPath, artistId);
     }
 
-    static getScanLevel(artistId: string): ScanLevel {
-        const artist = db.prepare(`
-            SELECT id, name, bio_text, last_scanned, mbid
-            FROM Artists
-            WHERE id = ?
-        `).get(artistId) as {
-            id?: string;
-            name?: string | null;
-            bio_text?: string | null;
-            mbid?: string | null;
-        } | undefined;
-
-        if (!artist) {
-            return ScanLevel.NONE;
-        }
-
-        // DEEP iff (has a release group AND (a release OR track OR provider offer))
-        // OR has a video. These are presence checks, so we use short-circuiting
-        // EXISTS scoped to the artist's release groups instead of the previous
-        // COUNT(DISTINCT ...) with "WHERE artist_mbid = ? OR scope...", which
-        // full-scanned the ~750k-row Tracks table on every artist-page load
-        // (~80s for prolific artists). The cheap checks (video / release group /
-        // release) resolve DEEP for essentially every real artist; the heavier
-        // track / provider-offer checks only run for the rare artist that has
-        // release groups but no releases imported yet.
-        if (artist.mbid) {
-            const mbid = String(artist.mbid);
-            const cheap = db.prepare(`
-                WITH artist_rgs(mbid) AS (
-                    SELECT mbid FROM Albums WHERE artist_mbid = @mbid
-                    UNION
-                    SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = @mbid
-                )
-                SELECT
-                    EXISTS(
-                        SELECT 1 FROM Recordings r
-                        WHERE r.is_video = 1 AND r.artist_mbid = @mbid
-                    ) AS has_video,
-                    EXISTS(SELECT 1 FROM artist_rgs) AS has_release_group,
-                    EXISTS(
-                        SELECT 1 FROM AlbumReleases ar
-                        WHERE ar.release_group_mbid IN (SELECT mbid FROM artist_rgs)
-                    ) AS has_release
-            `).get({ mbid }) as { has_video: number; has_release_group: number; has_release: number };
-
-            if (cheap.has_video) {
-                return ScanLevel.DEEP;
-            }
-
-            if (cheap.has_release_group) {
-                if (cheap.has_release) {
-                    return ScanLevel.DEEP;
-                }
-
-                const deeper = db.prepare(`
-                    WITH artist_rgs(mbid) AS (
-                        SELECT mbid FROM Albums WHERE artist_mbid = @mbid
-                        UNION
-                        SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = @mbid
-                    ),
-                    artist_releases(mbid) AS (
-                        SELECT ar.mbid
-                        FROM AlbumReleases ar
-                        JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
-                    )
-                    SELECT
-                        EXISTS(
-                            SELECT 1 FROM Tracks t
-                            WHERE t.release_mbid IN (SELECT mbid FROM artist_releases)
-                        ) AS has_track,
-                        EXISTS(
-                            SELECT 1 FROM ProviderItems item
-                            WHERE item.entity_type IN ('album', 'video')
-                              AND item.match_status IN ('verified', 'probable')
-                              AND (
-                                item.artist_mbid = @mbid
-                                OR item.release_group_mbid IN (SELECT mbid FROM artist_rgs)
-                              )
-                        ) AS has_offer
-                `).get({ mbid }) as { has_track: number; has_offer: number };
-
-                if (deeper.has_track || deeper.has_offer) {
-                    return ScanLevel.DEEP;
-                }
-            }
-        }
-
-        if (artist.bio_text !== null && artist.bio_text !== undefined) {
-            return ScanLevel.SHALLOW;
-        }
-
-        if (artist.name) {
-            return ScanLevel.BASIC;
-        }
-
-        return ScanLevel.NONE;
+    /**
+     * Whether an artist has never been refreshed (Lidarr's `LastInfoSync == null`
+     * check). Lidarr has no scan-level concept — an artist is either refreshed or
+     * not — so this replaces the old getScanLevel/ScanLevel state machine. The UI
+     * uses it only to auto-trigger an initial refresh; ongoing staleness is
+     * decided by shouldRefreshArtist. The RefreshArtist queue is per-ref
+     * exclusive, so a repeated trigger for a still-empty artist can't pile up.
+     */
+    static needsInitialRefresh(artistId: string): boolean {
+        const row = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
+            .get(artistId) as { last_scanned?: string | null } | undefined;
+        return !row || row.last_scanned == null;
     }
 
     static async refreshArtistMetadata(artistId: string, options: ScanOptions = {}): Promise<void> {

@@ -9,7 +9,6 @@ import { buildManagedArtistPredicate } from "./managed-artists.js";
 import { loadArtistWithEffectiveMonitor, type ArtistMonitorRow } from "./artist-monitoring.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
-import { ScanLevel } from "./scan-types.js";
 import { shouldRefreshArtist } from "../config/refresh-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../../contracts/catalog.js";
@@ -262,7 +261,7 @@ function shouldHydrateArtistPage(artist: ArtistMonitorRow | undefined, artistId:
         return true;
     }
 
-    if (RefreshArtistService.getScanLevel(artistId) < ScanLevel.DEEP) {
+    if (RefreshArtistService.needsInitialRefresh(artistId)) {
         return true;
     }
 

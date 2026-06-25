@@ -21,7 +21,6 @@ import type { ProviderImportSelection } from "../../services/providers/streaming
 import { servarrMetadataProxy, type LidarrArtist } from "../../services/metadata/servarr-metadata-proxy.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
 import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
-import { ScanLevel } from "../../services/music/scan-types.js";
 import {
   getObjectBody,
   getOptionalBoolean,
@@ -438,7 +437,7 @@ router.get("/:artistId/page-db", async (req, res) => {
     if (
       page.needs_scan &&
       MUSICBRAINZ_MBID_RE.test(String(page.artist?.mbid || req.params.artistId)) &&
-      RefreshArtistService.getScanLevel(String(page.artist?.id || req.params.artistId)) < ScanLevel.DEEP
+      RefreshArtistService.needsInitialRefresh(String(page.artist?.id || req.params.artistId))
     ) {
       const artistId = String(page.artist?.id || req.params.artistId);
       const artistName = String(page.artist?.name || artistId).trim();
