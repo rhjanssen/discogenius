@@ -377,13 +377,27 @@ area.
       available from either the Servarr metadata server or the provider (TIDAL
       album art = `origin` size; artist art = the provider's max). The UI may
       keep serving smaller cached sizes; only the embed/save path forces max-res.
-    - AcoustID: `ACOUSTID_ID` + `ACOUSTID_FINGERPRINT` ARE real embedded tags we
-      already write (`audio-tag-service`), backed by `TrackFiles.acoustid_id` /
-      `fingerprint` from `fpcalc` at import. Lidarr has no equivalent (it isn't a
-      tagger), but MusicBrainz Picard writes them and Plex's MB-aware matching
-      reads them — keep the toggle as an optional MB/Plex-aligned extension that
-      gates fingerprint compute + embed; it is NOT part of the core Lidarr tag
-      set, so present it under advanced/diagnostics, not the main happy path.
+    - AcoustID (RESEARCHED 2026-06-25, authoritative — see sources in chat):
+      - Plex does NOT read embedded `ACOUSTID_*` tags — its sonic/fingerprint
+        analysis RE-COMPUTES its own fingerprint server-side. So embedding
+        AcoustID does nothing for Plex. What helps Plex is the embedded
+        MusicBrainz IDs (Local Media Assets / MB-aware matching) — which we
+        already write and should keep front-and-centre.
+      - Embedded `ACOUSTID_ID`/`ACOUSTID_FINGERPRINT` ARE consumed by Picard,
+        beets (chroma), and Jellyfin (reads Picard-written tags) — a niche
+        re-tagging-workflow benefit, not a Plex one.
+      - Lidarr confirms the split: `AudioTag.cs` writes ONLY MusicBrainz IDs (no
+        acoustid field); `Parser/FingerprintingService.cs` uses fpcalc → AcoustID
+        `meta=recordingids` purely as IMPORT-MATCH evidence (score threshold),
+        gated by `AllowFingerprinting` (incl. existing files). It never embeds.
+      - DECISION: (1) do NOT embed AcoustID tags by default — make it an explicit
+        advanced opt-in (Picard/beets/Jellyfin users), off by default, never in
+        the main happy path. (2) Reframe fpcalc as an optional IMPORT-VERIFICATION
+        gate, not a tagging feature: for provider-downloaded files we already
+        hold the MB recording id from the provider→MB match, so the fingerprint
+        is redundant for identity; only run it to CROSS-CHECK files that lack
+        clean provenance (user's pre-existing library files), Lidarr-style —
+        AcoustID's returned recording ids scored against our expected recording.
 - pending: Review metadata tag-writing UX alongside the Lidarr port so settings
   describe consumer-facing behavior rather than exposing implementation detail;
   advanced provider/provenance tag extensions should live behind disclosure or
