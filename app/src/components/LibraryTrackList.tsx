@@ -25,7 +25,7 @@ import { api } from "@/services/api";
 import type { TrackListItem as Track } from "@/types/track-list";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
-import { getTidalImage } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 
 type TrackFiles = NonNullable<Track["files"]>;
 
@@ -376,7 +376,7 @@ const LibraryTrackList = ({
                 {showCover ? (
                   track.album_cover ? (
                     <img
-                      src={getTidalImage(track.album_cover, "square", "small") || undefined}
+                      src={renderableArtworkUrl(track.album_cover) || undefined}
                       alt={track.album_title || "Album"}
                       className={styles.mobileCover}
                     />
@@ -487,7 +487,7 @@ const LibraryTrackList = ({
                         <Avatar
                           image={{
                             src: track.album_cover
-                              ? getTidalImage(track.album_cover, "square", "small") || undefined
+                              ? renderableArtworkUrl(track.album_cover) || undefined
                               : undefined,
                           }}
                           name={track.album_title || "Album"}

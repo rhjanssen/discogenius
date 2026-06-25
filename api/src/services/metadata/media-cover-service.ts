@@ -784,16 +784,24 @@ export function chooseCachedProviderArtwork(
   return null;
 }
 
-export function chooseCachedAlbumArtwork(options: {
+/**
+ * Lidarr-aligned read mapper — the equivalent of its
+ * IMapCoversToLocal.ConvertToLocalUrls. Maps an album's STORED images (the
+ * `images` column) to its local /media-cover URL. Image selection and any
+ * provider-fallback artwork are resolved and persisted into `images` at
+ * refresh/match time (see resolveAlbumArtwork / persistResolvedFallbackArtwork),
+ * so a page read never re-derives a cover from raw provider data. The
+ * /media-cover route fetches the bytes on first request.
+ */
+export function albumCoverLocalUrl(options: {
   albumMbid?: string | null;
-  servarrMetadataData?: ServarrMetadataImageContainer | null;
-  providerCandidates?: ProviderArtworkCandidate[];
+  images?: ServarrMetadataImageContainer | null;
 }): string | null {
-  let servarrMetadataData = options.servarrMetadataData;
-  if (!servarrMetadataData && options.albumMbid) {
+  let images = options.images;
+  if (!images && options.albumMbid) {
     try {
       const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
-      servarrMetadataData = imageContainerFromImagesColumn(row?.images);
+      images = imageContainerFromImagesColumn(row?.images);
     } catch (error) {
       console.warn("[MediaCoverService] Failed to query or parse cached album artwork:", error);
     }
@@ -801,32 +809,7 @@ export function chooseCachedAlbumArtwork(options: {
 
   return mapAlbumArtworkToLocalUrl({
     albumMbid: options.albumMbid,
-    servarrMetadataData,
-    providerCandidates: options.providerCandidates,
-  });
-}
-
-export function chooseCachedArtistArtwork(options: {
-  artistMbid?: string | null;
-  servarrMetadataData?: ServarrMetadataImageContainer | null;
-  providerCandidates?: ProviderArtworkCandidate[];
-  preferredCoverTypes?: string | string[];
-}): string | null {
-  let servarrMetadataData = options.servarrMetadataData;
-  if (!servarrMetadataData && options.artistMbid) {
-    try {
-      const row = db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(options.artistMbid) as { images?: string | null } | undefined;
-      servarrMetadataData = imageContainerFromImagesColumn(row?.images);
-    } catch (error) {
-      console.warn("[MediaCoverService] Failed to query or parse cached artist artwork:", error);
-    }
-  }
-
-  return mapArtistArtworkToLocalUrl({
-    artistMbid: options.artistMbid,
-    servarrMetadataData,
-    providerCandidates: options.providerCandidates,
-    preferredCoverTypes: options.preferredCoverTypes,
+    servarrMetadataData: images,
   });
 }
 
@@ -875,10 +858,6 @@ export async function resolveProviderArtworkUrl(
     const providerId = textOrNull(candidate.provider);
     const entityId = textOrNull(candidate.entityId);
     const imageId = textOrNull(candidate.imageId, extractProviderArtworkId(candidate.data, entityType));
-    const directUrl = normalizeArtworkUrl(imageId || extractProviderArtworkId(candidate.data, entityType));
-    if (directUrl) {
-      return directUrl;
-    }
 
     if (providerId && (entityId || imageId)) {
       try {
@@ -896,6 +875,11 @@ export async function resolveProviderArtworkUrl(
       } catch {
         // provider artwork is a fallback source; continue to the next candidate.
       }
+    }
+
+    const directUrl = normalizeArtworkUrl(imageId || extractProviderArtworkId(candidate.data, entityType));
+    if (directUrl) {
+      return directUrl;
     }
   }
 
@@ -1106,8 +1090,7 @@ export class MediaCoverService {
     }
   }
 
-  static chooseCachedAlbumArtwork = chooseCachedAlbumArtwork;
-  static chooseCachedArtistArtwork = chooseCachedArtistArtwork;
+  static albumCoverLocalUrl = albumCoverLocalUrl;
   static resolveAlbumArtwork = resolveAlbumArtwork;
   static resolveArtistArtwork = resolveArtistArtwork;
   static albumProviderArtworkCandidatesFromRow = albumProviderArtworkCandidatesFromRow;

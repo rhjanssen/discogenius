@@ -2,13 +2,13 @@ import { db } from "../../database.js";
 import type { AlbumContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
-import { servarrMetadataProxy } from "./servarr-metadata-proxy.js";
+import { servarrMetadata } from "./servarr-metadata.js";
 import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-track-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
+    albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
-    chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
@@ -301,10 +301,9 @@ function listMusicBrainzReleaseVersions(
 }
 
 function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
-    return chooseCachedAlbumArtwork({
+    return albumCoverLocalUrl({
         albumMbid: releaseGroup.mbid,
-        servarrMetadataData: imageContainerFromImagesColumn(releaseGroup.images),
-        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
+        images: imageContainerFromImagesColumn(releaseGroup.images),
     });
 }
 
@@ -902,15 +901,15 @@ export class MusicBrainzReleaseGroupReadService {
         let releaseGroup = queryReleaseGroup(releaseGroupMbid);
         if (!releaseGroup) {
             try {
-                const detail = await servarrMetadataProxy.getAlbumInfo(releaseGroupMbid);
+                const detail = await servarrMetadata.getAlbumInfo(releaseGroupMbid);
                 if (detail) {
                     const artistMbid = (detail as any).artistid || (detail as any).artistId || (detail as any).ArtistId || (detail as any).Artist?.Id || (detail as any).Artist?.id || (detail as any).artists?.[0]?.id || (detail as any).artists?.[0]?.Id;
                     if (artistMbid) {
                         const artistExists = db.prepare("SELECT 1 FROM Artists WHERE mbid = ? LIMIT 1").get(artistMbid);
                         if (!artistExists) {
-                            await servarrMetadataProxy.syncArtist(artistMbid);
+                            await servarrMetadata.syncArtist(artistMbid);
                         }
-                        await servarrMetadataProxy.syncReleaseGroup(releaseGroupMbid, artistMbid);
+                        await servarrMetadata.syncReleaseGroup(releaseGroupMbid, artistMbid);
                         releaseGroup = queryReleaseGroup(releaseGroupMbid);
                     }
                 }
@@ -931,7 +930,7 @@ export class MusicBrainzReleaseGroupReadService {
 
         if (Number(releaseCount?.count || 0) === 0) {
             try {
-                await servarrMetadataProxy.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+                await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
             } catch (error) {
                 console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
             }

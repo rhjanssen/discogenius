@@ -8,7 +8,7 @@
  * MusicBrainz-docker instance instead.
  *
  * **DTOs are deliberately the Servarr Metadata Server/Lidarr shapes already produced by
- * `ServarrMetadataProxy`** (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`,
+ * `ServarrMetadataService`** (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`,
  * `LidarrTrack`) plus the matcher's `MusicBrainzReleaseGroupForMatching`. These
  * are the canonical-metadata DTOs in this codebase — every downstream consumer
  * (`refresh-artist-service`, `musicbrainz-release-group-read-service`, the
@@ -16,16 +16,17 @@
  * any `CatalogProvider` implementation is a drop-in for the Servarr Metadata Server flow without
  * forking a parallel DTO hierarchy.
  *
- * NOTE (U3 scaffolding): this interface is *additive*. It is not yet wired into
- * the live request path. The live app keeps calling `ServarrMetadataProxy` directly; the
- * adapters here document today's behavior and prepare for MB-local mode.
+ * NOTE (U3 scaffolding): this interface is *additive*. It is not yet fully wired
+ * into the live request path. The live app still calls the shared
+ * `servarrMetadata` service in places; the adapters here document today's
+ * behavior and prepare for MB-local mode.
  */
 import type {
   LidarrArtist,
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/servarr-metadata-proxy.js";
+} from "../metadata/servarr-metadata.js";
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 
 export type {
@@ -34,7 +35,7 @@ export type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/servarr-metadata-proxy.js";
+} from "../metadata/servarr-metadata.js";
 
 /**
  * A canonical recording, keyed by MBID. Servarr Metadata Server does not expose a standalone

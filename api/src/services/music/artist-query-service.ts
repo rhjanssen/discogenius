@@ -13,8 +13,8 @@ import { shouldRefreshArtist } from "../config/refresh-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 import type { ArtistContract, ArtistsListResponseContract } from "../../contracts/catalog.js";
 import {
+    albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
-    chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
@@ -320,10 +320,9 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
     const providerCover = chooseCachedProviderArtwork(providerCandidates, "album")
         || selectedProviderData?.cover
         || null;
-    const coverUrl = chooseCachedAlbumArtwork({
+    const coverUrl = albumCoverLocalUrl({
         albumMbid: row.mbid,
-        servarrMetadataData: imageContainerFromImagesColumn(row.images),
-        providerCandidates,
+        images: imageContainerFromImagesColumn(row.images),
     });
 
     return {
@@ -753,14 +752,14 @@ export class ArtistQueryService {
     }
 
     static async getRemoteArtistPage(artistId: string): Promise<any> {
-        const page = await this.getArtistPageDb(artistId);
+        const page = await this.getArtistPage(artistId);
         if (!page) {
             throw new Error(`Artist not found: ${artistId}`);
         }
         return page;
     }
 
-    static async getArtistPageDb(artistId: string): Promise<any | null> {
+    static async getArtistPage(artistId: string): Promise<any | null> {
         let artist = loadArtistWithEffectiveMonitor(artistId);
 
         // Cold-load: seed basic canonical metadata for not-yet-added artists so

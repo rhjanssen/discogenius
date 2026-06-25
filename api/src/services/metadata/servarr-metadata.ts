@@ -182,7 +182,7 @@ export function extractLinkUrls(linksJson?: string | null): string[] {
   return Array.from(urls);
 }
 
-export class ServarrMetadataProxy {
+export class ServarrMetadataService {
   private readonly baseUrl = "https://api.lidarr.audio/api/v0.4";
 
   private normalizeSearchText(value: string): string {
@@ -219,7 +219,7 @@ export class ServarrMetadataProxy {
     const res = await fetch(`${this.baseUrl}${path}`, {
       headers: {
         Accept: "application/json",
-        "User-Agent": getDiscogeniusUserAgent("metadata proxy"),
+        "User-Agent": getDiscogeniusUserAgent("metadata service"),
       },
       signal: AbortSignal.timeout(12_000),
     });
@@ -703,4 +703,4 @@ export class ServarrMetadataProxy {
   }
 }
 
-export const servarrMetadataProxy = new ServarrMetadataProxy();
+export const servarrMetadata = new ServarrMetadataService();

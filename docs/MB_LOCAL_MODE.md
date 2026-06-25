@@ -8,7 +8,7 @@ Servarr Metadata Server/Lidarr replica. It is the implementation companion to
 `docs/DATA_MODEL_TARGET.md` §3.
 
 No live behavior changed: the app still uses the Servarr Metadata Server flow
-(`api/src/services/metadata/servarr-metadata-proxy.ts`) exactly as before. Everything here
+(`api/src/services/metadata/servarr-metadata.ts`) exactly as before. Everything here
 is additive and behind interfaces/stubs.
 
 ## The abstraction
@@ -18,7 +18,7 @@ is additive and behind interfaces/stubs.
 | File | Role |
 | --- | --- |
 | `catalog-provider.ts` | The `CatalogProvider` interface (symmetric to `StreamingProvider`). DTOs are the existing Servarr Metadata Server/Lidarr shapes (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`, `LidarrTrack`) — no parallel DTO hierarchy. |
-| `servarr-metadata-catalog-provider.ts` | `ServarrMetadataCatalogProvider` — thin adapter over today's `ServarrMetadataProxy`. Documents current behavior as one implementation; changes nothing. |
+| `servarr-metadata-catalog-provider.ts` | `ServarrMetadataCatalogProvider` — thin adapter over today's `ServarrMetadataService`. Documents current behavior as one implementation; changes nothing. |
 | `local-musicbrainz-catalog-provider.ts` | `LocalMusicBrainzCatalogProvider` — **stub**, reads the MB-docker `:5000` web-service mirror. Not registered as active. |
 | `musicbrainz-ws-mapping.ts` | Pure mappers: MB `/ws/2` JSON → Servarr Metadata Server/Lidarr DTOs. Network-free, fixture-tested. |
 | `index.ts` | Barrel + a `catalogProviderRegistry` mirroring `streamingProviderManager`. Active source id = `servarr-metadata`. |
@@ -114,7 +114,7 @@ seam.
 - `musicbrainz-ws-mapping` + `LocalMusicBrainzCatalogProvider`: fixture unit
   tests against recorded `/ws/2` responses with an injected fetcher (no live
   network).
-- `ServarrMetadataCatalogProvider`: delegating-adapter tests with a spy proxy.
+- `ServarrMetadataCatalogProvider`: delegating-adapter tests with a spy service.
 - **Live container e2e is skipped** — no MB-docker container is provisioned in
   CI; the behavior is covered by the fixture unit tests above.
 
@@ -134,7 +134,7 @@ strictly richer than the Servarr replica:
 - **Per-recording artist-credit** (`inc=artist-credits`) at recording AND track
   level: `[{name, joinphrase, artist:{id,name,sort-name}}]`. This is exactly the
   queryable recording↔artist-credit relation the recording-centric song-set item
-  needs — and the blocker on dropping the `data` blob. The Servarr proxy only
+  needs — and the blocker on dropping the `data` blob. The Servarr metadata service only
   exposes a single primary `ArtistId` per track.
 - **ISRCs per recording** (`inc=isrcs`) and a dedicated `/isrc/{isrc}` endpoint;
   **UPC/barcode** via `barcode:` release search. (Skyhook strips these — the
@@ -167,7 +167,7 @@ and never be overridden by the supplement.
 
 ### The mapping gap to close BEFORE MB-local goes live
 
-The Servarr write path (`servarr-metadata-proxy.ts`) populates the curated JSON
+The Servarr write path (`servarr-metadata.ts`) populates the curated JSON
 columns by reading the RAW Servarr payload (`raw.links`, `raw.genres`,
 `raw.rating`, `raw.artistaliases`, `raw.oldids`). The Lidarr DTO interfaces do
 NOT carry those fields, so `musicbrainz-ws-mapping.ts` produces clean DTOs

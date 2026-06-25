@@ -24,7 +24,7 @@ import {
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
 import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { MediaCard } from "@/components/cards/MediaCard";
-import { getTidalImage } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
@@ -590,7 +590,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 <MediaCard
                     key={item.providerId}
                     onClick={() => handleItemClick(item)}
-                    imageUrl={getTidalImage(item.imageId, 'album', 'medium') || null}
+                    imageUrl={renderableArtworkUrl(item.imageId)}
                     alt={item.name}
                     title={item.name}
                     subtitle={subtitle}
@@ -605,7 +605,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 onClick={() => handleItemClick(item)}
             >
                 <Avatar
-                    image={{ src: getTidalImage(item.imageId, 'artist', 'small') ?? undefined }}
+                    image={{ src: renderableArtworkUrl(item.imageId) ?? undefined }}
                     name={item.name}
                     size={96}
                     shape="circular"
@@ -647,11 +647,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
             >
                 {/* Image */}
                 <img
-                    src={getTidalImage(
-                        item.imageId,
-                        item.type === 'track' ? 'album' : item.type as 'artist' | 'album' | 'video',
-                        'tiny'
-                    ) || undefined}
+                    src={renderableArtworkUrl(item.imageId) || undefined}
                     alt={item.name}
                     className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
                 />

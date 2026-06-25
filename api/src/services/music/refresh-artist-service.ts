@@ -9,7 +9,7 @@ import { RefreshVideoService } from "./refresh-video-service.js";
 import { type ScanOptions, type ScanDeepResult } from "./scan-types.js";
 import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
-import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
+import { servarrMetadata } from "../metadata/servarr-metadata.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
 import {
     matchProviderAlbumsToReleaseGroups,
@@ -150,7 +150,7 @@ export class RefreshArtistService {
 
         try {
             if (force || Number(cachedCount?.count || 0) === 0) {
-                await servarrMetadataProxy.syncArtist(artistMbid);
+                await servarrMetadata.syncArtist(artistMbid);
             }
             if (includeCreditedReleaseGroups) {
                 const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
@@ -227,7 +227,7 @@ export class RefreshArtistService {
 
         for (const releaseGroup of releaseGroups) {
             try {
-                await servarrMetadataProxy.syncReleaseGroup(releaseGroup.mbid, artistMbid);
+                await servarrMetadata.syncReleaseGroup(releaseGroup.mbid, artistMbid);
                 await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to hydrate canonical release group ${releaseGroup.mbid}:`, error);
@@ -246,7 +246,7 @@ export class RefreshArtistService {
         const localArtistId = existing?.id != null ? String(existing.id) : artistMbid;
         const shouldMonitor = options.monitorArtist === true ? true : Boolean(existing?.monitored);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
-        const artistData = await servarrMetadataProxy.syncArtist(artistMbid);
+        const artistData = await servarrMetadata.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
             SELECT provider, provider_id, data
@@ -385,7 +385,7 @@ export class RefreshArtistService {
             return new Map();
         }
 
-        const releaseGroups = servarrMetadataProxy.getCachedReleaseGroupsForArtist(artistMbid);
+        const releaseGroups = servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid);
         if (releaseGroups.length === 0) {
             return new Map();
         }
@@ -606,7 +606,7 @@ export class RefreshArtistService {
         }
 
         const cachedReleaseGroups = new Map(
-            servarrMetadataProxy.getCachedReleaseGroupsForArtist(artistMbid)
+            servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid)
                 .map((releaseGroup) => [releaseGroup.mbid, releaseGroup] as const),
         );
         const targets = db.prepare(`

@@ -25,9 +25,9 @@ export function useArtistPage(artistId: string | undefined) {
         queryFn: async ({ signal }) => {
             if (!artistId) throw new Error("Artist ID is required");
 
-            // Database-backed endpoint stays DB-first and only seeds core artist metadata when needed.
-            // Full enrichment remains an explicit scan/refresh action so page navigation stays responsive.
-            return api.getArtistPageDB(artistId, {
+            // Artist page reads stay local-first and only seed core artist metadata when needed.
+            // Full enrichment remains an explicit scan/refresh action so navigation stays responsive.
+            return api.getArtistPage(artistId, {
                 signal,
                 timeoutMs: 15_000,
             });

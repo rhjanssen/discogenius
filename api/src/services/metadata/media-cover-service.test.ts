@@ -28,9 +28,9 @@ after(() => {
 test("Servarr Metadata Server album artwork maps to the album MediaCover route", () => {
   const albumMbid = "album-with-canonical-cover";
   const remoteUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/cover.jpg";
-  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
+  const artworkUrl = mediaCoverServiceModule.albumCoverLocalUrl({
     albumMbid,
-    servarrMetadataData: {
+    images: {
       Images: [
         {
           CoverType: "Cover",
@@ -40,12 +40,6 @@ test("Servarr Metadata Server album artwork maps to the album MediaCover route",
         },
       ],
     },
-    providerCandidates: [
-      {
-        provider: "tidal",
-        imageId: "00000000-0000-0000-0000-000000000000",
-      },
-    ],
   });
 
   assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
@@ -68,9 +62,9 @@ test("Servarr Metadata Server selectors return raw URLs for durable storage", ()
 
 test("provider artwork ids are not converted by core sync selectors", () => {
   const albumMbid = "album-with-provider-id";
-  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
+  const artworkUrl = mediaCoverServiceModule.albumCoverLocalUrl({
     albumMbid,
-    servarrMetadataData: {
+    images: {
       Images: [
         {
           CoverType: "Cover",
@@ -78,12 +72,6 @@ test("provider artwork ids are not converted by core sync selectors", () => {
         },
       ],
     },
-    providerCandidates: [
-      {
-        provider: "tidal",
-        imageId: "11111111-1111-1111-1111-111111111111",
-      },
-    ],
   });
 
   assert.equal(artworkUrl, null);
@@ -104,9 +92,9 @@ test("Servarr Metadata Server album artwork wins over cached provider fallback a
       JSON.stringify([{ coverType: "Cover", url: providerUrl, source: "provider-fallback" }]),
     );
 
-  const artworkUrl = mediaCoverServiceModule.chooseCachedAlbumArtwork({
+  const artworkUrl = mediaCoverServiceModule.albumCoverLocalUrl({
     albumMbid,
-    servarrMetadataData: {
+    images: {
       Images: [
         {
           CoverType: "Cover",
@@ -116,7 +104,6 @@ test("Servarr Metadata Server album artwork wins over cached provider fallback a
         },
       ],
     },
-    providerCandidates: [],
   });
 
   assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);

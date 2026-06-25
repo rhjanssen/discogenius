@@ -1239,7 +1239,7 @@ const ArtistPage = () => {
     );
   };
 
-  // Process Page Data - use pageData.rows for modules (from page-db endpoint)
+  // Process Page Data - use pageData.rows for modules (from page endpoint)
   const modules = useMemo(() => {
     const rows = pageData?.rows ?? [];
     const mods: any[] = [];

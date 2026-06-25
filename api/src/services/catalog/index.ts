@@ -1,9 +1,9 @@
 /**
  * Catalog-source abstraction barrel — see `docs/DATA_MODEL_TARGET.md` §3.
  *
- * U3 scaffolding: additive, NOT wired into the live request path. The live app
- * still calls `ServarrMetadataProxy` directly. Importing this barrel has no side effects
- * and performs no network/DB I/O.
+ * U3 scaffolding: additive, NOT fully wired into the live request path. The
+ * live app still calls `servarrMetadata` directly in places. Importing this
+ * barrel has no side effects and performs no network/DB I/O.
  *
  * The `catalogProviderRegistry` mirrors `streamingProviderManager`'s shape so a
  * future unit can flip the active catalog source via config (Servarr Metadata Server ↔ MB-local)

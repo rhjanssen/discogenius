@@ -623,12 +623,8 @@ class ApiClient {
     return this.request<T>(`/v1/artist/${artistId}`);
   }
 
-  async getArtistPage(artistId: string) {
-    return this.request(`/v1/artist/${artistId}/page`);
-  }
-
-  async getArtistPageDB(artistId: string, options: RequestControlOptions = {}) {
-    return this.request(`/v1/artist/${artistId}/page-db`, options);
+  async getArtistPage(artistId: string, options: RequestControlOptions = {}) {
+    return this.request(`/v1/artist/${artistId}/page`, options);
   }
 
   async getArtistDetail(artistId: string) {

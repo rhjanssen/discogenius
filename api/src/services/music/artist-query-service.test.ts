@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let artistQueryModule: typeof import("./artist-query-service.js");
 let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
-let ServarrMetadataProxyModule: typeof import("../metadata/servarr-metadata-proxy.js");
+let servarrMetadataModule: typeof import("../metadata/servarr-metadata.js");
 let artistStatisticsModule: typeof import("./artist-statistics-service.js");
 
 before(async () => {
@@ -19,7 +19,7 @@ before(async () => {
   dbModule.initDatabase();
   artistQueryModule = await import("./artist-query-service.js");
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
-  ServarrMetadataProxyModule = await import("../metadata/servarr-metadata-proxy.js");
+  servarrMetadataModule = await import("../metadata/servarr-metadata.js");
   artistStatisticsModule = await import("./artist-statistics-service.js");
 });
 
@@ -165,7 +165,7 @@ return { artistId: "artist-1" };
 test("artist page uses canonical release groups, tracks, and video recordings", async () => {
   const { artistId } = seedCanonicalArtistPage();
 
-  const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
   assert.ok(page);
 
   const modules = (page?.rows || []).flatMap((row: any) => row.modules || []);
@@ -240,7 +240,7 @@ test("artist page album cards prefer cached Servarr Metadata Server artwork over
       "release-group-mbid-1",
     );
 
-  const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
   const albums = (page?.rows || [])
     .flatMap((row: any) => row.modules || [])
     .find((module: any) => module.title === "Albums")?.items || [];
@@ -261,7 +261,7 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
       "release-group-mbid-1",
     );
 
-  const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
   const albums = (page?.rows || [])
     .flatMap((row: any) => row.modules || [])
     .find((module: any) => module.title === "Albums")?.items || [];
@@ -274,7 +274,7 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
 test("artist page uses provider fallback without hydrating missing release-group artwork", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  const originalSync = servarrMetadataModule.servarrMetadata.syncReleaseGroup;
   let syncCalled = false;
   const providerFallbackUrl = "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg";
 
@@ -288,12 +288,12 @@ test("artist page uses provider fallback without hydrating missing release-group
       "release-group-mbid-1",
     );
 
-  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async () => {
+  servarrMetadataModule.servarrMetadata.syncReleaseGroup = (async () => {
     syncCalled = true;
-  }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  }) as typeof servarrMetadataModule.servarrMetadata.syncReleaseGroup;
 
   try {
-    const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+    const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
     const albums = (page?.rows || [])
       .flatMap((row: any) => row.modules || [])
       .find((module: any) => module.title === "Albums")?.items || [];
@@ -306,25 +306,25 @@ test("artist page uses provider fallback without hydrating missing release-group
     assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
     assert.equal(syncCalled, false);
   } finally {
-    ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
+    servarrMetadataModule.servarrMetadata.syncReleaseGroup = originalSync;
   }
 });
 
 test("artist page uses selected provider artwork for blank release-group artwork without read-time hydration", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
-  const originalSync = ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  const originalSync = servarrMetadataModule.servarrMetadata.syncReleaseGroup;
   let syncCalled = false;
 
   db.prepare(`UPDATE Albums SET images = NULL WHERE mbid = ?`)
     .run("release-group-mbid-1");
 
-  ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = (async () => {
+  servarrMetadataModule.servarrMetadata.syncReleaseGroup = (async () => {
     syncCalled = true;
-  }) as typeof ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup;
+  }) as typeof servarrMetadataModule.servarrMetadata.syncReleaseGroup;
 
   try {
-    const page = await artistQueryModule.ArtistQueryService.getArtistPageDb(artistId);
+    const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
     const albums = (page?.rows || [])
       .flatMap((row: any) => row.modules || [])
       .find((module: any) => module.title === "Albums")?.items || [];
@@ -334,7 +334,7 @@ test("artist page uses selected provider artwork for blank release-group artwork
     assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
     assert.equal(syncCalled, false);
   } finally {
-    ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;
+    servarrMetadataModule.servarrMetadata.syncReleaseGroup = originalSync;
   }
 });
 

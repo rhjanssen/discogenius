@@ -40,7 +40,7 @@ import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
-import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
@@ -334,11 +334,7 @@ function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
     const mediaBadge = getQueueHistoryMediaBadge(item);
     const title = item.title || item.album_title || 'Unknown item';
     const subtitle = item.artist || null;
-    const coverUrl = item.cover
-        ? mediaBadge?.kind === 'video'
-            ? getTidalImage(item.cover, 'video', 'small')
-            : getAlbumCover(item.cover, 'small')
-        : null;
+    const coverUrl = renderableArtworkUrl(item.cover);
     const navPath = getQueueHistoryNavPath(item);
     const timeSource = item.completed_at || item.updated_at || item.started_at || item.created_at;
 
@@ -1240,7 +1236,7 @@ const QueueTab = () => {
                         <div className={styles.downloadList}>
                             {visibleGroupedDownloads.map((group) => {
                                 const isVideo = group.type === 'video';
-                                const coverUrl = group.cover ? (isVideo ? getTidalImage(group.cover, 'video', 'small') : getAlbumCover(group.cover, 'small')) : null;
+                                const coverUrl = renderableArtworkUrl(group.cover);
                                 const isDownloading = group.status === 'downloading';
                                 const isFailed = group.status === 'failed';
                                 const groupedTrackItems = group.items.filter((item) => item.type === 'track');

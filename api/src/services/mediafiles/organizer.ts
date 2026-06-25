@@ -19,7 +19,7 @@ import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
-import { chooseCachedAlbumArtwork } from "../metadata/media-cover-service.js";
+import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 
 type OrganizeType = "album" | "track" | "video";
@@ -500,7 +500,7 @@ export class OrganizerService {
     // Canonical artwork (Servarr Metadata Server/Cover Art Archive) is stored on Albums.images;
     // the provider cover from the selected offer snapshot is the fallback.
     const canonicalCover = row.releaseGroupMbid
-      ? chooseCachedAlbumArtwork({ albumMbid: row.releaseGroupMbid })
+      ? albumCoverLocalUrl({ albumMbid: row.releaseGroupMbid })
       : null;
 
     const slot = String(row.slot || requestedSlot || "stereo").toLowerCase() === "spatial" ? "spatial" : "stereo";

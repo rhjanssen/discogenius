@@ -23,7 +23,7 @@ import type {
   LidarrReleaseGroupDetail,
   LidarrRelease,
   LidarrTrack,
-} from "../metadata/servarr-metadata-proxy.js";
+} from "../metadata/servarr-metadata.js";
 import type { CatalogRecording } from "./catalog-provider.js";
 
 /* ---- MB ws/2 response shapes (the subset we read) ---- */

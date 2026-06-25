@@ -53,7 +53,7 @@ priority first:
 3. **Title + shape** — release title/disambiguation vs provider title, plus track/volume shape.
    - **Composite**: a set of provider albums whose combined title/shape 1:1-covers the
      release's tracks (the existing `appendStrictCompositeCoverage` logic, promoted to a real
-     match). This is the **only** tier available in servarr-metadata-proxy mode.
+     match). This is the **only** tier available in servarr-metadata mode.
 
 Each match (direct or composite) persists as `ProviderItemMatches` edges:
 `musicbrainz_release_mbid` ← one provider album (direct) or a `;`-joined provider album set

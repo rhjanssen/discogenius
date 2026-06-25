@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { servarrMetadataProxy, type LidarrArtist } from "./servarr-metadata-proxy.js";
+import { servarrMetadata, type LidarrArtist } from "./servarr-metadata.js";
 import type { ProviderArtist } from "../providers/streaming-provider.js";
 
 export type ProviderArtistIdentityInput = {
@@ -119,7 +119,7 @@ export class ProviderArtistIdentityService {
     }
 
     try {
-      const candidates = await servarrMetadataProxy.searchForNewArtist(artist.name, 10);
+      const candidates = await servarrMetadata.searchForNewArtist(artist.name, 10);
       const match = bestCanonicalArtistMatch(artist, candidates);
       const normalizedName = normalizeSearchText(artist.name);
       const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;

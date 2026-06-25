@@ -2,14 +2,13 @@ import { Router } from "express";
 import { db } from "../database.js";
 
 import {
-    albumProviderArtworkCandidatesFromRow,
-    chooseCachedAlbumArtwork,
+    albumCoverLocalUrl,
     chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
 } from "../services/metadata/media-cover-service.js";
-import { servarrMetadataProxy } from "../services/metadata/servarr-metadata-proxy.js";
+import { servarrMetadata } from "../services/metadata/servarr-metadata.js";
 import type {
     SearchResponseContract,
     SearchResultContract,
@@ -172,9 +171,9 @@ router.get("/", async (req, res) => {
                     results.albums.push(formatSearchResult({
                         id: row.id,
                         name: row.title,
-                        cover_id: chooseCachedAlbumArtwork({
-                            servarrMetadataData: imageContainerFromImagesColumn(row.images),
-                            providerCandidates: albumProviderArtworkCandidatesFromRow(row),
+                        cover_id: albumCoverLocalUrl({
+                            albumMbid: row.id,
+                            images: imageContainerFromImagesColumn(row.images),
                         }),
                         artist_name: row.artist_name,
                         release_date: row.release_date,
@@ -280,12 +279,9 @@ router.get("/", async (req, res) => {
                     // A track shows its album's art. Resolve it through the same
                     // canonical→provider path the album results use so the result
                     // carries a usable URL, not a raw provider asset id.
-                    cover: chooseCachedAlbumArtwork({
+                    cover: albumCoverLocalUrl({
                         albumMbid: row.release_group_mbid,
-                        servarrMetadataData: imageContainerFromImagesColumn(row.rg_images),
-                        providerCandidates: row.album_cover
-                            ? [{ provider: row.cover_provider, imageId: row.album_cover, data: row.cover_provider_data }]
-                            : albumProviderArtworkCandidatesFromRow(row),
+                        images: imageContainerFromImagesColumn(row.rg_images),
                     }),
                     quality: row.quality,
                     explicit: !!row.explicit,
@@ -389,7 +385,7 @@ router.get("/", async (req, res) => {
 
         // 2. Remote MusicBrainz (Servarr Metadata Server) search
         if (query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))) {
-            const remoteItems = await servarrMetadataProxy.searchAll(query, limit);
+            const remoteItems = await servarrMetadata.searchAll(query, limit);
             for (const item of remoteItems) {
                 if (item.artist && requestedTypeSet.has("artists")) {
                     const mbid = item.artist.id;
@@ -403,13 +399,13 @@ router.get("/", async (req, res) => {
                             const imageId = [
                                 localArtist.picture,
                                 localArtist.cover_image_url,
-                                servarrMetadataProxy.getArtistImageUrl(item.artist),
+                                servarrMetadata.getArtistImageUrl(item.artist),
                             ].map((val) => {
                                 const text = val == null ? "" : String(val).trim();
                                 if (!text) return null;
                                 const resolved = resolveMediaCoverProxyUrl(text);
                                 if (resolved) return resolved;
-                                return /^\/MediaCoverProxy\//i.test(text) ? null : text;
+                                return /^\/media-cover-proxy\//i.test(text) ? null : text;
                             }).find(Boolean);
 
                             results.artists.push(formatSearchResult({
@@ -421,7 +417,7 @@ router.get("/", async (req, res) => {
                             }, 'artist'));
                             addedArtistIds.add(localArtist.id.toString());
                         } else {
-                            const imageId = servarrMetadataProxy.getArtistImageUrl(item.artist);
+                            const imageId = servarrMetadata.getArtistImageUrl(item.artist);
                             const releaseGroupCount = Array.isArray(item.artist.Albums) ? item.artist.Albums.length : 0;
                             const disambiguation = String(item.artist.disambiguation || "").trim();
                             const details = [
@@ -453,7 +449,7 @@ router.get("/", async (req, res) => {
                         `).get(mbid) as any;
 
                         const artistName = item.album.artistname || item.album.artistName || item.album.ArtistName || item.album.artist?.artistname || null;
-                        const imageId = servarrMetadataProxy.getAlbumImageUrl(item.album);
+                        const imageId = servarrMetadata.getAlbumImageUrl(item.album);
 
                         if (localAlbum) {
                             results.albums.push(formatSearchResult({

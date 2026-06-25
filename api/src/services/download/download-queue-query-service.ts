@@ -9,8 +9,7 @@ import { downloadProcessor } from "./download-processor.js";
 import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import {
-  albumProviderArtworkCandidatesFromRow,
-  chooseCachedAlbumArtwork,
+  albumCoverLocalUrl,
   imageContainerFromImagesColumn,
 } from "../metadata/media-cover-service.js";
 
@@ -336,10 +335,9 @@ function resolveCanonicalAlbumMetadata(input: {
   const providerData = parseProviderData(row.provider_data);
   const slotArtist = parseProviderData(slotData.artist);
   const providerArtist = parseProviderData(providerData.artist);
-  const cover = chooseCachedAlbumArtwork({
+  const cover = albumCoverLocalUrl({
     albumMbid: row.release_group_mbid,
-    servarrMetadataData: imageContainerFromImagesColumn(row.release_group_images),
-    providerCandidates: albumProviderArtworkCandidatesFromRow(row),
+    images: imageContainerFromImagesColumn(row.release_group_images),
   });
 
   return {
@@ -429,16 +427,9 @@ function resolveProviderItemMetadata(input: {
       : row.title
     : null;
   const cover = row.release_group_mbid
-    ? chooseCachedAlbumArtwork({
+    ? albumCoverLocalUrl({
         albumMbid: row.release_group_mbid,
-        servarrMetadataData: imageContainerFromImagesColumn(row.release_group_images),
-        providerCandidates: albumProviderArtworkCandidatesFromRow({
-          selected_provider: row.provider,
-          selected_provider_id: providerId,
-          provider_id: providerId,
-          provider_asset_id: row.asset_id,
-          provider_data: row.data,
-        }),
+        images: imageContainerFromImagesColumn(row.release_group_images),
       })
     : null;
 

@@ -168,7 +168,7 @@ the provider abstraction so a second provider can declare its own sources.
   remote artist payload is unchanged, `syncReleaseGroup` skips the whole RG
   tracklist rewrite when the remote RG detail is unchanged (with a repair guard:
   a hash match never suppresses re-hydration of an RG whose child rows are
-  missing). Tested in `servarr-metadata-proxy.test.ts`.
+  missing). Tested in `servarr-metadata.test.ts`.
 - pending (lever 2, the row-SIZE half): shrink/normalise the per-row `data` blob
   to curated columns (Lidarr stores columns, not raw JSON). This is the schema
   rework below; the blob-consumer map there is the precise migration list. Until
@@ -487,7 +487,7 @@ local MusicBrainz-docker instance.
 - pending: Wire `CatalogProvider` into the live runtime so artist search,
   artist refresh, release-group refresh, matching, artwork hydration, and import
   identity all go through the selected catalog source instead of directly
-  importing `servarrMetadataProxy`.
+  importing `ServarrMetadataService`.
 - pending: Add backend config and persistence for catalog source mode:
   `servarr-metadata` and `musicbrainz-local`, plus the local `/ws/2` base URL,
   health status, last successful check, and user-facing validation errors.

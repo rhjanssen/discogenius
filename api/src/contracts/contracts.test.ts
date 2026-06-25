@@ -224,7 +224,7 @@ test("catalog contract parsers validate list, stats, and search payloads", () =>
       {
         id: "release-group-1",
         title: "Give Me the Future",
-        cover_art_url: "/MediaCoverProxy/example/cover.jpg",
+        cover_art_url: "/media-cover-proxy/example/cover.jpg",
         provider_cover_id: "11111111-1111-1111-1111-111111111111",
         is_monitored: true,
         is_downloaded: false,

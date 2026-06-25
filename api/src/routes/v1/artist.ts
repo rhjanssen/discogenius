@@ -18,7 +18,7 @@ import { CommandNames } from "../../services/commands/command-names.js";
 import { appEvents, AppEvent, type ImportArtistsProgressEventPayload, type CommandEventPayload } from "../../services/commands/app-events.js";
 import type { ImportProviderArtistsCommand } from "../../services/commands/command-bodies.js";
 import type { ProviderImportSelection } from "../../services/providers/streaming-provider.js";
-import { servarrMetadataProxy, type LidarrArtist } from "../../services/metadata/servarr-metadata-proxy.js";
+import { servarrMetadata, type LidarrArtist } from "../../services/metadata/servarr-metadata.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
 import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
 import {
@@ -53,13 +53,13 @@ function formatArtistLookupResult(artist: LidarrArtist) {
   const imageId = [
     localArtist?.picture,
     localArtist?.cover_image_url,
-    servarrMetadataProxy.getArtistImageUrl(artist),
+    servarrMetadata.getArtistImageUrl(artist),
   ].map((value) => {
     const text = value == null ? "" : String(value).trim();
     if (!text) return null;
     const resolved = resolveMediaCoverProxyUrl(text);
     if (resolved) return resolved;
-    return /^\/MediaCoverProxy\//i.test(text) ? null : text;
+    return /^\/media-cover-proxy\//i.test(text) ? null : text;
   }).find(Boolean);
 
   return {
@@ -131,7 +131,7 @@ router.get("/lookup", async (req, res) => {
       return res.status(400).json({ detail: "Search term must be at least 2 characters" });
     }
 
-    const metadataArtists = await servarrMetadataProxy.searchForNewArtist(term, limit);
+    const metadataArtists = await servarrMetadata.searchForNewArtist(term, limit);
     const seen = new Set<string>();
     const artists = metadataArtists
       .map(formatArtistLookupResult)
@@ -412,18 +412,18 @@ router.get("/:artistId/albums", (req, res) => {
   }
 });
 
-// Database-backed artist page endpoint.
-// Keep this route DB-first so page navigation stays responsive even while queue workers are busy.
-router.get("/:artistId/page-db", async (req, res) => {
+// Artist page resource. Keep reads local-first so navigation stays responsive
+// even while queue workers are busy.
+router.get("/:artistId/page", async (req, res) => {
   try {
-    let page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
+    let page = await ArtistQueryService.getArtistPage(req.params.artistId);
     
     // Auto-fetch collaborating artists on click
     if (!page && MUSICBRAINZ_MBID_RE.test(req.params.artistId)) {
       try {
         const queued = await queueArtistRefreshScan(req.params.artistId, { forceUpdate: true });
         if (queued) {
-          page = await ArtistQueryService.getArtistPageDb(req.params.artistId);
+          page = await ArtistQueryService.getArtistPage(req.params.artistId);
         }
       } catch (err: any) {
         console.warn(`[artists] Failed to auto-fetch missing MBID ${req.params.artistId}:`, err.message);

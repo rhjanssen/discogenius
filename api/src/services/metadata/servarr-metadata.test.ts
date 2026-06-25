@@ -4,18 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-servarr-metadata-proxy-"));
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-servarr-metadata-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
-let servarrMetadataModule: typeof import("./servarr-metadata-proxy.js");
+let servarrMetadataModule: typeof import("./servarr-metadata.js");
 let originalFetch: typeof fetch;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
-  servarrMetadataModule = await import("./servarr-metadata-proxy.js");
+  servarrMetadataModule = await import("./servarr-metadata.js");
   originalFetch = globalThis.fetch;
 });
 
@@ -47,7 +47,7 @@ test("syncReleaseGroup stores Servarr Metadata Server album detail release type 
     }),
   })) as unknown as typeof fetch;
 
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("release-group-mbid", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("release-group-mbid", "artist-mbid");
 
   const releaseGroup = db.prepare(`
     SELECT title, primary_type, secondary_types, first_release_date
@@ -87,7 +87,7 @@ test("syncReleaseGroup keeps the canonical Servarr Metadata Server album owner i
     }),
   })) as unknown as typeof fetch;
 
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("happier-release-group", "bastille-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("happier-release-group", "bastille-mbid");
 
   const releaseGroup = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
     .get("happier-release-group") as { artist_mbid: string };
@@ -149,13 +149,13 @@ test("syncReleaseGroup skips rewriting an unchanged release group (diff-reconcil
   resetCatalog();
   fetchReturning(DOOM_DAYS_PAYLOAD);
 
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   // Mutate stored values; an unchanged re-sync must NOT overwrite them.
   db.prepare("UPDATE Albums SET title = 'SENTINEL' WHERE mbid = ?").run("rg-skip");
   db.prepare("UPDATE Tracks SET title = 'SENTINEL-TRACK' WHERE mbid = ?").run("trk-1");
 
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   const rg = db.prepare("SELECT title FROM Albums WHERE mbid = ?").get("rg-skip") as { title: string };
   const trk = db.prepare("SELECT title FROM Tracks WHERE mbid = ?").get("trk-1") as { title: string };
@@ -167,11 +167,11 @@ test("syncReleaseGroup rewrites when the remote payload changes", async () => {
   const { db } = dbModule;
   resetCatalog();
   fetchReturning(DOOM_DAYS_PAYLOAD);
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
   db.prepare("UPDATE Albums SET title = 'SENTINEL' WHERE mbid = ?").run("rg-skip");
 
   fetchReturning({ ...DOOM_DAYS_PAYLOAD, title: "Doom Days (Deluxe)" });
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   const rg = db.prepare("SELECT title FROM Albums WHERE mbid = ?").get("rg-skip") as { title: string };
   assert.equal(rg.title, "Doom Days (Deluxe)", "changed payload should rewrite the release group");
@@ -181,12 +181,12 @@ test("syncReleaseGroup re-hydrates missing releases even when the hash matches",
   const { db } = dbModule;
   resetCatalog();
   fetchReturning(DOOM_DAYS_PAYLOAD);
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   // Child rows pruned but the RG hash still present: an identical re-sync must
   // repair the tracklist rather than skip on the stale hash.
   db.prepare("DELETE FROM AlbumReleases WHERE release_group_mbid = ?").run("rg-skip");
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
     .get("rg-skip") as { count: number };
@@ -205,10 +205,10 @@ test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async ()
   };
   fetchReturning(artistPayload);
 
-  await servarrMetadataModule.servarrMetadataProxy.syncArtist("artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncArtist("artist-mbid");
   db.prepare("UPDATE ArtistMetadata SET name = 'SENTINEL' WHERE mbid = ?").run("artist-mbid");
 
-  await servarrMetadataModule.servarrMetadataProxy.syncArtist("artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncArtist("artist-mbid");
 
   const artist = db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ?").get("artist-mbid") as { name: string };
   assert.equal(artist.name, "SENTINEL", "unchanged artist should be skipped, not rewritten");
@@ -218,7 +218,7 @@ test("syncReleaseGroup populates curated release columns from the payload", asyn
   const { db } = dbModule;
   resetCatalog();
   fetchReturning(DOOM_DAYS_PAYLOAD);
-  await servarrMetadataModule.servarrMetadataProxy.syncReleaseGroup("rg-skip", "artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
   const rel = db.prepare("SELECT country, label, media FROM AlbumReleases WHERE mbid = ?")
     .get("rel-1") as { country: string; label: string; media: string };
@@ -244,7 +244,7 @@ test("syncArtist populates curated artist columns from the payload", async () =>
     Albums: [],
   });
 
-  await servarrMetadataModule.servarrMetadataProxy.syncArtist("artist-mbid");
+  await servarrMetadataModule.servarrMetadata.syncArtist("artist-mbid");
 
   const am = db.prepare(`
     SELECT overview, status, links, genres, aliases, old_foreign_ids
@@ -285,7 +285,7 @@ test("searchAll ranks the substantial exact-name artist ahead of same-name colli
     ]),
   })) as unknown as typeof fetch;
 
-  const results = await servarrMetadataModule.servarrMetadataProxy.searchAll("Bastille", 10);
+  const results = await servarrMetadataModule.servarrMetadata.searchAll("Bastille", 10);
 
   assert.equal(results[0].artist.id, "indie-pop-band");
   assert.equal(results[1].artist.id, "metal-band");

@@ -4,12 +4,12 @@
  * `docs/DATA_MODEL_TARGET.md` §3.
  *
  * This is a thin, behavior-preserving adapter: every method delegates to the
- * existing `ServarrMetadataProxy` (`api.lidarr.audio`). It does NOT change what the
+ * existing `ServarrMetadataService` (`api.lidarr.audio`). It does NOT change what the
  * Servarr Metadata Server flow does — it only documents it as one `CatalogProvider`
  * implementation so the catalog source becomes swappable.
  *
  * NOTE (U3 scaffolding): not yet wired into the live request path. The live app
- * still calls `ServarrMetadataProxy` directly. This adapter exists so MB-local mode can
+ * still calls `ServarrMetadataService` directly. This adapter exists so MB-local mode can
  * be slotted in later without touching call sites.
  *
  * Servarr Metadata Server capability gaps (these methods are intentionally absent / throwing):
@@ -19,7 +19,7 @@
  * MB-local mode fills these in; until then matching falls back to
  * title/track-count/date/duration (see §3 "Rate limits").
  */
-import { ServarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
+import { ServarrMetadataService } from "../metadata/servarr-metadata.js";
 import type {
   CatalogProvider,
   CatalogSearchOptions,
@@ -36,27 +36,27 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
   readonly name = "Servarr Metadata Server";
 
   /**
-   * Inject the proxy for testability. Defaults to a fresh `ServarrMetadataProxy`
+   * Inject the service for testability. Defaults to a fresh `ServarrMetadataService`
    * (read-only methods used here don't touch the DB, so a fresh instance is
-   * safe — the DB-writing `syncArtist` / `syncReleaseGroup` live on the proxy
+   * safe — the DB-writing `syncArtist` / `syncReleaseGroup` live on the service
    * and remain the live ingestion path, separate from this read adapter).
    */
-  constructor(private readonly proxy: Pick<
-    ServarrMetadataProxy,
+  constructor(private readonly service: Pick<
+    ServarrMetadataService,
     "getArtistInfo" | "getAlbumInfo" | "searchForNewArtist" | "searchAll"
-  > = new ServarrMetadataProxy()) {}
+  > = new ServarrMetadataService()) {}
 
   async getArtist(artistMbid: string): Promise<LidarrArtist> {
-    return this.proxy.getArtistInfo(artistMbid);
+    return this.service.getArtistInfo(artistMbid);
   }
 
   async getArtistReleaseGroups(artistMbid: string): Promise<MusicBrainzReleaseGroupForMatching[]> {
-    const artist = await this.proxy.getArtistInfo(artistMbid);
+    const artist = await this.service.getArtistInfo(artistMbid);
     return releaseGroupsFromArtist(artist);
   }
 
   async getReleaseGroup(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail> {
-    return this.proxy.getAlbumInfo(releaseGroupMbid);
+    return this.service.getAlbumInfo(releaseGroupMbid);
   }
 
   /**
@@ -86,15 +86,15 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
     releaseGroupMbid: string,
     releaseMbid: string,
   ): Promise<LidarrRelease | null> {
-    const detail = await this.proxy.getAlbumInfo(releaseGroupMbid);
+    const detail = await this.service.getAlbumInfo(releaseGroupMbid);
     return findReleaseInGroup(detail, releaseMbid);
   }
 
   async search(query: string, options: CatalogSearchOptions = {}): Promise<CatalogSearchResults> {
     const limit = options.limit ?? 20;
     const [artists, raw] = await Promise.all([
-      this.proxy.searchForNewArtist(query, limit),
-      Promise.resolve(this.proxy.searchAll(query, limit)).catch(() => [] as unknown[]),
+      this.service.searchForNewArtist(query, limit),
+      Promise.resolve(this.service.searchAll(query, limit)).catch(() => [] as unknown[]),
     ]);
     return { artists, raw };
   }
