@@ -64,8 +64,8 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
 const releaseGroupPopularityExpression = `
         MAX(
             COALESCE(rg.popularity, 0),
-            COALESCE(CAST(json_extract(stereo_provider_item.data, '$.popularity') AS REAL), 0),
-            COALESCE(CAST(json_extract(spatial_provider_item.data, '$.popularity') AS REAL), 0)
+            COALESCE(CAST(stereo_provider_item.popularity AS REAL), 0),
+            COALESCE(CAST(spatial_provider_item.popularity AS REAL), 0)
         )
 `;
 
@@ -293,11 +293,40 @@ export class AlbumQueryService {
     }
 
     static async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
-        return MusicBrainzReleaseGroupReadService.getTracks(albumId);
+        const tracks = await MusicBrainzReleaseGroupReadService.getTracks(albumId);
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        
+        if (includeSpatial) {
+            return tracks;
+        }
+
+        return tracks.map(track => {
+            const filteredTags = track.qualityTags?.filter(tag => !tag.toLowerCase().includes("atmos")) ?? [];
+            return {
+                ...track,
+                quality: filteredTags.length > 0 ? filteredTags[0] : "",
+                qualityTags: filteredTags
+            };
+        });
     }
 
     static async getAlbumPage(albumId: string): Promise<AlbumPageContract | null> {
-        return MusicBrainzReleaseGroupReadService.getPage(albumId);
+        const page = await MusicBrainzReleaseGroupReadService.getPage(albumId);
+        if (!page) return null;
+
+        const includeSpatial = getConfigSection("filtering").include_spatial === true;
+        if (!includeSpatial) {
+            page.tracks = page.tracks.map(track => {
+                const filteredTags = track.qualityTags?.filter(tag => !tag.toLowerCase().includes("atmos")) ?? [];
+                return {
+                    ...track,
+                    quality: filteredTags.length > 0 ? filteredTags[0] : "",
+                    qualityTags: filteredTags
+                };
+            });
+        }
+
+        return page;
     }
 
     static getSimilarAlbums(_albumId: string): SimilarAlbumContract[] {

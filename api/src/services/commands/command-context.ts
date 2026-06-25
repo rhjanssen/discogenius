@@ -1,6 +1,6 @@
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
-import { commandHandlers } from "./handlers/index.js";
-import type { CommandHandler, CommandHandlerContext } from "./handlers/index.js";
+import { commandExecutors } from "./executors/registry.js";
+import type { CommandHandlerContext } from "./handlers/handler-context.js";
 import { queueNextMonitoringPass } from "./scheduler.js";
 
 /**
@@ -120,19 +120,19 @@ export function buildHandlerContext(): CommandHandlerContext {
  * Never throws — handler failures are caught and persisted via `fail`.
  */
 export async function executeCommand(job: CommandModel): Promise<void> {
-    console.log(`⚙️ Processing Command #${job.id}: ${job.name}`);
+    console.log(`[Queue] Processing Command #${job.id}: ${job.name}`);
     try {
-        const handler = commandHandlers[job.name];
-        if (handler) {
-            await (handler as CommandHandler)(job, buildHandlerContext());
+        const executor = commandExecutors[job.name];
+        if (executor) {
+            await executor.execute(job, buildHandlerContext());
         } else {
             console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
         }
         CommandQueueManager.complete(job.id);
         queueNextMonitoringPass(job);
-        console.log(`✅ Command #${job.id} completed`);
+        console.log(`[Queue] Command #${job.id} completed`);
     } catch (error: any) {
-        console.error(`❌ Command #${job.id} failed:`, error);
+        console.error(`[Queue] Command #${job.id} failed:`, error);
         CommandQueueManager.fail(job.id, error?.message || 'Unknown command error');
         queueNextMonitoringPass(job);
     }

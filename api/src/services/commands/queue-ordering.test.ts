@@ -388,7 +388,9 @@ test("download queue query resolves canonical release-group provider offers with
     assert.equal(live.items[0]?.album_id, "rg-gmtf");
     assert.equal(live.items[0]?.album_title, "Give Me the Future");
     assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
-    assert.match(live.items[0]?.cover ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/canonical-cover\.jpg$/);
+    // The download queue resolves covers through the same Lidarr-style local
+    // media-cover route as the rest of the app (no per-request upstream proxy).
+    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-gmtf/cover.jpg");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-bastille",

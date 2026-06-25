@@ -18,6 +18,7 @@ import { shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
 
 type RetagTrackRow = {
   id: number;
@@ -648,6 +649,8 @@ function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, str
   const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
 
   switch (tag.key) {
+    case "lyrics":
+      return normalizeValue(common.lyrics) || fallback();
     case "title":
       return normalizeValue(common.title) || fallback();
     case "artist":
@@ -822,7 +825,7 @@ export class AudioTagService {
         COALESCE(
           canonical_recording.copyright,
           provider_recording.copyright,
-          CASE WHEN json_valid(provider_track.data) THEN json_extract(provider_track.data, '$.copyright') END
+          CASE WHEN json_valid(provider_track.data) THEN provider_track.copyright END
         ) AS media_copyright,
         canonical_recording.replay_gain AS media_replay_gain,
         canonical_recording.peak AS media_peak,
@@ -834,8 +837,8 @@ export class AudioTagService {
         COALESCE(
           canonical_group.review_text,
           alb.review_text,
-          CASE WHEN json_valid(provider_album.data) THEN json_extract(provider_album.data, '$.review_text') END,
-          CASE WHEN json_valid(provider_album.data) THEN json_extract(provider_album.data, '$.review') END
+          CASE WHEN json_valid(provider_album.data) THEN provider_album.review_text END,
+          CASE WHEN json_valid(provider_album.data) THEN provider_album.review_text END
         ) AS album_review_text,
         COALESCE(canonical_recording.credits, provider_recording.credits) AS media_credits,
         COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS media_mbid,
@@ -1023,6 +1026,7 @@ export class AudioTagService {
     const isM4a = ext === ".m4a" || ext === ".mp4";
 
     const flacMap: Record<string, string> = {
+      lyrics: "LYRICS",
       title: "TITLE",
       artist: "ARTIST",
       album_artist: "ALBUMARTIST",
@@ -1052,6 +1056,7 @@ export class AudioTagService {
     };
 
     const mp3Map: Record<string, string> = {
+      lyrics: "lyrics-eng",
       title: "title",
       artist: "artist",
       album_artist: "album_artist",
@@ -1081,6 +1086,7 @@ export class AudioTagService {
     };
 
     const m4aMap: Record<string, string> = {
+      lyrics: "lyrics-eng",
       title: "title",
       artist: "artist",
       album_artist: "album_artist",
@@ -1848,6 +1854,24 @@ export class AudioTagService {
     }
 
     const desiredTags = this.buildDesiredTags(row, config);
+
+    const quality = getConfigSection("quality");
+    if (quality.embed_lyrics && row.file_provider_id) {
+      const lyrics = await getLyricsForProviderMedia(row.file_provider_id);
+      if (lyrics) {
+        const targetValue = quality.embed_synced_lyrics && lyrics.subtitles ? lyrics.subtitles : lyrics.text;
+        if (targetValue) {
+          desiredTags.push({
+            key: "lyrics",
+            label: "Lyrics",
+            ffmpegKey: "lyrics-eng",
+            targetValue,
+            aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+          });
+        }
+      }
+    }
+
     const removals = this.buildManagedTagRemovals(config);
     if (desiredTags.length === 0 && removals.length === 0) {
       return {
@@ -2013,7 +2037,26 @@ export class AudioTagService {
         continue;
       }
 
-      const desiredTags = this.buildAudioTagWriteMap(this.buildDesiredTags(enrichedRow, config), enrichedRow.extension);
+      const desiredTagsArr = this.buildDesiredTags(enrichedRow, config);
+
+      const quality = getConfigSection("quality");
+      if (quality.embed_lyrics && enrichedRow.file_provider_id) {
+        const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id);
+        if (lyrics) {
+          const targetValue = quality.embed_synced_lyrics && lyrics.subtitles ? lyrics.subtitles : lyrics.text;
+          if (targetValue) {
+            desiredTagsArr.push({
+              key: "lyrics",
+              label: "Lyrics",
+              ffmpegKey: "lyrics-eng",
+              targetValue,
+              aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+            });
+          }
+        }
+      }
+
+      const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, enrichedRow.extension);
       const removalKeys = this.buildAudioTagRemovalKeys(this.buildManagedTagRemovals(config), enrichedRow.extension);
 
       if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {

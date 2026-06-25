@@ -700,11 +700,6 @@ export class ServarrMetadataProxy {
         track.DurationMs,
       );
     });
-
-    await MediaCoverService.resolveAlbumArtwork({
-      albumMbid: releaseGroupMbid,
-      servarrMetadataData: { images: albumImages },
-    });
   }
 }
 

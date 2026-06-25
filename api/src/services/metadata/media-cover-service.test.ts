@@ -48,7 +48,7 @@ test("Servarr Metadata Server album artwork maps to the album MediaCover route",
     ],
   });
 
-  assert.equal(artworkUrl, `/MediaCover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
 });
 
 test("Servarr Metadata Server selectors return raw URLs for durable storage", () => {
@@ -119,7 +119,7 @@ test("Servarr Metadata Server album artwork wins over cached provider fallback a
     providerCandidates: [],
   });
 
-  assert.equal(artworkUrl, `/MediaCover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
 });
 
 test("provider artwork ids resolve through the provider interface before caching", async () => {
@@ -198,7 +198,7 @@ test("provider artwork ids resolve through the provider interface before caching
     }],
   });
 
-  assert.equal(artworkUrl, `/MediaCover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
   assert.deepEqual(artworkRequests, [{
     entityType: "album",
     providerId: "provider-album-id",
@@ -227,11 +227,11 @@ test("album artwork resolver caches Cover Art Archive artwork locally when metad
 
   const artworkUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid });
 
-  assert.equal(artworkUrl, `/MediaCover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
   assert.deepEqual(calls, [`https://coverartarchive.org/release-group/${albumMbid}/front`]);
-  assert.equal(fs.existsSync(path.join(tempDir, "MediaCover", "Albums", albumMbid, "cover.jpg")), true);
-  assert.equal(fs.existsSync(path.join(tempDir, "MediaCover", "Albums", albumMbid, "cover-500.jpg")), true);
-  assert.equal(fs.existsSync(path.join(tempDir, "MediaCover", "Albums", albumMbid, "cover-250.jpg")), true);
+  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.jpg")), true);
+  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-500.jpg")), true);
+  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-250.jpg")), true);
 
   const secondArtworkUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid });
   assert.equal(secondArtworkUrl, artworkUrl);

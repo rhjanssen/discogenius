@@ -7,6 +7,7 @@ import {
     updateArtistDownloadStatus,
 } from "../download/download-state.js";
 import { CurationService } from "./curation-service.js";
+import { DownloadMissingService } from "./download-missing-service.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -539,7 +540,7 @@ export class LibraryBulkActionService {
         if (action === "download") {
             for (const row of rows) {
                 const artistId = String(row.id);
-                const queueCounts = await CurationService.queueMonitoredItems(artistId);
+                const queueCounts = await DownloadMissingService.queueMonitoredItems(artistId);
                 const jobCount = queueCounts.albums + queueCounts.tracks + queueCounts.videos;
                 result.items.push({
                     id: artistId,

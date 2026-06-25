@@ -197,10 +197,10 @@ router.get("/", async (req, res) => {
               COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
               COALESCE(release.date, rg.first_release_date) AS release_date,
               COALESCE(
-                json_extract(selected_slot.provider_data, '$.cover'),
+                selected_slot.cover,
                 provider_album.asset_id,
                 provider_track.asset_id,
-                json_extract(provider_track.data, '$.cover')
+                provider_track.cover
               ) AS album_cover,
               rg.mbid AS release_group_mbid,
               rg.images AS rg_images,

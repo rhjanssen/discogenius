@@ -44,7 +44,7 @@ type MediaCoverProxyEntry = {
 
 const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
 const MEDIA_COVER_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-const MEDIA_COVER_ROOT = path.join(CONFIG_DIR, "MediaCover");
+const MEDIA_COVER_ROOT = path.join(CONFIG_DIR, "media-cover");
 const MEDIA_COVER_DEFAULT_HEIGHTS = [500, 250] as const;
 const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
@@ -83,8 +83,8 @@ function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEnti
 function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = encodeURIComponent(safeMediaCoverEntityId(entityId));
   return coverEntity === "Album"
-    ? `/MediaCover/Albums/${safeId}`
-    : `/MediaCover/${safeId}`;
+    ? `/media-cover/Albums/${safeId}`
+    : `/media-cover/${safeId}`;
 }
 
 function normalizedCoverType(coverType: string): string {
@@ -268,7 +268,7 @@ export async function ensureCachedMediaCover(options: {
 
 export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
   const text = String(value || "").trim();
-  if (!text.startsWith("/MediaCover/")) {
+  if (!text.startsWith("/media-cover/")) {
     return null;
   }
 
@@ -397,7 +397,7 @@ export function registerMediaCoverProxyUrl(value: unknown): string | null {
     `).run(hash, url, expiresAt);
   });
 
-  return `/MediaCoverProxy/${hash}/${getSafeMediaCoverFilename(url)}`;
+  return `/media-cover-proxy/${hash}/${getSafeMediaCoverFilename(url)}`;
 }
 
 export function getRegisteredMediaCoverProxyUrl(hash: string): string | null {
@@ -422,7 +422,7 @@ export function resolveMediaCoverProxyUrl(value: unknown): string | null {
     return null;
   }
 
-  const match = text.match(/^\/MediaCoverProxy\/([a-f0-9]{64})\//i);
+  const match = text.match(/^\/media-cover-proxy\/([a-f0-9]{64})\//i);
   if (match) {
     return getRegisteredMediaCoverProxyUrl(match[1]);
   }

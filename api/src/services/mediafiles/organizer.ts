@@ -434,8 +434,8 @@ export class OrganizerService {
         rg.title,
         rg.artist_mbid AS artistMbid,
         am.name AS artistName,
-        COALESCE(json_extract(rgs.provider_data, '$.cover'), json_extract(pi.data, '$.cover')) AS providerCover,
-        json_extract(rgs.provider_data, '$.video_cover') AS videoCover,
+        COALESCE(rgs.cover, pi.cover) AS providerCover,
+        rgs.cover AS videoCover,
         selected_release.date AS releaseDate,
         rg.primary_type AS albumType,
         COALESCE(
@@ -1641,6 +1641,12 @@ export class OrganizerService {
 
         const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
         this.moveFileCrossDevice(srcFile, destFile);
+
+        const srcLrcFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), ".lrc");
+        const destLrcFile = destFile.replace(new RegExp(`\\${ext}$`, "i"), ".lrc");
+        if (fs.existsSync(srcLrcFile)) {
+          this.moveFileCrossDevice(srcLrcFile, destLrcFile);
+        }
 
         // Fingerprinting and embedded tags are applied by the post-organize
         // import finalizer after MusicBrainz identity is resolved.

@@ -188,8 +188,8 @@ app.use((req, res, next) => {
 app.use("/app-auth", appAuthRouter);
 app.use("/api/app-auth", appAuthRouter);
 app.use("/services/ultrablur", ultraBlurRouter);
-app.use("/MediaCover", mediaCoverRouter);
-app.use("/MediaCoverProxy", mediaCoverProxyRouter);
+app.use("/media-cover", mediaCoverRouter);
+app.use("/media-cover-proxy", mediaCoverProxyRouter);
 
 // Auth is an infra endpoint, kept un-versioned (like Lidarr's /login, /ping).
 app.use("/api/auth", authMiddleware, authRouter);

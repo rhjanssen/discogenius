@@ -2,6 +2,7 @@ import { CommandTrigger } from "./command-trigger.js";
 import { db } from "../../database.js";
 import { getConfigSection, updateConfig, type MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { CurationService } from "../music/curation-service.js";
+import { DownloadMissingService } from "../music/download-missing-service.js";
 import { RefreshArtistService } from "../music/refresh-artist-service.js";
 import {CommandNames} from "./command-names.js";
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
@@ -800,7 +801,7 @@ export async function downloadMissing(): Promise<{ albums: number; tracks: numbe
 
     for (const artist of monitoredArtists) {
         try {
-            const queued = await CurationService.queueMonitoredItems(String(artist.id));
+            const queued = await DownloadMissingService.queueMonitoredItems(String(artist.id));
             totalAlbums += queued.albums;
             totalTracks += queued.tracks;
             totalVideos += queued.videos;

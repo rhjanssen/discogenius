@@ -228,6 +228,7 @@ export class RefreshArtistService {
         for (const releaseGroup of releaseGroups) {
             try {
                 await servarrMetadataProxy.syncReleaseGroup(releaseGroup.mbid, artistMbid);
+                await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to hydrate canonical release group ${releaseGroup.mbid}:`, error);
             }

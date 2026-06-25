@@ -15,6 +15,7 @@ import {
 } from './download-routing.js';
 import { MediaSeedService } from '../music/media-seed-service.js';
 import { RefreshAlbumService } from "../music/refresh-album-service.js";
+import { AlbumQueryService } from "../music/album-query-service.js";
 import { streamingProviderManager } from '../providers/index.js';
 import type {
     DownloadAlbumCommand,
@@ -731,21 +732,40 @@ export class DownloadProcessor {
         sizeleft?: number;
         tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
     }) {
+        const currentJob = CommandQueueManager.get(commandId);
+        const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
+
+        let mergedTracks = state.tracks ?? currentDownloadState.tracks as any[];
+        
+        // Dynamically update track status based on currentFileNum
+        if (mergedTracks && typeof state.currentFileNum === 'number') {
+            const currentNum = state.currentFileNum;
+            const statusState = state.state;
+            mergedTracks = mergedTracks.map((t: any, idx: number) => {
+                const trackIdx = idx + 1;
+                let newStatus = t.status;
+                if (trackIdx < currentNum) newStatus = 'completed';
+                else if (trackIdx === currentNum && statusState === 'downloading') newStatus = 'downloading';
+                return { ...t, status: newStatus };
+            });
+        }
+
         const payloadPatch: Record<string, unknown> = {
             downloadState: {
-                progress: state.progress,
-                currentFileNum: state.currentFileNum,
-                totalFiles: state.totalFiles,
-                currentTrack: state.currentTrack,
-                trackProgress: state.trackProgress,
-                trackStatus: state.trackStatus,
-                statusMessage: state.statusMessage,
-                state: state.state,
-                speed: state.speed,
-                eta: state.eta,
-                size: state.size,
-                sizeleft: state.sizeleft,
-                tracks: state.tracks,
+                ...currentDownloadState,
+                progress: state.progress ?? currentDownloadState.progress,
+                currentFileNum: state.currentFileNum ?? currentDownloadState.currentFileNum,
+                totalFiles: state.totalFiles ?? currentDownloadState.totalFiles,
+                currentTrack: state.currentTrack ?? currentDownloadState.currentTrack,
+                trackProgress: state.trackProgress ?? currentDownloadState.trackProgress,
+                trackStatus: state.trackStatus ?? currentDownloadState.trackStatus,
+                statusMessage: state.statusMessage ?? currentDownloadState.statusMessage,
+                state: state.state ?? currentDownloadState.state,
+                speed: state.speed ?? currentDownloadState.speed,
+                eta: state.eta ?? currentDownloadState.eta,
+                size: state.size ?? currentDownloadState.size,
+                sizeleft: state.sizeleft ?? currentDownloadState.sizeleft,
+                tracks: mergedTracks,
             },
         };
 
@@ -981,6 +1001,29 @@ export class DownloadProcessor {
                 artist: resolved.artist,
                 cover: resolved.cover,
             });
+
+            // Initialize tracks for UI tracklist indicators
+            let initialTracks: { title: string; trackNum?: number; status: 'queued' }[] | undefined;
+            try {
+                if (type === 'track' || type === 'video') {
+                    initialTracks = [{ title: resolved.title, status: 'queued' }];
+                } else if (type === 'album' && payload.releaseGroupMbid) {
+                    const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
+                    initialTracks = albumTracks.map(t => ({
+                        title: t.title,
+                        trackNum: t.track_number,
+                        status: 'queued'
+                    }));
+                }
+            } catch (error) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Failed to fetch initial tracks for job #${job.id}:`, error);
+            }
+
+            if (initialTracks && initialTracks.length > 0) {
+                this.persistDownloadState(job.id, {
+                    tracks: initialTracks,
+                });
+            }
 
             await this.downloadItem(job.id, providerId, type, payload);
 

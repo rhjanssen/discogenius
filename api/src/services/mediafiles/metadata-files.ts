@@ -485,7 +485,7 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
     `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
 
     const resolved = row?.picture || row?.cover_image_url || null;
-    return typeof resolved === "string" && (/^https?:\/\//i.test(resolved) || resolved.startsWith("/MediaCover/")) ? resolved : null;
+    return typeof resolved === "string" && (/^https?:\/\//i.test(resolved) || resolved.startsWith("/media-cover/")) ? resolved : null;
 }
 
 function loadAlbumArtworkContext(albumId: string): {

@@ -1,4 +1,5 @@
 import { CurationService } from "../../music/curation-service.js";
+import { DownloadMissingService } from "../../music/download-missing-service.js";
 import { UpgraderService } from "../../mediafiles/upgrader.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
@@ -53,30 +54,36 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
     const selectedArtistIds = Array.isArray(job.payload.artistIds)
         ? job.payload.artistIds.map((artistId) => String(artistId))
         : undefined;
-    const artists = getManagedArtists({ artistIds: selectedArtistIds }) as Array<{ id: string | number; name?: string }>;
+
     let totalAlbums = 0;
     let totalTracks = 0;
     let totalVideos = 0;
 
-    if (artists.length > 0) {
-        ctx.updateCommandDescription(job, {
-            progress: 5,
-            description: `Managed artists - checking monitored items (0/${artists.length})`,
-        });
-    }
+    if (selectedArtistIds && selectedArtistIds.length > 0) {
+        const artists = getManagedArtists({ artistIds: selectedArtistIds }) as Array<{ id: string | number; name?: string }>;
+        for (let index = 0; index < artists.length; index += 1) {
+            const artist = artists[index];
+            const artistName = String((artist as { name?: string }).name || "").trim();
+            ctx.updateCommandDescription(job, {
+                progress: Math.min(90, 10 + Math.round((index / Math.max(artists.length, 1)) * 80)),
+                description: artistName
+                    ? `Managed artists - checking monitored items for ${artistName} (${index + 1}/${artists.length})`
+                    : `Managed artists - checking monitored items (${index + 1}/${artists.length})`,
+            });
 
-    for (let index = 0; index < artists.length; index += 1) {
-        const artist = artists[index];
-        const artistName = String((artist as { name?: string }).name || "").trim();
+            const queued = await DownloadMissingService.queueMonitoredItems(String(artist.id));
+            ArtistStatisticsService.refresh([String(artist.id)]);
+            totalAlbums += queued.albums;
+            totalTracks += queued.tracks;
+            totalVideos += queued.videos;
+        }
+    } else {
         ctx.updateCommandDescription(job, {
-            progress: Math.min(90, 10 + Math.round((index / Math.max(artists.length, 1)) * 80)),
-            description: artistName
-                ? `Managed artists - checking monitored items for ${artistName} (${index + 1}/${artists.length})`
-                : `Managed artists - checking monitored items (${index + 1}/${artists.length})`,
+            progress: 10,
+            description: `App-wide - checking monitored items`,
         });
 
-        const queued = await CurationService.queueMonitoredItems(String(artist.id));
-        ArtistStatisticsService.refresh([String(artist.id)]);
+        const queued = await DownloadMissingService.queueMonitoredItems();
         totalAlbums += queued.albums;
         totalTracks += queued.tracks;
         totalVideos += queued.videos;

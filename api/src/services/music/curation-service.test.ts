@@ -12,6 +12,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
 let curationServiceModule: typeof import("./curation-service.js");
+let downloadMissingServiceModule: typeof import("./download-missing-service.js");
 let albumQueryServiceModule: typeof import("./album-query-service.js");
 let queueModule: typeof import("../commands/command-queue-manager.js");
 
@@ -53,6 +54,7 @@ before(async () => {
 
   configModule = await import("../config/config.js");
   curationServiceModule = await import("./curation-service.js");
+  downloadMissingServiceModule = await import("./download-missing-service.js");
   albumQueryServiceModule = await import("./album-query-service.js");
   queueModule = await import("../commands/command-queue-manager.js");
 
@@ -204,7 +206,7 @@ test("CurationService queues monitored canonical videos through provider offers"
     "tidal", "video", "tidal-video-1", "artist-mbid-1", "video-rec-1", "Bohemian Rhapsody", "HIGH",
     101, 501, "verified", 1, "test",
   );
-const queued = await curationServiceModule.CurationService.queueMonitoredItems("artist-1");
+const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
   assert.equal(queued.videos, 1);
 
   const job = db.prepare(`
@@ -302,7 +304,7 @@ test("CurationService queues spatial slot when only the stereo selected release 
     "track",
   );
 
-  const queued = await curationServiceModule.CurationService.queueMonitoredItems("artist-1");
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
 
   assert.equal(queued.albums, 1);
   const jobs = db.prepare(`

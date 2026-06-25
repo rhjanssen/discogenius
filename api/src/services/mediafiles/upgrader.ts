@@ -144,13 +144,13 @@ export class UpgraderService {
             COALESCE(
                 CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END,
                 json_extract(media_item.match_evidence, '$.albumProviderId'),
-                json_extract(media_item.data, '$.albumProviderId'),
+                media_item.provider_album_id,
                 album_item.provider_id
             ) AS album_id,
             COALESCE(
                 media_item.quality,
-                json_extract(media_item.data, '$.quality'),
-                json_extract(media_item.data, '$.audioQuality')
+                media_item.quality,
+                media_item.audio_quality
             ) AS source_quality,
             lf.quality      AS current_quality,
             lf.codec        AS current_codec,
@@ -160,8 +160,8 @@ export class UpgraderService {
             lf.sample_rate  AS current_sample_rate,
             COALESCE(
                 album_item.quality,
-                json_extract(album_item.data, '$.quality'),
-                json_extract(album_item.data, '$.audioQuality')
+                album_item.quality,
+                album_item.audio_quality
             ) AS album_quality
         FROM TrackFiles lf
         LEFT JOIN ProviderItems media_item
@@ -181,8 +181,8 @@ export class UpgraderService {
                 (lf.provider_entity_type = 'album' AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT))
                 OR (json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
                     AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT))
-                OR (json_extract(media_item.data, '$.albumProviderId') IS NOT NULL
-                    AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.data, '$.albumProviderId') AS TEXT))
+                OR (media_item.provider_album_id IS NOT NULL
+                    AND CAST(album_item.provider_id AS TEXT) = CAST(media_item.provider_album_id AS TEXT))
                 OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
                 OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
              )
@@ -204,8 +204,8 @@ export class UpgraderService {
              AND CAST(album_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT) THEN 0
             WHEN json_extract(media_item.match_evidence, '$.albumProviderId') IS NOT NULL
              AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.match_evidence, '$.albumProviderId') AS TEXT) THEN 1
-            WHEN json_extract(media_item.data, '$.albumProviderId') IS NOT NULL
-             AND CAST(album_item.provider_id AS TEXT) = CAST(json_extract(media_item.data, '$.albumProviderId') AS TEXT) THEN 2
+            WHEN media_item.provider_album_id IS NOT NULL
+             AND CAST(album_item.provider_id AS TEXT) = CAST(media_item.provider_album_id AS TEXT) THEN 2
             WHEN lf.canonical_release_mbid IS NOT NULL
              AND album_item.release_mbid = lf.canonical_release_mbid THEN 3
             WHEN lf.canonical_release_group_mbid IS NOT NULL
@@ -300,7 +300,7 @@ export class UpgraderService {
                 SELECT COUNT(*) as cnt FROM ProviderItems
                 WHERE provider = 'tidal'
                   AND entity_type = 'track'
-                  AND json_extract(data, '$.albumProviderId') = ?
+                  AND provider_album_id = ?
             `).get(albumId) as any)?.cnt || 0;
 
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {

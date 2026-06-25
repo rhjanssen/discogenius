@@ -1225,13 +1225,17 @@ export class DiskScanService {
             // Try to match to a track by looking for an audio file with same stem
             const mediaId = this.findMediaIdByStem(stem, artistId)
                 || this.findMediaIdByTrackedSibling(filePath, artistId);
-            const albumId = mediaId
+            const albumIdFromTrack = mediaId
                 ? (db.prepare(`
-                    SELECT json_extract(data, '$.albumProviderId') AS album_id
+                    SELECT provider_album_id AS album_id
                     FROM ProviderItems
                     WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
                   `).get(mediaId) as any)?.album_id?.toString() || null
                 : null;
+            // A .lrc sidecar lives in its album folder; when the track row carries no
+            // explicit provider_album_id, resolve the album from the path just like the
+            // cover does, so the lyric still relinks to the right album.
+            const albumId = albumIdFromTrack || this.findAlbumIdFromPath(filePath, artistId);
             return { albumId, mediaId, fileType: "lyrics", quality: null };
         }
 
@@ -1242,7 +1246,7 @@ export class DiskScanService {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare(`
-                    SELECT json_extract(data, '$.albumProviderId') AS album_id, quality
+                    SELECT provider_album_id AS album_id, quality
                     FROM ProviderItems
                     WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
                 `).get(mediaId) as any;
@@ -1274,7 +1278,7 @@ export class DiskScanService {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare(`
-                    SELECT json_extract(data, '$.albumProviderId') AS album_id, quality
+                    SELECT provider_album_id AS album_id, quality
                     FROM ProviderItems
                     WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?
                 `).get(mediaId) as any;
@@ -1296,7 +1300,7 @@ export class DiskScanService {
             const videoMediaId = this.findVideoIdByStem(stem, artistId);
             if (videoMediaId) {
                 const media = db.prepare(`
-                    SELECT json_extract(data, '$.albumProviderId') AS album_id
+                    SELECT provider_album_id AS album_id
                     FROM ProviderItems
                     WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?
                 `).get(videoMediaId) as any;
