@@ -368,6 +368,22 @@ area.
   one main "Embed metadata tags" toggle backed by the tag-write policy, with
   separate sidecar toggles for NFO, artwork, lyrics, video thumbnails, and
   ReplayGain/fingerprinting only where they are genuinely independent.
+  - DECIDED (Robert, 2026-06-25) — fold these into the embedding rework:
+    - Lyrics: always prefer SYNCHRONISED lyrics over plain, for both the saved
+      `.lrc` sidecar and the embedded tag. Today `lyric-service` keys synced on
+      the `.lrc` extension (`isSynced`); choose synced whenever a provider
+      offers it, only falling back to plain when synced is unavailable.
+    - Cover images: for EMBEDDING + saving, always use the HIGHEST resolution
+      available from either the Servarr metadata server or the provider (TIDAL
+      album art = `origin` size; artist art = the provider's max). The UI may
+      keep serving smaller cached sizes; only the embed/save path forces max-res.
+    - AcoustID: `ACOUSTID_ID` + `ACOUSTID_FINGERPRINT` ARE real embedded tags we
+      already write (`audio-tag-service`), backed by `TrackFiles.acoustid_id` /
+      `fingerprint` from `fpcalc` at import. Lidarr has no equivalent (it isn't a
+      tagger), but MusicBrainz Picard writes them and Plex's MB-aware matching
+      reads them — keep the toggle as an optional MB/Plex-aligned extension that
+      gates fingerprint compute + embed; it is NOT part of the core Lidarr tag
+      set, so present it under advanced/diagnostics, not the main happy path.
 - pending: Review metadata tag-writing UX alongside the Lidarr port so settings
   describe consumer-facing behavior rather than exposing implementation detail;
   advanced provider/provenance tag extensions should live behind disclosure or
