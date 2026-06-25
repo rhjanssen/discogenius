@@ -1,6 +1,5 @@
 import { db, runChunkedWrite } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
-import { shouldHydrateArtistCatalog } from "../config/scan-policy.js";
 import {
     resolveArtistFolderForIdentityUpdate,
     resolveArtistFolderFromTemplate,
@@ -9,6 +8,7 @@ import {
 import { RefreshVideoService } from "./refresh-video-service.js";
 import { ScanLevel, type ScanOptions, type ScanDeepResult } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
+import { shouldRefreshArtist } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
@@ -1276,17 +1276,18 @@ export class RefreshArtistService {
         );
     }
 
-    static async refreshArtistProfile(artistId: string, options: ScanOptions = {}): Promise<void> {
-        console.log(`[RefreshArtistService] refreshArtistProfile for ${artistId}`);
-
+    /**
+     * Fetch + store the artist's provider biography. Was the "shallow" scan
+     * level's only addition over metadata; now folded into refreshArtist as a
+     * plain sub-step (Lidarr has no shallow/deep split — one refresh).
+     */
+    private static async refreshArtistBiography(artistId: string, options: ScanOptions = {}): Promise<void> {
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
         const shouldRefreshBio =
             options.forceUpdate === true ||
             existing?.bio_text == null ||
             isRefreshDue(existing?.last_scanned, refreshDays);
-
-        await this.refreshArtistMetadata(artistId, options);
 
         const refreshed = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
         if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
@@ -1323,8 +1324,6 @@ export class RefreshArtistService {
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch bio for ${artistId}:`, error);
         }
-
-        console.log(`[RefreshArtistService] refreshArtistProfile complete for ${artistId}`);
     }
 
     static async refreshArtist(artistId: string, options: ScanOptions = {}): Promise<ScanDeepResult> {
@@ -1338,44 +1337,43 @@ export class RefreshArtistService {
 
         const monitoringConfig = getConfigSection("monitoring");
         const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
-        const currentLevel = this.getScanLevel(artistId);
-        const shouldScanArtist =
-            options.forceUpdate === true ||
-            currentLevel < ScanLevel.DEEP ||
-            !artistRow ||
-            isRefreshDue(artistRow?.last_scanned, monitoringConfig.artist_refresh_days);
 
-        if (!shouldScanArtist) {
-            console.log(`[RefreshArtistService] Skipping artist ${artistId} scan (fresh)`);
-            // Nothing changed, so a deferred match would only rebuild slots from
-            // stored offers — hand back the no-hydrate context.
+        // Lidarr's ShouldRefreshArtist staleness gate — no shallow/deep levels.
+        // Refresh iff forced, never scanned, or stale per the refresh policy
+        // (12h-retry / 30d-hard / 2d-active / recent-release). One refresh path.
+        const shouldRefresh =
+            options.forceUpdate === true ||
+            !artistRow ||
+            shouldRefreshArtist({
+                artistId,
+                lastScanned: artistRow?.last_scanned,
+                refreshDays: monitoringConfig.artist_refresh_days,
+            });
+
+        if (!shouldRefresh) {
+            console.log(`[RefreshArtistService] Skipping artist ${artistId} refresh (fresh)`);
+            // Fresh: a deferred match would only rebuild slots from stored offers.
             return { artistMbid: resolveArtistMbid(), shouldHydrateCatalog: false };
         }
 
         const includeSimilarArtists = options.includeSimilarArtists !== false;
         const seedSimilarArtists = options.seedSimilarArtists !== false;
-        const hasManagedMetadata = currentLevel >= ScanLevel.DEEP;
-        const shouldHydrateCatalog = options.forceUpdate === true || shouldHydrateArtistCatalog(options, {
-            hasManagedMetadata,
-        });
-        const shouldRunShallow =
-            options.forceUpdate === true ||
-            currentLevel < ScanLevel.SHALLOW ||
-            includeSimilarArtists ||
-            seedSimilarArtists;
+        // Past the staleness gate, a refresh always does the full canonical
+        // metadata sync — diff-reconcile (content_hash) skips unchanged writes, so
+        // it's cheap, and a stale artist warrants a fresh provider re-fetch too.
+        const shouldHydrateCatalog = true;
 
-        if (shouldRunShallow) {
-            console.log(`[RefreshArtistService] Artist ${artistId} running SHALLOW scan (refresh=${options.forceUpdate === true})`);
-            await this.refreshArtistProfile(artistId, {
-                ...options,
-                includeSimilarArtists,
-                seedSimilarArtists,
-            });
-        }
+        // Canonical identity + biography (formerly the basic + shallow levels).
+        await this.refreshArtistMetadata(artistId, {
+            ...options,
+            includeSimilarArtists,
+            seedSimilarArtists,
+        });
+        await this.refreshArtistBiography(artistId, options);
 
         let artistMbid = resolveArtistMbid();
 
-        if (shouldHydrateCatalog) {
+        {
             const monitoredArtist = db.prepare("SELECT monitored FROM Artists WHERE id = ?")
                 .get(artistId) as { monitored?: number | null } | undefined;
             const isMonitored = Boolean(monitoredArtist?.monitored);

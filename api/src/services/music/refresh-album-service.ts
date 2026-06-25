@@ -484,7 +484,7 @@ export class RefreshAlbumService {
 
             for (const similar of similarAlbums) {
                 try {
-                    await RefreshArtistService.refreshArtistProfile(similar.artistId, {
+                    await RefreshArtistService.refreshArtistMetadata(similar.artistId, {
                         monitorArtist: false,
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
