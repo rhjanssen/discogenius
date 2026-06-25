@@ -1747,27 +1747,11 @@ export class AudioTagService {
         });
       }
 
-      const acoustidId = row.media_acoustid_id || row.file_acoustid_id;
-      if (acoustidId) {
-        tags.push({
-          key: "acoustid_id",
-          label: "AcoustID",
-          ffmpegKey: "acoustid_id",
-          targetValue: String(acoustidId),
-          aliases: ["acoustid_id", "acoustid id", "acoustid"],
-        });
-      }
-
-      const acoustidFingerprint = row.media_acoustid_fingerprint || row.file_fingerprint;
-      if (acoustidFingerprint) {
-        tags.push({
-          key: "acoustid_fingerprint",
-          label: "AcoustID Fingerprint",
-          ffmpegKey: "acoustid_fingerprint",
-          targetValue: String(acoustidFingerprint),
-          aliases: ["acoustid_fingerprint", "acoustid fingerprint", "fingerprint"],
-        });
-      }
+      // AcoustID id/fingerprint are deliberately NOT embedded: Lidarr writes only
+      // MusicBrainz IDs (the lever Plex/Jellyfin actually read) and uses fpcalc/
+      // AcoustID purely as INTERNAL import-match evidence — never as a written
+      // tag. We follow that exactly; the fingerprint stays in TrackFiles for
+      // matching/verification but is not surfaced as an embedded tag.
 
       if (row.media_explicit !== null && row.media_explicit !== undefined) {
         tags.push({
