@@ -157,7 +157,6 @@ function normalizeRefreshArtistPayload(
         seedSimilarArtists: Boolean(payload.seedSimilarArtists),
         forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
-        expandCreditedArtists: payload.expandCreditedArtists !== false,
         monitoringCycle: payload.monitoringCycle,
     };
 }
@@ -167,8 +166,6 @@ function areEquivalentRefreshArtistPayloads(
     right: RefreshArtistCommand,
 ): boolean {
     return left.artistId === right.artistId
-        && left.artistName === right.artistName
-        && left.workflow === right.workflow
         && left.monitorArtist === right.monitorArtist
         && left.hydrateCatalog === right.hydrateCatalog
         && left.hydrateAlbumTracks === right.hydrateAlbumTracks
@@ -176,9 +173,7 @@ function areEquivalentRefreshArtistPayloads(
         && left.includeSimilarArtists === right.includeSimilarArtists
         && left.seedSimilarArtists === right.seedSimilarArtists
         && left.forceDownloadQueue === right.forceDownloadQueue
-        && left.forceUpdate === right.forceUpdate
-        && left.expandCreditedArtists === right.expandCreditedArtists
-        && left.monitoringCycle === right.monitoringCycle;
+        && left.forceUpdate === right.forceUpdate;
 }
 
 function findActiveProviderArtistImport(payload: Partial<ImportProviderArtistsCommand>): { id: number; priority: number; status: CommandStatus } | null {

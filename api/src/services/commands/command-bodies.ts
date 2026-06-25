@@ -126,7 +126,6 @@ export interface RefreshArtistCommand extends CommandBodyCommon {
   seedSimilarArtists?: boolean;
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
-  expandCreditedArtists?: boolean;
 }
 
 /**

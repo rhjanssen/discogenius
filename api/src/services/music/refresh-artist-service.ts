@@ -32,7 +32,6 @@ import {
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { queueArtistIntake } from "./artist-workflow.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -128,7 +127,6 @@ export class RefreshArtistService {
         artistId: string,
         force = false,
         includeCreditedReleaseGroups = false,
-        expandCreditedArtists = false,
     ): Promise<string | null> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         if (!artistMbid) {
@@ -158,47 +156,6 @@ export class RefreshArtistService {
                     `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
                     `and ${credited.artists} credited artist(s) for ${artistMbid}`,
                 );
-                for (const collaboratorMbid of expandCreditedArtists ? credited.artistMbids : []) {
-                    if (collaboratorMbid === artistMbid) {
-                        continue;
-                    }
-                    const collaborator = db.prepare(`
-                        SELECT
-                            a.id,
-                            a.name,
-                            a.picture,
-                            a.cover_image_url AS coverImageUrl,
-                            a.last_scanned AS lastScanned,
-                            a.library_origin AS libraryOrigin
-                        FROM Artists a
-                        WHERE a.mbid = ?
-                        LIMIT 1
-                    `).get(collaboratorMbid) as {
-                        id?: string | number;
-                        name?: string | null;
-                        picture?: string | null;
-                        coverImageUrl?: string | null;
-                        lastScanned?: string | null;
-                        libraryOrigin?: string | null;
-                    } | undefined;
-
-                    // Deep metadata intake stamps last_scanned, so "never scanned"
-                    // is the only trigger. First-order collaborators get their own
-                    // canonical discography and provider slot matching, but remain
-                    // unmonitored and are not curated/downloaded unless the user
-                    // monitors them.
-                    const requiresHydration = !collaborator?.lastScanned;
-                    if (requiresHydration) {
-                        queueArtistIntake({
-                            artistId: String(collaborator?.id || collaboratorMbid),
-                            artistName: String(collaborator?.name || collaboratorMbid),
-                            monitored: false,
-                            forceUpdate: true,
-                            expandCreditedArtists: false,
-                            priority: -1,
-                        });
-                    }
-                }
             }
             const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force });
             if (syncedVideos > 0) {
@@ -1340,7 +1297,6 @@ export class RefreshArtistService {
             artistMbid = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
-                isMonitored,
                 isMonitored,
             );
             if (artistMbid) {

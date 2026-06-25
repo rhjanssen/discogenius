@@ -17,7 +17,6 @@ export interface ScanOptions {
     seedSimilarArtists?: boolean;
     includeSimilarAlbums?: boolean;
     seedSimilarAlbums?: boolean;
-    expandCreditedArtists?: boolean;
     /**
      * When true, scanDeep performs metadata intake only and SKIPS the inline
      * provider-matching step, returning the context a caller needs to enqueue a

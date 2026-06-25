@@ -445,7 +445,6 @@ router.get("/:artistId/page", async (req, res) => {
         artistId,
         artistName,
         workflow: "metadata-refresh",
-        expandCreditedArtists: false,
         priority: -1,
       });
     }

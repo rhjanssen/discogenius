@@ -190,6 +190,11 @@ the provider abstraction so a second provider can declare its own sources.
   inline. It queues per-artist workflow entry jobs so scheduled/manual refreshes
   reuse the same `RefreshArtist` -> `MatchArtistProviders` -> optional
   `RescanFolders` / `CurateArtist` chain.
+- done (2026-06-26): `RefreshArtist` no longer recursively queues first-order
+  credited collaborators as unmanaged artist refreshes. Credited release groups
+  stay local canonical metadata, and active refresh dedupe ignores label-only
+  payload drift plus stale expansion flags, preventing thousands of queued
+  unmanaged collaborator jobs from one managed artist.
 - done (2026-06-25): Album/track provider refresh checks no longer use
   `album_refresh_days` / `track_refresh_days`; `RefreshAlbumService` now uses
   the adaptive album and track-set refresh policies. Removed the dead

@@ -99,7 +99,6 @@ export function buildRefreshArtistCommand(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
-  expandCreditedArtists?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
@@ -118,7 +117,6 @@ export function buildRefreshArtistCommand(params: {
     seedSimilarArtists: false,
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
-    expandCreditedArtists: params.expandCreditedArtists === true,
     monitoringCycle: params.monitoringCycle,
   };
 }
@@ -165,7 +163,6 @@ export function buildArtistWorkflowEntryJob(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
-  expandCreditedArtists?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   switch (params.workflow) {
@@ -180,7 +177,6 @@ export function buildArtistWorkflowEntryJob(params: {
           artistName: params.artistName,
           workflow: params.workflow,
           forceUpdate: params.forceUpdate,
-          expandCreditedArtists: params.expandCreditedArtists,
           monitoringCycle: params.monitoringCycle,
         }),
       };
@@ -210,7 +206,6 @@ export function queueArtistWorkflow(params: {
   artistName: string;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
-  expandCreditedArtists?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
   priority?: number;
   trigger?: number;
@@ -230,7 +225,6 @@ export function queueArtistIntake(params: {
   artistName: string;
   monitored: boolean;
   forceUpdate?: boolean;
-  expandCreditedArtists?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
   priority?: number;
   trigger?: number;
@@ -240,7 +234,6 @@ export function queueArtistIntake(params: {
     artistName: params.artistName,
     workflow: params.monitored ? "monitoring-intake" : "metadata-refresh",
     forceUpdate: params.forceUpdate,
-    expandCreditedArtists: params.expandCreditedArtists === true,
     monitoringCycle: params.monitoringCycle,
     priority: params.priority,
     trigger: params.trigger,

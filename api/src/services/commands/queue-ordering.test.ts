@@ -140,6 +140,46 @@ test("provider artist import duplicate can raise queued priority", () => {
     assert.equal(row.trigger, 1);
 });
 
+test("refresh artist dedupe ignores label-only payload differences and stale expansion flags", () => {
+    const first = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistId: "artist-1",
+            artistName: "Original Name",
+            workflow: "metadata-refresh",
+            monitorArtist: false,
+            hydrateCatalog: true,
+            hydrateAlbumTracks: false,
+            scanLibrary: false,
+            forceDownloadQueue: false,
+            forceUpdate: true,
+        },
+        "artist-1",
+    );
+
+    const duplicate = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistId: "artist-1",
+            artistName: "Renamed Artist",
+            workflow: "metadata-refresh",
+            monitorArtist: false,
+            hydrateCatalog: true,
+            hydrateAlbumTracks: false,
+            scanLibrary: false,
+            forceDownloadQueue: false,
+            forceUpdate: true,
+            expandCreditedArtists: true,
+        } as any,
+        "artist-1",
+    );
+
+    assert.equal(duplicate, first);
+    const row = dbModule.db.prepare("SELECT COUNT(*) as count FROM commands WHERE name = ? AND ref_id = ?")
+        .get(queueModule.CommandNames.RefreshArtist, "artist-1") as { count: number };
+    assert.equal(row.count, 1);
+});
+
 test("reorderPendingJobs rejects invalid reorder sets", () => {
     const first = queuePendingDownload("track", "11");
     const second = queuePendingDownload("track", "12");
