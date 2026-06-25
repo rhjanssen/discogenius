@@ -173,7 +173,7 @@ export async function monitorArtistAndQueueIntake(options: {
     if (pendingArtistId) {
         artistId = pendingArtistId;
     } else {
-        await RefreshArtistService.scanBasic(artistId, { monitorArtist: true });
+        await RefreshArtistService.refreshArtistMetadata(artistId, { monitorArtist: true });
     }
 
     const changes = applyArtistMonitoringState(artistId, true);
@@ -231,7 +231,7 @@ export async function setArtistMonitoredState(options: {
 export async function queueArtistRefreshScan(artistId: string, options?: { forceUpdate?: boolean }) {
     let artist = loadArtistWithEffectiveMonitor(artistId);
     if (!artist) {
-        await RefreshArtistService.scanBasic(artistId);
+        await RefreshArtistService.refreshArtistMetadata(artistId);
         artist = loadArtistWithEffectiveMonitor(artistId);
         if (!artist) {
             return null;

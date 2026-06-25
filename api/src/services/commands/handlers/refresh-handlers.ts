@@ -18,7 +18,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     if (job.payload.scanDepth === "basic") {
         // Credit-only collaborator intake: canonical metadata
         // without provider catalog/video/slot hydration.
-        await RefreshArtistService.scanBasic(job.payload.artistId, {
+        await RefreshArtistService.refreshArtistMetadata(job.payload.artistId, {
             monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
             includeSimilarArtists: false,
             seedSimilarArtists: false,
@@ -33,9 +33,9 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     }
     // Metadata intake only — provider matching is deferred to a standalone
     // MatchArtistProviders command enqueued below (RefreshArtist →
-    // MatchArtistProviders → RescanFolders → CurateArtist). scanDeep returns the
-    // context that command needs to stay faithful to the old inline path.
-    const { artistMbid, shouldHydrateCatalog } = await RefreshArtistService.scanDeep(job.payload.artistId, {
+    // MatchArtistProviders → RescanFolders → CurateArtist). refreshArtist returns
+    // the context that command needs to stay faithful to the old inline path.
+    const { artistMbid, shouldHydrateCatalog } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
         monitorAlbums: job.payload.monitorAlbums,
         hydrateCatalog: job.payload.hydrateCatalog,
@@ -188,7 +188,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         });
 
         try {
-            await RefreshArtistService.scanDeep(artistId, {
+            await RefreshArtistService.refreshArtist(artistId, {
                 monitorArtist: Boolean((artist as any).monitor),
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,

@@ -1199,8 +1199,8 @@ export class RefreshArtistService {
         return ScanLevel.NONE;
     }
 
-    static async scanBasic(artistId: string, options: ScanOptions = {}): Promise<void> {
-        console.log(`[RefreshArtistService] scanBasic for ${artistId}`);
+    static async refreshArtistMetadata(artistId: string, options: ScanOptions = {}): Promise<void> {
+        console.log(`[RefreshArtistService] refreshArtistMetadata for ${artistId}`);
 
         const existing = db.prepare(
             "SELECT id, monitored, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
@@ -1218,7 +1218,7 @@ export class RefreshArtistService {
 
         if (isMusicBrainzMbid(artistId) && (!existing || existing.mbid === artistId || String(existing.id) === artistId)) {
             await this.upsertMusicBrainzArtist(artistId, options);
-            console.log(`[RefreshArtistService] scanBasic complete for MusicBrainz artist ${artistId}`);
+            console.log(`[RefreshArtistService] refreshArtistMetadata complete for MusicBrainz artist ${artistId}`);
             return;
         }
 
@@ -1227,7 +1227,7 @@ export class RefreshArtistService {
                 ...options,
                 monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitored),
             });
-            console.log(`[RefreshArtistService] scanBasic skipped provider lookup for ${artistId} (provider not connected)`);
+            console.log(`[RefreshArtistService] refreshArtistMetadata skipped provider lookup for ${artistId} (provider not connected)`);
             return;
         }
 
@@ -1247,7 +1247,7 @@ export class RefreshArtistService {
                 await this.syncArtistMusicBrainzCatalog(artistId, options.forceUpdate === true);
             }
 
-            console.log(`[RefreshArtistService] scanBasic skipped for ${artistId} (fresh)`);
+            console.log(`[RefreshArtistService] refreshArtistMetadata skipped for ${artistId} (fresh)`);
             return;
         }
 
@@ -1261,7 +1261,7 @@ export class RefreshArtistService {
             });
             ProviderArtistIdentityService.store(provider.id, providerArtistIdentity, musicBrainzIdentity, localArtistId);
             if (localArtistId !== artistId) {
-                await this.scanBasic(localArtistId, {
+                await this.refreshArtistMetadata(localArtistId, {
                     ...options,
                     monitorArtist: shouldMonitor,
                 });
@@ -1276,8 +1276,8 @@ export class RefreshArtistService {
         );
     }
 
-    static async scanShallow(artistId: string, options: ScanOptions = {}): Promise<void> {
-        console.log(`[RefreshArtistService] scanShallow for ${artistId}`);
+    static async refreshArtistProfile(artistId: string, options: ScanOptions = {}): Promise<void> {
+        console.log(`[RefreshArtistService] refreshArtistProfile for ${artistId}`);
 
         const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
@@ -1286,7 +1286,7 @@ export class RefreshArtistService {
             existing?.bio_text == null ||
             isRefreshDue(existing?.last_scanned, refreshDays);
 
-        await this.scanBasic(artistId, options);
+        await this.refreshArtistMetadata(artistId, options);
 
         const refreshed = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
         if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
@@ -1324,11 +1324,11 @@ export class RefreshArtistService {
             console.warn(`[RefreshArtistService] Failed to fetch bio for ${artistId}:`, error);
         }
 
-        console.log(`[RefreshArtistService] scanShallow complete for ${artistId}`);
+        console.log(`[RefreshArtistService] refreshArtistProfile complete for ${artistId}`);
     }
 
-    static async scanDeep(artistId: string, options: ScanOptions = {}): Promise<ScanDeepResult> {
-        console.log(`[RefreshArtistService] scanDeep for ${artistId}`);
+    static async refreshArtist(artistId: string, options: ScanOptions = {}): Promise<ScanDeepResult> {
+        console.log(`[RefreshArtistService] refreshArtist for ${artistId}`);
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
 
         const resolveArtistMbid = (): string | null =>
@@ -1366,7 +1366,7 @@ export class RefreshArtistService {
 
         if (shouldRunShallow) {
             console.log(`[RefreshArtistService] Artist ${artistId} running SHALLOW scan (refresh=${options.forceUpdate === true})`);
-            await this.scanShallow(artistId, {
+            await this.refreshArtistProfile(artistId, {
                 ...options,
                 includeSimilarArtists,
                 seedSimilarArtists,
@@ -1408,7 +1408,7 @@ export class RefreshArtistService {
                 END
             WHERE id = ?
         `).run(artistId);
-        console.log(`[RefreshArtistService] scanDeep complete for ${artistId}`);
+        console.log(`[RefreshArtistService] refreshArtist complete for ${artistId}`);
         return { artistMbid, shouldHydrateCatalog };
     }
 
@@ -1417,7 +1417,7 @@ export class RefreshArtistService {
      * its music videos, pull its release offers, match each to a MusicBrainz
      * release group, persist the offers, and select provider slots.
      *
-     * Extracted verbatim from scanDeep as the seam for a standalone
+     * Extracted verbatim from refreshArtist as the seam for a standalone
      * MatchArtistProviders command that runs AFTER metadata refresh (Lidarr keeps
      * import-list/availability work separate from metadata refresh). Behaviour-
      * preserving: same order, same writes, same logs. When the catalog was not

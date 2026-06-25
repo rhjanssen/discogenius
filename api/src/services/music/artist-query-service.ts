@@ -537,7 +537,7 @@ export class ArtistQueryService {
         // — staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await RefreshArtistService.scanBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.refreshArtistMetadata(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed — fall through to 404 */ }
         }
@@ -719,7 +719,7 @@ export class ArtistQueryService {
 
         if (!existing) {
             try {
-                await RefreshArtistService.scanBasic(id, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.refreshArtistMetadata(id, { includeSimilarArtists: false, seedSimilarArtists: false });
                 existing = loadArtistWithEffectiveMonitor(id);
             } catch { /* TIDAL lookup failed */ }
         }
@@ -785,7 +785,7 @@ export class ArtistQueryService {
         // staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await RefreshArtistService.scanBasic(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.refreshArtistMetadata(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed */ }
         }

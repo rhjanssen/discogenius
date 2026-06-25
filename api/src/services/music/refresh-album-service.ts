@@ -484,7 +484,7 @@ export class RefreshAlbumService {
 
             for (const similar of similarAlbums) {
                 try {
-                    await RefreshArtistService.scanShallow(similar.artistId, {
+                    await RefreshArtistService.refreshArtistProfile(similar.artistId, {
                         monitorArtist: false,
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,

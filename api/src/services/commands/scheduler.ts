@@ -682,7 +682,7 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
         try {
             console.log(`  Checking ${artist.name}...`);
             const isMonitored = Boolean(artist.monitor);
-            await RefreshArtistService.scanDeep(artist.id, {
+            await RefreshArtistService.refreshArtist(artist.id, {
                 monitorArtist: isMonitored,
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,
@@ -755,7 +755,7 @@ export async function checkNowStreaming(sendEvent: (event: string, data: any) =>
                 total: scanTargets.length,
             });
 
-            await RefreshArtistService.scanDeep(artist.id, {
+            await RefreshArtistService.refreshArtist(artist.id, {
                 monitorArtist: isMonitored,
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,

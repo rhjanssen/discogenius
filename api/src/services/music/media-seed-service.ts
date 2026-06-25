@@ -17,7 +17,7 @@ export class MediaSeedService {
             throw new Error("Track missing artist or album info");
         }
 
-        await RefreshArtistService.scanBasic(artistId, {
+        await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
             includeSimilarArtists: false,
             seedSimilarArtists: false,
@@ -47,7 +47,7 @@ export class MediaSeedService {
             throw new Error("Video missing artist info");
         }
 
-        await RefreshArtistService.scanBasic(artistId, {
+        await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
             includeSimilarArtists: false,
             seedSimilarArtists: false,
