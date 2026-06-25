@@ -132,6 +132,29 @@ export interface RefreshArtistCommand extends CommandBodyCommon {
   scanDepth?: "basic" | "deep";
 }
 
+/**
+ * Provider availability matching for one artist, run as its own queued unit
+ * AFTER the metadata refresh (RefreshArtist → MatchArtistProviders → RescanFolders
+ * → CurateArtist). Carries the context the inline matching had so the deferred
+ * step is faithful to the inline path.
+ */
+export interface MatchArtistProvidersCommand extends CommandBodyCommon {
+  artistId: string;
+  artistName: string;
+  /** Resolved MusicBrainz artist id, carried from the refresh so the match step
+   *  does not recompute it. */
+  artistMbid: string | null;
+  /** Computed PRE-intake by RefreshArtist: true = fetch + match provider offers;
+   *  false = just rebuild slot selections from stored offers. Passed through so
+   *  the deferred match keeps the same decision the inline path would have made
+   *  (the scan level changes once intake has run). */
+  shouldHydrateCatalog: boolean;
+  workflow: ArtistWorkflowValue;
+  scanLibrary: boolean;
+  forceDownloadQueue: boolean;
+  forceUpdate: boolean;
+}
+
 export interface RefreshAlbumCommand extends CommandBodyCommon {
   albumId: string;
   forceUpdate?: boolean;

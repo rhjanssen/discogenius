@@ -7,6 +7,7 @@
 
 export const CommandNames = {
     RefreshArtist: 'RefreshArtist',
+    MatchArtistProviders: 'MatchArtistProviders',
     RefreshAlbum: 'RefreshAlbum',
     RefreshMetadata: 'RefreshMetadata',
     ApplyCuration: 'ApplyCuration',
@@ -50,6 +51,7 @@ export const DOWNLOAD_OR_IMPORT_COMMAND_NAMES = [
 
 export const ARTIST_WORKFLOW_COMMAND_NAMES = [
     CommandNames.RefreshArtist,
+    CommandNames.MatchArtistProviders,
     CommandNames.RescanFolders,
     CommandNames.CurateArtist,
 ] as const;
@@ -60,6 +62,7 @@ export const ARTIST_WORKFLOW_COMMAND_NAMES = [
  */
 export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.RefreshArtist,
+    CommandNames.MatchArtistProviders,
     CommandNames.RefreshAlbum,
     CommandNames.RefreshMetadata,
     CommandNames.ApplyCuration,

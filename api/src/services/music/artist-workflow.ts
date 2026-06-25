@@ -123,6 +123,29 @@ export function buildRefreshArtistCommand(params: {
   };
 }
 
+export function buildMatchArtistProvidersCommand(params: {
+  artistId: string;
+  artistName: string;
+  artistMbid: string | null;
+  shouldHydrateCatalog: boolean;
+  workflow: ArtistWorkflow;
+  forceUpdate?: boolean;
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
+}) {
+  const phases = getArtistWorkflowPhases(params.workflow);
+  return {
+    artistId: params.artistId,
+    artistName: params.artistName,
+    artistMbid: params.artistMbid,
+    shouldHydrateCatalog: params.shouldHydrateCatalog,
+    workflow: params.workflow,
+    scanLibrary: phases.scanLibrary,
+    forceDownloadQueue: phases.queueDownloads,
+    forceUpdate: Boolean(params.forceUpdate),
+    monitoringCycle: params.monitoringCycle,
+  };
+}
+
 export function getArtistWorkflowEntryJobType(workflow: ArtistWorkflow): ArtistWorkflowEntryJobType {
   switch (workflow) {
     case "metadata-refresh":

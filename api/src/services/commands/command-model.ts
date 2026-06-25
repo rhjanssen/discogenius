@@ -23,6 +23,7 @@ import type {
     HousekeepingCommand,
     ImportDownloadCommand,
     ImportProviderArtistsCommand,
+    MatchArtistProvidersCommand,
     MoveArtistCommand,
     RefreshAlbumCommand,
     RefreshArtistCommand,
@@ -40,6 +41,7 @@ export type CommandStatus = 'queued' | 'started' | 'completed' | 'failed' | 'can
 
 export interface CommandBodyMap {
     [CommandNames.RefreshArtist]: RefreshArtistCommand;
+    [CommandNames.MatchArtistProviders]: MatchArtistProvidersCommand;
     [CommandNames.RefreshAlbum]: RefreshAlbumCommand;
     [CommandNames.RefreshMetadata]: RefreshMetadataCommand;
     [CommandNames.ApplyCuration]: ApplyCurationCommand;

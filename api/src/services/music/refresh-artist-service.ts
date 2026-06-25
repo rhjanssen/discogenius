@@ -7,7 +7,7 @@ import {
     shouldReapplyArtistPathTemplate,
 } from "./artist-paths.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
-import { ScanLevel, type ScanOptions } from "./scan-types.js";
+import { ScanLevel, type ScanOptions, type ScanDeepResult } from "./scan-types.js";
 import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
@@ -1327,9 +1327,14 @@ export class RefreshArtistService {
         console.log(`[RefreshArtistService] scanShallow complete for ${artistId}`);
     }
 
-    static async scanDeep(artistId: string, options: ScanOptions = {}): Promise<void> {
+    static async scanDeep(artistId: string, options: ScanOptions = {}): Promise<ScanDeepResult> {
         console.log(`[RefreshArtistService] scanDeep for ${artistId}`);
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
+
+        const resolveArtistMbid = (): string | null =>
+            (db.prepare("SELECT mbid FROM Artists WHERE id = ?")
+                .get(artistId) as { mbid?: string | null } | undefined)?.mbid
+            || (isMusicBrainzMbid(artistId) ? artistId : null);
 
         const monitoringConfig = getConfigSection("monitoring");
         const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
@@ -1342,7 +1347,9 @@ export class RefreshArtistService {
 
         if (!shouldScanArtist) {
             console.log(`[RefreshArtistService] Skipping artist ${artistId} scan (fresh)`);
-            return;
+            // Nothing changed, so a deferred match would only rebuild slots from
+            // stored offers — hand back the no-hydrate context.
+            return { artistMbid: resolveArtistMbid(), shouldHydrateCatalog: false };
         }
 
         const includeSimilarArtists = options.includeSimilarArtists !== false;
@@ -1366,9 +1373,7 @@ export class RefreshArtistService {
             });
         }
 
-        let artistMbid = (db.prepare("SELECT mbid FROM Artists WHERE id = ?")
-            .get(artistId) as { mbid?: string | null } | undefined)?.mbid
-            || (isMusicBrainzMbid(artistId) ? artistId : null);
+        let artistMbid = resolveArtistMbid();
 
         if (shouldHydrateCatalog) {
             const monitoredArtist = db.prepare("SELECT monitored FROM Artists WHERE id = ?")
@@ -1385,7 +1390,13 @@ export class RefreshArtistService {
             }
         }
 
-        await this.matchArtistProviders(artistId, artistMbid, options, shouldHydrateCatalog);
+        // The RefreshArtist command path defers matching to a standalone
+        // MatchArtistProviders command (it enqueues one with the returned
+        // context). Direct callers (scheduler, bulk RefreshMetadata) keep the
+        // inline match so their single-job behaviour is unchanged.
+        if (options.deferProviderMatching !== true) {
+            await this.matchArtistProviders(artistId, artistMbid, options, shouldHydrateCatalog);
+        }
 
         db.prepare(`
             UPDATE Artists
@@ -1398,6 +1409,7 @@ export class RefreshArtistService {
             WHERE id = ?
         `).run(artistId);
         console.log(`[RefreshArtistService] scanDeep complete for ${artistId}`);
+        return { artistMbid, shouldHydrateCatalog };
     }
 
     /**

@@ -3,8 +3,11 @@ import { RefreshAlbumService } from "../../music/refresh-album-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { shouldRefreshArtist } from "../../config/refresh-policy.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
+import { buildMatchArtistProvidersCommand } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
+import { CommandNames } from "../command-names.js";
+import { CommandQueueManager } from "../command-queue-manager.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, ctx) => {
@@ -28,7 +31,11 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         });
         return;
     }
-    await RefreshArtistService.scanDeep(job.payload.artistId, {
+    // Metadata intake only — provider matching is deferred to a standalone
+    // MatchArtistProviders command enqueued below (RefreshArtist →
+    // MatchArtistProviders → RescanFolders → CurateArtist). scanDeep returns the
+    // context that command needs to stay faithful to the old inline path.
+    const { artistMbid, shouldHydrateCatalog } = await RefreshArtistService.scanDeep(job.payload.artistId, {
         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
         monitorAlbums: job.payload.monitorAlbums,
         hydrateCatalog: job.payload.hydrateCatalog,
@@ -37,40 +44,12 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
         forceUpdate: job.payload.forceUpdate ?? false,
         expandCreditedArtists: job.payload.expandCreditedArtists ?? true,
+        deferProviderMatching: true,
         progress: (event) => {
             if (event.kind === "status") {
                 ctx.updateCommandDescription(job, {
                     progress: 10,
                     description: ctx.formatArtistPhaseDescription(job, "refreshing metadata"),
-                });
-                return;
-            }
-
-            if (event.kind === "albums_total") {
-                ctx.updateCommandDescription(job, {
-                    progress: event.total > 0 ? 15 : 75,
-                    description: event.total > 0
-                        ? ctx.formatArtistPhaseDescription(job, `indexing releases (0/${event.total})`)
-                        : ctx.formatArtistPhaseDescription(job, "no releases found"),
-                });
-                return;
-            }
-
-            if (event.kind === "album") {
-                const total = Math.max(event.total, 1);
-                const progress = Math.min(45, 15 + Math.round((event.index / total) * 30));
-                ctx.updateCommandDescription(job, {
-                    progress,
-                    description: ctx.formatArtistPhaseDescription(job, `indexing releases (${event.index}/${event.total})`),
-                });
-            }
-
-            if (event.kind === "album_tracks") {
-                const total = Math.max(event.total, 1);
-                const progress = Math.min(85, 45 + Math.round((event.index / total) * 40));
-                ctx.updateCommandDescription(job, {
-                    progress,
-                    description: ctx.formatArtistPhaseDescription(job, `scanning tracks (${event.index}/${event.total}: ${event.title})`),
                 });
             }
         },
@@ -78,10 +57,81 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     ArtistStatisticsService.refresh([job.payload.artistId]);
     ctx.updateCommandDescription(job, {
         progress: 90,
+        description: ctx.formatArtistPhaseDescription(job, "metadata refreshed, matching providers"),
+    });
+
+    // Hand provider matching off to its own queued unit. That command emits
+    // ARTIST_REFRESH_COMPLETED when matching finishes, so the existing
+    // RescanFolders → CurateArtist chain still fires AFTER slots are selected.
+    CommandQueueManager.push(
+        CommandNames.MatchArtistProviders,
+        buildMatchArtistProvidersCommand({
+            artistId: job.payload.artistId,
+            artistName: job.payload.artistName,
+            artistMbid,
+            shouldHydrateCatalog,
+            workflow: job.payload.workflow,
+            forceUpdate: job.payload.forceUpdate ?? false,
+            monitoringCycle: job.payload.monitoringCycle,
+        }),
+        job.payload.artistId,
+        0,
+        job.trigger ?? CommandTrigger.Unspecified,
+    );
+};
+
+export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> = async (job, ctx) => {
+    ctx.updateCommandDescription(job, {
+        progress: 5,
+        description: ctx.formatArtistPhaseDescription(job, "matching provider availability"),
+    });
+
+    await RefreshArtistService.matchArtistProviders(
+        job.payload.artistId,
+        job.payload.artistMbid ?? null,
+        {
+            forceUpdate: job.payload.forceUpdate ?? false,
+            progress: (event) => {
+                if (event.kind === "albums_total") {
+                    ctx.updateCommandDescription(job, {
+                        progress: event.total > 0 ? 15 : 90,
+                        description: event.total > 0
+                            ? ctx.formatArtistPhaseDescription(job, `indexing releases (0/${event.total})`)
+                            : ctx.formatArtistPhaseDescription(job, "no provider releases found"),
+                    });
+                    return;
+                }
+
+                if (event.kind === "album") {
+                    const total = Math.max(event.total, 1);
+                    const progress = Math.min(55, 15 + Math.round((event.index / total) * 40));
+                    ctx.updateCommandDescription(job, {
+                        progress,
+                        description: ctx.formatArtistPhaseDescription(job, `indexing releases (${event.index}/${event.total})`),
+                    });
+                }
+
+                if (event.kind === "album_tracks") {
+                    const total = Math.max(event.total, 1);
+                    const progress = Math.min(90, 55 + Math.round((event.index / total) * 35));
+                    ctx.updateCommandDescription(job, {
+                        progress,
+                        description: ctx.formatArtistPhaseDescription(job, `scanning tracks (${event.index}/${event.total}: ${event.title})`),
+                    });
+                }
+            },
+        },
+        job.payload.shouldHydrateCatalog,
+    );
+
+    ArtistStatisticsService.refresh([job.payload.artistId]);
+    ctx.updateCommandDescription(job, {
+        progress: 95,
         description: ctx.formatArtistPhaseDescription(job, "finalizing version groups"),
     });
 
-    // Emit event so decoupled listeners (like curation.listener) can chain the redundancy check
+    // Emit event so decoupled listeners (like curation.listener) can chain the
+    // redundancy check / disk scan — AFTER provider slots are selected.
     appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETED, {
         artistId: job.payload.artistId,
         artistName: job.payload.artistName,

@@ -176,6 +176,16 @@ export const COMMAND_DEFINITIONS = {
     isPerRefExclusive: true,
     maxConcurrent: 3,
   },
+  [CommandNames.MatchArtistProviders]: {
+    type: CommandNames.MatchArtistProviders,
+    name: "Match Artist Providers",
+    requiresDiskAccess: false,
+    isTypeExclusive: false,
+    isExclusive: false,
+    isLongRunning: true,
+    isPerRefExclusive: true,
+    maxConcurrent: 3,
+  },
   [CommandNames.RefreshAlbum]: {
     type: CommandNames.RefreshAlbum,
     name: "Refresh Album",
