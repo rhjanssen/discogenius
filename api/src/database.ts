@@ -226,6 +226,36 @@ export function flushDatabase(checkpointMode: "PASSIVE" | "FULL" | "RESTART" | "
   }
 }
 
+// A PASSIVE checkpoint advances the WAL but never shrinks the physical file, so
+// under sustained write load the .db-wal stays pinned at its high-water mark
+// (observed at 200+ MB), and every reader then has to scan that bloated WAL —
+// the slow-reads-after-hours cycle. This runs PASSIVE every tick (cheap, never
+// blocks) and, once the WAL has grown past a threshold, attempts a TRUNCATE to
+// physically reclaim the file. The TRUNCATE is made non-blocking (busy_timeout
+// = 0) so a contended attempt bails instantly instead of stalling the
+// synchronous event loop; it simply succeeds on the next write lull.
+const WAL_TRUNCATE_THRESHOLD_PAGES = 8000; // ~32 MB at the default 4 KB page size
+
+export function checkpointWal(): void {
+  try {
+    const result = db.pragma("wal_checkpoint(PASSIVE)") as Array<{ log?: number }> | undefined;
+    const walPages = Array.isArray(result) && result[0] ? Number(result[0].log ?? 0) : 0;
+    if (!Number.isFinite(walPages) || walPages <= WAL_TRUNCATE_THRESHOLD_PAGES) {
+      return;
+    }
+
+    const previousBusyTimeout = db.pragma("busy_timeout", { simple: true });
+    try {
+      db.pragma("busy_timeout = 0");
+      db.pragma("wal_checkpoint(TRUNCATE)");
+    } finally {
+      db.pragma(`busy_timeout = ${previousBusyTimeout}`);
+    }
+  } catch (error) {
+    console.warn("⚠️  Failed to checkpoint SQLite WAL:", error);
+  }
+}
+
 export function closeDatabase() {
   flushDatabase();
   try {
