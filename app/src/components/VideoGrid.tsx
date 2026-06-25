@@ -318,7 +318,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
                   src={getTidalImage(video.cover_id, 'video', 'medium') || ''}
                   alt={video.title}
                   className={styles.videoImage}
-                  loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className={styles.videoFallback}>

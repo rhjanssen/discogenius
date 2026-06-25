@@ -140,7 +140,11 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         src={activeImageUrl}
                         alt={alt}
                         className={mergeClasses(styles.cardImage, !imageLoaded && styles.cardImageLoading)}
-                        loading="lazy"
+                        // NOT loading="lazy": the card grids scroll inside a nested
+                        // container, but native lazy-loading only observes the
+                        // document viewport, so below-fold covers never loaded.
+                        // (The real perf fix is caching covers to disk — Lidarr's
+                        // MediaCoverService model — so eager loading is cheap.)
                         decoding="async"
                         onLoad={() => setImageLoaded(true)}
                         onError={() => {
