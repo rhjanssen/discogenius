@@ -532,6 +532,12 @@ export class ServarrMetadataProxy {
       MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
     });
 
+    await MediaCoverService.resolveArtistArtwork({
+      artistMbid: artist.id,
+      servarrMetadataData: artist,
+      preferredCoverTypes: ["Poster", "Headshot"],
+    });
+
     return artist;
   }
 
@@ -625,11 +631,12 @@ export class ServarrMetadataProxy {
 
     const releases = detail.Releases || [];
 
+    const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
+
     // Release group + its release rows are bounded and share one transaction.
     db.transaction(() => {
       MusicBrainzArtistCreditService.ensureArtist(ownerArtistMbid);
 
-      const albumImages = mapServarrMetadataImages(detail.images || detail.Images);
       const rawDetail = detail as Record<string, any>;
       insertRg.run(
         releaseGroupMbid,
@@ -692,6 +699,11 @@ export class ServarrMetadataProxy {
         track.TrackName,
         track.DurationMs,
       );
+    });
+
+    await MediaCoverService.resolveAlbumArtwork({
+      albumMbid: releaseGroupMbid,
+      servarrMetadataData: { images: albumImages },
     });
   }
 }

@@ -1110,14 +1110,12 @@ const Library = () => {
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = Boolean(album.monitored_lock);
     const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
-    const providerImageUrl = getAlbumCover(album.provider_cover_id, 'small');
     const itemProgress = getProgressByProviderId(String(album.id));
     return (
       <MediaCard
         key={album.id}
         to={`/album/${album.id}`}
         imageUrl={imageUrl}
-        fallbackImageUrl={providerImageUrl}
         alt={album.title}
         title={album.title}
         subtitle={subtitle}
@@ -1151,18 +1149,12 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const fallbackSrc = getAlbumCover(album.provider_cover_id, 'small');
-        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || fallbackSrc;
+        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
         return src ? (
           <img
             src={src}
             alt={album.title}
             className={dgCell.thumbnailSquare}
-            onError={(event) => {
-              if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                event.currentTarget.src = fallbackSrc;
-              }
-            }}
           />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>

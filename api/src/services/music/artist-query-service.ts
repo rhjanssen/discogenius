@@ -17,33 +17,17 @@ import {
     chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
-    registerMediaCoverProxyUrl,
-    resolveMediaCoverProxyUrl,
+    mapArtistArtworkToLocalUrl,
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
-function proxyArtistArtworkUrl(...values: unknown[]): string | null {
-    for (const value of values) {
-        const text = value == null ? "" : String(value).trim();
-        if (!text) {
-            continue;
-        }
-
-        const resolved = resolveMediaCoverProxyUrl(text);
-        if (resolved) {
-            return registerMediaCoverProxyUrl(resolved) || resolved;
-        }
-
-        if (/^\/MediaCoverProxy\//i.test(text)) {
-            continue;
-        }
-
-        return registerMediaCoverProxyUrl(text) || text;
-    }
-
-    return null;
+function artistArtworkUrl(artistMbid: unknown, ...values: unknown[]): string | null {
+    return mapArtistArtworkToLocalUrl({
+        artistMbid: artistMbid == null ? null : String(artistMbid),
+        sourceUrls: values.map((value) => value == null ? null : String(value)),
+    });
 }
 
 export interface ArtistListQuery {
@@ -189,7 +173,7 @@ function artistMusicBrainzId(artist: ArtistMonitorRow | undefined, fallbackArtis
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hasArtistArtworkGap(artist: ArtistMonitorRow): boolean {
-    return !proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
+    return !artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url);
 }
 
 function shouldHydrateArtistDisplayMetadata(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
@@ -497,7 +481,7 @@ export class ArtistQueryService {
             items: artists.map((artist) => {
                 const artistId = String(artist.id);
                 const statistics = artistStatisticsById.get(artistId);
-                const resolvedArtistPicture = proxyArtistArtworkUrl(artist.picture, artist.cover_image_url);
+                const resolvedArtistPicture = artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url);
                 const countFields = includeCounts
                     ? {
                         album_count: Number(statistics?.album_count || 0),
@@ -510,7 +494,7 @@ export class ArtistQueryService {
                 return {
                     ...artist,
                     picture: resolvedArtistPicture,
-                    cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
+                    cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
                     ...countFields,
                     downloaded: includeDownloadStats
                         ? artistDownloadStats?.get(artistId)?.downloadedPercent ?? 0
@@ -557,8 +541,8 @@ export class ArtistQueryService {
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
-            picture: proxyArtistArtworkUrl(artist.picture, artist.cover_image_url),
-            cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
+            picture: artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url),
+            cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
             bio: biography,
             biography,
@@ -1173,8 +1157,8 @@ export class ArtistQueryService {
         return {
             artist: {
                 ...artist,
-                picture: proxyArtistArtworkUrl(artist.picture, artist.cover_image_url),
-                cover_image_url: proxyArtistArtworkUrl(artist.cover_image_url),
+                picture: artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url),
+                cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
                 bio,
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,

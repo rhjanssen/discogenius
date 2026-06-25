@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
 import type { AlbumTrackContract, LibraryFileContract } from "../../contracts/media.js";
-import { spatialAudioQualitySql } from "../../utils/spatial-audio.js";
+import { isSpatialAudioQuality, spatialAudioQualitySql } from "../../utils/spatial-audio.js";
+import { getConfigSection } from "../config/config.js";
 
 const canonicalTrackDownloadedPredicate = `
   track.mbid IN (
@@ -372,11 +373,19 @@ function getTrackSelectSql(whereClause: string): string {
   `);
 }
 
-function splitQualityTags(value: string | null | undefined): string[] {
+function sanitizeQualityTag(value: string | null | undefined, includeSpatial: boolean): string {
+  const quality = String(value || "").trim();
+  if (!quality) {
+    return "";
+  }
+  return includeSpatial || !isSpatialAudioQuality(quality) ? quality : "";
+}
+
+function splitQualityTags(value: string | null | undefined, includeSpatial: boolean): string[] {
   const seen = new Set<string>();
   return String(value || "")
     .split(",")
-    .map((quality) => quality.trim())
+    .map((quality) => sanitizeQualityTag(quality, includeSpatial))
     .filter((quality) => {
       const key = quality.toUpperCase();
       if (!quality || seen.has(key)) {
@@ -390,6 +399,7 @@ function splitQualityTags(value: string | null | undefined): string[] {
 export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
   const trackIds = tracks.map((track) => String(track.id));
   const filesByTrack = new Map<string, LibraryFileContract[]>();
+  const includeSpatial = getConfigSection("filtering").include_spatial === true;
 
   if (trackIds.length > 0) {
     const placeholders = trackIds.map(() => "?").join(",");
@@ -457,8 +467,8 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       musicbrainz_track_id: track.musicbrainz_track_id || trackId,
       musicbrainz_recording_id: track.musicbrainz_recording_id || null,
       musicbrainz_release_id: track.musicbrainz_release_id || null,
-      quality: track.quality || "",
-      qualityTags: splitQualityTags(track.quality_tags),
+      quality: sanitizeQualityTag(track.quality, includeSpatial),
+      qualityTags: splitQualityTags(track.quality_tags, includeSpatial),
       is_monitored: Boolean(track.is_monitored),
       monitored_lock: Boolean(track.monitored_lock),
       explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),

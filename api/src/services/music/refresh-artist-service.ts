@@ -24,7 +24,9 @@ import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
+    ensureCachedMediaCover,
     getServarrMetadataArtistImageUrl,
+    resolveAlbumArtwork,
     resolveArtistArtwork,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
@@ -278,7 +280,15 @@ export class RefreshArtistService {
             providerCandidates,
             preferredCoverTypes: ["Poster", "Headshot"],
         });
-        const fanartUrl = getServarrMetadataArtistImageUrl(artistData, "Fanart") || posterUrl;
+        const fanartSourceUrl = getServarrMetadataArtistImageUrl(artistData, "Fanart");
+        const fanartUrl = fanartSourceUrl
+            ? await ensureCachedMediaCover({
+                entityId: artistMbid,
+                coverEntity: "Artist",
+                coverType: "Fanart",
+                sourceUrl: fanartSourceUrl,
+            }) || fanartSourceUrl
+            : posterUrl;
         const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
             artistId: localArtistId,
             artistName,
@@ -696,12 +706,12 @@ export class RefreshArtistService {
         };
     }
 
-    private static storeProviderAlbumOffers(
+    private static async storeProviderAlbumOffers(
         providerId: string,
         artistMbid: string | null,
         albums: any[],
         matches: Map<string, ProviderReleaseGroupMatch>,
-    ): void {
+    ): Promise<void> {
         if (albums.length === 0) {
             return;
         }
@@ -733,6 +743,10 @@ export class RefreshArtistService {
         `);
 
         const selectCanonicalOwner = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?");
+        const coverCacheJobs: Array<{
+            releaseGroupMbid: string;
+            providerCandidate: ProviderArtworkCandidate;
+        }> = [];
 
         // Chunk the per-album upserts so a prolific artist's provider catalog
         // doesn't hold the write lock for the whole batch and starve peers.
@@ -783,7 +797,41 @@ export class RefreshArtistService {
                         evidence: JSON.stringify(match.evidence),
                     });
                 }
+
+                if (matchedReleaseGroup?.mbid && match && match.status !== "unmatched") {
+                    coverCacheJobs.push({
+                        releaseGroupMbid: matchedReleaseGroup.mbid,
+                        providerCandidate: {
+                            provider: providerId,
+                            entityId: providerAlbumId,
+                            imageId: album.cover || null,
+                            data: JSON.stringify({
+                                cover: album.cover || null,
+                                image: album.image || null,
+                                image_id: album.image_id || null,
+                                imageId: album.imageId || null,
+                            }),
+                        },
+                    });
+                }
         });
+
+        for (let i = 0; i < coverCacheJobs.length; i += 5) {
+            const chunk = coverCacheJobs.slice(i, i + 5);
+            await Promise.all(chunk.map(async (job) => {
+                try {
+                    await resolveAlbumArtwork({
+                        albumMbid: job.releaseGroupMbid,
+                        providerCandidates: [job.providerCandidate],
+                    });
+                } catch (error) {
+                    console.warn(
+                        `[RefreshArtistService] Failed to cache provider artwork for ${job.releaseGroupMbid}:`,
+                        error,
+                    );
+                }
+            }));
+        }
     }
 
     private static buildStoredProviderAlbumSelections(
@@ -1447,7 +1495,7 @@ export class RefreshArtistService {
 
                 totalAlbumsCount += albums.length;
 
-                this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
+                await this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
                 refreshedProviders.add(provider.id);
 
                 for (const album of albums) {

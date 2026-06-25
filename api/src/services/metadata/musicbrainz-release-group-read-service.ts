@@ -11,34 +11,18 @@ import {
     chooseCachedAlbumArtwork,
     chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
-    registerMediaCoverProxyUrl,
-    resolveMediaCoverProxyUrl,
+    mapArtistArtworkToLocalUrl,
 } from "./media-cover-service.js";
 import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-service.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
 
-function proxyStoredArtworkUrl(...values: unknown[]): string | null {
-    for (const value of values) {
-        const text = value == null ? "" : String(value).trim();
-        if (!text) {
-            continue;
-        }
-
-        const resolved = resolveMediaCoverProxyUrl(text);
-        if (resolved) {
-            return registerMediaCoverProxyUrl(resolved) || resolved;
-        }
-
-        if (/^\/MediaCoverProxy\//i.test(text)) {
-            continue;
-        }
-
-        return registerMediaCoverProxyUrl(text) || text;
-    }
-
-    return null;
+function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
+    return mapArtistArtworkToLocalUrl({
+        artistMbid,
+        sourceUrls: values.map((value) => value == null ? null : String(value)),
+    });
 }
 
 function queryReleaseGroup(releaseGroupMbid: string): any | null {
@@ -390,8 +374,8 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
             id: artist.artistId,
             name: artist.name,
             join_phrase: artist.joinPhrase,
-            picture: proxyStoredArtworkUrl(artist.picture, artist.coverImageUrl),
-            cover_image_url: proxyStoredArtworkUrl(artist.coverImageUrl),
+            picture: localArtistArtworkUrl(artist.artistId, artist.picture, artist.coverImageUrl),
+            cover_image_url: localArtistArtworkUrl(artist.artistId, artist.coverImageUrl),
         }));
     const artistId = albumArtists[0]?.id || fallbackArtistId;
     const artistName = albumArtists.length > 0
@@ -1004,8 +988,8 @@ export class MusicBrainzReleaseGroupReadService {
                 : [],
             similarAlbums: [],
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
-            artistPicture: album.album_artists?.[0]?.picture || proxyStoredArtworkUrl(releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
-            artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || proxyStoredArtworkUrl(releaseGroup.artist_cover_image_url),
+            artistPicture: album.album_artists?.[0]?.picture || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
+            artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_cover_image_url),
         };
     }
 

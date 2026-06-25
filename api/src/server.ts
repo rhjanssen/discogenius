@@ -17,6 +17,7 @@ import historyRouter from "./routes/v1/history.js";
 import mediaFileRouter from "./routes/library-files.js";
 import libraryBulkRouter from "./routes/library-bulk.js";
 import logRouter from "./routes/log.js";
+import mediaCoverRouter from "./routes/media-cover.js";
 import mediaCoverProxyRouter from "./routes/media-cover-proxy.js";
 import metadataRouter from "./routes/metadata.js";
 import monitoringRouter from "./routes/monitoring.js";
@@ -187,6 +188,7 @@ app.use((req, res, next) => {
 app.use("/app-auth", appAuthRouter);
 app.use("/api/app-auth", appAuthRouter);
 app.use("/services/ultrablur", ultraBlurRouter);
+app.use("/MediaCover", mediaCoverRouter);
 app.use("/MediaCoverProxy", mediaCoverProxyRouter);
 
 // Auth is an infra endpoint, kept un-versioned (like Lidarr's /login, /ping).

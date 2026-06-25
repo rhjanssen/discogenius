@@ -706,18 +706,12 @@ const ArtistPage = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const fallbackSrc = getAlbumCover(album.provider_cover_id, 'small');
-        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || fallbackSrc;
+        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
         return src ? (
           <img
             src={src}
             alt={album.title}
             className={dgCell.thumbnailSquare}
-            onError={(event) => {
-              if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                event.currentTarget.src = fallbackSrc;
-              }
-            }}
           />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>
@@ -885,11 +879,9 @@ const ArtistPage = () => {
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
     const ServarrMetadataImageUrl = item.cover_art_url || null;
-    const providerImageUrl = getAlbumCover(item.provider_cover_id, "medium");
     const storedImageUrl = getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
 
-    const imageUrl = ServarrMetadataImageUrl || storedImageUrl || providerImageUrl;
-    const fallbackImageUrl = imageUrl === providerImageUrl ? null : providerImageUrl;
+    const imageUrl = ServarrMetadataImageUrl || storedImageUrl;
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
@@ -915,7 +907,6 @@ const ArtistPage = () => {
         key={providerId}
         to={getAlbumPath(providerId)}
         imageUrl={imageUrl}
-        fallbackImageUrl={fallbackImageUrl}
         alt={albumTitle}
         title={albumTitle}
         subtitle={subtitle}

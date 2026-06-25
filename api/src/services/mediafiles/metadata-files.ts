@@ -7,6 +7,7 @@ import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
+    getMediaCoverFilePathFromUrl,
     normalizeArtworkUrl,
     parseJsonObject,
     resolveAlbumArtwork,
@@ -440,6 +441,14 @@ async function downloadProviderArtwork(
         return;
     }
 
+    const localFilePath = getMediaCoverFilePathFromUrl(url);
+    if (localFilePath) {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.copyFileSync(localFilePath, outputPath);
+        console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
+        return;
+    }
+
     const fetchUrl = resolveMediaCoverProxyUrl(url);
     if (!fetchUrl) {
         console.log(`⚠️ [METADATA] Invalid ${label} URL: ${url}`);
@@ -476,7 +485,7 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
     `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
 
     const resolved = row?.picture || row?.cover_image_url || null;
-    return typeof resolved === "string" && /^https?:\/\//i.test(resolved) ? resolved : null;
+    return typeof resolved === "string" && (/^https?:\/\//i.test(resolved) || resolved.startsWith("/MediaCover/")) ? resolved : null;
 }
 
 function loadAlbumArtworkContext(albumId: string): {

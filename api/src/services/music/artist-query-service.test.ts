@@ -183,8 +183,8 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(albums[0].source, "musicbrainz");
   assert.equal(albums[0].monitored_lock, true);
   assert.equal(albums[0].selected_provider_id, "provider-album-1");
-  assert.match(albums[0].cover_art_url, /^\/MediaCoverProxy\//);
-  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+  assert.equal(albums[0].cover_art_url, "/MediaCover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 
   assert.equal(topTracks.length, 1);
@@ -225,7 +225,7 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums[0].id, "release-group-mbid-1");
   assert.equal(albums[0].title, "Canonical Album");
   assert.equal(albums[0].source, "musicbrainz");
-  assert.match(albums[0].cover_art_url, /^\/MediaCoverProxy\//);
+  assert.equal(albums[0].cover_art_url, "/MediaCover/Albums/release-group-mbid-1/cover.jpg");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
@@ -246,9 +246,8 @@ test("artist page album cards prefer cached Servarr Metadata Server artwork over
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
-  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+  assert.equal(albums[0].cover_art_url, "/MediaCover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
 test("artist page album cards resolve Servarr Metadata Server artwork before provider fallback on first load", async () => {
@@ -268,9 +267,8 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-  assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), servarrMetadataUrl);
-  assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+  assert.equal(albums[0].cover_art_url, "/MediaCover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
 test("artist page uses provider fallback without hydrating missing release-group artwork", async () => {
@@ -301,8 +299,7 @@ test("artist page uses provider fallback without hydrating missing release-group
       .find((module: any) => module.title === "Albums")?.items || [];
 
     assert.equal(albums.length, 1);
-    const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash), providerFallbackUrl);
+    assert.equal(albums[0].cover_art_url, "/MediaCover/Albums/release-group-mbid-1/cover.jpg");
     assert.equal(albums[0].provider_cover_id, providerFallbackUrl);
     assert.equal(syncCalled, false);
   } finally {
@@ -330,12 +327,8 @@ test("artist page uses selected provider artwork for blank release-group artwork
       .find((module: any) => module.title === "Albums")?.items || [];
 
     assert.equal(albums.length, 1);
-    const hash = String(albums[0].cover_art_url || "").split("/")[2] ?? "";
-    assert.equal(
-      mediaCoverServiceModule.getRegisteredMediaCoverProxyUrl(hash),
-      "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg",
-    );
-    assert.equal(albums[0].provider_cover_id, "https://resources.tidal.com/images/13bb32e2/e326/4ee5/be74/f3320ad3379c/750x750.jpg");
+    assert.equal(albums[0].cover_art_url, null);
+    assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
     assert.equal(syncCalled, false);
   } finally {
     ServarrMetadataProxyModule.servarrMetadataProxy.syncReleaseGroup = originalSync;

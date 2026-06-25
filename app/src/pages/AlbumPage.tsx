@@ -776,7 +776,6 @@ const AlbumPage = () => {
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
-  const [providerCoverImageFailed, setProviderCoverImageFailed] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
@@ -825,17 +824,8 @@ const AlbumPage = () => {
   const albumCanonicalArtworkUrl = album
     ? (album.cover_art_url || getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
     : null;
-  const albumProviderArtworkUrl = album
-    ? getAlbumCover((album as any).provider_cover_id, "large")
-    : null;
   const albumArtworkUrl = album
-    ? (
-      albumCanonicalArtworkUrl && !coverImageFailed
-        ? albumCanonicalArtworkUrl
-        : albumProviderArtworkUrl && !providerCoverImageFailed
-          ? albumProviderArtworkUrl
-          : albumCanonicalArtworkUrl
-    )
+    ? (albumCanonicalArtworkUrl && !coverImageFailed ? albumCanonicalArtworkUrl : null)
     : undefined;
   const albumBrandColor = useArtworkBrandColor({
     artworkUrl: albumArtworkUrl,
@@ -849,8 +839,7 @@ const AlbumPage = () => {
 
   useEffect(() => {
     setCoverImageFailed(false);
-    setProviderCoverImageFailed(false);
-  }, [albumCanonicalArtworkUrl, albumProviderArtworkUrl]);
+  }, [albumCanonicalArtworkUrl]);
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!album?.monitored_lock;
@@ -1227,7 +1216,6 @@ const AlbumPage = () => {
         className={isCurrent ? styles.currentEdition : undefined}
         to={target}
         imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
-        fallbackImageUrl={getAlbumCover(item.provider_cover_id, "medium")}
         alt={item.title}
         title={item.title}
         subtitle={subtitle}
@@ -1260,13 +1248,7 @@ const AlbumPage = () => {
                       alt={album.title}
                       className={styles.coverArt}
                       decoding="async"
-                      onError={() => {
-                        if (albumCanonicalArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
-                          setCoverImageFailed(true);
-                        } else {
-                          setProviderCoverImageFailed(true);
-                        }
-                      }}
+                      onError={() => setCoverImageFailed(true)}
                     />
                   ) : (
                     <div className={styles.coverPlaceholder}>
