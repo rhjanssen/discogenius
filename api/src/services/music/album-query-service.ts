@@ -8,6 +8,7 @@ import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } f
 import type { AlbumContract, AlbumsListResponseContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import { getConfigSection } from "../config/config.js";
+import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 const releaseGroupMonitoredExpression = `
         CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END
 `;
@@ -59,6 +60,84 @@ function releaseGroupDownloadedPredicate(libraryFilter: string): string {
       )
   )
 `;
+}
+
+function sanitizeQualityTag(value: string | null | undefined, includeSpatial: boolean): string {
+    const quality = String(value || "").trim();
+    if (!quality) {
+        return "";
+    }
+    return includeSpatial || !isSpatialAudioQuality(quality) ? quality : "";
+}
+
+function sanitizeQualityTags(values: string[] | undefined, includeSpatial: boolean): string[] {
+    const seen = new Set<string>();
+    return (values || [])
+        .map((quality) => sanitizeQualityTag(quality, includeSpatial))
+        .filter((quality) => {
+            const key = quality.toUpperCase();
+            if (!quality || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+}
+
+function sanitizeAlbumTrack(track: AlbumTrackContract, includeSpatial: boolean): AlbumTrackContract {
+    if (includeSpatial) {
+        return track;
+    }
+
+    const qualityTags = sanitizeQualityTags(track.qualityTags, includeSpatial);
+    const quality = sanitizeQualityTag(track.quality, includeSpatial) || qualityTags[0] || "";
+    const files = track.files.map((file) => {
+        const fileQuality = sanitizeQualityTag(file.quality, includeSpatial);
+        return fileQuality === file.quality ? file : { ...file, quality: fileQuality || null };
+    });
+
+    return {
+        ...track,
+        quality,
+        qualityTags,
+        files,
+    };
+}
+
+function sanitizeAlbumSpatialFields(album: AlbumContract, includeSpatial: boolean): AlbumContract {
+    if (includeSpatial) {
+        return album;
+    }
+
+    const quality = sanitizeQualityTag(album.quality, includeSpatial)
+        || sanitizeQualityTag(album.stereo_quality, includeSpatial)
+        || null;
+
+    return {
+        ...album,
+        quality,
+        spatial_provider: null,
+        spatial_provider_id: null,
+        spatial_quality: null,
+        spatial_match_status: null,
+        spatial_release_mbid: null,
+        selected_provider: album.stereo_provider || null,
+        selected_provider_id: album.stereo_provider_id || null,
+        selected_release_mbid: album.stereo_release_mbid || null,
+    };
+}
+
+function sanitizeAlbumVersionSpatialFields(version: AlbumVersionContract, includeSpatial: boolean): AlbumVersionContract {
+    if (includeSpatial) {
+        return version;
+    }
+
+    return {
+        ...version,
+        quality: sanitizeQualityTag(version.quality, includeSpatial) || sanitizeQualityTag(version.stereo_quality, includeSpatial) || null,
+        spatial_provider_id: null,
+        spatial_quality: null,
+    };
 }
 
 const releaseGroupPopularityExpression = `
@@ -295,19 +374,7 @@ export class AlbumQueryService {
     static async getAlbumTracks(albumId: string): Promise<AlbumTrackContract[]> {
         const tracks = await MusicBrainzReleaseGroupReadService.getTracks(albumId);
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        
-        if (includeSpatial) {
-            return tracks;
-        }
-
-        return tracks.map(track => {
-            const filteredTags = track.qualityTags?.filter(tag => !tag.toLowerCase().includes("atmos")) ?? [];
-            return {
-                ...track,
-                quality: filteredTags.length > 0 ? filteredTags[0] : "",
-                qualityTags: filteredTags
-            };
-        });
+        return tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial));
     }
 
     static async getAlbumPage(albumId: string): Promise<AlbumPageContract | null> {
@@ -315,18 +382,13 @@ export class AlbumQueryService {
         if (!page) return null;
 
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        if (!includeSpatial) {
-            page.tracks = page.tracks.map(track => {
-                const filteredTags = track.qualityTags?.filter(tag => !tag.toLowerCase().includes("atmos")) ?? [];
-                return {
-                    ...track,
-                    quality: filteredTags.length > 0 ? filteredTags[0] : "",
-                    qualityTags: filteredTags
-                };
-            });
-        }
 
-        return page;
+        return {
+            ...page,
+            album: sanitizeAlbumSpatialFields(page.album, includeSpatial),
+            tracks: page.tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial)),
+            otherVersions: page.otherVersions.map((version) => sanitizeAlbumVersionSpatialFields(version, includeSpatial)),
+        };
     }
 
     static getSimilarAlbums(_albumId: string): SimilarAlbumContract[] {

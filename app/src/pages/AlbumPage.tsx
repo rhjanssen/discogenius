@@ -553,6 +553,10 @@ const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
 const SWITCHABLE_SLOTS = ["stereo", "spatial"] as const;
 type SwitchableSlot = (typeof SWITCHABLE_SLOTS)[number];
 
+function activeSwitchableSlots(includeSpatial: boolean): SwitchableSlot[] {
+  return includeSpatial ? [...SWITCHABLE_SLOTS] : ["stereo"];
+}
+
 function slotLabel(slot: SwitchableSlot): string {
   return slot === "spatial" ? "Spatial" : "Stereo";
 }
@@ -639,10 +643,12 @@ function chooseAvailabilityForSlot(
 function sortReleasesForSwitcher(
   releases: ReleaseGroupAvailability["releases"],
   selectedReleaseBySlot: ReleaseGroupAvailability["selectedReleaseBySlot"],
+  includeSpatial: boolean,
 ): ReleaseGroupAvailability["releases"] {
+  const slots = activeSwitchableSlots(includeSpatial);
   return releases
     .map((release, index) => {
-      const selected = SWITCHABLE_SLOTS.some((slot) => selectedReleaseBySlot[slot] === release.releaseMbid);
+      const selected = slots.some((slot) => selectedReleaseBySlot[slot] === release.releaseMbid);
       const available = release.availability.length > 0;
       return { release, index, rank: selected ? 0 : available ? 1 : 2 };
     })
@@ -653,6 +659,7 @@ function sortReleasesForSwitcher(
 interface ReleaseSwitcherProps {
   availability: ReleaseGroupAvailability;
   currentReleaseMbid?: string | null;
+  includeSpatial: boolean;
   pendingSelectionKey?: string | null;
   onSelect: (slot: SwitchableSlot, releaseMbid: string, offer: ReleaseGroupAvailability["releases"][number]["availability"][number]) => void;
 }
@@ -660,11 +667,13 @@ interface ReleaseSwitcherProps {
 function ReleaseSwitcher({
   availability,
   currentReleaseMbid,
+  includeSpatial,
   pendingSelectionKey,
   onSelect,
 }: ReleaseSwitcherProps) {
   const styles = useStyles();
-  const releases = sortReleasesForSwitcher(availability.releases, availability.selectedReleaseBySlot);
+  const slots = activeSwitchableSlots(includeSpatial);
+  const releases = sortReleasesForSwitcher(availability.releases, availability.selectedReleaseBySlot, includeSpatial);
 
   if (releases.length === 0) {
     return null;
@@ -675,10 +684,13 @@ function ReleaseSwitcher({
       {releases.map((release) => {
         const disambiguation = releaseDisambiguationLabel(release.disambiguation);
         const metaParts = releaseMetaParts(release);
-        const selectedSlots = SWITCHABLE_SLOTS.filter((slot) => availability.selectedReleaseBySlot[slot] === release.releaseMbid);
+        const selectedSlots = slots.filter((slot) => availability.selectedReleaseBySlot[slot] === release.releaseMbid);
         const providerOffers = Array.from(release.availability.reduce((deduped, offer) => {
           const slot = String(offer.librarySlot || "").toLowerCase();
           if (slot !== "stereo" && slot !== "spatial") {
+            return deduped;
+          }
+          if (!includeSpatial && slot === "spatial") {
             return deduped;
           }
           const key = `${offer.provider || ""}|${slot}|${offer.quality || ""}`;
@@ -730,7 +742,7 @@ function ReleaseSwitcher({
               </div>
             </div>
             <div className={styles.releaseSlotActions}>
-              {SWITCHABLE_SLOTS.map((slot) => {
+              {slots.map((slot) => {
                 const offer = chooseAvailabilityForSlot(release, slot);
                 const selected = availability.selectedReleaseBySlot[slot] === release.releaseMbid;
                 const pending = pendingSelectionKey === `${slot}:${release.releaseMbid}`;
@@ -782,6 +794,13 @@ const AlbumPage = () => {
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
+  const { data: curationConfig } = useQuery({
+    queryKey: ["config", "curation"],
+    queryFn: () => api.getCurationConfig(),
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
+  });
+  const includeSpatial = curationConfig?.include_spatial === true;
 
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', album?.artist_id],
@@ -1488,6 +1507,7 @@ const AlbumPage = () => {
             <ReleaseSwitcher
               availability={releaseAvailability}
               currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
+              includeSpatial={includeSpatial}
               pendingSelectionKey={pendingSelectionKey}
               onSelect={handleSelectReleaseForSlot}
             />

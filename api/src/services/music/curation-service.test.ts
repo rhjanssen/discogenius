@@ -600,6 +600,112 @@ test("Album track read model follows release-group wanted state", async () => {
   assert.equal(monitoredTracks[0].is_monitored, true);
 });
 
+test("Album read models hide spatial quality badges when spatial audio is disabled", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album", "1975-11-21");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 1, 1);
+
+  db.prepare(`
+    INSERT INTO Recordings (mbid, title)
+    VALUES (?, ?)
+  `).run("recording-mbid-1", "Bohemian Rhapsody");
+
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody", 354000);
+
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
+      library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-1", "artist-mbid-1", "rg-mbid-1", "release-mbid-1",
+    "track-mbid-1", "recording-mbid-1", "spatial", "/library/spatial/Queen/Bohemian Rhapsody.m4a",
+    "Queen/Bohemian Rhapsody.m4a", "/library/spatial", "Bohemian Rhapsody.m4a", ".m4a", "track", "DOLBY_ATMOS",
+  );
+
+  const hiddenTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
+  assert.equal(hiddenTracks[0].quality, "");
+  assert.deepEqual(hiddenTracks[0].qualityTags, []);
+  assert.equal(hiddenTracks[0].files[0]?.quality, null);
+
+  writeTestConfig({ filtering: { include_spatial: true } });
+  const visibleTracks = await albumQueryServiceModule.AlbumQueryService.getAlbumTracks("rg-mbid-1");
+  assert.equal(visibleTracks[0].quality, "DOLBY_ATMOS");
+  assert.deepEqual(visibleTracks[0].qualityTags, ["DOLBY_ATMOS"]);
+  assert.equal(visibleTracks[0].files[0]?.quality, "DOLBY_ATMOS");
+});
+
+test("Album page hides spatial slot badges when spatial audio is disabled", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album", "1975-11-21");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Official", "1975-11-21", 1, 0);
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id,
+      selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "spatial", 1, "tidal", "spatial-album-1", "release-mbid-1", "DOLBY_ATMOS", "verified");
+
+  const hiddenPage = await albumQueryServiceModule.AlbumQueryService.getAlbumPage("rg-mbid-1");
+  assert.ok(hiddenPage);
+  assert.equal(hiddenPage.album.spatial_provider_id, null);
+  assert.equal(hiddenPage.album.spatial_quality, null);
+  assert.equal(hiddenPage.album.selected_provider_id, null);
+  assert.equal(hiddenPage.album.quality, null);
+  assert.equal(hiddenPage.otherVersions[0]?.spatial_provider_id, null);
+  assert.equal(hiddenPage.otherVersions[0]?.spatial_quality, null);
+
+  writeTestConfig({ filtering: { include_spatial: true } });
+  const visiblePage = await albumQueryServiceModule.AlbumQueryService.getAlbumPage("rg-mbid-1");
+  assert.ok(visiblePage);
+  assert.equal(visiblePage.album.spatial_provider_id, "spatial-album-1");
+  assert.equal(visiblePage.album.spatial_quality, "DOLBY_ATMOS");
+  assert.equal(visiblePage.album.selected_provider_id, "spatial-album-1");
+  assert.equal(visiblePage.otherVersions[0]?.spatial_provider_id, "spatial-album-1");
+  assert.equal(visiblePage.otherVersions[0]?.spatial_quality, "DOLBY_ATMOS");
+});
+
 test("Album versions are MusicBrainz releases from the release group", async () => {
   const { db } = dbModule;
 
