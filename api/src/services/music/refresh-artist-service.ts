@@ -1383,178 +1383,9 @@ export class RefreshArtistService {
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid);
             }
-            const providers = streamingProviderManager.getAllStreamingProviders();
-            const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
-
-            if (connectedProviders.length === 0) {
-                console.log(
-                    `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
-                    `(no providers connected)`,
-                );
-                db.prepare(`
-                    UPDATE Artists
-                    SET
-                        last_scanned = CURRENT_TIMESTAMP,
-                        library_origin = CASE
-                            WHEN library_origin = 'musicbrainz-credit' THEN 'musicbrainz-credit-hydrated'
-                            ELSE library_origin
-                        END
-                    WHERE id = ?
-                `).run(artistId);
-                return;
-            }
-
-            const allMatchedSelections: Array<{
-                provider: string;
-                album: ProviderAlbumSlotCandidate;
-                match: ProviderReleaseGroupMatch;
-            }> = [];
-            const refreshedProviders = new Set<string>();
-            let totalAlbumsCount = 0;
-
-            for (const provider of connectedProviders) {
-                const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
-                if (!providerArtistId) {
-                    console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
-                    continue;
-                }
-
-                const shouldRefreshArtistVideos =
-                    options.forceUpdate === true ||
-                    shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
-                if (shouldRefreshArtistVideos && provider.getArtistVideos) {
-                    try {
-                        const videos = (await provider.getArtistVideos(providerArtistId) || [])
-                            .map((video) => ({
-                                ...providerVideoToLegacyVideoRow(video, artistId),
-                                _provider: provider.id,
-                            }));
-                        console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
-                        RefreshVideoService.upsertArtistVideos(artistId, videos, options);
-                    } catch (error) {
-                        console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
-                    }
-                }
-
-                try {
-                    const providerAlbums = provider.listArtistReleaseOffers
-                        ? await provider.listArtistReleaseOffers(providerArtistId)
-                        : await provider.getArtistAlbums(providerArtistId);
-                    const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
-
-                    // Fetch tracks for all provider albums to support track-level matching
-                    for (const album of albums) {
-                        let loadedTracks: any[] | null = null;
-                        const cachedItem = db.prepare(`
-                            SELECT data
-                            FROM ProviderItems
-                            WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
-                        `).get(provider.id, String(album.provider_id)) as { data?: string | null } | undefined;
-
-                        if (cachedItem?.data) {
-                            try {
-                                const parsed = JSON.parse(cachedItem.data);
-                                if (Array.isArray(parsed.tracks) && parsed.tracks.length === Number(album.num_tracks)) {
-                                    loadedTracks = parsed.tracks;
-                                }
-                            } catch {
-                                // Ignore JSON parse errors
-                            }
-                        }
-
-                        if (loadedTracks) {
-                            album._provider_tracks = loadedTracks;
-                        }
-                    }
-
-                    const missingAlbums = albums.filter((album) => !album._provider_tracks);
-                    if (missingAlbums.length > 0) {
-                        console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
-                        const chunkSize = 5;
-                        for (let i = 0; i < missingAlbums.length; i += chunkSize) {
-                            const chunk = missingAlbums.slice(i, i + chunkSize);
-                            await Promise.all(
-                                chunk.map(async (album) => {
-                                    try {
-                                        const rawTracks = await provider.getAlbumTracks(album.provider_id);
-                                        album._provider_tracks = rawTracks.map((t) => this.slotTrack(t));
-                                    } catch (error) {
-                                        console.warn(`[RefreshArtistService] Failed to fetch tracks for album ${album.provider_id}:`, error);
-                                        album._provider_tracks = [];
-                                    }
-                                })
-                            );
-                        }
-                    }
-
-                    const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
-                    console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
-
-                    totalAlbumsCount += albums.length;
-
-                    this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
-                    refreshedProviders.add(provider.id);
-
-                    for (const album of albums) {
-                        const providerAlbumId = String(album.provider_id);
-                        const match = providerReleaseGroupMatches.get(providerAlbumId);
-                        if (match) {
-                            allMatchedSelections.push({
-                                provider: provider.id,
-                                album: {
-                                    providerId: providerAlbumId,
-                                    title: String(album.title || ""),
-                                    version: album.version ?? null,
-                                    releaseDate: album.release_date ?? null,
-                                    quality: album.quality ?? null,
-                                    explicit: album.explicit ?? null,
-                                    trackCount: album.num_tracks ?? null,
-                                    volumeCount: album.num_volumes ?? null,
-                                    tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
-                                    raw: album,
-                                },
-                                match,
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
-                }
-            }
-
-            options.progress?.({ kind: "albums_total", total: totalAlbumsCount });
-
-            const registeredProviderIds = new Set(providers.map((provider) => provider.id));
-            const staleProviderIds = db
-                .prepare(`
-                    SELECT DISTINCT selected_provider AS providerId
-                    FROM ReleaseGroupSlots
-                    WHERE selected_provider IS NOT NULL
-                `)
-                .all()
-                .map((row) => String((row as { providerId: string }).providerId))
-                .filter((providerId) => !registeredProviderIds.has(providerId));
-
-            const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
-                artistMbid,
-                candidates: allMatchedSelections,
-                clearProviders: [...new Set([...refreshedProviders, ...staleProviderIds])],
-            });
-            const storedSlotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
-            const totalSlotCounts = {
-                stereo: Math.max(slotCounts.stereo, storedSlotCounts.stereo),
-                spatial: Math.max(slotCounts.spatial, storedSlotCounts.spatial),
-            };
-            if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
-                console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
-            }
-        } else {
-            console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
-            const slotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
-            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
-                console.log(`[RefreshArtistService] Rebuilt provider selections from stored offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
-            }
         }
+
+        await this.matchArtistProviders(artistId, artistMbid, options, shouldHydrateCatalog);
 
         db.prepare(`
             UPDATE Artists
@@ -1567,6 +1398,191 @@ export class RefreshArtistService {
             WHERE id = ?
         `).run(artistId);
         console.log(`[RefreshArtistService] scanDeep complete for ${artistId}`);
+    }
+
+    /**
+     * Provider matching for an artist: resolve the provider's artist id, refresh
+     * its music videos, pull its release offers, match each to a MusicBrainz
+     * release group, persist the offers, and select provider slots.
+     *
+     * Extracted verbatim from scanDeep as the seam for a standalone
+     * MatchArtistProviders command that runs AFTER metadata refresh (Lidarr keeps
+     * import-list/availability work separate from metadata refresh). Behaviour-
+     * preserving: same order, same writes, same logs. When the catalog was not
+     * (re)hydrated this just rebuilds slot selections from stored offers; when no
+     * providers are connected it is a no-op (the caller still stamps last_scanned).
+     */
+    static async matchArtistProviders(
+        artistId: string,
+        artistMbid: string | null,
+        options: ScanOptions,
+        shouldHydrateCatalog: boolean,
+    ): Promise<void> {
+        if (!shouldHydrateCatalog) {
+            console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
+            const slotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
+            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
+                console.log(`[RefreshArtistService] Rebuilt provider selections from stored offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
+            }
+            return;
+        }
+
+        const monitoringConfig = getConfigSection("monitoring");
+        const providers = streamingProviderManager.getAllStreamingProviders();
+        const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
+
+        if (connectedProviders.length === 0) {
+            console.log(
+                `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
+                `(no providers connected)`,
+            );
+            return;
+        }
+
+        const allMatchedSelections: Array<{
+            provider: string;
+            album: ProviderAlbumSlotCandidate;
+            match: ProviderReleaseGroupMatch;
+        }> = [];
+        const refreshedProviders = new Set<string>();
+        let totalAlbumsCount = 0;
+
+        for (const provider of connectedProviders) {
+            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+            if (!providerArtistId) {
+                console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
+                continue;
+            }
+
+            const shouldRefreshArtistVideos =
+                options.forceUpdate === true ||
+                shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
+            if (shouldRefreshArtistVideos && provider.getArtistVideos) {
+                try {
+                    const videos = (await provider.getArtistVideos(providerArtistId) || [])
+                        .map((video) => ({
+                            ...providerVideoToLegacyVideoRow(video, artistId),
+                            _provider: provider.id,
+                        }));
+                    console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
+                    RefreshVideoService.upsertArtistVideos(artistId, videos, options);
+                } catch (error) {
+                    console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
+                }
+            }
+
+            try {
+                const providerAlbums = provider.listArtistReleaseOffers
+                    ? await provider.listArtistReleaseOffers(providerArtistId)
+                    : await provider.getArtistAlbums(providerArtistId);
+                const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
+
+                // Fetch tracks for all provider albums to support track-level matching
+                for (const album of albums) {
+                    let loadedTracks: any[] | null = null;
+                    const cachedItem = db.prepare(`
+                        SELECT data
+                        FROM ProviderItems
+                        WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+                    `).get(provider.id, String(album.provider_id)) as { data?: string | null } | undefined;
+
+                    if (cachedItem?.data) {
+                        try {
+                            const parsed = JSON.parse(cachedItem.data);
+                            if (Array.isArray(parsed.tracks) && parsed.tracks.length === Number(album.num_tracks)) {
+                                loadedTracks = parsed.tracks;
+                            }
+                        } catch {
+                            // Ignore JSON parse errors
+                        }
+                    }
+
+                    if (loadedTracks) {
+                        album._provider_tracks = loadedTracks;
+                    }
+                }
+
+                const missingAlbums = albums.filter((album) => !album._provider_tracks);
+                if (missingAlbums.length > 0) {
+                    console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
+                    const chunkSize = 5;
+                    for (let i = 0; i < missingAlbums.length; i += chunkSize) {
+                        const chunk = missingAlbums.slice(i, i + chunkSize);
+                        await Promise.all(
+                            chunk.map(async (album) => {
+                                try {
+                                    const rawTracks = await provider.getAlbumTracks(album.provider_id);
+                                    album._provider_tracks = rawTracks.map((t) => this.slotTrack(t));
+                                } catch (error) {
+                                    console.warn(`[RefreshArtistService] Failed to fetch tracks for album ${album.provider_id}:`, error);
+                                    album._provider_tracks = [];
+                                }
+                            })
+                        );
+                    }
+                }
+
+                const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
+                console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
+
+                totalAlbumsCount += albums.length;
+
+                this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
+                refreshedProviders.add(provider.id);
+
+                for (const album of albums) {
+                    const providerAlbumId = String(album.provider_id);
+                    const match = providerReleaseGroupMatches.get(providerAlbumId);
+                    if (match) {
+                        allMatchedSelections.push({
+                            provider: provider.id,
+                            album: {
+                                providerId: providerAlbumId,
+                                title: String(album.title || ""),
+                                version: album.version ?? null,
+                                releaseDate: album.release_date ?? null,
+                                quality: album.quality ?? null,
+                                explicit: album.explicit ?? null,
+                                trackCount: album.num_tracks ?? null,
+                                volumeCount: album.num_volumes ?? null,
+                                tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
+                                raw: album,
+                            },
+                            match,
+                        });
+                    }
+                }
+            } catch (error) {
+                console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
+            }
+        }
+
+        options.progress?.({ kind: "albums_total", total: totalAlbumsCount });
+
+        const registeredProviderIds = new Set(providers.map((provider) => provider.id));
+        const staleProviderIds = db
+            .prepare(`
+                SELECT DISTINCT selected_provider AS providerId
+                FROM ReleaseGroupSlots
+                WHERE selected_provider IS NOT NULL
+            `)
+            .all()
+            .map((row) => String((row as { providerId: string }).providerId))
+            .filter((providerId) => !registeredProviderIds.has(providerId));
+
+        const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
+            artistMbid,
+            candidates: allMatchedSelections,
+            clearProviders: [...new Set([...refreshedProviders, ...staleProviderIds])],
+        });
+        const storedSlotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
+        const totalSlotCounts = {
+            stereo: Math.max(slotCounts.stereo, storedSlotCounts.stereo),
+            spatial: Math.max(slotCounts.spatial, storedSlotCounts.spatial),
+        };
+        if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
+            console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
+        }
     }
 
 }
