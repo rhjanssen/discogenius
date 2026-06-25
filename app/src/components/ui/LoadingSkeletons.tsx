@@ -10,6 +10,7 @@ type ThumbnailAspect = "square" | "video" | "videoWide";
 type CardGridSkeletonVariant = "media" | "artistSearch";
 type DetailSkeletonArtShape = "circle" | "rounded";
 type DetailSkeletonContent = "cards" | "tracks";
+type DetailSkeletonInfo = "metadata" | "bio";
 
 interface CardGridSkeletonProps {
   cards?: number;
@@ -65,6 +66,11 @@ interface ActivityListSkeletonProps {
 interface DetailPageSkeletonProps {
   artShape?: DetailSkeletonArtShape;
   content?: DetailSkeletonContent;
+  /**
+   * Shape of the header info column. "metadata" (album) renders a subtitle bar
+   * plus a row of metadata pills; "bio" (artist) renders a multi-line paragraph.
+   */
+  info?: DetailSkeletonInfo;
   rows?: number;
   cards?: number;
   className?: string;
@@ -677,6 +683,23 @@ const useStyles = makeStyles({
       justifyContent: "flex-start",
     },
   },
+  // Artist header info is a name + multi-line biography paragraph (no subtitle
+  // bar or metadata pills), so mirror that shape instead of the album layout.
+  detailBioBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    width: "100%",
+    alignItems: "center",
+    "@media (min-width: 768px)": {
+      alignItems: "flex-start",
+      maxWidth: "560px",
+    },
+  },
+  detailBioLine: {
+    height: "13px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
   detailMetadataPill: {
     height: "14px",
     borderRadius: tokens.borderRadiusCircular,
@@ -1100,6 +1123,7 @@ export function ActivityListSkeleton({
 export function DetailPageSkeleton({
   artShape = "rounded",
   content = "tracks",
+  info = "metadata",
   rows = 8,
   cards = 6,
   className,
@@ -1130,12 +1154,22 @@ export function DetailPageSkeleton({
             />
             <div className={styles.detailInfo}>
               <SkeletonItem className={styles.detailTitle} />
-              <SkeletonItem className={styles.detailSubtitle} />
-              <div className={styles.detailMetadataRow}>
-                <SkeletonItem className={styles.detailMetadataPill} style={{ width: "64px" }} />
-                <SkeletonItem className={styles.detailMetadataPill} style={{ width: "46px" }} />
-                <SkeletonItem className={styles.detailMetadataPill} style={{ width: "78px" }} />
-              </div>
+              {info === "bio" ? (
+                <div className={styles.detailBioBlock}>
+                  <SkeletonItem className={styles.detailBioLine} style={{ width: "94%" }} />
+                  <SkeletonItem className={styles.detailBioLine} style={{ width: "88%" }} />
+                  <SkeletonItem className={styles.detailBioLine} style={{ width: "66%" }} />
+                </div>
+              ) : (
+                <>
+                  <SkeletonItem className={styles.detailSubtitle} />
+                  <div className={styles.detailMetadataRow}>
+                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "64px" }} />
+                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "46px" }} />
+                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "78px" }} />
+                  </div>
+                </>
+              )}
               <div className={styles.detailActions}>
                 <SkeletonItem className={styles.detailAction} style={{ width: "104px" }} />
                 <SkeletonItem className={styles.detailAction} style={{ width: "96px" }} />

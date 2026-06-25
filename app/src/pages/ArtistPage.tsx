@@ -1307,6 +1307,7 @@ const ArtistPage = () => {
       <DetailPageSkeleton
         artShape="circle"
         content="cards"
+        info="bio"
         cards={6}
         className={styles.container}
         cardsClassName={styles.grid}
