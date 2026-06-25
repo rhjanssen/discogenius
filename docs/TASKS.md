@@ -217,10 +217,23 @@ Target Discogenius design:
   Removes scanShallow/scanDeep AND the full re-upsert every refresh — the
   diff-only writes are exactly the short-write / skip-unchanged scale fix.
 - `MatchArtistProviders` (our provider feature, kept separate): the connected-
-  providers loop + provider↔MB matching + slot selection, extracted from
-  `scanDeep` (~lines 1386–1550) into its own service/command, run AFTER refresh.
+  providers loop + provider↔MB matching + slot selection.
+  - DONE (commit e529277): extracted from `scanDeep` into
+    `RefreshArtistService.matchArtistProviders(artistId, artistMbid, options,
+    shouldHydrateCatalog)` — the standalone method seam. Behaviour-preserving
+    (scanDeep does metadata intake → calls matchArtistProviders → stamps
+    last_scanned; full suite 394/394). `scanDeep` still calls it INLINE.
+  - REMAINING: promote to its own queued command (command-names/bodies/model/
+    registry + handler calling `matchArtistProviders`), have `scanDeep`/
+    RefreshArtist ENQUEUE it instead of calling inline, and wire the chain. This
+    is a command-system change (timing, SSE progress, scheduler) — do it as its
+    own focused, live-validated pass.
 - Chain: `RefreshArtist` → `MatchArtistProviders` → `RescanFolders` →
   `CurateArtist`. Each a short, independently-queued unit.
+- Drop the shallow/deep naming: `scanBasic`/`scanShallow`/`scanDeep` are called
+  from ~15 sites (artist-monitoring, artist-query, media-seed, scheduler,
+  download/import paths). Rename toward Lidarr's `RefreshArtist`/`RefreshAlbum`
+  vocabulary in a dedicated pass (mechanical but wide).
 
 Execution notes: big redesign — do with full focus, build/test-gated. Reuse the
 existing catalog tables; the win is the diff-reconcile write path (port
