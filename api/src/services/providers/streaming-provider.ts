@@ -45,7 +45,6 @@ export interface StreamingProvider {
   getArtistAlbums(id: string | number): Promise<ProviderAlbum[]>;
   getArtistVideos?(id: string | number): Promise<ProviderVideo[]>;
   getArtistCatalogPage?(id: string | number): Promise<any>;
-  getFollowedArtists?(): Promise<ProviderArtist[]>;
   /** Categories of artist-import lists this provider supports (followed, playlists, mixes, …). */
   listImportSources?(): Promise<ProviderImportSource[]>;
   /** Distinct artists for a chosen import source/selection (e.g. a playlist's artists). */

@@ -166,7 +166,7 @@ router.get("/lookup", async (req, res) => {
  * runs the heavy per-artist loop on a worker thread) and relays its progress
  * events to the client. The work never runs on this request thread — we only
  * forward the bridged IMPORT_ARTISTS_PROGRESS events and close on the command's
- * terminal state. `import-followed-stream` is kept as a back-compat alias.
+ * terminal state.
  * NOTE: Must be before the /:artistId route to avoid being matched as a param.
  */
 async function streamArtistImport(req: any, res: any, selection: ProviderImportSelection, label?: string) {
@@ -269,11 +269,6 @@ router.get("/import-stream", (req, res) => {
   const listId = typeof req.query.listId === "string" ? req.query.listId : undefined;
   const label = typeof req.query.label === "string" ? req.query.label : undefined;
   void streamArtistImport(req, res, { category: category as ProviderImportSelection["category"], listId }, label);
-});
-
-// Back-compat alias for the followed-artists-only stream.
-router.get("/import-followed-stream", (req, res) => {
-  void streamArtistImport(req, res, { category: "followed-artists" }, "followed artists");
 });
 
 // Monitor an artist: Ensure basic metadata exists + set monitor=1.
@@ -527,28 +522,6 @@ router.post("/import", async (req, res) => {
   } catch (error: any) {
     console.error('Error queueing artist import:', error);
     res.status(500).json({ detail: error.message || 'Failed to queue artist import' });
-  }
-});
-
-// Back-compat: followed-artists trigger, now enqueues the same background command.
-router.post("/import-followed", async (req, res) => {
-  try {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const providerId = typeof body.providerId === "string"
-      ? body.providerId
-      : typeof body.provider === "string" ? body.provider : undefined;
-    const commandId = await enqueueProviderArtistImport({
-      providerId,
-      importCategory: "followed-artists",
-      importLabel: "followed artists",
-    } as ImportProviderArtistsCommand);
-    if (commandId === -1) {
-      return res.status(409).json({ detail: "Could not queue artist import" });
-    }
-    res.status(202).json({ commandId, queued: true });
-  } catch (error: any) {
-    console.error('Error queueing followed-artists import:', error);
-    res.status(500).json({ detail: error.message || 'Failed to queue followed-artists import' });
   }
 });
 

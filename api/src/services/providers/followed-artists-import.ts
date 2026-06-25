@@ -98,17 +98,6 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
 }
 
 export class FollowedArtistsImportService {
-    /** Back-compat: import the provider's followed artists. */
-    static importFollowedArtists(options?: {
-        providerId?: string | null;
-        onEvent?: (event: FollowedArtistsImportEvent) => void;
-    }): Promise<FollowedArtistsImportSummary> {
-        return this.importArtists({
-            ...options,
-            selection: { category: "followed-artists" },
-        });
-    }
-
     /**
      * Import the distinct artists from any provider import source (followed
      * artists, a playlist, favorite tracks, a home-screen mix). The per-artist
@@ -126,7 +115,7 @@ export class FollowedArtistsImportService {
         const provider = providerId
             ? streamingProviderManager.getStreamingProvider(providerId)
             : streamingProviderManager.getDefaultStreamingProvider();
-        if (!provider.getArtistsForImportSource && !provider.getFollowedArtists) {
+        if (!provider.getArtistsForImportSource) {
             throw new Error(`${provider.name} does not support artist import`);
         }
         if (provider.isAuthenticated && !provider.isAuthenticated()) {
@@ -135,9 +124,7 @@ export class FollowedArtistsImportService {
 
         emit?.({ type: "status", message: `Fetching artists from ${provider.name}...` });
 
-        const providerArtists = provider.getArtistsForImportSource
-            ? await provider.getArtistsForImportSource(selection)
-            : await provider.getFollowedArtists!();
+        const providerArtists = await provider.getArtistsForImportSource(selection);
         const followedArtists = providerArtists.map(normalizeProviderArtist);
 
         if (!followedArtists || followedArtists.length === 0) {

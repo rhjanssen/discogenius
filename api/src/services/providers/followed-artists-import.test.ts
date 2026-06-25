@@ -25,7 +25,7 @@ after(() => {
 });
 
 test("followed artist import uses the requested streaming provider", async () => {
-  let followedArtistsRequested = false;
+  let importSourceRequested = false;
 
   providersModule.streamingProviderManager.registerStreamingProvider({
     id: "followed-test-provider",
@@ -49,8 +49,9 @@ test("followed artist import uses the requested streaming provider", async () =>
       providerIds: true,
     },
     isAuthenticated: () => true,
-    getFollowedArtists: async () => {
-      followedArtistsRequested = true;
+    getArtistsForImportSource: async (selection) => {
+      assert.equal(selection.category, "followed-artists");
+      importSourceRequested = true;
       return [];
     },
     search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
@@ -87,11 +88,12 @@ test("followed artist import uses the requested streaming provider", async () =>
     }),
   });
 
-  const summary = await importModule.FollowedArtistsImportService.importFollowedArtists({
+  const summary = await importModule.FollowedArtistsImportService.importArtists({
     providerId: "followed-test-provider",
+    selection: { category: "followed-artists" },
   });
 
-  assert.equal(followedArtistsRequested, true);
+  assert.equal(importSourceRequested, true);
   assert.equal(summary.providerId, "followed-test-provider");
   assert.equal(summary.providerName, "Followed Test provider");
   assert.equal(summary.added, 0);

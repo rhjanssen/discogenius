@@ -218,10 +218,6 @@ export class TidalProvider implements StreamingProvider {
     return tidal.getArtistPage(String(id));
   }
 
-  async getFollowedArtists(): Promise<ProviderArtist[]> {
-    return (await tidal.getFollowedArtists()).map((artist: any) => this.mapArtist(artist));
-  }
-
   async listImportSources(): Promise<ProviderImportSource[]> {
     const sources: ProviderImportSource[] = [
       {

@@ -1583,7 +1583,7 @@ const SettingsPage = () => {
                                             Disconnect
                                         </Button>
                                     ) : null}
-                                    {provider.management.canImportFollowedArtists ? (
+                                    {provider.management.canImportArtists ? (
                                         <Button
                                             appearance="outline"
                                             className={styles.signOutButton}

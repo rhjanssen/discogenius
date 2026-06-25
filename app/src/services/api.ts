@@ -246,7 +246,7 @@ export type StreamingProviderStatus = {
   management: {
     canAuthenticate: boolean;
     canDisconnect: boolean;
-    canImportFollowedArtists: boolean;
+    canImportArtists: boolean;
     canPreviewTracks: boolean;
     canPreviewVideos: boolean;
     canDownloadMusic: boolean;
@@ -1114,13 +1114,6 @@ class ApiClient {
     return this.request(`/v1/artist/${artistId}`, { method: 'DELETE' });
   }
 
-  async importFollowedArtists(providerId?: string | null) {
-    return this.request('/v1/artist/import-followed', {
-      method: 'POST',
-      body: JSON.stringify(providerId ? { providerId } : {}),
-    });
-  }
-
   // Download queue endpoints
   async getQueue(params?: { limit?: number; offset?: number }): Promise<QueueListResponseContract> {
     const queryParams = new URLSearchParams();
@@ -1334,14 +1327,6 @@ class ApiClient {
     const query = queryParams.toString();
     if (query) url += `?${query}`;
     return this.attachImportStreamListeners(createManagedEventSource(url), onEvent, onError);
-  }
-
-  createImportFollowedStream(
-    onEvent: (event: string, data: any) => void,
-    onError?: (error: Error) => void,
-    providerId?: string | null,
-  ): EventSource {
-    return this.createImportStream({ category: 'followed-artists', providerId }, onEvent, onError);
   }
 
   private attachImportStreamListeners(

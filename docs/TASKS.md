@@ -131,7 +131,7 @@ the provider abstraction so a second provider can declare its own sources.
 
 - done: Background command. `ImportProviderArtists` registered (type-exclusive,
   runs on a worker); generalised `FollowedArtistsImportService.importArtists(selection)`.
-  Routes enqueue and return immediately; the ~180s blocking `POST /import-followed`
+  Routes enqueue and return immediately; the ~180s blocking followed-only import
   is gone.
 - done: Provider import-source abstraction on the streaming-provider interface
   (`listImportSources()`, `getArtistsForImportSource(selection)`), implemented for
@@ -139,8 +139,9 @@ the provider abstraction so a second provider can declare its own sources.
   mixes & featured playlists (all v1 reads, matching Tidarr; v2 only for search).
 - done: Routes. `GET /api/v1/provider/import-sources`; `GET /api/v1/artist/import-stream`
   (SSE, enqueues the command and relays bridged `IMPORT_ARTISTS_PROGRESS`) and
-  `POST /api/v1/artist/import` (enqueue + 202). Back-compat `import-followed`
-  aliases kept. Full CI green.
+  `POST /api/v1/artist/import` (enqueue + 202). The old `import-followed`
+  compatibility aliases were removed; followed artists are now just one import
+  source category. Full CI green.
 - done: Frontend. A single "Import artists" button (Library empty-state + toolbar)
   → `ImportArtistsModal`: pick a source category, then (for playlists/mixes) pick a
   specific list, then run with streamed per-artist progress. SettingsPage import
