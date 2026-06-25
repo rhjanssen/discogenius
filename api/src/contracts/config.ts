@@ -121,13 +121,8 @@ export interface FilteringConfigContract {
 
 export interface MonitoringConfigContract {
   enabled: boolean;
-  scanIntervalHours: number;
   monitorNewArtists: boolean;
   removeUnmonitoredFiles: boolean;
-  artistRefreshDays: number;
-  albumRefreshDays: number;
-  trackRefreshDays: number;
-  videoRefreshDays: number;
   lastCheckTimestamp?: string;
   checkInProgress?: boolean;
   progressArtistIndex?: number;
@@ -273,13 +268,8 @@ export function parseMonitoringConfigContract(value: unknown): MonitoringConfigC
   const record = expectRecord(value, "Monitoring config");
   return {
     enabled: expectBoolean(record.enabled, "monitoring.enabled"),
-    scanIntervalHours: expectNumber(record.scanIntervalHours, "monitoring.scanIntervalHours"),
     monitorNewArtists: expectBoolean(record.monitorNewArtists, "monitoring.monitorNewArtists"),
     removeUnmonitoredFiles: expectBoolean(record.removeUnmonitoredFiles, "monitoring.removeUnmonitoredFiles"),
-    artistRefreshDays: expectNumber(record.artistRefreshDays, "monitoring.artistRefreshDays"),
-    albumRefreshDays: expectNumber(record.albumRefreshDays, "monitoring.albumRefreshDays"),
-    trackRefreshDays: expectNumber(record.trackRefreshDays, "monitoring.trackRefreshDays"),
-    videoRefreshDays: expectNumber(record.videoRefreshDays, "monitoring.videoRefreshDays"),
     lastCheckTimestamp: expectOptionalString(record.lastCheckTimestamp, "monitoring.lastCheckTimestamp"),
     checkInProgress: expectOptionalBoolean(record.checkInProgress, "monitoring.checkInProgress"),
     progressArtistIndex: expectOptionalNumber(record.progressArtistIndex, "monitoring.progressArtistIndex"),

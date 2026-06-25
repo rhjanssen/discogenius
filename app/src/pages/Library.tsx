@@ -242,22 +242,6 @@ const LIBRARY_TABS = [
 const LIBRARY_SETTINGS_STORAGE_KEY = "discogenius_library_settings";
 const LIBRARY_SETTINGS_VERSION = 2;
 
-function isLegacyMonitoredOnlyDefault(statusFilters: unknown): statusFilters is StatusFilters {
-  if (!statusFilters || typeof statusFilters !== "object") {
-    return false;
-  }
-
-  const filters = statusFilters as StatusFilters;
-  return filters.onlyMonitored === true
-    && filters.onlyUnmonitored === false
-    && filters.onlyLocked === false
-    && filters.onlyUnlocked === false
-    && filters.onlyDownloaded === false
-    && filters.onlyNotDownloaded === false
-    && filters.onlyPrimary === false
-    && filters.onlyRedundant === false;
-}
-
 function loadPersistedLibrarySettings() {
   try {
     const saved = localStorage.getItem(LIBRARY_SETTINGS_STORAGE_KEY);
@@ -266,18 +250,7 @@ function loadPersistedLibrarySettings() {
     }
 
     const parsed = JSON.parse(saved);
-    if (
-      parsed?.settingsVersion == null
-      && isLegacyMonitoredOnlyDefault(parsed?.statusFilters)
-    ) {
-      return {
-        ...parsed,
-        statusFilters: defaultStatusFilters,
-        settingsVersion: LIBRARY_SETTINGS_VERSION,
-      };
-    }
-
-    return parsed;
+    return parsed?.settingsVersion === LIBRARY_SETTINGS_VERSION ? parsed : null;
   } catch (e) {
     console.warn('Failed to load library settings from localStorage:', e);
     return null;

@@ -428,14 +428,11 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     if (track.recording_credits) {
       try {
         const parsed = JSON.parse(track.recording_credits);
-        // Structured `Recordings.credits` is `[{id,name,join_phrase}]`; tolerate
-        // a legacy MB `artist-credit` object shape just in case.
-        const credits = Array.isArray(parsed) ? parsed : (parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits);
-        if (Array.isArray(credits) && credits.length > 0) {
-          artist_credits = credits.map((credit: any) => ({
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          artist_credits = parsed.map((credit: any) => ({
             id: credit.id || credit.artist?.id || credit.artistId || "",
             name: credit.name || credit.artist?.name || "",
-            join_phrase: credit.join_phrase || credit.joinphrase || "",
+            join_phrase: credit.join_phrase || "",
           })).filter(credit => credit.name);
         }
       } catch {

@@ -446,20 +446,17 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
 
 /**
  * Parse the structured `Recordings.credits` column (`[{id, name, join_phrase}]`)
- * into the artist-credit shape the album page uses. Replaces the old dig through
- * the raw track/recording `data` blob; tolerant of the legacy MB `artist-credit`
- * object shape in case an older row's credits were stored that way.
+ * into the artist-credit shape the album page uses.
  */
 function parseRecordingArtistCredits(creditsStr: string | null | undefined): Array<{ id: string; name: string; join_phrase: string }> | null {
     if (!creditsStr) return null;
     try {
         const parsed = JSON.parse(creditsStr);
-        const credits = Array.isArray(parsed) ? parsed : (parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits);
-        if (Array.isArray(credits) && credits.length > 0) {
-            return credits.map((c: any) => ({
+        if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((c: any) => ({
                 id: c.id || c.artist?.id || c.artistId || "",
                 name: c.name || c.artist?.name || "",
-                join_phrase: c.join_phrase || c.joinphrase || "",
+                join_phrase: c.join_phrase || "",
             })).filter((c) => c.name);
         }
     } catch {

@@ -27,9 +27,6 @@ export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
   duplicateTrackedAssetsRemoved: number;
   staleTrackedAssetsRemoved: number;
-  mediaMonitorRepairs: number;
-  albumMonitorRepairs: number;
-  artistMonitorRepairs: number;
   albumStatesRefreshed: number;
   artistStatesRefreshed: number;
   databaseOptimized: boolean;
@@ -189,79 +186,6 @@ export function dedupeLibraryFiles(summary: RuntimeMaintenanceSummary) {
   dedupeLibraryFilesByKey(canonicalIdentityKey, summary);
 }
 
-export function repairMonitoringGaps(summary: RuntimeMaintenanceSummary) {
-  const installedAudioSlots = `
-    SELECT DISTINCT
-      COALESCE(NULLIF(lf.canonical_artist_mbid, ''), NULLIF(artist.mbid, ''), NULLIF(rg.artist_mbid, '')) AS artist_mbid,
-      lf.canonical_release_group_mbid AS release_group_mbid,
-      COALESCE(NULLIF(lf.library_slot, ''), 'stereo') AS slot
-    FROM TrackFiles lf
-    JOIN Albums rg ON rg.mbid = lf.canonical_release_group_mbid
-    LEFT JOIN Artists artist ON CAST(artist.id AS TEXT) = CAST(lf.artist_id AS TEXT)
-    JOIN ArtistMetadata metadata
-      ON metadata.mbid = COALESCE(NULLIF(lf.canonical_artist_mbid, ''), NULLIF(artist.mbid, ''), NULLIF(rg.artist_mbid, ''))
-    WHERE lf.file_type = 'track'
-      AND lf.canonical_release_group_mbid IS NOT NULL
-  `;
-
-  summary.albumMonitorRepairs += Number(db.prepare(`
-    UPDATE ReleaseGroupSlots
-    SET monitored = 1,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE COALESCE(monitored, 0) = 0
-      AND COALESCE(monitored_lock, 0) = 0
-      AND id IN (
-        SELECT slot_row.id
-        FROM ReleaseGroupSlots slot_row
-        JOIN (${installedAudioSlots}) installed
-          ON installed.release_group_mbid = slot_row.release_group_mbid
-         AND installed.slot = slot_row.slot
-      )
-  `).run().changes || 0);
-
-  summary.albumMonitorRepairs += Number(db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, updated_at
-    )
-    SELECT installed.artist_mbid, installed.release_group_mbid, installed.slot, 1, CURRENT_TIMESTAMP
-    FROM (${installedAudioSlots}) installed
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM ReleaseGroupSlots slot_row
-      WHERE slot_row.release_group_mbid = installed.release_group_mbid
-        AND slot_row.slot = installed.slot
-    )
-  `).run().changes || 0);
-
-  summary.mediaMonitorRepairs += Number(db.prepare(`
-    UPDATE Recordings
-    SET monitored = 1,
-        monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE is_video = 1
-      AND COALESCE(monitored, 0) = 0
-      AND COALESCE(monitored_lock, 0) = 0
-      AND EXISTS (
-        SELECT 1
-        FROM TrackFiles lf
-        LEFT JOIN ProviderItems pi
-          ON lf.provider_entity_type = 'video'
-         AND pi.entity_type = 'video'
-         AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-         AND (lf.provider IS NULL OR pi.provider = lf.provider)
-        WHERE lf.file_type = 'video'
-          AND (
-            lf.recording_id = Recordings.id
-            OR (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = Recordings.mbid)
-            OR pi.recording_id = Recordings.id
-          )
-      )
-  `).run().changes || 0);
-
-  // Artist monitoring is explicit user state. Do not auto-promote artists to monitored
-  // just because related albums or tracks are monitored/downloaded.
-}
-
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
   summary.albumStatesRefreshed = Number(
     (db.prepare("SELECT COUNT(*) AS count FROM Albums").get() as { count: number } | undefined)?.count || 0,
@@ -278,9 +202,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     duplicateLibraryFilesRemoved: 0,
     duplicateTrackedAssetsRemoved: 0,
     staleTrackedAssetsRemoved: 0,
-    mediaMonitorRepairs: 0,
-    albumMonitorRepairs: 0,
-    artistMonitorRepairs: 0,
     albumStatesRefreshed: 0,
     artistStatesRefreshed: 0,
     databaseOptimized: false,
@@ -292,7 +213,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
-    repairMonitoringGaps(summary);
   })();
 
   refreshDownloadState(summary);
@@ -315,17 +235,12 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||
     summary.staleTrackedAssetsRemoved > 0 ||
-    summary.duplicateLibraryFilesRemoved > 0 ||
-    summary.mediaMonitorRepairs > 0 ||
-    summary.albumMonitorRepairs > 0 ||
-    summary.artistMonitorRepairs > 0
+    summary.duplicateLibraryFilesRemoved > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
       `${summary.duplicateTrackedAssetsRemoved} duplicate tracked asset(s), ` +
-      `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
-      `repaired ${summary.mediaMonitorRepairs} media, ${summary.albumMonitorRepairs} albums, ` +
-      `${summary.artistMonitorRepairs} artists, refreshed ${summary.albumStatesRefreshed} albums and ` +
+      `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );
   } else {

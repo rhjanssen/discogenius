@@ -16,6 +16,7 @@ import {
     hasActiveTask,
     loadMonitoringProgress,
     saveMonitoringProgress,
+    stampMonitoringCompleted,
 } from "./task-state.js";
 import {
     isScheduledTaskDue,
@@ -41,6 +42,7 @@ let activeMonitoringDownloadPassStmt: any | null = null;
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
 const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 50, 1);
+const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES", 60, 1);
 
 export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
 
@@ -144,7 +146,7 @@ function getScheduledTaskUpdateStmt() {
 
 export function getMonitoringStatus(): { running: boolean; checking: boolean; config: import("./task-state.js").MonitoringConfig } {
     const configFromFile = getConfigSection("monitoring");
-    const runtimeState = getEffectiveMonitoringRuntimeState(configFromFile, { isChecking });
+    const runtimeState = getEffectiveMonitoringRuntimeState({ isChecking });
     const checking = runtimeState.checkInProgress;
 
     const config: import("./task-state.js").MonitoringConfig = {
@@ -165,7 +167,7 @@ export function updateMonitoringConfig(updates: Partial<ConfigMonitoringConfig>)
 
     updateScheduledTask("monitoring-cycle", {
         enabled: config.enable_active_monitoring,
-        intervalMinutes: Math.max(1, config.scan_interval_hours * 60),
+        intervalMinutes: MONITORING_DUE_CHECK_INTERVAL_MINUTES,
     });
 
     if (!isMonitoring) {
@@ -183,7 +185,6 @@ function selectMetadataRefreshArtists(options: {
     if (options.dueOnly) {
         return getManagedArtistsDueForRefresh({
             artistIds,
-            refreshDays: getConfigSection("monitoring").artist_refresh_days,
         });
     }
 
@@ -320,7 +321,7 @@ function hasActiveMonitoringCycleDownloadPass(): boolean {
 
 function markMonitoringCycleCompleted() {
     markScheduledTaskQueued("monitoring-cycle");
-    updateConfig("monitoring", { last_check: new Date().toISOString() });
+    stampMonitoringCompleted();
 }
 
 export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payload" | "trigger">) {
@@ -331,10 +332,13 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
 
     switch (job.name) {
         case CommandNames.RefreshMetadata:
-            // Per-artist curation is handled by the event-driven pipeline:
-            // ARTIST_REFRESH_COMPLETED → RescanFolders → ARTIST_SCANNED → CurateArtist.
-            // Only queue the library-wide root scan if full-cycle; DownloadMissing
-            // is deferred until all monitoring-originated follow-up work drains.
+            // Per-artist curation/matching is handled by the event-driven pipeline
+            // (ARTIST_REFRESH_COMPLETED → MatchArtistProviders → RescanFolders →
+            // ARTIST_SCANNED → CurateArtist). On a full cycle we STILL queue the
+            // library-wide root scan here: it inventories the disk (new/unmapped
+            // files) which the per-artist folder scans don't cover. It can't race
+            // provider matching — it's disk inventory, and the terminal
+            // DownloadMissing is deferred below until all follow-up work drains.
             if (monitoringCycle === "full-cycle") {
                 queueRescanFoldersPass({
                     trigger: job.trigger ?? CommandTrigger.Unspecified,
@@ -413,14 +417,13 @@ export function queueHousekeepingPass(options: { trigger?: number } = {}) {
 
 function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
     const { config } = getMonitoringStatus();
-    const refreshIntervalMinutes = Math.max(1, config.scan_interval_hours * 60);
 
     return [
         {
             key: "monitoring-cycle",
             name: "Monitoring Cycle",
             taskName: CommandNames.RescanFolders,
-            intervalMinutes: refreshIntervalMinutes,
+            intervalMinutes: MONITORING_DUE_CHECK_INTERVAL_MINUTES,
             enabled: Boolean(config.enable_active_monitoring),
         },
         {
@@ -627,7 +630,7 @@ export function startMonitoring() {
     trySyncScheduledTasks();
 
     const { config } = getMonitoringStatus();
-    console.log(`🔍 Starting scheduled task runner (monitoring cycle every ${config.scan_interval_hours}h, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h — UTC interval schedule, Lidarr-style)`);
+    console.log(`🔍 Starting scheduled task runner (artist due-check every ${MONITORING_DUE_CHECK_INTERVAL_MINUTES}m, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h — Lidarr-style adaptive refresh)`);
     isMonitoring = true;
 
     const tick = () => {
@@ -912,4 +915,3 @@ export function queueConfigPrune(options: { trigger?: number } = {}) {
         options.trigger ?? CommandTrigger.Manual,
     );
 }
-

@@ -308,10 +308,18 @@ test("download queue query resolves canonical release-group provider offers with
     const { db } = dbModule;
     db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
         .run("artist-bastille", "Bastille");
+    const canonicalCoverUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/gmtf/canonical-cover.jpg";
     db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
-        VALUES (?, ?, ?, ?, ?)
-    `).run("rg-gmtf", "artist-bastille", "Give Me the Future", "album", "2022-02-04");
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+        "rg-gmtf",
+        "artist-bastille",
+        "Give Me the Future",
+        "album",
+        "2022-02-04",
+        JSON.stringify([{ coverType: "Cover", url: canonicalCoverUrl, source: "servarr-metadata" }]),
+    );
     db.prepare(`
         INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -367,6 +375,7 @@ test("download queue query resolves canonical release-group provider offers with
             providerId: "tidal-gmtf-expanded",
             releaseGroupMbid: "rg-gmtf",
             slot: "stereo",
+            cover: "provider-cover",
         },
         "rg-gmtf:stereo",
     );
@@ -379,7 +388,7 @@ test("download queue query resolves canonical release-group provider offers with
     assert.equal(live.items[0]?.album_id, "rg-gmtf");
     assert.equal(live.items[0]?.album_title, "Give Me the Future");
     assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
-    assert.equal(live.items[0]?.cover, "provider-cover");
+    assert.match(live.items[0]?.cover ?? "", /^\/MediaCoverProxy\/[a-f0-9]{64}\/canonical-cover\.jpg$/);
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-bastille",

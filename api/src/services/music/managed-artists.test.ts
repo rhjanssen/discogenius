@@ -32,16 +32,16 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("getManagedArtistsDueForRefresh respects configured refresh days and keeps stalest artists first", () => {
+test("getManagedArtistsDueForRefresh uses adaptive policy and keeps stalest artists first", () => {
     dbModule.db.prepare(`
         INSERT INTO Artists (id, name, monitored, path, last_scanned)
         VALUES
             ('1', 'Never Scanned', 1, 'Never Scanned', NULL),
-            ('2', 'Recently Scanned', 1, 'Recently Scanned', datetime('now', '-5 days')),
+            ('2', 'Recently Scanned', 1, 'Recently Scanned', datetime('now', '-5 hours')),
             ('3', 'Stale Scan', 1, 'Stale Scan', datetime('now', '-45 days'))
     `).run();
 
-    const dueArtists = managedArtistsModule.getManagedArtistsDueForRefresh({ refreshDays: 30 });
+    const dueArtists = managedArtistsModule.getManagedArtistsDueForRefresh();
 
     assert.deepEqual(
         dueArtists.map((artist) => String(artist.id)),

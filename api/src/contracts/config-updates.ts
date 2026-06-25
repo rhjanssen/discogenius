@@ -105,13 +105,8 @@ const FILTERING_UPDATE_KEYS = [
 
 const MONITORING_UPDATE_KEYS = [
   "enabled",
-  "scanIntervalHours",
   "monitorNewArtists",
   "removeUnmonitoredFiles",
-  "artistRefreshDays",
-  "albumRefreshDays",
-  "trackRefreshDays",
-  "videoRefreshDays",
 ] as const satisfies readonly (keyof MonitoringConfigContract)[];
 
 function hasOwn(record: Record<string, unknown>, key: string): boolean {

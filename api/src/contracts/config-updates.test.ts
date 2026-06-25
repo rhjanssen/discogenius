@@ -30,20 +30,15 @@ test("config update parsers return only validated partial updates", () => {
 
   const monitoringUpdate = parseMonitoringConfigUpdate({
     enabled: false,
-    scanIntervalHours: 12,
+    monitorNewArtists: false,
   }, {
     enabled: true,
-    scanIntervalHours: 24,
     monitorNewArtists: true,
     removeUnmonitoredFiles: true,
-    artistRefreshDays: 30,
-    albumRefreshDays: 120,
-    trackRefreshDays: 240,
-    videoRefreshDays: 365,
   });
   assert.deepEqual(monitoringUpdate, {
     enabled: false,
-    scanIntervalHours: 12,
+    monitorNewArtists: false,
   });
 
   const appUpdate = parsePublicAppConfigUpdate({
@@ -102,16 +97,11 @@ test("config update parsers reject unsupported keys and invalid values", () => {
   assert.throws(() => {
     parseMonitoringConfigUpdate({
       enabled: true,
-      extra: 1,
+      scanIntervalHours: 24,
     }, {
       enabled: true,
-      scanIntervalHours: 24,
       monitorNewArtists: true,
-    removeUnmonitoredFiles: true,
-      artistRefreshDays: 30,
-      albumRefreshDays: 120,
-      trackRefreshDays: 240,
-      videoRefreshDays: 365,
+      removeUnmonitoredFiles: true,
     });
   }, RequestValidationError);
 });

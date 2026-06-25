@@ -100,7 +100,7 @@ export function buildRefreshArtistCommand(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
-  scanDepth?: "basic" | "deep";
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   const hydrateCatalog = phases.refreshMetadata;
@@ -119,7 +119,7 @@ export function buildRefreshArtistCommand(params: {
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     expandCreditedArtists: params.expandCreditedArtists === true,
-    scanDepth: params.scanDepth ?? "deep",
+    monitoringCycle: params.monitoringCycle,
   };
 }
 
@@ -166,7 +166,7 @@ export function buildArtistWorkflowEntryJob(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
-  scanDepth?: "basic" | "deep";
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
 }) {
   switch (params.workflow) {
     case "metadata-refresh":
@@ -181,7 +181,7 @@ export function buildArtistWorkflowEntryJob(params: {
           workflow: params.workflow,
           forceUpdate: params.forceUpdate,
           expandCreditedArtists: params.expandCreditedArtists,
-          scanDepth: params.scanDepth,
+          monitoringCycle: params.monitoringCycle,
         }),
       };
     case "library-scan":
@@ -211,7 +211,7 @@ export function queueArtistWorkflow(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
-  scanDepth?: "basic" | "deep";
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
   priority?: number;
   trigger?: number;
 }) {
@@ -231,7 +231,7 @@ export function queueArtistIntake(params: {
   monitored: boolean;
   forceUpdate?: boolean;
   expandCreditedArtists?: boolean;
-  scanDepth?: "basic" | "deep";
+  monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
   priority?: number;
   trigger?: number;
 }) {
@@ -241,7 +241,7 @@ export function queueArtistIntake(params: {
     workflow: params.monitored ? "monitoring-intake" : "metadata-refresh",
     forceUpdate: params.forceUpdate,
     expandCreditedArtists: params.expandCreditedArtists === true,
-    scanDepth: params.scanDepth,
+    monitoringCycle: params.monitoringCycle,
     priority: params.priority,
     trigger: params.trigger,
   });

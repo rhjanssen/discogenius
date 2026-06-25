@@ -152,9 +152,6 @@ export function updateSystemTaskSchedule(id: string, updates: { enabled?: boolea
     if (updates.enabled !== undefined) {
       monitoringUpdates.enable_active_monitoring = updates.enabled;
     }
-    if (updates.intervalMinutes !== undefined) {
-      monitoringUpdates.scan_interval_hours = Math.max(1, Math.round(updates.intervalMinutes / 60));
-    }
     updateMonitoringConfig(monitoringUpdates);
   } else {
     updateScheduledTask(normalizedId as ScheduledTaskKey, {

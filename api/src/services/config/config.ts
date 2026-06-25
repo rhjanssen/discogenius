@@ -73,15 +73,9 @@ export interface AppConfig {
 }
 
 export interface MonitoringConfig {
-  enable_active_monitoring: boolean;   // Enable scheduled re-scans
-  scan_interval_hours: number;         // How often to re-scan monitored artists (daily, weekly, monthly)
+  enable_active_monitoring: boolean;   // Enable scheduled monitoring checks
   monitor_new_artists: boolean;        // Auto-monitor artists discovered during root scans
   remove_unmonitored_files: boolean;   // Remove files for items no longer monitored
-  last_check?: string;                 // Timestamp of last successful check
-  artist_refresh_days: number;         // Minimum days between artist scans
-  album_refresh_days: number;          // Minimum days between album metadata refreshes
-  track_refresh_days: number;          // Minimum days between track list refreshes
-  video_refresh_days: number;          // Minimum days between video list refreshes
 }
 
 export interface FilteringConfig {
@@ -105,7 +99,7 @@ export interface FilteringConfig {
   include_videos: boolean;             // Monitor music videos
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
-  require_provider_availability: boolean; // Legacy config key; provider availability is now tracked by slot selections, not wanted state
+  require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
 }
 
 export interface PathConfig {
@@ -205,13 +199,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   monitoring: {
     enable_active_monitoring: true,
-    scan_interval_hours: 24,
     monitor_new_artists: false,
     remove_unmonitored_files: false,
-    artist_refresh_days: 30,
-    album_refresh_days: 120,
-    track_refresh_days: 240,
-    video_refresh_days: 365,
   },
   quality: {
     audio_quality: "max",
@@ -316,48 +305,63 @@ function getConfigFileKey(): string | null {
   }
 }
 
-const MUSICBRAINZ_FILTER_KEYS: Array<keyof FilteringConfig> = [
-  "include_broadcast",
-  "include_other",
-  "include_dj_mix",
-  "include_mixtape_street",
-  "include_demo",
-];
-
-function isLegacyFilteringConfig(raw?: Partial<FilteringConfig>): boolean {
-  if (!raw) {
-    return false;
-  }
-
-  return MUSICBRAINZ_FILTER_KEYS.every((key) => !(key in raw));
+function normalizeMonitoringConfig(raw?: Partial<MonitoringConfig>): MonitoringConfig {
+  return {
+    enable_active_monitoring: typeof raw?.enable_active_monitoring === "boolean"
+      ? raw.enable_active_monitoring
+      : DEFAULT_CONFIG.monitoring.enable_active_monitoring,
+    monitor_new_artists: typeof raw?.monitor_new_artists === "boolean"
+      ? raw.monitor_new_artists
+      : DEFAULT_CONFIG.monitoring.monitor_new_artists,
+    remove_unmonitored_files: typeof raw?.remove_unmonitored_files === "boolean"
+      ? raw.remove_unmonitored_files
+      : DEFAULT_CONFIG.monitoring.remove_unmonitored_files,
+  };
 }
 
 function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConfig {
-  const {
-    include_spokenword: _includeSpokenword,
-    include_interview: _includeInterview,
-    include_audiobook: _includeAudiobook,
-    include_audio_drama: _includeAudioDrama,
-    include_field_recording: _includeFieldRecording,
-    ...supportedRaw
-  } = (raw || {}) as Partial<FilteringConfig> & Record<string, unknown>;
-  const supportedFiltering = supportedRaw as Partial<FilteringConfig>;
-
-  if (isLegacyFilteringConfig(raw)) {
-    return {
-      ...DEFAULT_CONFIG.filtering,
-      include_spatial: raw?.include_spatial ?? DEFAULT_CONFIG.filtering.include_spatial,
-      include_videos: raw?.include_videos ?? DEFAULT_CONFIG.filtering.include_videos,
-      prefer_explicit: raw?.prefer_explicit ?? DEFAULT_CONFIG.filtering.prefer_explicit,
-      enable_redundancy_filter: raw?.enable_redundancy_filter ?? DEFAULT_CONFIG.filtering.enable_redundancy_filter,
-      require_provider_availability: false,
-    };
-  }
-
   return {
-    ...DEFAULT_CONFIG.filtering,
-    ...supportedFiltering,
-    require_provider_availability: supportedFiltering.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
+    enable_redundancy_filter: raw?.enable_redundancy_filter ?? DEFAULT_CONFIG.filtering.enable_redundancy_filter,
+    prefer_explicit: raw?.prefer_explicit ?? DEFAULT_CONFIG.filtering.prefer_explicit,
+    include_album: raw?.include_album ?? DEFAULT_CONFIG.filtering.include_album,
+    include_ep: raw?.include_ep ?? DEFAULT_CONFIG.filtering.include_ep,
+    include_single: raw?.include_single ?? DEFAULT_CONFIG.filtering.include_single,
+    include_broadcast: raw?.include_broadcast ?? DEFAULT_CONFIG.filtering.include_broadcast,
+    include_other: raw?.include_other ?? DEFAULT_CONFIG.filtering.include_other,
+    include_compilation: raw?.include_compilation ?? DEFAULT_CONFIG.filtering.include_compilation,
+    include_soundtrack: raw?.include_soundtrack ?? DEFAULT_CONFIG.filtering.include_soundtrack,
+    include_live: raw?.include_live ?? DEFAULT_CONFIG.filtering.include_live,
+    include_remix: raw?.include_remix ?? DEFAULT_CONFIG.filtering.include_remix,
+    include_dj_mix: raw?.include_dj_mix ?? DEFAULT_CONFIG.filtering.include_dj_mix,
+    include_mixtape_street: raw?.include_mixtape_street ?? DEFAULT_CONFIG.filtering.include_mixtape_street,
+    include_demo: raw?.include_demo ?? DEFAULT_CONFIG.filtering.include_demo,
+    include_spatial: raw?.include_spatial ?? DEFAULT_CONFIG.filtering.include_spatial,
+    include_videos: raw?.include_videos ?? DEFAULT_CONFIG.filtering.include_videos,
+    require_provider_availability: raw?.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
+  };
+}
+
+function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig {
+  return {
+    save_album_cover: raw?.save_album_cover ?? DEFAULT_CONFIG.metadata.save_album_cover,
+    album_cover_name: raw?.album_cover_name ?? DEFAULT_CONFIG.metadata.album_cover_name,
+    album_cover_resolution: raw?.album_cover_resolution ?? DEFAULT_CONFIG.metadata.album_cover_resolution,
+    save_artist_picture: raw?.save_artist_picture ?? DEFAULT_CONFIG.metadata.save_artist_picture,
+    artist_picture_name: raw?.artist_picture_name ?? DEFAULT_CONFIG.metadata.artist_picture_name,
+    artist_picture_resolution: raw?.artist_picture_resolution ?? DEFAULT_CONFIG.metadata.artist_picture_resolution,
+    save_video_thumbnail: raw?.save_video_thumbnail ?? DEFAULT_CONFIG.metadata.save_video_thumbnail,
+    embed_video_thumbnail: raw?.embed_video_thumbnail ?? DEFAULT_CONFIG.metadata.embed_video_thumbnail,
+    video_thumbnail_resolution: raw?.video_thumbnail_resolution ?? DEFAULT_CONFIG.metadata.video_thumbnail_resolution,
+    save_lyrics: raw?.save_lyrics ?? DEFAULT_CONFIG.metadata.save_lyrics,
+    save_nfo: raw?.save_nfo ?? DEFAULT_CONFIG.metadata.save_nfo,
+    embed_album_review: raw?.embed_album_review ?? DEFAULT_CONFIG.metadata.embed_album_review,
+    enable_fingerprinting: raw?.enable_fingerprinting ?? DEFAULT_CONFIG.metadata.enable_fingerprinting,
+    write_tidal_url: raw?.write_tidal_url ?? DEFAULT_CONFIG.metadata.write_tidal_url,
+    mark_explicit: raw?.mark_explicit ?? DEFAULT_CONFIG.metadata.mark_explicit,
+    upc_target: raw?.upc_target ?? DEFAULT_CONFIG.metadata.upc_target,
+    embed_replaygain: raw?.embed_replaygain ?? DEFAULT_CONFIG.metadata.embed_replaygain,
+    write_audio_tags_policy: raw?.write_audio_tags_policy ?? DEFAULT_CONFIG.metadata.write_audio_tags_policy,
+    scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
   };
 }
 
@@ -368,20 +372,13 @@ function readConfigFile(): DiscoGeniusConfig {
     const content = fs.readFileSync(CONFIG_FILE, "utf-8");
     const parsed = TOML.parse(content) as unknown as DiscoGeniusConfig;
 
-    const metadataFromFile: Partial<MetadataConfig> = { ...(parsed.metadata || {}) };
-    delete (metadataFromFile as Record<string, unknown>).save_album_review;
-    delete (metadataFromFile as Record<string, unknown>).save_artist_bio;
-    if (metadataFromFile.enable_fingerprinting === undefined) {
-      metadataFromFile.enable_fingerprinting = DEFAULT_CONFIG.metadata.enable_fingerprinting;
-    }
-
     return {
       app: { ...DEFAULT_CONFIG.app, ...parsed.app },
-      monitoring: { ...DEFAULT_CONFIG.monitoring, ...parsed.monitoring },
+      monitoring: normalizeMonitoringConfig(parsed.monitoring),
       filtering: normalizeFilteringConfig((parsed as any).filtering),
       path: { ...DEFAULT_CONFIG.path, ...parsed.path },
       naming: { ...DEFAULT_CONFIG.naming, ...(parsed as any).naming },
-      metadata: { ...DEFAULT_CONFIG.metadata, ...metadataFromFile },
+      metadata: normalizeMetadataConfig(parsed.metadata),
       quality: { ...DEFAULT_CONFIG.quality, ...(parsed as any).quality },
       streaming: { ...DEFAULT_CONFIG.streaming, ...(parsed as any).streaming },
       account: { ...DEFAULT_CONFIG.account, ...parsed.account },
@@ -453,6 +450,14 @@ function mergeDbOverrides(fileConfig: DiscoGeniusConfig): DiscoGeniusConfig {
       continue;
     }
 
+    if (section === "monitoring") {
+      merged.monitoring = normalizeMonitoringConfig({
+        ...merged.monitoring,
+        ...(override as Partial<MonitoringConfig>),
+      });
+      continue;
+    }
+
     if (section === "app") {
       merged.app = {
         ...merged.app,
@@ -460,6 +465,14 @@ function mergeDbOverrides(fileConfig: DiscoGeniusConfig): DiscoGeniusConfig {
           ? override.acoustid_api_key
           : merged.app.acoustid_api_key,
       };
+      continue;
+    }
+
+    if (section === "metadata") {
+      merged.metadata = normalizeMetadataConfig({
+        ...merged.metadata,
+        ...(override as Partial<MetadataConfig>),
+      });
       continue;
     }
 
@@ -586,6 +599,16 @@ export function updateConfig<K extends keyof DiscoGeniusConfig>(
     config.filtering = normalizeFilteringConfig({
       ...config.filtering,
       ...(updates as Partial<FilteringConfig>),
+    });
+  } else if (section === "monitoring") {
+    config.monitoring = normalizeMonitoringConfig({
+      ...config.monitoring,
+      ...(updates as Partial<MonitoringConfig>),
+    });
+  } else if (section === "metadata") {
+    config.metadata = normalizeMetadataConfig({
+      ...config.metadata,
+      ...(updates as Partial<MetadataConfig>),
     });
   } else {
     config[section] = {

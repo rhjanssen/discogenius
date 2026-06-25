@@ -301,8 +301,6 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
 }
 
 const BASE_SCHEMA_VERSION = 34;
-const SCHEMA_VERSION_FORMAT_KEY = "runtime.schema_version_format";
-const INTEGER_SCHEMA_VERSION_FORMAT = "integer";
 
 // ====================================================================
 // SCHEMA
@@ -957,9 +955,34 @@ function ensureMusicBrainzProviderSchema(): void {
   // initDatabase — no separate index needed here.)
 }
 
+function getUserTableCount(): number {
+  const row = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+  `).get() as { count: number };
+  return Number(row.count || 0);
+}
+
+function assertDatabaseVersionCanStart(): void {
+  const fromVersion = db.pragma("user_version", { simple: true }) as number;
+  const userTableCount = getUserTableCount();
+  if (fromVersion === 0 && userTableCount === 0) {
+    return;
+  }
+
+  if (fromVersion !== BASE_SCHEMA_VERSION) {
+    throw new Error(
+      `Database schema ${fromVersion || "unversioned"} is not supported by this build. ` +
+      `Reset the runtime database so Discogenius can create a clean schema ${BASE_SCHEMA_VERSION} database.`,
+    );
+  }
+}
+
 function stampSchemaVersion(): void {
   const fromVersion = db.pragma("user_version", { simple: true }) as number;
-  if (fromVersion !== BASE_SCHEMA_VERSION) {
+  if (fromVersion === 0) {
     console.log(`🛠️  Baseline schema at version ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION}).`);
     db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
   }
@@ -967,6 +990,7 @@ function stampSchemaVersion(): void {
 
 export function initDatabase() {
   console.log("🗄️  Initializing database schema...");
+  assertDatabaseVersionCanStart();
 
   // ====================================================================
   // ARTISTS TABLE
@@ -1087,10 +1111,6 @@ export function initDatabase() {
       FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE
     )
   `);
-
-  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_insert`);
-  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_delete`);
-  db.exec(`DROP TRIGGER IF EXISTS trg_track_files_download_state_update`);
 
   ensureMetadataIdentitySchema();
   ensureMusicBrainzProviderSchema();
@@ -1320,10 +1340,6 @@ function recordDatabaseVersionState() {
   const schemaUserVersion = db.pragma("user_version", { simple: true }) as number;
   const schemaVersion = String(schemaUserVersion);
 
-  const previousVersionRow = db.prepare(`SELECT value FROM config WHERE key = 'runtime.current_app_version'`).get() as
-    | { value: string }
-    | undefined;
-
   const insertConfig = db.prepare(`
     INSERT OR IGNORE INTO config (key, value, description)
     VALUES (?, ?, ?)
@@ -1363,14 +1379,6 @@ function recordDatabaseVersionState() {
       schemaVersion,
       "Current Discogenius schema version"
     );
-
-    upsertConfig.run(
-      SCHEMA_VERSION_FORMAT_KEY,
-      INTEGER_SCHEMA_VERSION_FORMAT,
-      "Schema versioning format used by SQLite PRAGMA user_version"
-    );
-
-    db.prepare("DELETE FROM config WHERE key = 'runtime.current_schema_user_version'").run();
 
     db.exec("COMMIT");
   } catch (error) {

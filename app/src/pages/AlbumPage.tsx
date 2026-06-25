@@ -822,25 +822,19 @@ const AlbumPage = () => {
           picture: artistImage,
         }]
       : [];
-  const albumServarrMetadataArtworkUrl = album ? (album.cover_art_url || null) : null;
+  const albumCanonicalArtworkUrl = album
+    ? (album.cover_art_url || getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
+    : null;
   const albumProviderArtworkUrl = album
     ? getAlbumCover((album as any).provider_cover_id, "large")
     : null;
-  const albumStoredArtworkUrl = album
-    ? (getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
-    : null;
-  const albumStoredFallbackUrl = albumStoredArtworkUrl
-    && albumStoredArtworkUrl !== albumServarrMetadataArtworkUrl
-    && albumStoredArtworkUrl !== albumProviderArtworkUrl
-    ? albumStoredArtworkUrl
-    : null;
   const albumArtworkUrl = album
     ? (
-      albumServarrMetadataArtworkUrl && !coverImageFailed
-        ? albumServarrMetadataArtworkUrl
+      albumCanonicalArtworkUrl && !coverImageFailed
+        ? albumCanonicalArtworkUrl
         : albumProviderArtworkUrl && !providerCoverImageFailed
           ? albumProviderArtworkUrl
-          : albumStoredFallbackUrl
+          : albumCanonicalArtworkUrl
     )
     : undefined;
   const albumBrandColor = useArtworkBrandColor({
@@ -856,7 +850,7 @@ const AlbumPage = () => {
   useEffect(() => {
     setCoverImageFailed(false);
     setProviderCoverImageFailed(false);
-  }, [albumServarrMetadataArtworkUrl, albumProviderArtworkUrl]);
+  }, [albumCanonicalArtworkUrl, albumProviderArtworkUrl]);
 
   const isMonitored = !!album?.is_monitored;
   const isLocked = !!album?.monitored_lock;
@@ -1267,7 +1261,7 @@ const AlbumPage = () => {
                       className={styles.coverArt}
                       decoding="async"
                       onError={() => {
-                        if (albumServarrMetadataArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
+                        if (albumCanonicalArtworkUrl && !coverImageFailed && albumProviderArtworkUrl) {
                           setCoverImageFailed(true);
                         } else {
                           setProviderCoverImageFailed(true);

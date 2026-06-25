@@ -25,7 +25,6 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
     const parts = [
         `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
-        `repaired ${summary.mediaMonitorRepairs + summary.albumMonitorRepairs} monitor state gap(s)`,
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `and optimized the database`,
     ];

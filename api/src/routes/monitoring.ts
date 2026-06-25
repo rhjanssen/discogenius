@@ -29,13 +29,8 @@ router.get("/status", (_, res) => {
       checking: status.checking,
       config: {
         enabled: status.config.enable_active_monitoring,
-        scanIntervalHours: status.config.scan_interval_hours,
         monitorNewArtists: status.config.monitor_new_artists,
         removeUnmonitoredFiles: status.config.remove_unmonitored_files,
-        artistRefreshDays: status.config.artist_refresh_days,
-        albumRefreshDays: status.config.album_refresh_days,
-        trackRefreshDays: status.config.track_refresh_days,
-        videoRefreshDays: status.config.video_refresh_days,
         lastCheckTimestamp: status.config.lastCheckTimestamp,
         checkInProgress: status.config.checkInProgress,
         progressArtistIndex: status.config.progressArtistIndex,
@@ -54,39 +49,24 @@ router.post("/config", (req, res) => {
     const currentStatus = getMonitoringStatus();
     const validatedUpdates = parseMonitoringConfigUpdate(getObjectBody(req.body), {
       enabled: currentStatus.config.enable_active_monitoring,
-      scanIntervalHours: currentStatus.config.scan_interval_hours,
       monitorNewArtists: currentStatus.config.monitor_new_artists,
       removeUnmonitoredFiles: currentStatus.config.remove_unmonitored_files,
-      artistRefreshDays: currentStatus.config.artist_refresh_days,
-      albumRefreshDays: currentStatus.config.album_refresh_days,
-      trackRefreshDays: currentStatus.config.track_refresh_days,
-      videoRefreshDays: currentStatus.config.video_refresh_days,
       lastCheckTimestamp: currentStatus.config.lastCheckTimestamp ?? undefined,
       checkInProgress: currentStatus.config.checkInProgress,
       progressArtistIndex: currentStatus.config.progressArtistIndex,
     });
     const updates: any = {};
     if ("enabled" in validatedUpdates) updates.enable_active_monitoring = validatedUpdates.enabled;
-    if ("scanIntervalHours" in validatedUpdates) updates.scan_interval_hours = validatedUpdates.scanIntervalHours;
     if ("monitorNewArtists" in validatedUpdates) updates.monitor_new_artists = validatedUpdates.monitorNewArtists;
     if ("removeUnmonitoredFiles" in validatedUpdates) updates.remove_unmonitored_files = validatedUpdates.removeUnmonitoredFiles;
-    if ("artistRefreshDays" in validatedUpdates) updates.artist_refresh_days = validatedUpdates.artistRefreshDays;
-    if ("albumRefreshDays" in validatedUpdates) updates.album_refresh_days = validatedUpdates.albumRefreshDays;
-    if ("trackRefreshDays" in validatedUpdates) updates.track_refresh_days = validatedUpdates.trackRefreshDays;
-    if ("videoRefreshDays" in validatedUpdates) updates.video_refresh_days = validatedUpdates.videoRefreshDays;
 
     const config = updateMonitoringConfig(updates);
 
     // Convert back to camelCase for response
     const response = {
       enabled: config.enable_active_monitoring,
-      scanIntervalHours: config.scan_interval_hours,
       monitorNewArtists: config.monitor_new_artists,
       removeUnmonitoredFiles: config.remove_unmonitored_files,
-      artistRefreshDays: config.artist_refresh_days,
-      albumRefreshDays: config.album_refresh_days,
-      trackRefreshDays: config.track_refresh_days,
-      videoRefreshDays: config.video_refresh_days,
       lastCheckTimestamp: config.lastCheckTimestamp,
       checkInProgress: config.checkInProgress,
       progressArtistIndex: config.progressArtistIndex,

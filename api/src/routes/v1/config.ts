@@ -87,27 +87,6 @@ router.get("/about", async (_, res) => {
   }
 });
 
-router.get("/monitoring", (_, res) => {
-  try {
-    const config = getConfigSection("monitoring");
-    res.json(config);
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-router.post("/monitoring", (req, res) => {
-  try {
-    updateConfig("monitoring", getObjectBody(req.body));
-    res.json({ success: true });
-  } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
-  }
-});
-
 router.get("/quality", (_, res) => {
   try {
     const config = getConfigSection("quality");

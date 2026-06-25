@@ -446,7 +446,7 @@ export class OrganizerService {
               json_extract(media.value, '$.position'),
               0
             ) AS INTEGER))
-            FROM json_each(selected_release.data, '$.Media') media
+            FROM json_each(selected_release.media) media
             WHERE CAST(COALESCE(
               json_extract(media.value, '$.Position'),
               json_extract(media.value, '$.position'),

@@ -3,7 +3,7 @@ import { RefreshAlbumService } from "../../music/refresh-album-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { shouldRefreshArtist } from "../../config/refresh-policy.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
-import { buildMatchArtistProvidersCommand } from "../../music/artist-workflow.js";
+import { buildMatchArtistProvidersCommand, queueArtistWorkflow } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandNames } from "../command-names.js";
@@ -15,22 +15,6 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
         progress: 5,
         description: ctx.formatArtistPhaseDescription(job, "preparing artist refresh"),
     });
-    if (job.payload.scanDepth === "basic") {
-        // Credit-only collaborator intake: canonical metadata
-        // without provider catalog/video/slot hydration.
-        await RefreshArtistService.refreshArtistMetadata(job.payload.artistId, {
-            monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
-            includeSimilarArtists: false,
-            seedSimilarArtists: false,
-            forceUpdate: job.payload.forceUpdate ?? false,
-        });
-        ArtistStatisticsService.refresh([job.payload.artistId]);
-        ctx.updateCommandDescription(job, {
-            progress: 100,
-            description: ctx.formatArtistPhaseDescription(job, "metadata refreshed"),
-        });
-        return;
-    }
     // Metadata intake only — provider matching is deferred to a standalone
     // MatchArtistProviders command enqueued below (RefreshArtist →
     // MatchArtistProviders → RescanFolders → CurateArtist). refreshArtist returns
@@ -164,7 +148,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         : undefined;
     const allArtists = getManagedArtists({ orderByLastScanned: true, artistIds: selectedArtistIds });
 
-    let refreshed = 0;
+    let queued = 0;
     let skipped = 0;
 
     for (let i = 0; i < allArtists.length; i++) {
@@ -184,34 +168,26 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         const progress = Math.min(90, 10 + Math.round(((i + 1) / allArtists.length) * 80));
         ctx.updateCommandDescription(job, {
             progress,
-            description: `${baseLabel} - refreshing ${artistName || 'artist'} (${i + 1}/${allArtists.length}, ${refreshed} refreshed, ${skipped} skipped)`,
+            description: `${baseLabel} - queueing ${artistName || 'artist'} (${i + 1}/${allArtists.length}, ${queued} queued, ${skipped} skipped)`,
         });
 
         try {
-            await RefreshArtistService.refreshArtist(artistId, {
-                monitorArtist: Boolean((artist as any).monitor),
-                hydrateCatalog: true,
-                hydrateAlbumTracks: false,
-                includeSimilarArtists: false,
-                seedSimilarArtists: false,
-            });
-            ArtistStatisticsService.refresh([artistId]);
-            refreshed++;
-
-            const monitoringCycle = Boolean(job.payload.monitoringCycle);
-
-            // Emit event so per-artist pipeline can chain (curation listener handles this)
-            appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETED, {
+            const monitoringCycle = job.payload.monitoringCycle;
+            const commandId = queueArtistWorkflow({
                 artistId,
                 artistName,
-                workflow: monitoringCycle ? 'monitoring-intake' : 'metadata-refresh',
-                monitoringCycle: job.payload.monitoringCycle,
-                scanLibrary: monitoringCycle,
-                forceDownloadQueue: false,
+                workflow: monitoringCycle ? "monitoring-intake" : "metadata-refresh",
+                monitoringCycle,
+                priority: -1,
                 trigger: job.trigger ?? CommandTrigger.Unspecified,
             });
+            if (commandId !== -1) {
+                queued++;
+            } else {
+                skipped++;
+            }
         } catch (error: any) {
-            console.error(`[CommandExecutor] RefreshMetadata: failed to refresh ${artistName} (${artistId}):`, error?.message);
+            console.error(`[CommandExecutor] RefreshMetadata: failed to queue ${artistName} (${artistId}):`, error?.message);
         }
 
         // Yield between artists so API requests/SSE aren't starved
@@ -221,6 +197,6 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
 
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: `Refreshed ${refreshed} artist(s), skipped ${skipped} (${allArtists.length} total)`,
+        description: `Queued ${queued} artist refresh job(s), skipped ${skipped} (${allArtists.length} total)`,
     });
 };

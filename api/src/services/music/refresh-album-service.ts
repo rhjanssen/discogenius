@@ -1,8 +1,7 @@
 import { db } from "../../database.js";
-import { getConfigSection } from "../config/config.js";
 import { createCooperativeBatcher } from "../../utils/concurrent.js";
 import { ScanLevel, type ScanOptions } from "./scan-types.js";
-import { isRefreshDue, shouldRefreshTracks } from "./scan-refresh-state.js";
+import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
@@ -425,20 +424,28 @@ export class RefreshAlbumService {
     ): Promise<void> {
         console.log(`[RefreshAlbumService] scanBasic for ${albumId}`);
 
-        const monitoringConfig = getConfigSection("monitoring");
         // Freshness is the album offer's updated_at (the offer is the provider
         // catalog now); the canonical link comes from release_(group_)mbid on it.
         const existingRow = db.prepare(`
-            SELECT release_mbid AS mbid, release_group_mbid AS mb_release_group_id, updated_at AS last_scanned
-            FROM ProviderItems
-            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            ORDER BY updated_at DESC
+            SELECT
+                pi.release_mbid AS mbid,
+                pi.release_group_mbid AS mb_release_group_id,
+                pi.updated_at AS last_scanned,
+                COALESCE(release.date, album.first_release_date, pi.release_date) AS album_release_date
+            FROM ProviderItems pi
+            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
+            WHERE pi.entity_type = 'album' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY pi.updated_at DESC
             LIMIT 1
         `).get(albumId) as any;
         const shouldRefreshAlbum =
             !existingRow ||
             options.forceUpdate === true ||
-            isRefreshDue(existingRow?.last_scanned, monitoringConfig.album_refresh_days);
+            shouldRefreshAlbumPolicy({
+                albumReleaseDate: existingRow?.album_release_date,
+                lastScanned: existingRow?.last_scanned,
+            });
 
         if (existingRow && !shouldRefreshAlbum) {
             if (!existingRow.mbid || !existingRow.mb_release_group_id || options.forceUpdate === true) {
@@ -468,7 +475,7 @@ export class RefreshAlbumService {
             releaseMbid: canonicalLink.releaseMbid,
             album: albumData,
         });
-        // Advance the offer freshness so isRefreshDue() sees this basic scan.
+        // Advance the offer freshness so adaptive refresh policy sees this scan.
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
             WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
@@ -505,11 +512,14 @@ export class RefreshAlbumService {
     static async scanShallow(albumId: string, options: ScanOptions = {}): Promise<void> {
         console.log(`[RefreshAlbumService] scanShallow for ${albumId}`);
 
-        const monitoringConfig = getConfigSection("monitoring");
         const existing = db.prepare(`
-            SELECT a.review_text AS review_text, pi.updated_at AS last_scanned
+            SELECT
+                a.review_text AS review_text,
+                pi.updated_at AS last_scanned,
+                COALESCE(release.date, a.first_release_date, pi.release_date) AS album_release_date
             FROM ProviderItems pi
             LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
+            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
             WHERE pi.entity_type = 'album' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY pi.updated_at DESC
             LIMIT 1
@@ -517,7 +527,10 @@ export class RefreshAlbumService {
         const shouldRefreshAlbumMeta =
             options.forceUpdate === true ||
             !existing ||
-            isRefreshDue(existing?.last_scanned, monitoringConfig.album_refresh_days);
+            shouldRefreshAlbumPolicy({
+                albumReleaseDate: existing?.album_release_date,
+                lastScanned: existing?.last_scanned,
+            });
 
         if (shouldRefreshAlbumMeta) {
             await this.scanBasic(albumId, undefined, undefined, options);
@@ -527,7 +540,10 @@ export class RefreshAlbumService {
 
         const shouldRefreshTrackList =
             options.forceUpdate === true ||
-            shouldRefreshTracks(albumId, monitoringConfig.track_refresh_days);
+            shouldRefreshTrackSet({
+                albumId,
+                fallbackLastScanned: existing?.last_scanned,
+            });
         if (shouldRefreshTrackList) {
             await this.scanTracks(albumId);
         } else {

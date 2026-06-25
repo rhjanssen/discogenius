@@ -1,5 +1,4 @@
 import { db } from "../../database.js";
-import type { MonitoringConfig as ConfigMonitoringConfig } from "../config/config.js";
 import { getManagedArtists } from "../music/managed-artists.js";
 import {ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames} from "./command-names.js";
 
@@ -9,7 +8,11 @@ export interface MonitoringProgress {
     progressArtistIndex: number;
 }
 
-export type MonitoringConfig = ConfigMonitoringConfig & MonitoringProgress;
+export interface MonitoringConfig extends MonitoringProgress {
+    enable_active_monitoring: boolean;
+    monitor_new_artists: boolean;
+    remove_unmonitored_files: boolean;
+}
 
 interface MonitoringStateRow {
     state_key: string;
@@ -221,6 +224,16 @@ export function saveMonitoringProgress(artistIndex: number, checkInProgress: boo
     persistMonitoringProgress();
 }
 
+export function stampMonitoringCompleted() {
+    loadMonitoringProgress();
+    monitoringProgress = {
+        progressArtistIndex: 0,
+        checkInProgress: false,
+        lastCheckTimestamp: new Date().toISOString(),
+    };
+    persistMonitoringProgress();
+}
+
 export function getArtistsWithPendingJobs(): Set<string> {
     try {
         const rows = getPendingArtistJobsStmt().all(...ARTIST_WORKFLOW_COMMAND_NAMES) as Array<{ artist_id: string | number | null }>;
@@ -254,10 +267,7 @@ export function hasActiveArtistWorkflow(): boolean {
     );
 }
 
-export function getEffectiveMonitoringRuntimeState(
-    configFromFile: ConfigMonitoringConfig,
-    options: { isChecking: boolean },
-): MonitoringProgress {
+export function getEffectiveMonitoringRuntimeState(options: { isChecking: boolean }): MonitoringProgress {
     loadMonitoringProgress();
 
     const workflowActive = options.isChecking || hasActiveMonitoringCycleWorkflow();
@@ -273,7 +283,7 @@ export function getEffectiveMonitoringRuntimeState(
     }
 
     return {
-        lastCheckTimestamp: monitoringProgress.lastCheckTimestamp ?? configFromFile.last_check ?? null,
+        lastCheckTimestamp: monitoringProgress.lastCheckTimestamp,
         checkInProgress: workflowActive || monitoringProgress.checkInProgress,
         progressArtistIndex: workflowActive ? monitoringProgress.progressArtistIndex : 0,
     };

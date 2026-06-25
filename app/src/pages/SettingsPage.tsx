@@ -1125,13 +1125,8 @@ const SettingsPage = () => {
             // Set defaults on error
             setMonitoringConfig({
                 enabled: false,
-                scanIntervalHours: 24,
                 monitorNewArtists: false,
                 removeUnmonitoredFiles: false,
-                artistRefreshDays: 30,
-                albumRefreshDays: 120,
-                trackRefreshDays: 240,
-                videoRefreshDays: 365,
             });
             setMonitoringStatus({ running: false, checking: false });
             setCurationConfig({
@@ -1847,88 +1842,6 @@ const SettingsPage = () => {
                             checked: monitoringConfig?.removeUnmonitoredFiles || false,
                             onChange: (checked) => updateMonitoring({ removeUnmonitoredFiles: checked }),
                         })}
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Scan Interval</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    How often to check
-                                </Text>
-                            </div>
-                            <Select
-                                value={monitoringConfig?.scanIntervalHours?.toString() || '24'}
-                                onChange={(_, data) => updateMonitoring({ scanIntervalHours: Number(data.value) })}
-                                disabled={!monitoringConfig?.enabled}
-                                className={styles.selectCompact}
-                            >
-                                <option value="24">Daily</option>
-                                <option value="168">Weekly</option>
-                                <option value="720">Monthly</option>
-                            </Select>
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Artist Refresh (Days)</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Minimum days between artist scans
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={0}
-                                value={monitoringConfig?.artistRefreshDays?.toString() || '30'}
-                                onChange={(_, data) => updateMonitoring({ artistRefreshDays: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Album Refresh (Days)</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Minimum days between album metadata refreshes
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={0}
-                                value={monitoringConfig?.albumRefreshDays?.toString() || '60'}
-                                onChange={(_, data) => updateMonitoring({ albumRefreshDays: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Track Refresh (Days)</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Minimum days between track list refreshes
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={0}
-                                value={monitoringConfig?.trackRefreshDays?.toString() || '60'}
-                                onChange={(_, data) => updateMonitoring({ trackRefreshDays: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Video Refresh (Days)</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Minimum days between video refreshes
-                                </Text>
-                            </div>
-                            <Input
-                                type="number"
-                                min={0}
-                                value={monitoringConfig?.videoRefreshDays?.toString() || '60'}
-                                onChange={(_, data) => updateMonitoring({ videoRefreshDays: Number(data.value) })}
-                                className={styles.inputCompact}
-                                disabled={!monitoringConfig?.enabled}
-                            />
-                        </div>
                         <div className={styles.actionButtonRow}>
                             <Button
                                 appearance="outline"

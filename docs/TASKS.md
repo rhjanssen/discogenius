@@ -178,6 +178,29 @@ the provider abstraction so a second provider can declare its own sources.
   NOTE: the catalog FK triggers fire only on INSERT / UPDATE OF mbid — NOT on
   `ON CONFLICT DO UPDATE` re-syncs — so they're a new-row cost, not a re-refresh
   cost.
+- done (2026-06-25): Removed the user-facing fixed refresh interval controls
+  from Settings and stopped using `scan_interval_hours` / `*_refresh_days` to
+  decide artist refresh due-ness. The monitoring scheduled task is now only an
+  internal due-check cadence (`DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES`,
+  default 60m); artist selection uses the adaptive `ShouldRefreshArtist` policy.
+  The old monitoring config/API fields and `/v1/config/monitoring` endpoint were
+  removed; old interval fields are now rejected instead of accepted for
+  compatibility.
+- done (2026-06-25): `RefreshMetadata` no longer refreshes managed artists
+  inline. It queues per-artist workflow entry jobs so scheduled/manual refreshes
+  reuse the same `RefreshArtist` -> `MatchArtistProviders` -> optional
+  `RescanFolders` / `CurateArtist` chain.
+- done (2026-06-25): Album/track provider refresh checks no longer use
+  `album_refresh_days` / `track_refresh_days`; `RefreshAlbumService` now uses
+  the adaptive album and track-set refresh policies. Removed the dead
+  `scan-refresh-state` helper/tests so the old fixed-day refresh model no longer
+  exists in production or test-only code.
+- done (2026-06-25): Runtime compatibility cleanup: fresh DB startup remains the
+  only supported path. Startup now rejects non-current existing schemas instead
+  of running historical migrations/backfills; obsolete trigger cleanup and schema
+  format marker writes were removed. Config loading now normalizes to current
+  monitoring/filtering/metadata shapes instead of carrying old keys forward, and
+  the frontend no longer migrates old library localStorage settings.
 - pending: Audit other request-triggered routes for inline heavy work that should
   be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
   and adopt `runWithAsyncBusyRetry` for their writes.
@@ -236,10 +259,13 @@ Target Discogenius design:
     → RescanFolders, event chain intact, 0 errors, 113 albums visible.
 - Chain: `RefreshArtist` → `MatchArtistProviders` → `RescanFolders` →
   `CurateArtist`. Each a short, independently-queued unit.
-- Drop the shallow/deep naming: `scanBasic`/`scanShallow`/`scanDeep` are called
-  from ~15 sites (artist-monitoring, artist-query, media-seed, scheduler,
-  download/import paths). Rename toward Lidarr's `RefreshArtist`/`RefreshAlbum`
-  vocabulary in a dedicated pass (mechanical but wide).
+- done (2026-06-25): Artist refresh no longer accepts `scanDepth` and
+  `upsertMusicBrainzArtist` no longer stamps `last_scanned` during display-only
+  seeding. Search-result navigation can seed the artist page, then queue the
+  normal refresh workflow instead of making a shallow row look fully scanned.
+- pending: Finish the remaining album-side shallow/deep vocabulary cleanup.
+  `RefreshAlbumService` still has `scanBasic`/`scanShallow`/`scanDeep` naming,
+  although its refresh due checks now use the adaptive policy.
 
 Execution notes: big redesign — do with full focus, build/test-gated. Reuse the
 existing catalog tables; the win is the diff-reconcile write path (port
@@ -316,6 +342,10 @@ DONE (schema 32→34, on branch `2.1.0`):
   credits use `Recordings.credits`.
 - `musicbrainz-release-group-read-service.ts`, `track-query-service`, and
   `audio-tag-service`: recording artist credits now read `Recordings.credits`.
+- `download-queue-query-service`: queue cover art now uses the shared
+  canonical-first album artwork resolver (`Albums.images` / Servarr Metadata
+  Server or Cover Art Archive URL first, provider artwork as fallback) and
+  replaces provider cover IDs already present in older queue payloads.
 - Fresh schema 34 drops the raw catalog `data` columns from ArtistMetadata,
   Albums, AlbumReleases, Recordings, and Tracks. Writers no longer populate those
   blobs.

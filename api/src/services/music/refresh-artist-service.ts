@@ -7,8 +7,7 @@ import {
 } from "./artist-paths.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
 import { type ScanOptions, type ScanDeepResult } from "./scan-types.js";
-import { isRefreshDue, shouldRefreshVideos } from "./scan-refresh-state.js";
-import { shouldRefreshArtist } from "../config/refresh-policy.js";
+import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadataProxy } from "../metadata/servarr-metadata-proxy.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
@@ -75,12 +74,7 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
     };
 }
 
-function providerVideoToLegacyVideoRow(providerVideo: ProviderVideo, fallbackArtistId: string): any {
-    const raw = providerVideo.raw;
-    if (raw && typeof raw === "object" && "provider_id" in raw) {
-        return raw;
-    }
-
+function providerVideoToOfferRow(providerVideo: ProviderVideo, fallbackArtistId: string): any {
     return {
         provider_id: providerVideo.providerId,
         title: providerVideo.title,
@@ -304,10 +298,10 @@ export class RefreshArtistService {
                     id, name, picture, cover_image_url, popularity, artist_types, artist_roles,
                     mbid, musicbrainz_status, musicbrainz_last_checked, musicbrainz_match_method,
                     bio_text, bio_source,
-                    monitored, monitored_at, user_date_added, last_scanned, path
+                    monitored, monitored_at, user_date_added, path
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP, 'musicbrainz-metadata',
-                    ?, 'musicbrainz', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP, ?)
+                    ?, 'musicbrainz', ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, ?, ?)
             `).run(
                 localArtistId,
                 artistName,
@@ -340,7 +334,6 @@ export class RefreshArtistService {
                     bio_source = CASE WHEN ? IS NOT NULL THEN 'musicbrainz' ELSE bio_source END,
                     monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
-                    last_scanned = CURRENT_TIMESTAMP,
                     path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END
                 WHERE id = ?
             `).run(
@@ -1121,11 +1114,13 @@ export class RefreshArtistService {
         const existing = db.prepare(
             "SELECT id, monitored, name, mbid, last_scanned, path FROM Artists WHERE id = ?",
         ).get(artistId) as any;
-        const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const shouldRefresh =
             !existing ||
             options.forceUpdate === true ||
-            isRefreshDue(existing?.last_scanned, refreshDays);
+            shouldRefreshArtist({
+                artistId,
+                lastScanned: existing?.last_scanned,
+            });
 
         const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitored || false);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
@@ -1198,12 +1193,14 @@ export class RefreshArtistService {
      * plain sub-step (Lidarr has no shallow/deep split — one refresh).
      */
     private static async refreshArtistBiography(artistId: string, options: ScanOptions = {}): Promise<void> {
-        const refreshDays = getConfigSection("monitoring").artist_refresh_days;
         const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
         const shouldRefreshBio =
             options.forceUpdate === true ||
             existing?.bio_text == null ||
-            isRefreshDue(existing?.last_scanned, refreshDays);
+            shouldRefreshArtist({
+                artistId,
+                lastScanned: existing?.last_scanned,
+            });
 
         const refreshed = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
         if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
@@ -1251,7 +1248,6 @@ export class RefreshArtistService {
                 .get(artistId) as { mbid?: string | null } | undefined)?.mbid
             || (isMusicBrainzMbid(artistId) ? artistId : null);
 
-        const monitoringConfig = getConfigSection("monitoring");
         const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
 
         // Lidarr's ShouldRefreshArtist staleness gate — no shallow/deep levels.
@@ -1263,7 +1259,6 @@ export class RefreshArtistService {
             shouldRefreshArtist({
                 artistId,
                 lastScanned: artistRow?.last_scanned,
-                refreshDays: monitoringConfig.artist_refresh_days,
             });
 
         if (!shouldRefresh) {
@@ -1353,7 +1348,6 @@ export class RefreshArtistService {
             return;
         }
 
-        const monitoringConfig = getConfigSection("monitoring");
         const providers = streamingProviderManager.getAllStreamingProviders();
         const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
 
@@ -1382,12 +1376,12 @@ export class RefreshArtistService {
 
             const shouldRefreshArtistVideos =
                 options.forceUpdate === true ||
-                shouldRefreshVideos(artistId, monitoringConfig.video_refresh_days);
+                shouldRefreshVideos({ artistId });
             if (shouldRefreshArtistVideos && provider.getArtistVideos) {
                 try {
                     const videos = (await provider.getArtistVideos(providerArtistId) || [])
                         .map((video) => ({
-                            ...providerVideoToLegacyVideoRow(video, artistId),
+                            ...providerVideoToOfferRow(video, artistId),
                             _provider: provider.id,
                         }));
                     console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);

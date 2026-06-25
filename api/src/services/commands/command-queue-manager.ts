@@ -158,6 +158,7 @@ function normalizeRefreshArtistPayload(
         forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
         expandCreditedArtists: payload.expandCreditedArtists !== false,
+        monitoringCycle: payload.monitoringCycle,
     };
 }
 
@@ -176,7 +177,8 @@ function areEquivalentRefreshArtistPayloads(
         && left.seedSimilarArtists === right.seedSimilarArtists
         && left.forceDownloadQueue === right.forceDownloadQueue
         && left.forceUpdate === right.forceUpdate
-        && left.expandCreditedArtists === right.expandCreditedArtists;
+        && left.expandCreditedArtists === right.expandCreditedArtists
+        && left.monitoringCycle === right.monitoringCycle;
 }
 
 function findActiveProviderArtistImport(payload: Partial<ImportProviderArtistsCommand>): { id: number; priority: number; status: CommandStatus } | null {
