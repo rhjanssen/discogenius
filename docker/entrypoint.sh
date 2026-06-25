@@ -85,13 +85,40 @@ prepare_writable_dirs() {
     fi
   done
 
-  if ! chown -R "$TARGET_USER:$TARGET_GROUP" /config /downloads /library; then
-    echo "[ENTRYPOINT] Warning: failed to normalize ownership for /config, /downloads, or /library." >&2
-  fi
+  # Recursive chown/chmod over /downloads and /library is O(files) and becomes
+  # pathologically slow on large libraries (minutes-to-tens-of-minutes on Docker
+  # Desktop bind mounts), blocking startup every boot. The app writes its own
+  # files as TARGET_USER, so a full recursive pass is only needed on first run or
+  # after a PUID/PGID change. Detect that by the top-level dir's owner and only
+  # recurse when it differs; otherwise just ensure the mount root itself is
+  # writable (cheap, non-recursive).
+  local want_uid want_gid
+  want_uid="$(id -u "$TARGET_USER")"
+  want_gid="$(getent group "$TARGET_GROUP" | cut -d: -f3)"
 
-  if ! chmod -R u+rwX,g+rwX /config /downloads /library; then
-    echo "[ENTRYPOINT] Warning: failed to normalize mode bits for /config, /downloads, or /library." >&2
-  fi
+  normalize_tree() {
+    local dir="$1"
+    local cur_uid cur_gid
+    cur_uid="$(stat -c %u "$dir" 2>/dev/null || echo -1)"
+    cur_gid="$(stat -c %g "$dir" 2>/dev/null || echo -1)"
+
+    if [[ "$cur_uid" != "$want_uid" || "$cur_gid" != "$want_gid" ]]; then
+      if ! chown -R "$TARGET_USER:$TARGET_GROUP" "$dir"; then
+        echo "[ENTRYPOINT] Warning: failed to normalize ownership for $dir." >&2
+      fi
+      if ! chmod -R u+rwX,g+rwX "$dir"; then
+        echo "[ENTRYPOINT] Warning: failed to normalize mode bits for $dir." >&2
+      fi
+    else
+      # Already owned by the runtime user — just keep the mount root writable.
+      chown "$TARGET_USER:$TARGET_GROUP" "$dir" 2>/dev/null || true
+      chmod u+rwX,g+rwX "$dir" 2>/dev/null || true
+    fi
+  }
+
+  normalize_tree /config
+  normalize_tree /downloads
+  normalize_tree /library
 }
 
 print_config_diagnostics() {

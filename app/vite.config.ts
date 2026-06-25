@@ -64,7 +64,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
-        '/MediaCoverProxy': {
+        '/media-cover': {
+          target: backendTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/media-cover-proxy': {
           target: backendTarget,
           changeOrigin: true,
           secure: false,
