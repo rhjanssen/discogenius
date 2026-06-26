@@ -418,8 +418,8 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
-  // Legacy rows kept only to satisfy the transitional TrackFiles.media_id/album_id
-  // FK (dropped in Phase 5); identity resolves from ProviderItems below.
+  // Provider availability rows supply the streaming identity; TrackFiles links
+  // through canonical MBIDs/catalog FKs plus provider provenance.
 
 dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
@@ -574,7 +574,8 @@ test("upsertLibraryFile prefers selected release-group slot identity over legacy
     INSERT INTO Tracks (mbid, recording_mbid, release_mbid, medium_position, position, title)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("selected-track-mbid", "recording-mbid-1", "selected-release-mbid", 1, 1, "Shut Off The Lights");
-  // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
+  // Provider availability rows intentionally point at a different provider
+  // release so the selected MusicBrainz release-group identity wins.
 
 dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -794,7 +795,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
-  // Legacy rows kept only for the transitional TrackFiles FK (dropped in Phase 5).
+  // Provider availability rows supply the streaming identity for both slots.
 
 dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)

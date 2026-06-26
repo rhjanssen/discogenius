@@ -83,9 +83,10 @@ transitional/provider shadows where they no longer pay for themselves.
 - pending: Audit sidecar file identity at the same time as the `TrackFiles`
   cleanup so sidecars link by `track_file_id`, catalog FK/MBID, and provider
   provenance instead of legacy `album_id`/`media_id` shadows.
-- in progress: Remove legacy import/backfill code that exists only to hydrate
-  provider-era `TrackFiles.album_id`/`TrackFiles.media_id` rows after the
-  provider provenance replacement is complete.
+- done: Removed legacy import/backfill code that existed only to hydrate
+  provider-era `TrackFiles.album_id`/`TrackFiles.media_id` rows; the fresh
+  schema no longer creates those `TrackFiles` columns. The separate sidecar
+  identity audit remains pending above.
 - pending: Port Lidarr's naming token parser/formatter model instead of growing
   a Discogenius-only parser. Keep Discogenius extensions additive only, such as
   provider name/id variables for users who want streaming-service provenance in

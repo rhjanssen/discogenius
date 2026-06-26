@@ -48,11 +48,7 @@ function seedTrackedFile() {
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Artist One", "artist-one-mbid", "Artist One", 1);
 
-  // Legacy provider rows retained only to satisfy TrackFiles.album_id/media_id
-  // foreign keys during the transition (dropped in Phase 5); naming now resolves
-  // from the canonical graph + ProviderItems below.
-
-// Canonical graph + provider availability.
+  // Canonical graph + provider availability.
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
   dbModule.db.prepare(`
