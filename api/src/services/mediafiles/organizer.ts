@@ -1126,26 +1126,28 @@ export class OrganizerService {
     namingTemplate?: string | null;
   }): string {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
+    // Cover/video_cover/nfo singleton sidecars live in MetadataFiles (keyed by
+    // album_id/media_id), not TrackFiles — which only holds track/video media.
     const scopedRows = params.albumId
       ? db.prepare(`
         SELECT id, file_path, library_root
-        FROM TrackFiles
+        FROM MetadataFiles
         WHERE artist_id = ?
           AND album_id = ?
           AND media_id IS NULL
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
-        ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
+        ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
       `).all(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath)
       : db.prepare(`
         SELECT id, file_path, library_root
-        FROM TrackFiles
+        FROM MetadataFiles
         WHERE artist_id = ?
           AND album_id IS NULL
           AND media_id IS NULL
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
-        ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
+        ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
       `).all(params.artistId, params.libraryRoot, params.fileType, params.expectedPath);
 
     let hasExpectedSidecar = fs.existsSync(params.expectedPath);
@@ -1158,7 +1160,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(sidecar.id);
+        db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(sidecar.id);
         continue;
       }
 
@@ -1199,7 +1201,7 @@ export class OrganizerService {
 
       if (params.albumId) {
         db.prepare(`
-          DELETE FROM TrackFiles
+          DELETE FROM MetadataFiles
           WHERE artist_id = ?
             AND album_id = ?
             AND media_id IS NULL
@@ -1209,7 +1211,7 @@ export class OrganizerService {
         `).run(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath);
       } else {
         db.prepare(`
-          DELETE FROM TrackFiles
+          DELETE FROM MetadataFiles
           WHERE artist_id = ?
             AND album_id IS NULL
             AND media_id IS NULL

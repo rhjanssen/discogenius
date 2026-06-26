@@ -2108,16 +2108,16 @@ export class AudioTagService {
       };
     }
 
+    // Imported track files are matched by their provider track id. (TrackFiles no
+    // longer carries a media_id column — the processed ids are provider ids.)
     const placeholders = uniqueMediaIds.map(() => "?").join(",");
     const libraryFileIds = db.prepare(`
       SELECT id
       FROM TrackFiles
       WHERE file_type = 'track'
-        AND (
-          media_id IN (${placeholders})
-          OR (provider_entity_type = 'track' AND provider_id IN (${placeholders}))
-        )
-    `).all(...uniqueMediaIds, ...uniqueMediaIds) as Array<{ id: number }>;
+        AND provider_entity_type = 'track'
+        AND provider_id IN (${placeholders})
+    `).all(...uniqueMediaIds) as Array<{ id: number }>;
 
     return this.apply(libraryFileIds.map((row) => row.id));
   }
