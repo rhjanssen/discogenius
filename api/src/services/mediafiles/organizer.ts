@@ -747,36 +747,47 @@ export class OrganizerService {
 
     let deletedCount = 0;
 
-    const selectors: Array<string> = [];
+    // Cover/nfo/image sidecars live in MetadataFiles (with a file_type column);
+    // lyrics live in LyricFiles (no file_type — the table itself is the type).
+    const metadataSelectors: Array<string> = [];
     if (!config.save_album_cover) {
-      selectors.push("(file_type = 'cover' AND album_id IS NOT NULL)");
-      selectors.push("file_type = 'video_cover'");
+      metadataSelectors.push("(file_type = 'cover' AND album_id IS NOT NULL)");
+      metadataSelectors.push("file_type = 'video_cover'");
     }
     if (!config.save_artist_picture) {
-      selectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
+      metadataSelectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
     }
-    if (!config.save_nfo) selectors.push("file_type = 'nfo'");
-    if (!config.save_lyrics) selectors.push("file_type = 'lyrics'");
-    if (!config.save_video_thumbnail) selectors.push("file_type = 'video_thumbnail'");
+    if (!config.save_nfo) metadataSelectors.push("file_type = 'nfo'");
+    if (!config.save_video_thumbnail) metadataSelectors.push("file_type = 'video_thumbnail'");
 
-    if (selectors.length === 0) {
-      console.log('[Organizer] No metadata types are disabled. Pruning skipped.');
-      return;
+    type PruneRow = { id: number; file_path: string; file_type: string; library_root: string; table: "MetadataFiles" | "LyricFiles" };
+    const filesToPrune: PruneRow[] = [];
+
+    if (metadataSelectors.length > 0) {
+      const rows = db.prepare(`
+        SELECT id, file_path, file_type, library_root
+        FROM MetadataFiles
+        WHERE ${metadataSelectors.join(" OR ")}
+      `).all() as Array<Omit<PruneRow, "table">>;
+      filesToPrune.push(...rows.map((row) => ({ ...row, table: "MetadataFiles" as const })));
     }
 
-    const filesToPrune = db.prepare(`
-      SELECT id, file_path, file_type, library_root
-      FROM TrackFiles 
-      WHERE ${selectors.join(" OR ")}
-    `).all() as { id: number; file_path: string; file_type: string; library_root: string }[];
+    if (!config.save_lyrics) {
+      const rows = db.prepare(`
+        SELECT id, file_path, 'lyrics' AS file_type, library_root
+        FROM LyricFiles
+      `).all() as Array<Omit<PruneRow, "table">>;
+      filesToPrune.push(...rows.map((row) => ({ ...row, table: "LyricFiles" as const })));
+    }
 
     if (filesToPrune.length === 0) {
       console.log('[Organizer] No orphaned files found to prune.');
       return;
     }
 
-    // Process deletions
-    const deleteStmt = db.prepare(`DELETE FROM TrackFiles WHERE id = ?`);
+    // Process deletions against each sidecar's own table.
+    const deleteMetadata = db.prepare(`DELETE FROM MetadataFiles WHERE id = ?`);
+    const deleteLyric = db.prepare(`DELETE FROM LyricFiles WHERE id = ?`);
 
     db.transaction(() => {
       for (const file of filesToPrune) {
@@ -788,7 +799,7 @@ export class OrganizerService {
           if (fs.existsSync(resolvedFilePath)) {
             fs.unlinkSync(resolvedFilePath);
           }
-          deleteStmt.run(file.id);
+          (file.table === "LyricFiles" ? deleteLyric : deleteMetadata).run(file.id);
           deletedCount++;
         } catch (error) {
           console.error(`[Organizer] Failed to prune ${file.file_type} file: ${file.file_path}`, error);
@@ -1019,21 +1030,31 @@ export class OrganizerService {
     });
     const librarySlot = canonicalIdentity.librarySlot;
 
-    const sidecars = db.prepare(`
-      SELECT id, file_path, library_root
-      FROM TrackFiles
-      WHERE provider = ?
-        AND provider_entity_type = ?
-        AND provider_id = ?
-        AND file_type = ?
-        AND library_slot IS ?
-      ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, verified_at DESC, id DESC
-    `).all(
+    // Linked sidecars live in their own tables (Lidarr-aligned): lyrics in
+    // LyricFiles, image/other sidecars in MetadataFiles — never TrackFiles
+    // (track/video media only). LyricFiles has no file_type column (the table
+    // *is* the type), so that filter only applies to MetadataFiles.
+    const sidecarTable = params.fileType === "lyrics" ? "LyricFiles" : "MetadataFiles";
+    const sidecarFileTypeClause = sidecarTable === "LyricFiles" ? "" : "AND file_type = ?";
+    const sidecarMatchValues = [
       canonicalIdentity.provider || "",
       canonicalIdentity.providerEntityType || params.fileType,
       canonicalIdentity.providerId || params.mediaId,
-      params.fileType,
+      ...(sidecarTable === "LyricFiles" ? [] : [params.fileType]),
       librarySlot,
+    ];
+
+    const sidecars = db.prepare(`
+      SELECT id, file_path, library_root
+      FROM ${sidecarTable}
+      WHERE provider = ?
+        AND provider_entity_type = ?
+        AND provider_id = ?
+        ${sidecarFileTypeClause}
+        AND library_slot IS ?
+      ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
+    `).all(
+      ...sidecarMatchValues,
       expectedPath,
     ) as Array<{
       id: number;
@@ -1051,7 +1072,7 @@ export class OrganizerService {
       const normalizedResolvedPath = this.normalizeResolvedPath(resolvedFilePath);
 
       if (!fs.existsSync(resolvedFilePath)) {
-        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(sidecar.id);
+        db.prepare(`DELETE FROM ${sidecarTable} WHERE id = ?`).run(sidecar.id);
         continue;
       }
 
@@ -1096,19 +1117,15 @@ export class OrganizerService {
       });
 
       db.prepare(`
-        DELETE FROM TrackFiles
+        DELETE FROM ${sidecarTable}
         WHERE provider = ?
           AND provider_entity_type = ?
           AND provider_id = ?
-          AND file_type = ?
+          ${sidecarFileTypeClause}
           AND library_slot IS ?
           AND file_path != ?
       `).run(
-        canonicalIdentity.provider || "",
-        canonicalIdentity.providerEntityType || params.fileType,
-        canonicalIdentity.providerId || params.mediaId,
-        params.fileType,
-        librarySlot,
+        ...sidecarMatchValues,
         expectedPath,
       );
     }
