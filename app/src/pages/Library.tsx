@@ -65,7 +65,7 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api, type StreamingProviderStatus } from "@/services/api";
-import { getAlbumCover, getTidalImage } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -1109,7 +1109,7 @@ const Library = () => {
     const year = album.release_date ? album.release_date.split('-')[0] : '';
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = Boolean(album.monitored_lock);
-    const imageUrl = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
+    const imageUrl = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
     const itemProgress = getProgressByProviderId(String(album.id));
     return (
       <MediaCard
@@ -1149,7 +1149,7 @@ const Library = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
+        const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
         return src ? (
           <img
             src={src}
@@ -1277,7 +1277,7 @@ const Library = () => {
       header: "",
       width: "64px",
       render: (video: any) => {
-        const src = getTidalImage(video.cover_id || video.cover_art_url, 'video', 'small');
+        const src = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
         return src ? (
           <img src={src} alt={video.title} className={dgCell.thumbnailWide} />
         ) : (

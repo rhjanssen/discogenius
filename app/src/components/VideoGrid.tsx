@@ -12,7 +12,7 @@ import {
   EyeOff24Regular,
   ArrowDownload24Regular,
 } from "@fluentui/react-icons";
-import { getTidalImage } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
@@ -239,7 +239,9 @@ export interface Video {
 
   explicit?: boolean;
   quality?: string | null;
+  cover?: string | null;
   cover_id?: string | null;
+  cover_art_url?: string | null;
   url?: string | null;
   path?: string | null;
   artist_id: string;
@@ -313,9 +315,9 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
             onClick={() => handleVideoClick(video)}
           >
             <div className={styles.videoPreview}>
-              {video.cover_id ? (
+              {renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) ? (
                 <img
-                  src={getTidalImage(video.cover_id, 'video', 'medium') || ''}
+                  src={renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) || ''}
                   alt={video.title}
                   className={styles.videoImage}
                   decoding="async"

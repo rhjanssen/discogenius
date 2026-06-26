@@ -61,7 +61,7 @@ import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEven
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
-import { getAlbumCover } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import {
   detailActionGlassButtonStyles,
   detailActionPrimaryButtonStyles,
@@ -841,7 +841,7 @@ const AlbumPage = () => {
         }]
       : [];
   const albumCanonicalArtworkUrl = album
-    ? (album.cover_art_url || getAlbumCover(album.cover || album.cover_id, "large") || album.cover || album.cover_id || null)
+    ? renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id)
     : null;
   const albumArtworkUrl = album
     ? (albumCanonicalArtworkUrl && !coverImageFailed ? albumCanonicalArtworkUrl : null)
@@ -1201,6 +1201,7 @@ const AlbumPage = () => {
       spatial_provider_id?: string | null;
       spatial_quality?: string | null;
       provider_cover_id?: string | null;
+      cover_art_url?: string | null;
     },
     subtitle: string,
     itemProgress?: any,
@@ -1234,7 +1235,7 @@ const AlbumPage = () => {
         key={item.id}
         className={isCurrent ? styles.currentEdition : undefined}
         to={target}
-        imageUrl={getAlbumCover(item.cover_id || item.cover, "medium") || item.cover_id || item.cover || null}
+        imageUrl={renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id)}
         alt={item.title}
         title={item.title}
         subtitle={subtitle}

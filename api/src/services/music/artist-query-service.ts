@@ -15,7 +15,7 @@ import type { ArtistContract, ArtistsListResponseContract } from "../../contract
 import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
-    chooseCachedProviderArtwork,
+    providerArtworkIdFromCandidates,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
 } from "../metadata/media-cover-service.js";
@@ -317,7 +317,7 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
     const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
     const selectedProviderData = parseSelectedProviderData(row);
     const providerCandidates = albumProviderArtworkCandidatesFromRow(row);
-    const providerCover = chooseCachedProviderArtwork(providerCandidates, "album")
+    const providerCover = providerArtworkIdFromCandidates(providerCandidates, "album")
         || selectedProviderData?.cover
         || null;
     const coverUrl = albumCoverLocalUrl({
@@ -749,14 +749,6 @@ export class ArtistQueryService {
         }
 
         return { artist, albums: grouped };
-    }
-
-    static async getRemoteArtistPage(artistId: string): Promise<any> {
-        const page = await this.getArtistPage(artistId);
-        if (!page) {
-            throw new Error(`Artist not found: ${artistId}`);
-        }
-        return page;
     }
 
     static async getArtistPage(artistId: string): Promise<any | null> {

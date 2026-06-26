@@ -615,16 +615,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Artist pages are MusicBrainz/DB backed; provider offers are attached separately.
-router.get("/:artistId/page", async (req, res) => {
-  try {
-    res.json(await ArtistQueryService.getRemoteArtistPage(req.params.artistId));
-  } catch (error: any) {
-    console.error(`[Artists] Failed to get artist page:`, error);
-    res.status(500).json({ detail: error.message });
-  }
-});
-
 // Get artist details from local database (grouped by module)
 router.get("/:id/detail", async (req, res) => {
   try {

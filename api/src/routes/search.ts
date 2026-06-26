@@ -3,9 +3,9 @@ import { db } from "../database.js";
 
 import {
     albumCoverLocalUrl,
-    chooseCachedProviderArtwork,
     imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
+    resolveProviderArtworkUrl,
     resolveMediaCoverProxyUrl,
 } from "../services/metadata/media-cover-service.js";
 import { servarrMetadata } from "../services/metadata/servarr-metadata.js";
@@ -363,23 +363,28 @@ router.get("/", async (req, res) => {
                     )
                     .all(like, limit) as any[];
 
-                results.videos.push(...localVideos.map((row: any) => formatSearchResult({
-                    id: row.id,
-                    name: row.title,
-                    artist_name: row.artist_name,
-                    // Resolve the video thumbnail to a usable URL: a stored canonical
-                    // URL goes through the proxy; a raw provider asset id is turned
-                    // into a provider thumbnail URL — never pass the bare id through.
-                    image_id: registerMediaCoverProxyUrl(row.cover_url)
-                        || chooseCachedProviderArtwork(
+                for (const row of localVideos) {
+                    const providerArtworkUrl = row.cover_url
+                        ? null
+                        : await resolveProviderArtworkUrl(
                             [{ provider: row.cover_provider, imageId: row.cover, data: row.cover_provider_data }],
                             "video",
-                        ),
-                    quality: row.current_quality,
-                    release_date: row.release_date,
-                    monitored: !!row.monitored,
-                    in_library: true,
-                }, 'video')));
+                            "medium",
+                        );
+                    results.videos.push(formatSearchResult({
+                        id: row.id,
+                        name: row.title,
+                        artist_name: row.artist_name,
+                        image_id: registerMediaCoverProxyUrl(row.cover_url || providerArtworkUrl)
+                            || row.cover_url
+                            || providerArtworkUrl
+                            || null,
+                        quality: row.current_quality,
+                        release_date: row.release_date,
+                        monitored: !!row.monitored,
+                        in_library: true,
+                    }, 'video'));
+                }
             }
         }
 

@@ -352,6 +352,10 @@ DONE (schema 32→34, on branch `2.1.0`):
   canonical-first album artwork resolver (`Albums.images` / Servarr Metadata
   Server or Cover Art Archive URL first, provider artwork as fallback) and
   replaces provider cover IDs already present in older queue payloads.
+- Frontend added-library views (artist, album, library, video, queue/list cards)
+  consume backend-shaped artwork URLs only (`/media-cover/...` or other
+  renderable URLs). The old client-side TIDAL CDN image builder was deleted so
+  provider artwork URL construction stays inside provider interfaces.
 - Fresh schema 34 drops the raw catalog `data` columns from ArtistMetadata,
   Albums, AlbumReleases, Recordings, and Tracks. Writers no longer populate those
   blobs.

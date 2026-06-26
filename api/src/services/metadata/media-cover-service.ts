@@ -521,7 +521,7 @@ export function mapAlbumArtworkToLocalUrl(options: {
   );
   const providerSource = options.includeExpectedProviderFallback === false
     ? null
-    : storedProviderFallback || chooseCachedProviderArtwork(options.providerCandidates || [], "album");
+    : storedProviderFallback || providerArtworkIdFromCandidates(options.providerCandidates || [], "album");
   return expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource);
 }
 
@@ -541,7 +541,7 @@ export function mapArtistArtworkToLocalUrl(options: {
   const storedSource = firstStoredImageUrl(options.servarrMetadataData?.images, types, true)
     || getServarrMetadataArtistImageUrl(options.servarrMetadataData, types);
   const explicitSource = options.sourceUrls?.map(normalizeArtworkUrl).find((url): url is string => Boolean(url));
-  const providerSource = chooseCachedProviderArtwork(options.providerCandidates || [], "artist");
+  const providerSource = providerArtworkIdFromCandidates(options.providerCandidates || [], "artist");
   return expectedMediaCoverUrl(
     options.artistMbid,
     "Artist",
@@ -771,7 +771,7 @@ export function albumProviderArtworkCandidatesFromRow(row: Record<string, any>):
   return candidates.filter((candidate) => candidate.provider || candidate.imageId || candidate.data || candidate.entityId);
 }
 
-export function chooseCachedProviderArtwork(
+export function providerArtworkIdFromCandidates(
   candidates: ProviderArtworkCandidate[],
   entityType: ProviderArtworkEntityType,
 ): string | null {

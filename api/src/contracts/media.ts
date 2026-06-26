@@ -142,6 +142,7 @@ export interface VideoDetailContract {
   quality?: string | null;
   cover?: string | null;
   cover_id?: string | null;
+  cover_art_url?: string | null;
   is_monitored: boolean;
   monitored_lock: boolean;
   downloaded: boolean;
@@ -352,6 +353,7 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
     quality: expectNullableString(record.quality, "video.quality"),
     cover: expectNullableString(record.cover, "video.cover"),
     cover_id: expectNullableString(record.cover_id, "video.cover_id"),
+    cover_art_url: expectNullableString(record.cover_art_url, "video.cover_art_url"),
     is_monitored: expectBoolean(record.is_monitored, "video.is_monitored"),
     monitored_lock: expectOptionalBoolean(record.monitored_lock, "video.monitored_lock") ?? false,
     downloaded: expectBoolean(record.downloaded, "video.downloaded"),

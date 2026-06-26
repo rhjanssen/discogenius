@@ -34,7 +34,7 @@ import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
-import { getAlbumCover, getArtistPicture, getVideoThumbnail } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -497,13 +497,18 @@ const ArtistPage = () => {
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   const artistPictureUrl = artistInfo
-    ? (artistInfo.picture || (pageData?.artistInfo as any)?.picture || (artistInfo as any).cover_image_url || (pageData?.artistInfo as any)?.cover_image_url || null)
+    ? renderableArtworkUrl(artistInfo.picture || (pageData?.artistInfo as any)?.picture || (artistInfo as any).cover_image_url || (pageData?.artistInfo as any)?.cover_image_url)
     : undefined;
+  const [artistPictureFailed, setArtistPictureFailed] = useState(false);
   const artistBrandColor = useArtworkBrandColor({
-    artworkUrl: artistPictureUrl,
+    artworkUrl: artistPictureFailed ? null : artistPictureUrl,
     deriveBrandFromArtwork: true,
   });
   const isMonitored = monitorOverride ?? Boolean(artistInfo?.is_monitored);
+
+  useEffect(() => {
+    setArtistPictureFailed(false);
+  }, [artistPictureUrl]);
 
   useEffect(() => {
     if (!artistId) {
@@ -706,7 +711,7 @@ const ArtistPage = () => {
       header: "",
       width: "40px",
       render: (album: any) => {
-        const src = album.cover_art_url || getAlbumCover(album.cover_id || album.cover, 'small') || null;
+        const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
         return src ? (
           <img
             src={src}
@@ -878,10 +883,7 @@ const ArtistPage = () => {
     if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const ServarrMetadataImageUrl = item.cover_art_url || null;
-    const storedImageUrl = getAlbumCover(item.cover || item.cover_id, "medium") || item.cover || item.cover_id || null;
-
-    const imageUrl = ServarrMetadataImageUrl || storedImageUrl;
+    const imageUrl = renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
@@ -955,7 +957,7 @@ const ArtistPage = () => {
     const title = item.title || "Unknown Video";
     const isVideoMonitored = Boolean(item.is_monitored);
     const isLocked = Boolean(item.monitored_lock);
-    const imageUrl = getVideoThumbnail(item.cover_id, 'small');
+    const imageUrl = renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
 
@@ -1363,21 +1365,12 @@ const ArtistPage = () => {
           <div className={styles.headerContent}>
             {/* Artist Avatar */}
             <div className={styles.artistImageShell}>
-              {artistPictureUrl ? (
+              {artistPictureUrl && !artistPictureFailed ? (
                 <img 
                   src={artistPictureUrl} 
                   className={styles.artistImage} 
                   alt={artistName} 
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    if (!target.dataset.fallbackTried) {
-                      target.dataset.fallbackTried = 'true';
-                      const fallbackUrl = getArtistPicture((artistInfo as any)?.provider_id || artistId, 'large');
-                      if (fallbackUrl && target.src !== fallbackUrl) {
-                        target.src = fallbackUrl;
-                      }
-                    }
-                  }}
+                  onError={() => setArtistPictureFailed(true)}
                 />
               ) : (
                 <div

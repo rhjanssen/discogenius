@@ -24,7 +24,7 @@ import {
     Video24Regular,
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
-import { getTidalImage, getArtistPicture } from "@/utils/tidalImages";
+import { renderableArtworkUrl } from "@/utils/artwork";
 import { formatDurationSeconds } from "@/utils/format";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
@@ -279,7 +279,7 @@ const VideoPage = () => {
         const files = filesData?.items ?? [];
         return files.find((file) => file.file_type === "video");
     }, [filesData]);
-    const coverUrl = video ? getTidalImage(video.cover_id || video.cover, "video", "large") : undefined;
+    const coverUrl = video ? renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) || undefined : undefined;
     const videoBrandColor = useArtworkBrandColor({
         artworkUrl: coverUrl,
         deriveBrandFromArtwork: true,
@@ -362,7 +362,7 @@ const VideoPage = () => {
         ? api.getStreamUrl(videoFile.id)
         : (remoteStreamUrl || '');
 
-    const artistPicUrl = artistData?.picture ? getArtistPicture(artistData.picture, "small") : null;
+    const artistPicUrl = renderableArtworkUrl(artistData?.picture);
 
     useEffect(() => {
         const videoElement = videoRef.current;

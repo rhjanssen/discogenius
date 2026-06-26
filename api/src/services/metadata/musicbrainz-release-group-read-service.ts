@@ -9,7 +9,7 @@ import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
-    chooseCachedProviderArtwork,
+    providerArtworkIdFromCandidates,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
 } from "./media-cover-service.js";
@@ -308,7 +308,7 @@ function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
 }
 
 function chooseReleaseGroupProviderArtwork(releaseGroup: any): string | null {
-    return chooseCachedProviderArtwork(albumProviderArtworkCandidatesFromRow(releaseGroup), "album");
+    return providerArtworkIdFromCandidates(albumProviderArtworkCandidatesFromRow(releaseGroup), "album");
 }
 
 async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | null> {

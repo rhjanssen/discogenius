@@ -96,6 +96,7 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
     quality: mapped.quality,
     cover: mapped.cover,
     cover_id: mapped.cover_id,
+    cover_art_url: mapped.cover_art_url,
     is_monitored: mapped.is_monitored,
     monitored_lock: mapped.monitored_lock,
     downloaded: mapped.downloaded ?? false,
