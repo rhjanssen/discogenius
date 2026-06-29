@@ -748,15 +748,25 @@ export class DownloadQueueQueryService {
       ?? getOptionalString(job.payload?.librarySlot)
       ?? null;
 
-    const canonicalMetadata = resolveCanonicalAlbumMetadata({
+    // The two resolvers below are heavy per-item joins. They only fill gaps, and
+    // queued downloads already carry title/artist/cover in their payload (set at
+    // enqueue time). When a full queue is polled, running them for every item is
+    // what starves the synchronous event loop under download load — so skip them
+    // when the display basics are present and resolve only the cover, cheaply,
+    // through the indexed local-cover mapper.
+    const hasDisplayBasics = Boolean(title && artist);
+    const canonicalMetadata = hasDisplayBasics ? null : resolveCanonicalAlbumMetadata({
       releaseGroupMbid: albumId,
       providerId,
       slot,
     });
-    const providerItemMetadata = resolveProviderItemMetadata({
+    const providerItemMetadata = hasDisplayBasics ? null : resolveProviderItemMetadata({
       contentType,
       providerId,
     });
+    if (hasDisplayBasics && albumId && contentType === "album") {
+      cover = albumCoverLocalUrl({ albumMbid: albumId }) ?? cover ?? null;
+    }
     const offerMetadata = canonicalMetadata ?? providerItemMetadata;
     if (offerMetadata) {
       title ||= offerMetadata.title ?? undefined;

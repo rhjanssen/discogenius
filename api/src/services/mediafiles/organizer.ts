@@ -1512,12 +1512,18 @@ export class OrganizerService {
       });
 
       if (unmatchedAudioFiles.length > 0) {
-        throw new Error(
-          `[Organizer] Could not match ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded album file(s) for ${providerId}; keeping the download workspace for review.`
+        // Import what matched instead of failing the whole album. Failing here
+        // left the album permanently "missing", so the monitoring cycle would
+        // re-download and re-fail it every cycle forever (e.g. a single bonus
+        // file the provider release has but the canonical MB release doesn't).
+        // The import loop below already skips unmatched files, so the album's
+        // real tracks still land.
+        console.warn(
+          `[Organizer] ${unmatchedAudioFiles.length}/${audioFiles.length} downloaded file(s) for ${providerId} did not match a Discogenius track; importing the rest and skipping the extras.`,
         );
       }
 
-      const totalImportableTracks = audioFiles.length;
+      const totalImportableTracks = audioFiles.length - unmatchedAudioFiles.length;
       onProgress?.({
         phase: "importing",
         currentFileNum: 0,
