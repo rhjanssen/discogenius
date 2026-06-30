@@ -115,7 +115,7 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
  * graph. Provider catalog tables are gone: an album/track's canonical link lives
  * on its `ProviderItems` offer (release_group_mbid / release_mbid / recording_mbid /
  * recording_id), populated by the release-group matcher and by-position mapping in
- * RefreshAlbumService.scanTracks. This service therefore reports identity from
+ * RefreshAlbumService.refreshTracks. This service therefore reports identity from
  * those offers and ensures the canonical release-group row is synced; it no longer
  * runs a bespoke per-track ISRC/AcoustID search (retired with the legacy tables —
  * fingerprinting only matters for unknown *local* imports, a separate file path).

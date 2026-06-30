@@ -489,7 +489,7 @@ export class ServarrMetadataService {
       contentHash,
     );
 
-    // The artist payload carries only SHALLOW album entries (no images, links,
+    // The artist payload carries only summary album entries (no images, links,
     // genres, or full release detail). On conflict, update only the shallow
     // scalar fields it actually has and NEVER overwrite the detail-sourced
     // columns (images, links, genres, overview, content_hash) — those are

@@ -1,6 +1,6 @@
 import { db } from "../../database.js";
 import { createCooperativeBatcher } from "../../utils/concurrent.js";
-import { ScanLevel, type ScanOptions } from "./scan-types.js";
+import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
@@ -373,11 +373,10 @@ export class RefreshAlbumService {
         return localArtistId;
     }
 
-    static getScanLevel(albumId: string): ScanLevel {
-        // Scan state is read from the canonical graph + the album's ProviderItems
-        // offer now (no legacy provider catalog): the offer's existence = BASIC,
-        // Albums.review_text (homed on shallow) = SHALLOW, and per-track credits
-        // homed onto the album's Recordings (homed on deep) = DEEP.
+    static getRefreshLevel(albumId: string): AlbumRefreshLevel {
+        // Refresh state is read from the canonical graph + the album's ProviderItems
+        // offer now: offer exists = OFFER, review + tracks = METADATA, and
+        // per-track credits homed onto Recordings = DETAILS.
         const offer = db.prepare(`
             SELECT release_group_mbid, release_mbid
             FROM ProviderItems
@@ -387,7 +386,7 @@ export class RefreshAlbumService {
         `).get(albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
         if (!offer) {
-            return ScanLevel.NONE;
+            return AlbumRefreshLevel.NONE;
         }
 
         const hasCredits = offer.release_mbid
@@ -399,7 +398,7 @@ export class RefreshAlbumService {
             `).get(offer.release_mbid)
             : null;
         if (hasCredits) {
-            return ScanLevel.DEEP;
+            return AlbumRefreshLevel.DETAILS;
         }
 
         const reviewText = offer.release_group_mbid
@@ -410,19 +409,19 @@ export class RefreshAlbumService {
             WHERE entity_type = 'track' AND provider_album_id = ?
         `).get(albumId) as { c?: number } | undefined)?.c || 0);
         if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
-            return ScanLevel.SHALLOW;
+            return AlbumRefreshLevel.METADATA;
         }
 
-        return ScanLevel.BASIC;
+        return AlbumRefreshLevel.OFFER;
     }
 
-    static async scanBasic(
+    static async refreshOffer(
         albumId: string,
         artistId?: string,
         moduleOverride?: string | null,
-        options: ScanOptions = {},
+        options: RefreshOptions = {},
     ): Promise<void> {
-        console.log(`[RefreshAlbumService] scanBasic for ${albumId}`);
+        console.log(`[RefreshAlbumService] refreshOffer for ${albumId}`);
 
         // Freshness is the album offer's updated_at (the offer is the provider
         // catalog now); the canonical link comes from release_(group_)mbid on it.
@@ -451,7 +450,7 @@ export class RefreshAlbumService {
             if (!existingRow.mbid || !existingRow.mb_release_group_id || options.forceUpdate === true) {
                 await MetadataIdentityService.resolveAlbum(albumId, { force: options.forceUpdate === true });
             }
-            console.log(`[RefreshAlbumService] scanBasic skipped for ${albumId} (fresh)`);
+            console.log(`[RefreshAlbumService] refreshOffer skipped for ${albumId} (fresh)`);
             return;
         }
 
@@ -496,7 +495,7 @@ export class RefreshAlbumService {
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
                     });
-                    await this.scanShallow(similar.albumId, {
+                    await this.refreshMetadata(similar.albumId, {
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
                     });
@@ -506,11 +505,11 @@ export class RefreshAlbumService {
             }
         }
 
-        console.log(`[RefreshAlbumService] scanBasic complete for ${albumId}`);
+        console.log(`[RefreshAlbumService] refreshOffer complete for ${albumId}`);
     }
 
-    static async scanShallow(albumId: string, options: ScanOptions = {}): Promise<void> {
-        console.log(`[RefreshAlbumService] scanShallow for ${albumId}`);
+    static async refreshMetadata(albumId: string, options: RefreshOptions = {}): Promise<void> {
+        console.log(`[RefreshAlbumService] refreshMetadata for ${albumId}`);
 
         const existing = db.prepare(`
             SELECT
@@ -533,7 +532,7 @@ export class RefreshAlbumService {
             });
 
         if (shouldRefreshAlbumMeta) {
-            await this.scanBasic(albumId, undefined, undefined, options);
+            await this.refreshOffer(albumId, undefined, undefined, options);
         } else {
             console.log(`[RefreshAlbumService] Skipping album metadata refresh for ${albumId} (fresh)`);
         }
@@ -545,7 +544,7 @@ export class RefreshAlbumService {
                 fallbackLastScanned: existing?.last_scanned,
             });
         if (shouldRefreshTrackList) {
-            await this.scanTracks(albumId);
+            await this.refreshTracks(albumId);
         } else {
             console.log(`[RefreshAlbumService] Skipping track refresh for album ${albumId} (fresh)`);
         }
@@ -586,16 +585,16 @@ export class RefreshAlbumService {
             console.log(`[RefreshAlbumService] Skipping review refresh for album ${albumId} (fresh)`);
         }
 
-        console.log(`[RefreshAlbumService] scanShallow complete for ${albumId}`);
+        console.log(`[RefreshAlbumService] refreshMetadata complete for ${albumId}`);
     }
 
-    static async scanDeep(albumId: string, options: ScanOptions = {}): Promise<void> {
-        console.log(`[RefreshAlbumService] scanDeep for ${albumId}`);
+    static async refreshDetails(albumId: string, options: RefreshOptions = {}): Promise<void> {
+        console.log(`[RefreshAlbumService] refreshDetails for ${albumId}`);
 
-        const currentLevel = this.getScanLevel(albumId);
-        if (options.forceUpdate || currentLevel < ScanLevel.SHALLOW) {
-            console.log(`[RefreshAlbumService] Album ${albumId} running SHALLOW scan (refresh=${options.forceUpdate === true})`);
-            await this.scanShallow(albumId, options);
+        const currentLevel = this.getRefreshLevel(albumId);
+        if (options.forceUpdate || currentLevel < AlbumRefreshLevel.METADATA) {
+            console.log(`[RefreshAlbumService] Album ${albumId} refreshing metadata (force=${options.forceUpdate === true})`);
+            await this.refreshMetadata(albumId, options);
         }
 
         // Album-level credits had no canonical home and nothing reads them; only
@@ -616,16 +615,16 @@ export class RefreshAlbumService {
             console.warn(`[RefreshAlbumService] Failed to fetch per-track credits for album ${albumId}:`, error);
         }
 
-        // Advance offer freshness for this deep scan.
+        // Advance offer freshness for this detail refresh.
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
             WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         `).run(albumId);
 
-        console.log(`[RefreshAlbumService] scanDeep complete for ${albumId}`);
+        console.log(`[RefreshAlbumService] refreshDetails complete for ${albumId}`);
     }
 
-    static async scanTracks(
+    static async refreshTracks(
         albumId: string,
         options: { resolveMusicBrainz?: boolean } = {},
     ): Promise<void> {
@@ -851,7 +850,7 @@ export class RefreshAlbumService {
         album: any,
         scanningArtistId: string,
         albumModuleMap: Map<string, string>,
-        options: ScanOptions,
+        options: RefreshOptions,
     ): Promise<boolean> {
         const forceUpdate = options.forceUpdate === true;
         const primaryProviderArtistId = album.artist_id;

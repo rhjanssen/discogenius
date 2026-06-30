@@ -224,7 +224,7 @@ dbModule.db.prepare(`
     ) VALUES (?, ?, 'stereo', 1, 'fake', ?, ?, 'LOSSLESS')
   `).run(artistMbid, releaseGroupMbid, "provider-album-1", releaseMbid);
 
-  await refreshServiceModule.RefreshAlbumService.scanTracks("provider-album-1", { resolveMusicBrainz: false });
+  await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
     SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc

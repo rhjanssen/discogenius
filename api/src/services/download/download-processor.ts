@@ -482,8 +482,8 @@ export class DownloadProcessor {
                 const albumIds = providerId.split(";").filter(Boolean);
                 for (const subAlbumId of albumIds) {
                     if (!this.hasAlbumMetadataReady(subAlbumId, payload)) {
-                        console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; running album scan before download`);
-                        await RefreshAlbumService.scanShallow(subAlbumId, {
+                        console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; refreshing album metadata before download`);
+                        await RefreshAlbumService.refreshMetadata(subAlbumId, {
                             includeSimilarAlbums: false,
                             seedSimilarAlbums: false,
                         });

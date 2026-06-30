@@ -685,9 +685,9 @@ export class ImportService {
             if (!albumId) continue;
 
             try {
-                await RefreshAlbumService.scanShallow(albumId);
+                await RefreshAlbumService.refreshMetadata(albumId);
             } catch (e) {
-                console.error(`[Import] Failed to scan album ${albumId}:`, e);
+                console.error(`[Import] Failed to refresh album metadata ${albumId}:`, e);
                 continue;
             }
 

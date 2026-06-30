@@ -6,7 +6,7 @@ import {
     shouldReapplyArtistPathTemplate,
 } from "./artist-paths.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
-import { type ScanOptions, type ScanDeepResult } from "./scan-types.js";
+import { type RefreshOptions, type ArtistRefreshResult } from "./scan-types.js";
 import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadata } from "../metadata/servarr-metadata.js";
@@ -192,7 +192,7 @@ export class RefreshArtistService {
         }
     }
 
-    static async upsertMusicBrainzArtist(artistMbid: string, options: ScanOptions = {}): Promise<string> {
+    static async upsertMusicBrainzArtist(artistMbid: string, options: RefreshOptions = {}): Promise<string> {
         if (!isMusicBrainzMbid(artistMbid)) {
             throw new Error(`Invalid MusicBrainz artist id: ${artistMbid}`);
         }
@@ -1103,7 +1103,7 @@ export class RefreshArtistService {
     /**
      * Whether an artist has never been refreshed (Lidarr's `LastInfoSync == null`
      * check). Lidarr has no scan-level concept — an artist is either refreshed or
-     * not — so this replaces the old getScanLevel/ScanLevel state machine. The UI
+     * not — so this replaces the old scan-level state machine. The UI
      * uses it only to auto-trigger an initial refresh; ongoing staleness is
      * decided by shouldRefreshArtist. The RefreshArtist queue is per-ref
      * exclusive, so a repeated trigger for a still-empty artist can't pile up.
@@ -1114,7 +1114,7 @@ export class RefreshArtistService {
         return !row || row.last_scanned == null;
     }
 
-    static async refreshArtistMetadata(artistId: string, options: ScanOptions = {}): Promise<void> {
+    static async refreshArtistMetadata(artistId: string, options: RefreshOptions = {}): Promise<void> {
         console.log(`[RefreshArtistService] refreshArtistMetadata for ${artistId}`);
 
         const existing = db.prepare(
@@ -1194,11 +1194,10 @@ export class RefreshArtistService {
     }
 
     /**
-     * Fetch + store the artist's provider biography. Was the "shallow" scan
-     * level's only addition over metadata; now folded into refreshArtist as a
-     * plain sub-step (Lidarr has no shallow/deep split — one refresh).
+     * Fetch + store the artist's provider biography as a plain sub-step of the
+     * Lidarr-style artist refresh.
      */
-    private static async refreshArtistBiography(artistId: string, options: ScanOptions = {}): Promise<void> {
+    private static async refreshArtistBiography(artistId: string, options: RefreshOptions = {}): Promise<void> {
         const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
         const shouldRefreshBio =
             options.forceUpdate === true ||
@@ -1245,7 +1244,7 @@ export class RefreshArtistService {
         }
     }
 
-    static async refreshArtist(artistId: string, options: ScanOptions = {}): Promise<ScanDeepResult> {
+    static async refreshArtist(artistId: string, options: RefreshOptions = {}): Promise<ArtistRefreshResult> {
         console.log(`[RefreshArtistService] refreshArtist for ${artistId}`);
         options.progress?.({ kind: "status", message: `Scanning artist ${artistId}...` });
 
@@ -1256,7 +1255,7 @@ export class RefreshArtistService {
 
         const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
 
-        // Lidarr's ShouldRefreshArtist staleness gate — no shallow/deep levels.
+        // Lidarr's ShouldRefreshArtist staleness gate.
         // Refresh iff forced, never scanned, or stale per the refresh policy
         // (12h-retry / 30d-hard / 2d-active / recent-release). One refresh path.
         const shouldRefresh =
@@ -1280,7 +1279,7 @@ export class RefreshArtistService {
         // it's cheap, and a stale artist warrants a fresh provider re-fetch too.
         const shouldHydrateCatalog = true;
 
-        // Canonical identity + biography (formerly the basic + shallow levels).
+        // Canonical identity + biography.
         await this.refreshArtistMetadata(artistId, {
             ...options,
             includeSimilarArtists,
@@ -1341,7 +1340,7 @@ export class RefreshArtistService {
     static async matchArtistProviders(
         artistId: string,
         artistMbid: string | null,
-        options: ScanOptions,
+        options: RefreshOptions,
         shouldHydrateCatalog: boolean,
     ): Promise<void> {
         if (!shouldHydrateCatalog) {

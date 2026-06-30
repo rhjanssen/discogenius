@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import type { ScanOptions } from "./scan-types.js";
+import type { RefreshOptions } from "./scan-types.js";
 
 type AudioRecordingVideoMatch = {
     id: number;
@@ -375,7 +375,7 @@ function ensureProviderVideoRecording(input: {
 }
 
 export class RefreshVideoService {
-    static upsertArtistVideos(artistId: string, videos: any[], options: ScanOptions = {}): void {
+    static upsertArtistVideos(artistId: string, videos: any[], options: RefreshOptions = {}): void {
         const selectProviderItem = db.prepare(`
             SELECT recording_id
             FROM ProviderItems

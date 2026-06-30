@@ -270,9 +270,12 @@ Target Discogenius design:
   `upsertMusicBrainzArtist` no longer stamps `last_scanned` during display-only
   seeding. Search-result navigation can seed the artist page, then queue the
   normal refresh workflow instead of making a shallow row look fully scanned.
-- pending: Finish the remaining album-side shallow/deep vocabulary cleanup.
-  `RefreshAlbumService` still has `scanBasic`/`scanShallow`/`scanDeep` naming,
-  although its refresh due checks now use the adaptive policy.
+- done (2026-06-30): Finished the remaining album-side shallow/deep vocabulary
+  cleanup. `RefreshAlbumService` now exposes refresh-level methods
+  (`refreshOffer`, `refreshMetadata`, `refreshDetails`, `refreshTracks`) and
+  `AlbumRefreshLevel` (`OFFER`/`METADATA`/`DETAILS`) while keeping the same
+  adaptive refresh policy behavior. Direct callers were updated; no compatibility
+  wrappers for the old scan-depth names remain.
 
 Execution notes: big redesign — do with full focus, build/test-gated. Reuse the
 existing catalog tables; the win is the diff-reconcile write path (port

@@ -136,15 +136,15 @@ export class ManualImportService {
                     ? db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any
                     : null;
 
-                // Scan provider album metadata when the imported item belongs to an album.
+                // Refresh provider album metadata when the imported item belongs to an album.
                 const albumId = (trackData.album?.providerId || trackData.album?.id || trackData.album_id)?.toString() || null;
                 if (albumId) {
-                    try { await RefreshAlbumService.scanShallow(albumId); } catch {
-                        console.warn(`[Bulk Import] Could not perform shallow scan for album ${albumId}`);
+                    try { await RefreshAlbumService.refreshMetadata(albumId); } catch {
+                        console.warn(`[Bulk Import] Could not refresh album metadata for album ${albumId}`);
                     }
                 }
 
-                // Read album offer for naming (created by RefreshAlbumService.scanShallow)
+                // Read album offer for naming (created by RefreshAlbumService.refreshMetadata)
                 const albumRow = albumId ? db.prepare(`
                     SELECT release_group_mbid AS mb_release_group_id, release_mbid AS mbid,
                            release_date, version, explicit, NULL AS num_volumes

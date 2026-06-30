@@ -126,8 +126,8 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
 };
 
 export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) => {
-    // RefreshAlbum means: ensure album SHALLOW metadata (tracks + review + similar)
-    await RefreshAlbumService.scanShallow(job.payload.albumId, {
+    // RefreshAlbum means: ensure album metadata (offer, tracks, review).
+    await RefreshAlbumService.refreshMetadata(job.payload.albumId, {
         forceUpdate: Boolean(job.payload?.forceUpdate),
         includeSimilarAlbums: false,
         seedSimilarAlbums: false,

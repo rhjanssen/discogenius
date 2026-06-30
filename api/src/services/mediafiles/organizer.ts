@@ -1422,7 +1422,7 @@ export class OrganizerService {
       if (albumIds.length === 0) throw new Error("Missing tidal id");
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const albumIdVal of albumIds) {
-        await RefreshAlbumService.scanShallow(albumIdVal);
+        await RefreshAlbumService.refreshMetadata(albumIdVal);
       }
 
       const album = db.prepare(`
@@ -1969,7 +1969,7 @@ export class OrganizerService {
 
       // Ensure album + tracks in DB for naming and to locate track metadata.
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-      await RefreshAlbumService.scanShallow(albumId);
+      await RefreshAlbumService.refreshMetadata(albumId);
 
       const album = db.prepare(`
         SELECT

@@ -1,11 +1,11 @@
-export enum ScanLevel {
+export enum AlbumRefreshLevel {
     NONE = 0,
-    BASIC = 1,
-    SHALLOW = 2,
-    DEEP = 3,
+    OFFER = 1,
+    METADATA = 2,
+    DETAILS = 3,
 }
 
-export interface ScanOptions {
+export interface RefreshOptions {
     monitorArtist?: boolean;
     monitorAlbums?: boolean;
     hydrateCatalog?: boolean;
@@ -18,7 +18,7 @@ export interface ScanOptions {
     includeSimilarAlbums?: boolean;
     seedSimilarAlbums?: boolean;
     /**
-     * When true, scanDeep performs metadata intake only and SKIPS the inline
+     * When true, artist refresh performs metadata intake only and skips the inline
      * provider-matching step, returning the context a caller needs to enqueue a
      * standalone MatchArtistProviders command instead. Used by the RefreshArtist
      * command path to decompose refresh and provider matching into separate
@@ -28,8 +28,8 @@ export interface ScanOptions {
     progress?: (event: ArtistScanProgressEvent) => void;
 }
 
-/** What scanDeep hands back so a deferred MatchArtistProviders command is faithful to the inline path. */
-export interface ScanDeepResult {
+/** What artist refresh hands back so a deferred MatchArtistProviders command is faithful to the inline path. */
+export interface ArtistRefreshResult {
     artistMbid: string | null;
     shouldHydrateCatalog: boolean;
 }

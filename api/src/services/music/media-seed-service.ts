@@ -2,10 +2,10 @@ import { streamingProviderManager } from "../providers/index.js";
 import { RefreshAlbumService } from "./refresh-album-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
-import type { ScanOptions } from "./scan-types.js";
+import type { RefreshOptions } from "./scan-types.js";
 
 export class MediaSeedService {
-    static async seedTrack(trackId: string, options: ScanOptions = {}) {
+    static async seedTrack(trackId: string, options: RefreshOptions = {}) {
         const providerTrack = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
         const trackData = (providerTrack.raw && typeof providerTrack.raw === "object")
             ? providerTrack.raw as any
@@ -23,7 +23,7 @@ export class MediaSeedService {
             seedSimilarArtists: false,
         });
 
-        await RefreshAlbumService.scanShallow(albumId, {
+        await RefreshAlbumService.refreshMetadata(albumId, {
             ...options,
             includeSimilarAlbums: false,
             seedSimilarAlbums: false,
@@ -32,7 +32,7 @@ export class MediaSeedService {
         return trackData;
     }
 
-    static async seedVideo(videoId: string, options: ScanOptions = {}) {
+    static async seedVideo(videoId: string, options: RefreshOptions = {}) {
         const providerVideo = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
         if (!providerVideo) {
             throw new Error(`Video ${videoId} not found`);
@@ -54,7 +54,7 @@ export class MediaSeedService {
         });
 
         if (albumId) {
-            await RefreshAlbumService.scanBasic(albumId, artistId, undefined, {
+            await RefreshAlbumService.refreshOffer(albumId, artistId, undefined, {
                 ...options,
                 includeSimilarAlbums: false,
                 seedSimilarAlbums: false,
