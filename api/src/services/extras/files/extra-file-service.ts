@@ -67,21 +67,35 @@ export class ExtraFileService {
       return Number(input.trackFileId);
     }
 
-    const mediaId = nullableText(input.mediaId);
-    if (!mediaId) {
+    const providerId = nullableText(input.providerId) ?? nullableText(input.mediaId);
+    const canonicalTrackMbid = nullableText(input.canonicalTrackMbid);
+    const canonicalRecordingMbid = nullableText(input.canonicalRecordingMbid);
+
+    if (!providerId && !canonicalTrackMbid && !canonicalRecordingMbid) {
       return null;
     }
 
     const row = db.prepare(`
       SELECT id
       FROM TrackFiles
-      WHERE CAST(media_id AS TEXT) = CAST(? AS TEXT)
+      WHERE (
+          (? IS NOT NULL AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))
+          OR (? IS NOT NULL AND canonical_track_mbid = ?)
+          OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+        )
         AND file_type IN ('track', 'video')
       ORDER BY CASE file_type WHEN 'track' THEN 0 ELSE 1 END,
                verified_at DESC,
                id DESC
       LIMIT 1
-    `).get(mediaId) as { id?: number } | undefined;
+    `).get(
+      providerId,
+      providerId,
+      canonicalTrackMbid,
+      canonicalTrackMbid,
+      canonicalRecordingMbid,
+      canonicalRecordingMbid,
+    ) as { id?: number } | undefined;
 
     return row?.id ?? null;
   }

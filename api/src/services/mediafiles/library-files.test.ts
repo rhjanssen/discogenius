@@ -715,6 +715,59 @@ dbModule.db.prepare(`
   });
 });
 
+test("upsertLibraryFile links lyric sidecars through TrackFiles provider identity", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, path, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("1", "Queen", "Queen", 1);
+
+  const root = configModule.Config.getMusicPath();
+  const albumDir = path.join(root, "Queen", "A Night at the Opera");
+  const audioPath = path.join(albumDir, "01 - Bohemian Rhapsody.flac");
+  const lyricPath = path.join(albumDir, "01 - Bohemian Rhapsody.lrc");
+  fs.mkdirSync(albumDir, { recursive: true });
+  fs.writeFileSync(audioPath, "audio");
+  fs.writeFileSync(lyricPath, "lyrics");
+
+  const trackFileId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: audioPath,
+    libraryRoot: root,
+    fileType: "track",
+    quality: "LOSSLESS",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "100",
+    librarySlot: "stereo",
+  });
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "10",
+    mediaId: "100",
+    filePath: lyricPath,
+    libraryRoot: root,
+    fileType: "lyrics",
+    quality: "LOSSLESS",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "100",
+    librarySlot: "stereo",
+  });
+
+  const lyric = dbModule.db.prepare(`
+    SELECT media_id AS mediaId, provider_id AS providerId, track_file_id AS trackFileId
+    FROM LyricFiles
+    WHERE file_path = ?
+  `).get(lyricPath) as { mediaId: string | null; providerId: string | null; trackFileId: number | null } | undefined;
+
+  assert.equal(lyric?.mediaId, "100");
+  assert.equal(lyric?.providerId, "100");
+  assert.equal(lyric?.trackFileId, trackFileId);
+});
+
 test("upsertLibraryFile merges duplicate path and media identity rows during rescan", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, path, monitored)
