@@ -1360,6 +1360,7 @@ export class OrganizerService {
     artistId: string;
     albumId?: string | null;
     mediaId?: string | null;
+    trackFileId?: number | null;
     filePath: string;
     libraryRoot: string;
     fileType: "track" | "video" | "cover" | "video_cover" | "video_thumbnail" | "lyrics" | "nfo";
@@ -1680,6 +1681,7 @@ export class OrganizerService {
         // Batch all per-track DB writes in a single transaction (Lidarr-style).
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
+        let importedTrackFileId: number | null = null;
         db.transaction(() => {
           const libraryFileId = this.upsertLibraryFile({
             artistId,
@@ -1707,6 +1709,7 @@ export class OrganizerService {
             canonicalTrackMbid: canonicalIdentity.canonicalTrackMbid,
             canonicalRecordingMbid: canonicalIdentity.canonicalRecordingMbid,
           });
+          importedTrackFileId = libraryFileId;
 
           try {
             recordHistoryEvent({
@@ -1751,16 +1754,26 @@ export class OrganizerService {
                 artistId,
                 albumId: String(trackRow.album_id || albumIds[0]),
                 mediaId: trackId,
+                trackFileId: importedTrackFileId,
                 filePath: lrcPath,
                 libraryRoot: targetRoot,
                 fileType: "lyrics",
                 quality: trackRow?.quality || album.quality,
                 namingTemplate: null,
                 expectedPath: lrcPath,
+                provider: canonicalIdentity.provider,
+                providerEntityType: "track",
+                providerId: trackId,
+                librarySlot: canonicalIdentity.librarySlot,
+                canonicalArtistMbid: canonicalIdentity.canonicalArtistMbid,
+                canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
+                canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
+                canonicalTrackMbid: canonicalIdentity.canonicalTrackMbid,
+                canonicalRecordingMbid: canonicalIdentity.canonicalRecordingMbid,
               });
             }
-          } catch {
-            // ignore
+          } catch (error) {
+            console.warn(`[Organizer] Failed to save or track lyrics for ${trackId}:`, error);
           }
         }
 
@@ -2082,8 +2095,17 @@ export class OrganizerService {
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
+      const trackIdentity = resolveLibraryFileIdentity({
+        artistId,
+        albumId,
+        mediaId: providerId,
+        libraryRoot: targetRoot,
+        fileType: "track",
+        quality: derivedQuality,
+      });
 
       // Batch all per-track DB writes in a single transaction (Lidarr-style).
+      let importedTrackFileId: number | null = null;
       db.transaction(() => {
         const libraryFileId = this.upsertLibraryFile({
           artistId,
@@ -2102,6 +2124,7 @@ export class OrganizerService {
           channels: metrics.channels,
           fingerprint: fileFingerprint
         });
+        importedTrackFileId = libraryFileId;
 
         try {
           recordHistoryEvent({
@@ -2122,14 +2145,6 @@ export class OrganizerService {
 
         // Keep the track branch aligned with album/video organization so quality
         // changes replace the previous file instead of leaving duplicates behind.
-        const trackIdentity = resolveLibraryFileIdentity({
-          artistId,
-          albumId,
-          mediaId: providerId,
-          libraryRoot: targetRoot,
-          fileType: "track",
-          quality: derivedQuality,
-        });
         this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null);
         this.cleanupSiblingMediaVariants(dest, "track");
       })();
@@ -2154,16 +2169,26 @@ export class OrganizerService {
               artistId,
               albumId,
               mediaId: providerId,
+              trackFileId: importedTrackFileId,
               filePath: lrcPath,
               libraryRoot: targetRoot,
               fileType: "lyrics",
               quality: trackRow?.quality || album.quality,
               namingTemplate: null,
               expectedPath: lrcPath,
+              provider: trackIdentity.provider,
+              providerEntityType: "track",
+              providerId,
+              librarySlot: trackIdentity.librarySlot,
+              canonicalArtistMbid: trackIdentity.canonicalArtistMbid,
+              canonicalReleaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid,
+              canonicalReleaseMbid: trackIdentity.canonicalReleaseMbid,
+              canonicalTrackMbid: trackIdentity.canonicalTrackMbid,
+              canonicalRecordingMbid: trackIdentity.canonicalRecordingMbid,
             });
           }
-        } catch {
-          // ignore
+        } catch (error) {
+          console.warn(`[Organizer] Failed to save or track lyrics for ${providerId}:`, error);
         }
       }
 

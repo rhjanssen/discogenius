@@ -144,6 +144,13 @@ class LibraryMetadataBackfillService {
                         result.failed++;
                     }
                 } else {
+                    this.upsertLibraryFile({
+                        artistId,
+                        filePath: picPath,
+                        libraryRoot,
+                        fileType: "cover",
+                        expectedPath: picPath,
+                    });
                     result.skipped++;
                 }
             }
@@ -325,6 +332,20 @@ class LibraryMetadataBackfillService {
                             result.failed++;
                         }
                     } else {
+                        this.upsertLibraryFile({
+                            artistId,
+                            albumId: String(album.id),
+                            filePath: coverPath,
+                            libraryRoot,
+                            fileType: "cover",
+                            expectedPath: coverPath,
+                            provider: album.provider,
+                            providerEntityType: "album",
+                            providerId: String(album.id),
+                            canonicalReleaseGroupMbid,
+                            canonicalReleaseMbid,
+                            librarySlot,
+                        });
                         result.skipped++;
                     }
 
@@ -361,6 +382,20 @@ class LibraryMetadataBackfillService {
                                 result.failed++;
                             }
                         } else {
+                            this.upsertLibraryFile({
+                                artistId,
+                                albumId: String(album.id),
+                                filePath: videoCoverPath,
+                                libraryRoot,
+                                fileType: "video_cover",
+                                expectedPath: videoCoverPath,
+                                provider: album.provider,
+                                providerEntityType: "album",
+                                providerId: String(album.id),
+                                canonicalReleaseGroupMbid,
+                                canonicalReleaseMbid,
+                                librarySlot,
+                            });
                             result.skipped++;
                         }
                     }
@@ -473,6 +508,25 @@ class LibraryMetadataBackfillService {
             const ext = path.extname(track.file_path);
             const lrcPath = track.file_path.replace(new RegExp(`${ext.replace('.', '\\.')}$`), ".lrc");
             if (fs.existsSync(lrcPath)) {
+                this.upsertLibraryFile({
+                    artistId,
+                    albumId: track.album_id ? String(track.album_id) : null,
+                    mediaId: String(track.provider_id),
+                    filePath: lrcPath,
+                    libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
+                    fileType: "lyrics",
+                    expectedPath: lrcPath,
+                    librarySlot: track.library_slot,
+                    trackFileId: track.track_file_id,
+                    provider: track.provider,
+                    providerEntityType: "track",
+                    providerId: String(track.provider_id),
+                    canonicalArtistMbid: track.canonical_artist_mbid,
+                    canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
+                    canonicalReleaseMbid: track.canonical_release_mbid,
+                    canonicalTrackMbid: track.canonical_track_mbid,
+                    canonicalRecordingMbid: track.canonical_recording_mbid,
+                });
                 result.skipped++;
                 continue;
             }
@@ -568,6 +622,22 @@ class LibraryMetadataBackfillService {
                 const thumbPath = path.join(videoDir, `${videoStem}.jpg`);
 
                 if (fs.existsSync(thumbPath)) {
+                    this.upsertLibraryFile({
+                        artistId,
+                        albumId: video.album_id ? String(video.album_id) : null,
+                        mediaId: String(video.provider_id),
+                        filePath: thumbPath,
+                        libraryRoot: String(video.library_root || "").trim() || videoRoot,
+                        fileType: "video_thumbnail",
+                        expectedPath: thumbPath,
+                        librarySlot: video.library_slot,
+                        trackFileId: video.track_file_id,
+                        provider: video.provider,
+                        providerEntityType: "video",
+                        providerId: String(video.provider_id),
+                        canonicalArtistMbid: video.canonical_artist_mbid,
+                        canonicalRecordingMbid: video.canonical_recording_mbid,
+                    });
                     result.skipped++;
                     continue;
                 }

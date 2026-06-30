@@ -380,3 +380,99 @@ test("metadata backfill discovers album and video sidecars from canonical Provid
     assert.equal(videoNfo?.library_slot, "video");
     assert.ok(videoNfo?.track_file_id);
 });
+
+test("metadata backfill records existing artist, album, and lyric sidecars", async () => {
+    seedCanonicalLibraryFiles();
+    dbModule.db.prepare("UPDATE ProviderItems SET data = ? WHERE entity_type = 'album' AND provider_id = '200'")
+        .run(JSON.stringify({}));
+    configModule.updateConfig("metadata", {
+        save_album_cover: true,
+        save_artist_picture: true,
+        save_video_thumbnail: false,
+        save_lyrics: true,
+        save_nfo: false,
+    });
+
+    const musicRoot = configModule.Config.getMusicPath();
+    const track = dbModule.db.prepare(`
+        SELECT id, file_path
+        FROM TrackFiles
+        WHERE provider_entity_type = 'track'
+        LIMIT 1
+    `).get() as { id: number; file_path: string };
+    const artistDir = path.dirname(path.dirname(track.file_path));
+    const albumDir = path.dirname(track.file_path);
+    const artistPicPath = path.join(artistDir, "folder.jpg");
+    const albumCoverPath = path.join(albumDir, "cover.jpg");
+    const lyricPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    const videoArtistPicPath = path.join(configModule.Config.getVideoPath(), "The Example Artist", "folder.jpg");
+
+    fs.writeFileSync(artistPicPath, "artist image");
+    fs.writeFileSync(videoArtistPicPath, "artist image");
+    fs.writeFileSync(albumCoverPath, "album image");
+    fs.writeFileSync(lyricPath, "lyrics");
+
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+
+    assert.equal(result.failed, 0);
+    assert.ok(result.skipped >= 3);
+
+    const artistImage = dbModule.db.prepare(`
+        SELECT type, file_type, file_path, provider_entity_type, provider_id
+        FROM MetadataFiles
+        WHERE file_path = ?
+    `).get(artistPicPath) as {
+        type: string;
+        file_type: string;
+        file_path: string;
+        provider_entity_type: string | null;
+        provider_id: string | null;
+    } | undefined;
+    assert.deepEqual(artistImage, {
+        type: "ArtistImage",
+        file_type: "cover",
+        file_path: artistPicPath,
+        provider_entity_type: "artist",
+        provider_id: null,
+    });
+
+    const albumImage = dbModule.db.prepare(`
+        SELECT type, file_type, provider_entity_type, provider_id, library_slot
+        FROM MetadataFiles
+        WHERE file_path = ?
+    `).get(albumCoverPath) as {
+        type: string;
+        file_type: string;
+        provider_entity_type: string | null;
+        provider_id: string | null;
+        library_slot: string | null;
+    } | undefined;
+    assert.deepEqual(albumImage, {
+        type: "AlbumImage",
+        file_type: "cover",
+        provider_entity_type: "album",
+        provider_id: "200",
+        library_slot: "stereo",
+    });
+
+    const lyric = dbModule.db.prepare(`
+        SELECT media_id, track_file_id, provider_entity_type, provider_id, library_slot
+        FROM LyricFiles
+        WHERE file_path = ?
+    `).get(lyricPath) as {
+        media_id: string | null;
+        track_file_id: number | null;
+        provider_entity_type: string | null;
+        provider_id: string | null;
+        library_slot: string | null;
+    } | undefined;
+    assert.deepEqual(lyric, {
+        media_id: "300",
+        track_file_id: track.id,
+        provider_entity_type: "track",
+        provider_id: "300",
+        library_slot: "stereo",
+    });
+
+    assert.equal(path.relative(musicRoot, artistPicPath).startsWith("The Example Artist"), true);
+});
