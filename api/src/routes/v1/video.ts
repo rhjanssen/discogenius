@@ -3,7 +3,6 @@ import { db, runWithAsyncBusyRetry } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
-import { MediaSeedService } from "../../services/music/media-seed-service.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
   getObjectBody,
@@ -67,16 +66,7 @@ router.get("/", (req, res) => {
 
 router.get("/:videoId", async (req, res) => {
   try {
-    let video = getVideoDetail(req.params.videoId);
-
-    if (!video) {
-      try {
-        await MediaSeedService.seedVideo(req.params.videoId, { monitorArtist: false });
-      } catch {
-        // Keep response behavior unchanged; return 404 below if still missing.
-      }
-      video = getVideoDetail(req.params.videoId);
-    }
+    const video = getVideoDetail(req.params.videoId);
 
     if (!video) {
       return res.status(404).json({ detail: "Video not found" });

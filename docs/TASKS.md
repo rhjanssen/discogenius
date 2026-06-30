@@ -214,10 +214,11 @@ the provider abstraction so a second provider can declare its own sources.
   regeneration now queues `RetagArtist` / `RetagFiles` / `RescanFolders` instead
   of running tag and metadata-sidecar work inline, and `/retag/apply` uses the
   same async busy-retry path for request-thread command enqueueing. Remaining
-  audit targets: root-scan SSE, bulk monitor/download writes, unmapped import
-  actions, and the direct video-detail fallback that still hydrates
-  provider/metadata state from a request handler. Explicit video add now queues
-  `SeedVideo` and returns immediately instead of seeding provider metadata inline.
+  audit targets: root-scan SSE, bulk monitor/download writes, and unmapped
+  import actions. Video search-result clicks now queue add/monitor for unknown
+  videos instead of navigating to a detail page that hydrates on GET; explicit
+  video add queues `SeedVideo` and returns immediately instead of seeding
+  provider metadata inline.
 
 ### Architecture decision: keep TypeScript, decompose (not a .NET port)
 

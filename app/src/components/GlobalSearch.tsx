@@ -472,6 +472,20 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         } else if (item.type === 'album') {
             navigateToAlbum(navigate, item.providerId);
         } else if (item.type === 'video') {
+            if (!item.inLibrary) {
+                setProcessingItems(prev => new Set(prev).add(item.providerId));
+                try {
+                    await addItem(item);
+                } finally {
+                    setProcessingItems(prev => {
+                        const next = new Set(prev);
+                        next.delete(item.providerId);
+                        return next;
+                    });
+                }
+                setIsOpen(false);
+                return;
+            }
             navigate(`/video/${item.providerId}`);
         } else if (item.type === 'track') {
             try {

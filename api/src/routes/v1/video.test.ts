@@ -54,6 +54,12 @@ function getPostHandler(pathName: string): (req: any, res: any) => Promise<void>
   return layer.route.stack[0].handle;
 }
 
+function getGetHandler(pathName: string): (req: any, res: any) => Promise<void> | void {
+  const layer = (videoRouter as any).stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.get);
+  assert.ok(layer, `Expected GET handler for path ${pathName}`);
+  return layer.route.stack[0].handle;
+}
+
 test("video add queues provider seeding instead of running inline", async () => {
   const handler = getPostHandler("/");
   const res = createMockResponse();
@@ -83,4 +89,21 @@ test("video add queues provider seeding instead of running inline", async () => 
   assert.equal(payload.providerId, "provider-video-1");
   assert.equal(payload.monitorArtist, true);
   assert.equal(payload.monitorVideo, true);
+});
+
+test("video detail does not seed unknown provider ids from GET", async () => {
+  const handler = getGetHandler("/:videoId");
+  const res = createMockResponse();
+
+  await handler({
+    params: {
+      videoId: "provider-video-1",
+    },
+  }, res);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.detail, "Video not found");
+
+  const count = dbModule.db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number };
+  assert.equal(count.count, 0);
 });
