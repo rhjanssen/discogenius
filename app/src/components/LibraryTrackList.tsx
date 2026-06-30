@@ -10,6 +10,7 @@ import {
   TableRow,
   Text,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
 import { CheckmarkCircle16Regular, Play24Filled, Stop24Regular } from "@fluentui/react-icons";
@@ -26,6 +27,7 @@ import type { TrackListItem as Track } from "@/types/track-list";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
 import { renderableArtworkUrl } from "@/utils/artwork";
+import { orderedQualityTags } from "@/utils/qualityTags";
 
 type TrackFiles = NonNullable<Track["files"]>;
 
@@ -270,10 +272,23 @@ const useStyles = makeStyles({
     textAlign: "right",
   },
   qualityCell: {
-    flex: "0 0 120px",
     justifyContent: "flex-start",
     alignItems: "center",
+    columnGap: tokens.spacingHorizontalXXS,
     paddingRight: tokens.spacingHorizontalM,
+  },
+  qualityCellSingle: {
+    flex: "0 0 80px",
+  },
+  qualityCellMultiple: {
+    flex: "0 0 140px",
+  },
+  qualityContent: {
+    display: "flex",
+    flexWrap: "nowrap",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    minWidth: 0,
   },
   durationCell: {
     flex: "0 0 56px",
@@ -314,22 +329,7 @@ const getTrackDisplayTitle = (track: Track) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 
 const getQualityTags = (track: Track): string[] => {
-  const values = Array.isArray(track.qualityTags) && track.qualityTags.length > 0
-    ? track.qualityTags
-    : track.quality
-      ? [track.quality]
-      : [];
-  const seen = new Set<string>();
-  return values
-    .map((quality) => String(quality || "").trim())
-    .filter((quality) => {
-      const key = quality.toUpperCase();
-      if (!quality || seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
+  return orderedQualityTags(track);
 };
 
 const isDownloadedTrack = (track: Track) => Boolean(track.is_downloaded ?? track.downloaded);
@@ -381,6 +381,14 @@ const LibraryTrackList = ({
   const columnCount = useMemo(() => {
     return (selection ? 1 : 0) + (showCover ? 1 : 0) + 1 + (showArtist ? 1 : 0) + (showAlbum ? 1 : 0) + 3 + 1;
   }, [selection, showAlbum, showArtist, showCover]);
+  const hasMultipleQuality = useMemo(
+    () => tracks.some((track) => getQualityTags(track).length > 1),
+    [tracks]
+  );
+  const qualityCellClass = mergeClasses(
+    styles.qualityCell,
+    hasMultipleQuality ? styles.qualityCellMultiple : styles.qualityCellSingle
+  );
 
   const getTrackFiles = useCallback((track: Track): TrackFiles => {
     if (Array.isArray(track.files) && track.files.length > 0) {
@@ -635,7 +643,7 @@ const LibraryTrackList = ({
                   <span className={styles.headerLabel}>Album</span>
                 </TableHeaderCell>
               ) : null}
-              <TableHeaderCell className={styles.qualityCell}>
+              <TableHeaderCell className={qualityCellClass}>
                 <span className={styles.headerLabel}>Quality</span>
               </TableHeaderCell>
               <TableHeaderCell className={styles.durationCell}>
@@ -744,8 +752,8 @@ const LibraryTrackList = ({
                       </TableCell>
                     ) : null}
 
-                    <TableCell className={styles.qualityCell}>
-                      <div className={styles.metaRow}>
+                    <TableCell className={qualityCellClass}>
+                      <div className={styles.qualityContent}>
                         {qualityTags.map((quality) => (
                           <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
                         ))}

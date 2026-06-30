@@ -21,7 +21,7 @@ import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { formatDurationSeconds } from "@/utils/format";
-import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
+import { orderedQualityTags } from "@/utils/qualityTags";
 import type { TrackListItem } from "@/types/track-list";
 
 type TrackNumbering = "track" | "index";
@@ -331,25 +331,7 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
 const getDisplayTitle = (track: TrackListItem) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 const getQualityTags = (track: TrackListItem): string[] => {
-  const values = Array.isArray(track.qualityTags) && track.qualityTags.length > 0
-    ? track.qualityTags
-    : track.quality
-      ? [track.quality]
-      : [];
-  const seen = new Set<string>();
-  return values
-    .map((quality) => String(quality || "").trim())
-    .filter((quality) => {
-      const key = quality.toUpperCase();
-      if (!quality || seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    })
-    // Stereo first, spatial (Dolby Atmos) last — matches the album-header order.
-    .sort((a, b) =>
-      Number(isSpatialAudioQuality(normalizeQualityTag(a))) - Number(isSpatialAudioQuality(normalizeQualityTag(b))));
+  return orderedQualityTags(track);
 };
 
 const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
