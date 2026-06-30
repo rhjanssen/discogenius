@@ -1,6 +1,6 @@
 import {CommandNames} from "../command-names.js";
 import type { CommandHandlerRegistry } from "./handler-context.js";
-import { handleRefreshArtist, handleMatchArtistProviders, handleRefreshAlbum, handleRefreshMetadata } from "./refresh-handlers.js";
+import { handleRefreshArtist, handleMatchArtistProviders, handleRefreshAlbum, handleRefreshMetadata, handleSeedVideo } from "./refresh-handlers.js";
 import { handleApplyCuration, handleDownloadMissing, handleCheckUpgrades, handleCurateArtist } from "./curation-handlers.js";
 import {
     handleRescanFolders,
@@ -25,6 +25,7 @@ export const commandHandlers: CommandHandlerRegistry = {
     [CommandNames.MatchArtistProviders]: handleMatchArtistProviders,
     [CommandNames.RefreshAlbum]: handleRefreshAlbum,
     [CommandNames.RefreshMetadata]: handleRefreshMetadata,
+    [CommandNames.SeedVideo]: handleSeedVideo,
     [CommandNames.ApplyCuration]: handleApplyCuration,
     [CommandNames.DownloadMissing]: handleDownloadMissing,
     [CommandNames.CheckUpgrades]: handleCheckUpgrades,

@@ -72,6 +72,7 @@ const COMMAND_QUEUE_CATEGORY_TYPES = {
     CommandNames.RenameArtist,
     CommandNames.RetagFiles,
     CommandNames.RetagArtist,
+    CommandNames.SeedVideo,
   ],
 } satisfies Record<Exclude<CommandQueueCategory, "other">, readonly CommandName[]>;
 
@@ -149,6 +150,16 @@ export const COMMAND_DEFINITIONS = {
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+  },
+  [CommandNames.SeedVideo]: {
+    type: CommandNames.SeedVideo,
+    name: "Add Video",
+    requiresDiskAccess: false,
+    isTypeExclusive: false,
+    isExclusive: false,
+    isLongRunning: true,
+    isPerRefExclusive: true,
+    maxConcurrent: 3,
   },
   [CommandNames.DownloadVideo]: {
     type: CommandNames.DownloadVideo,

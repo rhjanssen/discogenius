@@ -34,6 +34,7 @@ import type {
     RescanFoldersCommand,
     RetagArtistCommand,
     RetagFilesCommand,
+    SeedVideoCommand,
     UpdateLibraryMetadataCommand,
 } from "./command-bodies.js";
 
@@ -68,6 +69,7 @@ export interface CommandBodyMap {
     [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
     [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;
+    [CommandNames.SeedVideo]: SeedVideoCommand;
 }
 
 export type AnyCommandBody = CommandBodyMap[CommandName];

@@ -264,6 +264,12 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
   importLabel?: string;
 }
 
+export interface SeedVideoCommand extends CommandBodyCommon {
+  providerId: string;
+  monitorArtist?: boolean;
+  monitorVideo?: boolean;
+}
+
 export interface RetagFilesCommand extends CommandBodyCommon {
   ids?: number[];
   mediaIds?: Array<string | number>;

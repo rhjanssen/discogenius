@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { db } from "../../database.js";
+import { db, runWithAsyncBusyRetry } from "../../database.js";
+import { CommandNames } from "../../services/commands/command-names.js";
+import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
+import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { MediaSeedService } from "../../services/music/media-seed-service.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
@@ -90,27 +93,29 @@ router.post("/", async (req, res) => {
     const body = getObjectBody(req.body);
     const providerId = getRequiredIdentifier(body, "id");
 
-    const videoData = await MediaSeedService.seedVideo(providerId, { monitorArtist: true });
+    const commandId = await runWithAsyncBusyRetry(
+      () => CommandQueueManager.push(
+        CommandNames.SeedVideo,
+        {
+          providerId,
+          monitorArtist: true,
+          monitorVideo: true,
+          description: `Add video ${providerId}`,
+        },
+        providerId,
+        1,
+        CommandTrigger.Manual,
+      ),
+      30,
+      200,
+    );
 
-    const providerItem = db.prepare(`
-      SELECT recording_id AS recordingId
-      FROM ProviderItems
-      WHERE entity_type = 'video' AND provider_id = ?
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `).get(providerId) as { recordingId?: number | null } | undefined;
-
-    if (providerItem?.recordingId) {
-      db.prepare(`
-        UPDATE Recordings
-        SET monitored = CASE WHEN monitored_lock = 1 THEN Monitored ELSE 1 END,
-            monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(providerItem.recordingId);
-    }
-
-    res.json({ success: true, message: "Video added", video: videoData });
+    res.status(202).json({
+      success: true,
+      queued: commandId !== -1,
+      commandId,
+      message: "Video add queued",
+    });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

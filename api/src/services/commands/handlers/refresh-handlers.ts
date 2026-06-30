@@ -1,6 +1,8 @@
 import { RefreshArtistService } from "../../music/refresh-artist-service.js";
 import { RefreshAlbumService } from "../../music/refresh-album-service.js";
+import { MediaSeedService } from "../../music/media-seed-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
+import { db } from "../../../database.js";
 import { shouldRefreshArtist } from "../../config/refresh-policy.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { buildMatchArtistProvidersCommand, queueArtistWorkflow } from "../../music/artist-workflow.js";
@@ -197,5 +199,42 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Queued ${queued} artist refresh job(s), skipped ${skipped} (${allArtists.length} total)`,
+    });
+};
+
+export const handleSeedVideo: CommandHandler<"SeedVideo"> = async (job, ctx) => {
+    const providerId = job.payload.providerId;
+    ctx.updateCommandDescription(job, {
+        progress: 5,
+        description: `Adding video ${providerId}`,
+    });
+
+    await MediaSeedService.seedVideo(providerId, {
+        monitorArtist: job.payload.monitorArtist ?? true,
+    });
+
+    if (job.payload.monitorVideo !== false) {
+        const providerItem = db.prepare(`
+            SELECT recording_id AS recordingId
+            FROM ProviderItems
+            WHERE entity_type = 'video' AND provider_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(providerId) as { recordingId?: number | null } | undefined;
+
+        if (providerItem?.recordingId) {
+            db.prepare(`
+                UPDATE Recordings
+                SET monitored = CASE WHEN monitored_lock = 1 THEN monitored ELSE 1 END,
+                    monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(providerItem.recordingId);
+        }
+    }
+
+    ctx.updateCommandDescription(job, {
+        progress: 100,
+        description: `Added video ${providerId}`,
     });
 };
