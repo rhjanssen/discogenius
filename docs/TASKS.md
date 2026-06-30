@@ -73,8 +73,9 @@ transitional/provider shadows where they no longer pay for themselves.
   `/api/v1/system/task`; managed playable files moved to `/api/v1/mediaFile`
   because Discogenius tracks audio and video files; streaming provider status
   moved to `/api/v1/provider`.
-- pending: Prune redundant `TrackFiles` canonical indexes where composite indexes
-  fully cover the hot paths.
+- done: Pruned redundant `TrackFiles` canonical track/recording single-column
+  indexes; the fresh schema keeps the covering `(canonical_*_mbid, file_type)`
+  composites and asserts the redundant singles stay absent.
 - pending: Keep the `TrackFiles` table name unless the cleanup uncovers a real
   product or maintenance benefit from a rename. Lidarr calls playable files
   `TrackFile`; our table intentionally tracks playable audio and videos, while

@@ -26,6 +26,11 @@ function tableColumns(tableName: string): string[] {
     .map((column) => column.name);
 }
 
+function tableIndexes(tableName: string): string[] {
+  return (dbModule.db.prepare(`PRAGMA index_list(${tableName})`).all() as Array<{ name: string }>)
+    .map((index) => index.name);
+}
+
 test("fresh database initializes the current development baseline", () => {
   const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
   assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
@@ -97,4 +102,13 @@ test("retired provider catalog tables are absent from the baseline", () => {
       .get(tableName) as { name: string } | undefined;
     assert.equal(row, undefined, `Expected retired table '${tableName}' to be absent`);
   }
+});
+
+test("fresh TrackFiles schema keeps covering canonical indexes without redundant singles", () => {
+  const indexes = tableIndexes("TrackFiles");
+
+  assert.ok(indexes.includes("idx_track_files_canonical_track_type"));
+  assert.ok(indexes.includes("idx_track_files_canonical_recording_type"));
+  assert.equal(indexes.includes("idx_track_files_canonical_track"), false);
+  assert.equal(indexes.includes("idx_track_files_canonical_recording"), false);
 });
