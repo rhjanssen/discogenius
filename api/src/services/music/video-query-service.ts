@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
 import type { VideoContract, VideosListResponseContract } from "../../contracts/catalog.js";
 import type { VideoDetailContract } from "../../contracts/media.js";
+import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -57,6 +58,7 @@ function normalizeSortField(value: string | undefined): SortableVideoField {
 }
 
 function mapVideoRow(row: VideoRow, isDownloaded: boolean): VideoContract {
+  const coverArtUrl = videoCoverLocalUrl(row.id) ?? row.cover_art_url ?? null;
   return {
     id: String(row.id),
     title: row.title,
@@ -67,7 +69,7 @@ function mapVideoRow(row: VideoRow, isDownloaded: boolean): VideoContract {
     quality: row.current_quality || row.quality || null,
     cover: row.cover ?? null,
     cover_id: row.cover ?? null,
-    cover_art_url: row.cover_art_url ?? null,
+    cover_art_url: coverArtUrl,
     url: row.url ?? null,
     path: row.path ?? null,
     artist_id: String(row.artist_id),

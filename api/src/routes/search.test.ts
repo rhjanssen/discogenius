@@ -156,5 +156,6 @@ test("local search returns canonical videos", async () => {
   assert.equal(res.body.results.videos.length, 1);
   assert.equal(res.body.results.videos[0].id, String(video.id));
   assert.equal(res.body.results.videos[0].quality, "FHD");
+  assert.equal(res.body.results.videos[0].imageId, `/media-cover/Videos/${video.id}/cover.jpg`);
   assert.equal(res.body.results.videos[0].monitored, true);
 });

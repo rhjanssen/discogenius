@@ -50,7 +50,7 @@ const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
 let lastMediaCoverCleanupAt = 0;
 
-type MediaCoverEntity = "Artist" | "Album";
+type MediaCoverEntity = "Artist" | "Album" | "Video";
 
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
   ".gif": "image/gif",
@@ -75,16 +75,24 @@ function safeMediaCoverEntityId(entityId: string | number): string {
 
 function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = safeMediaCoverEntityId(entityId);
-  return coverEntity === "Album"
-    ? path.join(MEDIA_COVER_ROOT, "Albums", safeId)
-    : path.join(MEDIA_COVER_ROOT, safeId);
+  if (coverEntity === "Album") {
+    return path.join(MEDIA_COVER_ROOT, "Albums", safeId);
+  }
+  if (coverEntity === "Video") {
+    return path.join(MEDIA_COVER_ROOT, "Videos", safeId);
+  }
+  return path.join(MEDIA_COVER_ROOT, safeId);
 }
 
 function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = encodeURIComponent(safeMediaCoverEntityId(entityId));
-  return coverEntity === "Album"
-    ? `/media-cover/Albums/${safeId}`
-    : `/media-cover/${safeId}`;
+  if (coverEntity === "Album") {
+    return `/media-cover/Albums/${safeId}`;
+  }
+  if (coverEntity === "Video") {
+    return `/media-cover/Videos/${safeId}`;
+  }
+  return `/media-cover/${safeId}`;
 }
 
 function normalizedCoverType(coverType: string): string {
@@ -282,6 +290,11 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
     return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), parts[4]);
   }
 
+  if (parts[2] === "Videos" && parts.length >= 5) {
+    const videoId = safeMediaCoverEntityId(parts[3]);
+    return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Videos", videoId), parts[4]);
+  }
+
   const artistId = safeMediaCoverEntityId(parts[2]);
   return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), parts[3]);
 }
@@ -443,6 +456,10 @@ function existingArtistMediaCoverUrl(artistMbid: string | null | undefined, cove
     }
   }
   return null;
+}
+
+function existingVideoMediaCoverUrl(videoId: string | number | null | undefined): string | null {
+  return existingMediaCover(videoId, "Video", "Cover")?.url ?? null;
 }
 
 function firstStoredImageUrl(images: ServarrMetadataImage[] | undefined | null, coverTypes: string[], includeProviderFallbacks: boolean): string | null {
@@ -784,6 +801,76 @@ export function providerArtworkIdFromCandidates(
   return null;
 }
 
+export function videoProviderArtworkCandidatesFromRow(row: Record<string, any>): ProviderArtworkCandidate[] {
+  const provider = textOrNull(row.provider, row.selected_provider);
+  const data = row.provider_data ?? row.data;
+  return [{
+    provider,
+    entityId: textOrNull(row.provider_id, row.selected_provider_id),
+    imageId: textOrNull(row.provider_asset_id, row.asset_id, row.cover, row.cover_image_id, extractProviderArtworkId(data, "video")),
+    data,
+  }].filter((candidate) => candidate.provider || candidate.imageId || candidate.data || candidate.entityId);
+}
+
+export function videoCoverLocalUrl(videoId: string | number | null | undefined): string | null {
+  const normalizedVideoId = textOrNull(videoId);
+  if (!normalizedVideoId) {
+    return null;
+  }
+
+  const existing = existingVideoMediaCoverUrl(normalizedVideoId);
+  if (existing) {
+    return existing;
+  }
+
+  try {
+    const row = db.prepare(`
+      SELECT
+        recording.cover_image_url,
+        recording.cover_image_id,
+        provider_item.provider,
+        provider_item.provider_id,
+        provider_item.asset_id AS provider_asset_id,
+        provider_item.data AS provider_data
+      FROM Recordings recording
+      LEFT JOIN ProviderItems provider_item
+        ON provider_item.rowid = (
+          SELECT candidate.rowid
+          FROM ProviderItems candidate
+          WHERE candidate.entity_type = 'video'
+            AND (
+              candidate.recording_id = recording.id
+              OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
+            )
+          ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+          LIMIT 1
+        )
+      WHERE CAST(recording.id AS TEXT) = CAST(? AS TEXT)
+        AND recording.is_video = 1
+      LIMIT 1
+    `).get(normalizedVideoId) as {
+      cover_image_url?: string | null;
+      cover_image_id?: string | null;
+      provider?: string | null;
+      provider_id?: string | null;
+      provider_asset_id?: string | null;
+      provider_data?: string | null;
+    } | undefined;
+    const source = textOrNull(row?.cover_image_url, row?.cover_image_id, row?.provider_asset_id);
+    if (!source) {
+      return row && videoProviderArtworkCandidatesFromRow(row).length > 0
+        ? getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg")
+        : null;
+    }
+    return normalizeArtworkUrl(source)
+      ? expectedMediaCoverUrl(normalizedVideoId, "Video", "Cover", source)
+      : getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg");
+  } catch (error) {
+    console.warn("[MediaCoverService] Failed to query video artwork:", error);
+    return null;
+  }
+}
+
 /**
  * Lidarr-aligned read mapper — the equivalent of its
  * IMapCoversToLocal.ConvertToLocalUrls. Maps an album's STORED images (the
@@ -1063,6 +1150,87 @@ export async function resolveArtistArtwork(options: {
   return null;
 }
 
+export async function resolveVideoArtwork(options: {
+  videoId?: string | number | null;
+  providerCandidates?: ProviderArtworkCandidate[];
+  size?: string | number | null;
+}): Promise<string | null> {
+  const normalizedVideoId = textOrNull(options.videoId);
+  const localCoverUrl = existingVideoMediaCoverUrl(normalizedVideoId);
+  if (localCoverUrl) {
+    return localCoverUrl;
+  }
+
+  let storedSource: string | null = null;
+  let providerCandidates = options.providerCandidates || [];
+  if (normalizedVideoId) {
+    try {
+      const row = db.prepare(`
+        SELECT
+          recording.cover_image_url,
+          recording.cover_image_id,
+          provider_item.provider,
+          provider_item.provider_id,
+          provider_item.asset_id AS provider_asset_id,
+          provider_item.data AS provider_data
+        FROM Recordings recording
+        LEFT JOIN ProviderItems provider_item
+          ON provider_item.rowid = (
+            SELECT candidate.rowid
+            FROM ProviderItems candidate
+            WHERE candidate.entity_type = 'video'
+              AND (
+                candidate.recording_id = recording.id
+                OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
+              )
+            ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+            LIMIT 1
+          )
+        WHERE CAST(recording.id AS TEXT) = CAST(? AS TEXT)
+          AND recording.is_video = 1
+        LIMIT 1
+      `).get(normalizedVideoId) as Record<string, any> | undefined;
+
+      storedSource = normalizeArtworkUrl(row?.cover_image_url) || null;
+      if (row) {
+        providerCandidates = [
+          ...videoProviderArtworkCandidatesFromRow(row),
+          ...providerCandidates,
+        ];
+      }
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to resolve video artwork from database:", error);
+    }
+  }
+
+  if (storedSource) {
+    const cached = await ensureCachedMediaCover({
+      entityId: normalizedVideoId,
+      coverEntity: "Video",
+      coverType: "Cover",
+      sourceUrl: storedSource,
+    });
+    if (cached) return cached;
+  }
+
+  const providerUrl = await resolveProviderArtworkUrl(
+    providerCandidates,
+    "video",
+    options.size ?? "1080x720",
+  );
+  if (providerUrl) {
+    const cached = await ensureCachedMediaCover({
+      entityId: normalizedVideoId,
+      coverEntity: "Video",
+      coverType: "Cover",
+      sourceUrl: providerUrl,
+    });
+    if (cached) return cached;
+  }
+
+  return null;
+}
+
 // MediaCoverService class aligned 1:1 with Lidarr naming and structure
 export class MediaCoverService {
   static getArtistImageUrl(artist: ServarrMetadataImageContainer, preferredCoverType = "Poster"): string | null {
@@ -1073,11 +1241,11 @@ export class MediaCoverService {
     return getServarrMetadataAlbumImageUrl(album, preferredCoverType);
   }
 
-  static getCoverPath(entityId: number, coverEntity: 'Artist' | 'Album', coverType: string, extension: string): string {
+  static getCoverPath(entityId: number, coverEntity: MediaCoverEntity, coverType: string, extension: string): string {
     return getMediaCoverPath(entityId, coverEntity, coverType, extension);
   }
 
-  static convertToLocalUrls(entityId: number, coverEntity: 'Artist' | 'Album', covers: ServarrMetadataImage[]): void {
+  static convertToLocalUrls(entityId: number, coverEntity: MediaCoverEntity, covers: ServarrMetadataImage[]): void {
     for (const cover of covers) {
       const url = imageUrl(cover);
       const coverType = cover.CoverType || cover.coverType || (coverEntity === "Album" ? "Cover" : "Poster");
@@ -1093,7 +1261,10 @@ export class MediaCoverService {
   static albumCoverLocalUrl = albumCoverLocalUrl;
   static resolveAlbumArtwork = resolveAlbumArtwork;
   static resolveArtistArtwork = resolveArtistArtwork;
+  static resolveVideoArtwork = resolveVideoArtwork;
+  static videoCoverLocalUrl = videoCoverLocalUrl;
   static albumProviderArtworkCandidatesFromRow = albumProviderArtworkCandidatesFromRow;
+  static videoProviderArtworkCandidatesFromRow = videoProviderArtworkCandidatesFromRow;
   static parseJsonObject = parseJsonObject;
   static normalizeArtworkUrl = normalizeArtworkUrl;
   static registerUrl = registerMediaCoverProxyUrl;

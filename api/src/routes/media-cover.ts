@@ -7,7 +7,8 @@ import {
   getMediaCoverContentType, 
   resolveMediaCoverFilePath,
   resolveAlbumArtwork,
-  resolveArtistArtwork
+  resolveArtistArtwork,
+  resolveVideoArtwork
 } from "../services/metadata/media-cover-service.js";
 
 const router = Router();
@@ -29,6 +30,25 @@ router.get("/Albums/:albumId/:filename", async (req, res) => {
       filePath = resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), String(req.params.filename || ""));
     } catch (error) {
       console.warn(`[MediaCover Route] Failed to fetch missing album cover on-the-fly for ${albumId}:`, error);
+    }
+  }
+
+  if (!filePath) {
+    return res.status(404).end();
+  }
+  return sendMediaCover(res, filePath);
+});
+
+router.get("/Videos/:videoId/:filename", async (req, res) => {
+  const videoId = String(req.params.videoId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+  let filePath = resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Videos", videoId), String(req.params.filename || ""));
+
+  if (!filePath) {
+    try {
+      await resolveVideoArtwork({ videoId });
+      filePath = resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Videos", videoId), String(req.params.filename || ""));
+    } catch (error) {
+      console.warn(`[MediaCover Route] Failed to fetch missing video cover on-the-fly for ${videoId}:`, error);
     }
   }
 

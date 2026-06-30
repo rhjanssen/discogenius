@@ -68,6 +68,7 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(list.items[0]?.artist_name, "Video Artist");
   assert.equal(list.items[0]?.quality, "FHD");
   assert.equal(list.items[0]?.cover, "canonical-cover");
+  assert.equal(list.items[0]?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.equal(list.items[0]?.is_monitored, true);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
@@ -75,6 +76,7 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(detail?.id, String(recording.id));
   assert.equal(detail?.title, "Canonical Video");
   assert.equal(detail?.duration, 215);
+  assert.equal(detail?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
 });
 
 test("video list and detail ignore legacy provider-media-only video rows", () => {

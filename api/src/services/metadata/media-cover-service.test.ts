@@ -195,6 +195,203 @@ test("provider artwork ids resolve through the provider interface before caching
   assert.equal(fetchCalls.includes(providerUrl), true);
 });
 
+test("provider video artwork ids resolve through the provider interface before caching", async () => {
+  const providerModule = await import("../providers/index.js");
+  const image = jpeg.encode({
+    width: 1280,
+    height: 720,
+    data: Buffer.alloc(1280 * 720 * 4, 255),
+  }, 92).data;
+  const fetchCalls: string[] = [];
+  const artworkRequests: any[] = [];
+  const providerUrl = "https://provider.example/artwork/video-image-id.jpg";
+
+  providerModule.streamingProviderManager.registerStreamingProvider({
+    id: "test-video-artwork-provider",
+    name: "Test Video Artwork Provider",
+    capabilities: {
+      catalogSearch: false,
+      artistCatalog: false,
+      followedArtists: false,
+      audioPreviews: false,
+      audioDownloads: false,
+      lossyStereo: false,
+      losslessStereo: false,
+      hiResStereo: false,
+      spatialAudio: false,
+      lyrics: false,
+      musicVideos: true,
+      videoPreviews: false,
+      videoDownloads: false,
+      artwork: true,
+      editorialMetadata: false,
+      providerIds: true,
+    },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => { throw new Error("not implemented"); },
+    getArtistAlbums: async () => [],
+    getAlbum: async () => { throw new Error("not implemented"); },
+    getAlbumTracks: async () => [],
+    getTrack: async () => { throw new Error("not implemented"); },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 1,
+      canAccessShell: false,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: false,
+    }),
+    getArtworkUrl: (request: any) => {
+      artworkRequests.push(request);
+      return providerUrl;
+    },
+  } as any);
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("video-artist-mbid", "Video Artist");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, is_video,
+      metadata_status, cover_image_id, monitored
+    )
+    VALUES (?, ?, ?, ?, 1, 'provider_only', ?, 1)
+    RETURNING id
+  `).get("provider-video-id", "video-recording-mbid", "video-artist-mbid", "Video Title", "video-image-id") as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, asset_id, match_status, match_confidence
+    )
+    VALUES (?, 'video', ?, ?, ?, ?, ?, 'verified', 1)
+  `).run(
+    "test-video-artwork-provider",
+    "provider-video-id",
+    "video-artist-mbid",
+    recording.id,
+    "Video Title",
+    "video-image-id",
+  );
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    fetchCalls.push(String(url));
+    return new Response(image, {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  }) as typeof fetch;
+
+  assert.equal(mediaCoverServiceModule.videoCoverLocalUrl(recording.id), `/media-cover/Videos/${recording.id}/cover.jpg`);
+
+  const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
+
+  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
+  assert.deepEqual(artworkRequests, [{
+    entityType: "video",
+    providerId: "provider-video-id",
+    imageId: "video-image-id",
+    size: "1080x720",
+  }]);
+  assert.deepEqual(fetchCalls, [providerUrl]);
+  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Videos", String(recording.id), "cover.jpg")), true);
+});
+
+test("provider video artwork can resolve from provider id when no image id is stored", async () => {
+  const providerModule = await import("../providers/index.js");
+  const image = jpeg.encode({
+    width: 1280,
+    height: 720,
+    data: Buffer.alloc(1280 * 720 * 4, 255),
+  }, 92).data;
+  const artworkRequests: any[] = [];
+  const providerUrl = "https://provider.example/artwork/provider-video-without-image-id.jpg";
+
+  providerModule.streamingProviderManager.registerStreamingProvider({
+    id: "test-video-provider-id-artwork-provider",
+    name: "Test Video Provider Id Artwork Provider",
+    capabilities: {
+      catalogSearch: false,
+      artistCatalog: false,
+      followedArtists: false,
+      audioPreviews: false,
+      audioDownloads: false,
+      lossyStereo: false,
+      losslessStereo: false,
+      hiResStereo: false,
+      spatialAudio: false,
+      lyrics: false,
+      musicVideos: true,
+      videoPreviews: false,
+      videoDownloads: false,
+      artwork: true,
+      editorialMetadata: false,
+      providerIds: true,
+    },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => { throw new Error("not implemented"); },
+    getArtistAlbums: async () => [],
+    getAlbum: async () => { throw new Error("not implemented"); },
+    getAlbumTracks: async () => [],
+    getTrack: async () => { throw new Error("not implemented"); },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 1,
+      canAccessShell: false,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: false,
+    }),
+    getArtworkUrl: (request: any) => {
+      artworkRequests.push(request);
+      return providerUrl;
+    },
+  } as any);
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("video-provider-id-artist-mbid", "Video Provider Id Artist");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, is_video,
+      metadata_status, monitored
+    )
+    VALUES (?, ?, ?, ?, 1, 'provider_only', 1)
+    RETURNING id
+  `).get("provider-video-without-image-id", "video-provider-id-recording-mbid", "video-provider-id-artist-mbid", "Provider Id Video") as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, match_status, match_confidence
+    )
+    VALUES (?, 'video', ?, ?, ?, ?, 'verified', 1)
+  `).run(
+    "test-video-provider-id-artwork-provider",
+    "provider-video-without-image-id",
+    "video-provider-id-artist-mbid",
+    recording.id,
+    "Provider Id Video",
+  );
+
+  globalThis.fetch = (async () => new Response(image, {
+    status: 200,
+    headers: { "content-type": "image/jpeg" },
+  })) as typeof fetch;
+
+  assert.equal(mediaCoverServiceModule.videoCoverLocalUrl(recording.id), `/media-cover/Videos/${recording.id}/cover.jpg`);
+
+  const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
+
+  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
+  assert.deepEqual(artworkRequests, [{
+    entityType: "video",
+    providerId: "provider-video-without-image-id",
+    imageId: null,
+    size: "1080x720",
+  }]);
+});
+
 test("album artwork resolver caches Cover Art Archive artwork locally when metadata has no image", async () => {
   const albumMbid = "cover-art-archive-release-group";
   const calls: string[] = [];

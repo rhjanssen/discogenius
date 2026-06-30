@@ -59,7 +59,12 @@ function findExistingArtist(artist: FollowedArtistRow): { id: string | number; m
     }
 }
 
-async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ status: "added" | "updated" | "skipped"; localArtistId: string | null; reason?: string }> {
+type ExistingArtistRow = { id: string | number; monitored: number; path: string | null };
+
+async function ensureMonitoredArtist(
+    artist: FollowedArtistRow,
+    existingArtist?: ExistingArtistRow | null,
+): Promise<{ status: "added" | "updated" | "skipped"; localArtistId: string | null; reason?: string }> {
     if (!artist.mbid) {
         return {
             status: "skipped",
@@ -68,7 +73,7 @@ async function ensureMonitoredArtist(artist: FollowedArtistRow): Promise<{ statu
         };
     }
 
-    const existing = findExistingArtist(artist);
+    const existing = existingArtist === undefined ? findExistingArtist(artist) : existingArtist;
     const status = existing?.monitored === 1 ? "skipped" : existing ? "updated" : "added";
 
     const localArtistId = await RefreshArtistService.upsertMusicBrainzArtist(artist.mbid, { monitorArtist: true });
@@ -168,11 +173,13 @@ export class FollowedArtistsImportService {
                     raw: artist.raw,
                 };
                 const mbMatch = await ProviderArtistIdentityService.resolve(provider.id, identityInput);
+                let existingArtistBeforeImport: ExistingArtistRow | null | undefined;
                 if (mbMatch?.mbid) {
                     artist.mbid = mbMatch.mbid;
                     artist.match_status = mbMatch.status === "ambiguous" || mbMatch.status === "provider_only" ? "probable" : mbMatch.status;
                     artist.match_confidence = mbMatch.confidence;
                     artist.match_method = mbMatch.method;
+                    existingArtistBeforeImport = findExistingArtist(artist) ?? null;
                     try {
                         await servarrMetadata.syncArtist(mbMatch.mbid);
                     } catch (error) {
@@ -184,7 +191,7 @@ export class FollowedArtistsImportService {
                     artist.match_method = mbMatch.method;
                 }
 
-                const result = await ensureMonitoredArtist(artist);
+                const result = await ensureMonitoredArtist(artist, existingArtistBeforeImport);
                 ProviderArtistIdentityService.store(provider.id, identityInput, {
                     mbid: artist.mbid || null,
                     status: artist.match_status || (artist.mbid ? "verified" : "provider_only"),

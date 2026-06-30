@@ -5,8 +5,8 @@ import {
     albumCoverLocalUrl,
     imageContainerFromImagesColumn,
     registerMediaCoverProxyUrl,
-    resolveProviderArtworkUrl,
     resolveMediaCoverProxyUrl,
+    videoCoverLocalUrl,
 } from "../services/metadata/media-cover-service.js";
 import { servarrMetadata } from "../services/metadata/servarr-metadata.js";
 import type {
@@ -302,8 +302,6 @@ router.get("/", async (req, res) => {
               COALESCE(recording.monitored, 0) AS monitored,
               COALESCE(recording.cover_image_id, provider_video.asset_id) AS cover,
               recording.cover_image_url AS cover_url,
-              provider_video.provider AS cover_provider,
-              provider_video.data AS cover_provider_data,
               COALESCE(recording.release_date, provider_video.release_date) AS release_date,
               COALESCE((
                 SELECT lf.quality
@@ -364,21 +362,11 @@ router.get("/", async (req, res) => {
                     .all(like, limit) as any[];
 
                 for (const row of localVideos) {
-                    const providerArtworkUrl = row.cover_url
-                        ? null
-                        : await resolveProviderArtworkUrl(
-                            [{ provider: row.cover_provider, imageId: row.cover, data: row.cover_provider_data }],
-                            "video",
-                            "medium",
-                        );
                     results.videos.push(formatSearchResult({
                         id: row.id,
                         name: row.title,
                         artist_name: row.artist_name,
-                        image_id: registerMediaCoverProxyUrl(row.cover_url || providerArtworkUrl)
-                            || row.cover_url
-                            || providerArtworkUrl
-                            || null,
+                        image_id: videoCoverLocalUrl(row.id),
                         quality: row.current_quality,
                         release_date: row.release_date,
                         monitored: !!row.monitored,

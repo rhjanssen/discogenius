@@ -101,3 +101,116 @@ test("followed artist import uses the requested streaming provider", async () =>
   assert.equal(summary.skipped, 0);
   assert.match(summary.message, /No followed artists found/);
 });
+
+test("followed artist import reports added when metadata sync creates the artist row", async () => {
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+  const { RefreshArtistService } = await import("../music/refresh-artist-service.js");
+  const originalSyncArtist = servarrMetadata.syncArtist;
+  const originalUpsertMusicBrainzArtist = RefreshArtistService.upsertMusicBrainzArtist;
+  const events: any[] = [];
+
+  providersModule.streamingProviderManager.registerStreamingProvider({
+    id: "followed-status-test-provider",
+    name: "Followed Status Test provider",
+    capabilities: {
+      catalogSearch: false,
+      artistCatalog: false,
+      followedArtists: true,
+      audioPreviews: false,
+      audioDownloads: false,
+      lossyStereo: false,
+      losslessStereo: false,
+      hiResStereo: false,
+      spatialAudio: false,
+      lyrics: false,
+      musicVideos: false,
+      videoPreviews: false,
+      videoDownloads: false,
+      artwork: false,
+      editorialMetadata: false,
+      providerIds: true,
+    },
+    isAuthenticated: () => true,
+    getArtistsForImportSource: async () => [{
+      providerId: "artist-added-after-sync",
+      name: "Artist Added After Sync",
+    }],
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ providerId: "artist-added-after-sync", name: "Artist Added After Sync" }),
+    getArtistAlbums: async () => [],
+    getAlbum: async () => ({
+      providerId: "album-1",
+      title: "Test Album",
+      artist: { providerId: "artist-added-after-sync", name: "Artist Added After Sync" },
+    }),
+    getAlbumTracks: async () => [],
+    getTrack: async () => ({
+      providerId: "track-1",
+      title: "Test Track",
+      artist: { providerId: "artist-added-after-sync", name: "Artist Added After Sync" },
+      album: {
+        providerId: "album-1",
+        title: "Test Album",
+        artist: { providerId: "artist-added-after-sync", name: "Artist Added After Sync" },
+      },
+      duration: 180,
+      trackNumber: 1,
+    }),
+    logout: () => {},
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: true,
+      remoteCatalogAvailable: false,
+      canAuthenticate: true,
+    }),
+  });
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, title,
+      match_status, match_confidence, match_method
+    )
+    VALUES (?, 'artist', ?, ?, ?, 'verified', 1, 'test-cache')
+  `).run(
+    "followed-status-test-provider",
+    "artist-added-after-sync",
+    "artist-added-after-sync-mbid",
+    "Artist Added After Sync",
+  );
+
+  servarrMetadata.syncArtist = (async (mbid: string) => {
+    dbModule.db.prepare(`
+      INSERT INTO Artists (id, mbid, name, monitored)
+      VALUES (?, ?, ?, 0)
+    `).run(mbid, mbid, "Artist Added After Sync");
+    return {
+      id: mbid,
+      artistname: "Artist Added After Sync",
+      status: "continuing",
+      overview: "",
+      images: [],
+      Albums: [],
+    };
+  }) as unknown as typeof servarrMetadata.syncArtist;
+  RefreshArtistService.upsertMusicBrainzArtist = (async (mbid: string) => mbid) as typeof RefreshArtistService.upsertMusicBrainzArtist;
+
+  try {
+    const summary = await importModule.FollowedArtistsImportService.importArtists({
+      providerId: "followed-status-test-provider",
+      selection: { category: "followed-artists" },
+      onEvent: (event) => events.push(event),
+    });
+
+    assert.equal(summary.added, 1);
+    assert.equal(summary.updated, 0);
+    assert.equal(summary.skipped, 0);
+    assert.equal(events.some((event) => event.type === "artist-added" && event.name === "Artist Added After Sync"), true);
+  } finally {
+    servarrMetadata.syncArtist = originalSyncArtist;
+    RefreshArtistService.upsertMusicBrainzArtist = originalUpsertMusicBrainzArtist;
+  }
+});

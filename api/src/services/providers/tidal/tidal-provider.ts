@@ -392,7 +392,11 @@ export class TidalProvider implements StreamingProvider {
     }
 
     if (request.entityType === "video") {
-      return this.tidalImageUrl("images", request.imageId, this.normalizeVideoSize(request.size));
+      if (request.imageId) {
+        return this.tidalImageUrl("images", request.imageId, this.normalizeVideoSize(request.size));
+      }
+      const video = await tidal.getVideo(String(request.providerId || ""));
+      return this.tidalImageUrl("images", video?.image_id, this.normalizeVideoSize(request.size));
     }
 
     if (request.entityType === "albumVideoCover") {
