@@ -65,6 +65,8 @@ export interface AlbumTrackContract {
   artist_name?: string;
   artist_credits?: Array<{ id: string; name: string; join_phrase: string }>;
   album_title?: string;
+  album_cover?: string | null;
+  cover_url?: string | null;
   musicbrainz_track_id?: string | null;
   musicbrainz_recording_id?: string | null;
   musicbrainz_release_id?: string | null;
@@ -236,6 +238,8 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
           };
         }),
     album_title: expectOptionalString(record.album_title, `${label}.album_title`),
+    album_cover: expectOptionalString(record.album_cover, `${label}.album_cover`) ?? null,
+    cover_url: expectOptionalString(record.cover_url, `${label}.cover_url`) ?? null,
     musicbrainz_track_id: expectOptionalString(record.musicbrainz_track_id, `${label}.musicbrainz_track_id`) ?? null,
     musicbrainz_recording_id: expectOptionalString(record.musicbrainz_recording_id, `${label}.musicbrainz_recording_id`) ?? null,
     musicbrainz_release_id: expectOptionalString(record.musicbrainz_release_id, `${label}.musicbrainz_release_id`) ?? null,

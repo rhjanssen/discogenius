@@ -2,6 +2,7 @@ import { db } from "../../database.js";
 import type { AlbumTrackContract, LibraryFileContract } from "../../contracts/media.js";
 import { isSpatialAudioQuality, spatialAudioQualitySql } from "../../utils/spatial-audio.js";
 import { getConfigSection } from "../config/config.js";
+import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 const canonicalTrackDownloadedPredicate = `
   track.mbid IN (
@@ -433,6 +434,9 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
     const trackId = String(track.id);
     const files = filesByTrack.get(trackId) || [];
     const isDownloaded = Boolean(track.is_downloaded) || files.some((file) => file.file_type === "track");
+    const albumCover = albumCoverLocalUrl({
+      albumMbid: track.album_id != null ? String(track.album_id) : null,
+    }) ?? track.album_cover ?? null;
 
     let artist_credits: Array<{ id: string; name: string; join_phrase: string }> = [];
     if (track.recording_credits) {
@@ -462,6 +466,8 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       ...track,
       id: trackId,
       album_id: track.album_id != null ? String(track.album_id) : null,
+      album_cover: albumCover,
+      cover_url: albumCover,
       preview_provider: track.preview_provider || null,
       preview_provider_track_id: track.preview_provider_track_id || null,
       musicbrainz_track_id: track.musicbrainz_track_id || trackId,

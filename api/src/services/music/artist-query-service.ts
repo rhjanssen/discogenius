@@ -18,6 +18,7 @@ import {
     providerArtworkIdFromCandidates,
     imageContainerFromImagesColumn,
     mapArtistArtworkToLocalUrl,
+    videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 
@@ -798,6 +799,10 @@ export class ArtistQueryService {
            COALESCE(recording.monitored, 0) AS monitored,
            COALESCE(recording.monitored_lock, 0) AS monitored_lock,
            recording.updated_at AS last_scanned,
+           MAX(
+             COALESCE(CAST(recording.popularity AS REAL), 0),
+             COALESCE(CAST(provider_item.popularity AS REAL), 0)
+           ) AS video_popularity,
            CASE WHEN EXISTS (
              SELECT 1
              FROM TrackFiles lf
@@ -830,7 +835,7 @@ export class ArtistQueryService {
              OR recording.artist_mbid = ?
              OR artist_metadata.mbid = ?
            )
-         ORDER BY (COALESCE(recording.release_date, provider_item.release_date) IS NULL) ASC, COALESCE(recording.release_date, provider_item.release_date) DESC, recording.title ASC, recording.id ASC
+         ORDER BY COALESCE(video_popularity, 0) DESC, (COALESCE(recording.release_date, provider_item.release_date) IS NULL) ASC, COALESCE(recording.release_date, provider_item.release_date) DESC, recording.title ASC, recording.id ASC
        `).all(String(artist.id), String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
@@ -1084,15 +1089,19 @@ export class ArtistQueryService {
                 modules: [{
                     type: "VIDEO_LIST",
                     title: "Videos",
-                    items: videos.map((video) => ({
-                        ...video,
-                        cover_id: video.cover || null,
-                        quality: video.quality || "MP4_1080P",
-                        monitored_lock: Boolean(video.monitored_lock),
-                        is_monitored: Boolean(video.monitored),
-                        downloaded: video.is_downloaded ? 1 : 0,
-                        is_downloaded: Boolean(video.is_downloaded),
-                    })),
+                    items: videos.map((video) => {
+                        const coverArtUrl = videoCoverLocalUrl(video.id) ?? video.cover_art_url ?? null;
+                        return {
+                            ...video,
+                            cover_id: video.cover || null,
+                            cover_art_url: coverArtUrl,
+                            quality: video.quality || "MP4_1080P",
+                            monitored_lock: Boolean(video.monitored_lock),
+                            is_monitored: Boolean(video.monitored),
+                            downloaded: video.is_downloaded ? 1 : 0,
+                            is_downloaded: Boolean(video.is_downloaded),
+                        };
+                    }),
                 }],
             });
         }

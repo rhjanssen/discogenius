@@ -12,12 +12,12 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
+import { CheckmarkCircle16Regular, Play24Filled, Stop24Regular } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
-import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -49,18 +49,52 @@ const useStyles = makeStyles({
   },
   desktopTable: {
     display: "none",
+    width: "100%",
     "@media (min-width: 768px)": {
-      display: "table",
+      display: "block",
     },
+  },
+  headerRow: {
+    display: "flex",
+  },
+  headerLabel: {
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground3,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  headerLabelRight: {
+    display: "block",
+    width: "100%",
+    textAlign: "right",
   },
   row: {
     cursor: "pointer",
+    display: "flex",
+    transitionProperty: "background-color, backdrop-filter, transform, box-shadow",
+    transitionDuration: tokens.durationFast,
+    transitionTimingFunction: tokens.curveEasyEase,
     ":hover": {
       backgroundColor: tokens.colorNeutralBackgroundAlpha,
+      backdropFilter: "blur(14px) saturate(140%)",
+      WebkitBackdropFilter: "blur(14px) saturate(140%)",
+      boxShadow: tokens.shadow8,
+      transform: "translateY(-1px)",
+      position: "relative",
+      zIndex: 1,
     },
   },
   playerRow: {
-    padding: `${tokens.spacingVerticalXS} 0 ${tokens.spacingVerticalS}`,
+    width: "100%",
+    ":hover": {
+      backgroundColor: "transparent",
+    },
+  },
+  playerCell: {
+    flex: "1 1 0px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalS,
+    paddingLeft: 0,
+    paddingRight: 0,
   },
   linkText: {
     color: tokens.colorNeutralForeground3,
@@ -70,10 +104,28 @@ const useStyles = makeStyles({
     },
   },
   coverCell: {
-    width: "56px",
+    flex: "0 0 52px",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingLeft: tokens.spacingHorizontalS,
+    paddingRight: tokens.spacingHorizontalS,
   },
   titleCell: {
-    minWidth: "280px",
+    flex: "1.25 1 0px",
+    minWidth: 0,
+    alignItems: "center",
+  },
+  artistCell: {
+    flex: "1 1 0px",
+    minWidth: 0,
+    alignItems: "center",
+    paddingRight: tokens.spacingHorizontalM,
+  },
+  albumCell: {
+    flex: "1.45 1 0px",
+    minWidth: 0,
+    alignItems: "center",
+    paddingRight: tokens.spacingHorizontalM,
   },
   titleBlock: {
     display: "flex",
@@ -138,6 +190,66 @@ const useStyles = makeStyles({
     flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
   },
+  desktopCover: {
+    width: "40px",
+    height: "40px",
+    borderRadius: tokens.borderRadiusSmall,
+    objectFit: "cover",
+    display: "block",
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  coverButton: {
+    position: "relative",
+    width: "40px",
+    height: "40px",
+    padding: 0,
+    border: 0,
+    borderRadius: tokens.borderRadiusSmall,
+    overflow: "hidden",
+    backgroundColor: tokens.colorNeutralBackground3,
+    color: tokens.colorNeutralForegroundOnBrand,
+    cursor: "pointer",
+    display: "block",
+    ":hover": {
+      "& [data-cover-play]": {
+        opacity: 1,
+      },
+      "& [data-cover-image]": {
+        filter: "brightness(0.62)",
+      },
+    },
+    ":focus-visible": {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "2px",
+      "& [data-cover-play]": {
+        opacity: 1,
+      },
+    },
+  },
+  coverFallback: {
+    width: "40px",
+    height: "40px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playOverlay: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.48)",
+    color: tokens.colorNeutralForegroundOnBrand,
+    opacity: 0,
+    transitionProperty: "opacity",
+    transitionDuration: tokens.durationFaster,
+    transitionTimingFunction: tokens.curveEasyEase,
+  },
+  playIcon: {
+    fontSize: "22px",
+    display: "block",
+  },
   mobileInfo: {
     flex: 1,
     minWidth: 0,
@@ -149,14 +261,52 @@ const useStyles = makeStyles({
     paddingTop: tokens.spacingVerticalXS,
   },
   selectionCell: {
-    width: "44px",
+    flex: "0 0 44px",
   },
   actionCell: {
-    width: "180px",
+    flex: "0 0 36px",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    textAlign: "right",
+  },
+  qualityCell: {
+    flex: "0 0 120px",
+    justifyContent: "flex-start",
+    alignItems: "center",
+    paddingRight: tokens.spacingHorizontalM,
+  },
+  durationCell: {
+    flex: "0 0 56px",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: "tabular-nums",
+    textAlign: "right",
+  },
+  downloadedCell: {
+    flex: "0 0 88px",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    textAlign: "right",
   },
   actionCellContent: {
     width: "100%",
     justifyContent: "flex-end",
+  },
+  checkIcon: {
+    color: tokens.colorPaletteGreenForeground1,
+    verticalAlign: "middle",
+  },
+  emptyCheck: {
+    display: "inline-block",
+    width: "16px",
+    height: "16px",
+  },
+  truncateCell: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
 });
 
@@ -185,6 +335,7 @@ const getQualityTags = (track: Track): string[] => {
 const isDownloadedTrack = (track: Track) => Boolean(track.is_downloaded ?? track.downloaded);
 const isMonitoredTrack = (track: Track) => Boolean(track.is_monitored);
 const isLockedTrack = (track: Track) => Boolean(track.monitored_lock);
+const getTrackCoverUrl = (track: Track) => track.cover_url ?? track.album_cover ?? track.album?.cover_id ?? null;
 
 function joinTrackMeta(parts: Array<string | null | undefined>) {
   return parts.filter((value) => Boolean(value && value.trim().length > 0)) as string[];
@@ -211,6 +362,7 @@ const LibraryTrackList = ({
   const [infoTrack, setInfoTrack] = useState<Track | null>(null);
   const [trackFilesById, setTrackFilesById] = useState<Record<string, TrackFiles>>({});
   const [loadingTrackFileIds, setLoadingTrackFileIds] = useState<Set<string>>(new Set());
+  const [failedCoverUrls, setFailedCoverUrls] = useState<Set<string>>(new Set());
   const selectedRowIdSet = useMemo(
     () => new Set(selection?.selectedRowIds ?? []),
     [selection?.selectedRowIds]
@@ -227,7 +379,7 @@ const LibraryTrackList = ({
     : false;
 
   const columnCount = useMemo(() => {
-    return (selection ? 1 : 0) + (showCover ? 1 : 0) + 1 + (showArtist ? 1 : 0) + (showAlbum ? 1 : 0) + 1;
+    return (selection ? 1 : 0) + (showCover ? 1 : 0) + 1 + (showArtist ? 1 : 0) + (showAlbum ? 1 : 0) + 3 + 1;
   }, [selection, showAlbum, showArtist, showCover]);
 
   const getTrackFiles = useCallback((track: Track): TrackFiles => {
@@ -320,11 +472,26 @@ const LibraryTrackList = ({
     selection.onSelectionChange(nextSelection);
   }, [selection]);
 
-  const renderTitleMeta = (track: Track) => {
+  const markCoverFailed = useCallback((url: string | null | undefined) => {
+    if (!url) {
+      return;
+    }
+    setFailedCoverUrls((previous) => {
+      if (previous.has(url)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.add(url);
+      return next;
+    });
+  }, []);
+
+  const renderTitleMeta = (track: Track, showInlineDetails = true) => {
     const metaItems = joinTrackMeta([
-      formatDurationSeconds(track.duration),
+      showInlineDetails ? formatDurationSeconds(track.duration) : null,
     ]);
     const qualityTags = getQualityTags(track);
+    const showInlineQuality = showInlineDetails && qualityTags.length > 0;
 
     return (
       <div className={styles.titleBlock}>
@@ -341,11 +508,10 @@ const LibraryTrackList = ({
               {item}
             </Text>
           ))}
-          {qualityTags.length > 0 ? <Text size={200} className={styles.separator}>•</Text> : null}
-          {qualityTags.map((quality) => (
+          {showInlineQuality ? <Text size={200} className={styles.separator}>•</Text> : null}
+          {showInlineDetails ? qualityTags.map((quality) => (
             <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
-          ))}
-          {isDownloadedTrack(track) ? <DownloadedBadge /> : null}
+          )) : null}
         </div>
       </div>
     );
@@ -366,6 +532,10 @@ const LibraryTrackList = ({
             const hasProviderTrack = Boolean(track.preview_provider_track_id);
             const canPlayTrack = isDownloaded || hasProviderTrack;
             const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
+            const coverUrl = getTrackCoverUrl(track);
+            const renderableCoverUrl = failedCoverUrls.has(coverUrl || "")
+              ? null
+              : renderableArtworkUrl(coverUrl);
 
             return (
               <div
@@ -374,11 +544,12 @@ const LibraryTrackList = ({
                 onClick={() => handleRowClick(track)}
               >
                 {showCover ? (
-                  track.album_cover ? (
+                  renderableCoverUrl ? (
                     <img
-                      src={renderableArtworkUrl(track.album_cover) || undefined}
+                      src={renderableCoverUrl}
                       alt={track.album_title || "Album"}
                       className={styles.mobileCover}
+                      onError={() => markCoverFailed(coverUrl)}
                     />
                   ) : (
                     <div className={styles.mobileCover} />
@@ -438,9 +609,9 @@ const LibraryTrackList = ({
           })}
         </div>
 
-        <Table aria-label="Track list" className={styles.desktopTable}>
+        <Table aria-label="Track list" className={styles.desktopTable} noNativeElements size="small">
           <TableHeader>
-            <TableRow>
+            <TableRow className={styles.headerRow}>
               {selection ? (
                 <TableHeaderCell className={styles.selectionCell}>
                   <Checkbox
@@ -451,9 +622,28 @@ const LibraryTrackList = ({
                 </TableHeaderCell>
               ) : null}
               {showCover ? <TableHeaderCell className={styles.coverCell} /> : null}
-              <TableHeaderCell className={styles.titleCell}>Title</TableHeaderCell>
-              {showArtist ? <TableHeaderCell>Artist</TableHeaderCell> : null}
-              {showAlbum ? <TableHeaderCell>Album</TableHeaderCell> : null}
+              <TableHeaderCell className={styles.titleCell}>
+                <span className={styles.headerLabel}>Title</span>
+              </TableHeaderCell>
+              {showArtist ? (
+                <TableHeaderCell className={styles.artistCell}>
+                  <span className={styles.headerLabel}>Artist</span>
+                </TableHeaderCell>
+              ) : null}
+              {showAlbum ? (
+                <TableHeaderCell className={styles.albumCell}>
+                  <span className={styles.headerLabel}>Album</span>
+                </TableHeaderCell>
+              ) : null}
+              <TableHeaderCell className={styles.qualityCell}>
+                <span className={styles.headerLabel}>Quality</span>
+              </TableHeaderCell>
+              <TableHeaderCell className={styles.durationCell}>
+                <span className={`${styles.headerLabel} ${styles.headerLabelRight}`}>Duration</span>
+              </TableHeaderCell>
+              <TableHeaderCell className={styles.downloadedCell}>
+                <span className={`${styles.headerLabel} ${styles.headerLabelRight}`}>Downloaded</span>
+              </TableHeaderCell>
               <TableHeaderCell className={styles.actionCell} />
             </TableRow>
           </TableHeader>
@@ -465,6 +655,11 @@ const LibraryTrackList = ({
               const hasProviderTrack = Boolean(track.preview_provider_track_id);
               const canPlayTrack = isDownloaded || hasProviderTrack;
               const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
+              const coverUrl = getTrackCoverUrl(track);
+              const renderableCoverUrl = failedCoverUrls.has(coverUrl || "")
+                ? null
+                : renderableArtworkUrl(coverUrl);
+              const qualityTags = getQualityTags(track);
 
               return (
                 <Fragment key={track.id}>
@@ -483,36 +678,60 @@ const LibraryTrackList = ({
                       </TableCell>
                     ) : null}
                     {showCover ? (
-                      <TableCell className={styles.coverCell}>
-                        <Avatar
-                          image={{
-                            src: track.album_cover
-                              ? renderableArtworkUrl(track.album_cover) || undefined
-                              : undefined,
-                          }}
-                          name={track.album_title || "Album"}
-                          shape="square"
-                          size={40}
-                        />
+                      <TableCell className={styles.coverCell} onClick={(event) => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          className={styles.coverButton}
+                          aria-label={isPlaying ? "Stop track" : "Play track"}
+                          disabled={!canPlayTrack}
+                          onClick={canPlayTrack ? (event) => toggleTrackPlayback(track, event) : undefined}
+                        >
+                          {renderableCoverUrl ? (
+                            <img
+                              src={renderableCoverUrl}
+                              alt={track.album_title || "Album"}
+                              className={styles.desktopCover}
+                              data-cover-image
+                              onError={() => markCoverFailed(coverUrl)}
+                            />
+                          ) : (
+                            <span className={styles.coverFallback}>
+                              <Avatar
+                                name={track.album_title || "Album"}
+                                shape="square"
+                                size={40}
+                              />
+                            </span>
+                          )}
+                          {canPlayTrack ? (
+                            <span className={styles.playOverlay} data-cover-play>
+                              {isPlaying
+                                ? <Stop24Regular className={styles.playIcon} />
+                                : <Play24Filled className={styles.playIcon} />}
+                            </span>
+                          ) : null}
+                        </button>
                       </TableCell>
                     ) : null}
 
                     <TableCell className={styles.titleCell}>
-                      {renderTitleMeta(track)}
+                      {renderTitleMeta(track, false)}
                     </TableCell>
 
                     {showArtist ? (
-                      <TableCell>
-                        <Text className={styles.linkText} onClick={(event) => handleArtistClick(event, track)}>
+                      <TableCell className={styles.artistCell}>
+                        <Text truncate wrap={false} className={`${styles.linkText} ${styles.truncateCell}`} onClick={(event) => handleArtistClick(event, track)}>
                           {track.artist_name || "Unknown Artist"}
                         </Text>
                       </TableCell>
                     ) : null}
 
                     {showAlbum ? (
-                      <TableCell>
+                      <TableCell className={styles.albumCell}>
                         <Text
-                          className={styles.linkText}
+                          truncate
+                          wrap={false}
+                          className={`${styles.linkText} ${styles.truncateCell}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             if (track.album_id) {
@@ -525,6 +744,22 @@ const LibraryTrackList = ({
                       </TableCell>
                     ) : null}
 
+                    <TableCell className={styles.qualityCell}>
+                      <div className={styles.metaRow}>
+                        {qualityTags.map((quality) => (
+                          <QualityBadge key={quality} quality={quality} size="small" className={styles.qualityBadge} />
+                        ))}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className={styles.durationCell}>
+                      {formatDurationSeconds(track.duration)}
+                    </TableCell>
+
+                    <TableCell className={styles.downloadedCell} aria-label={isDownloaded ? "Downloaded" : "Not downloaded"}>
+                      {isDownloaded ? <CheckmarkCircle16Regular className={styles.checkIcon} /> : <span className={styles.emptyCheck} />}
+                    </TableCell>
+
                     <TableCell onClick={(event) => event.stopPropagation()} className={styles.actionCell}>
                       <TrackRowActions
                         className={`${styles.actionCellContent} track-actions`}
@@ -534,7 +769,6 @@ const LibraryTrackList = ({
                         isDownloaded={isDownloaded}
                         isDownloading={downloadingTracks.has(track.id)}
                         canShowInfo={canShowInfo}
-                        onPlay={canPlayTrack ? (event) => toggleTrackPlayback(track, event) : undefined}
                         onShowInfo={(event) => {
                           void openTrackInfo(track, event);
                         }}
@@ -548,19 +782,17 @@ const LibraryTrackList = ({
                   </TableRow>
 
                   {isPlaying ? (
-                    <TableRow>
-                      <TableCell colSpan={columnCount}>
-                        <div className={styles.playerRow}>
-                          <AudioPlayer
-                            src={getPlaybackSrc(track)}
-                    hlsSrc={getPlaybackHlsSrc(track)}
-                            knownDuration={track.duration}
-                            onEnded={() => setPlayingTrackId(null)}
-                            onPlaybackError={() => {
-                              void handleTrackPlaybackError(track);
-                            }}
-                          />
-                        </div>
+                    <TableRow className={styles.playerRow}>
+                      <TableCell className={styles.playerCell} style={{ flex: `1 1 ${columnCount * 100}%` }}>
+                        <AudioPlayer
+                          src={getPlaybackSrc(track)}
+                          hlsSrc={getPlaybackHlsSrc(track)}
+                          knownDuration={track.duration}
+                          onEnded={() => setPlayingTrackId(null)}
+                          onPlaybackError={() => {
+                            void handleTrackPlaybackError(track);
+                          }}
+                        />
                       </TableCell>
                     </TableRow>
                   ) : null}

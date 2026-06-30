@@ -136,7 +136,10 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       recording.updated_at AS created_at,
       recording.updated_at AS updated_at,
       recording.updated_at AS last_scanned,
-      NULL AS popularity,
+      MAX(
+        COALESCE(CAST(recording.popularity AS REAL), 0),
+        COALESCE(CAST(provider_item.popularity AS REAL), 0)
+      ) AS popularity,
       CASE WHEN EXISTS (
         SELECT 1
         FROM TrackFiles lf

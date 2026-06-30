@@ -19,6 +19,10 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM commands").run();
+  dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM TrackFiles").run();
+  dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -106,4 +110,43 @@ test("video detail does not seed unknown provider ids from GET", async () => {
 
   const count = dbModule.db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number };
   assert.equal(count.count, 0);
+});
+
+test("video list sorts by provider popularity and maps provider artwork to local cover URL", async () => {
+  const handler = getGetHandler("/");
+  const res = createMockResponse();
+
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (id, mbid, name)
+    VALUES (1, 'artist-mbid-1', 'Video Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (id, mbid, artist_metadata_id, artist_mbid, title, length_ms, is_video, popularity)
+    VALUES
+      (1, 'recording-low', 1, 'artist-mbid-1', 'Low Popularity', 180000, 1, 10),
+      (2, 'recording-high', 1, 'artist-mbid-1', 'High Popularity', 200000, 1, 20)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, recording_id, recording_mbid, title,
+      duration, asset_id, popularity, match_confidence
+    )
+    VALUES
+      ('tidal', 'video', 'provider-low', 1, 'recording-low', 'Low Popularity', 180, 'low-cover-id', 15, 1),
+      ('tidal', 'video', 'provider-high', 2, 'recording-high', 'High Popularity', 200, 'high-cover-id', 95, 1)
+  `).run();
+
+  handler({
+    query: {
+      limit: "10",
+      offset: "0",
+      sort: "popularity",
+      dir: "desc",
+    },
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.items[0].id, "2");
+  assert.equal(res.body.items[0].cover_art_url, "/media-cover/Videos/2/cover.jpg");
+  assert.equal(res.body.items[1].id, "1");
 });
