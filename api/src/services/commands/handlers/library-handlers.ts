@@ -184,10 +184,12 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
     });
     const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
         ? await AudioTagService.apply(job.payload.ids)
-        : await AudioTagService.applyByQuery({
-            artistId: job.payload.artistId,
-            albumId: job.payload.albumId,
-        });
+        : Array.isArray(job.payload.mediaIds) && job.payload.mediaIds.length > 0
+            ? await AudioTagService.applyForMediaIds(job.payload.mediaIds)
+            : await AudioTagService.applyByQuery({
+                artistId: job.payload.artistId,
+                albumId: job.payload.albumId,
+            });
     ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
     ctx.updateCommandDescription(job, {
         progress: 100,

@@ -208,9 +208,15 @@ the provider abstraction so a second provider can declare its own sources.
   format marker writes were removed. Config loading now normalizes to current
   monitoring/filtering/metadata shapes instead of carrying old keys forward, and
   the frontend no longer migrates old library localStorage settings.
-- pending: Audit other request-triggered routes for inline heavy work that should
-  be commands (bulk monitor/scan/import paths), same enqueue-and-stream pattern,
-  and adopt `runWithAsyncBusyRetry` for their writes.
+- in progress: Audit other request-triggered routes for inline heavy work that
+  should be commands (bulk monitor/scan/import paths), same enqueue-and-stream
+  pattern, and adopt `runWithAsyncBusyRetry` for their writes. `metadata`
+  regeneration now queues `RetagArtist` / `RetagFiles` / `RescanFolders` instead
+  of running tag and metadata-sidecar work inline, and `/retag/apply` uses the
+  same async busy-retry path for request-thread command enqueueing. Remaining
+  audit targets: root-scan SSE, bulk monitor/download writes, unmapped import
+  actions, and video seeding routes that still hydrate provider/metadata state
+  from request handlers.
 
 ### Architecture decision: keep TypeScript, decompose (not a .NET port)
 

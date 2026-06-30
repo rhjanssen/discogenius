@@ -1,7 +1,8 @@
 import { Router } from "express";
+import { runWithAsyncBusyRetry } from "../database.js";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
-import {CommandNames} from "../services/commands/command-names.js";
-import {CommandQueueManager} from "../services/commands/command-queue-manager.js";
+import { CommandNames } from "../services/commands/command-names.js";
+import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 
 const router = Router();
 
@@ -49,23 +50,27 @@ router.post("/apply", async (req, res) => {
       && Boolean(artistId)
       && !albumId
       && (!normalizedIds || normalizedIds.length === 0);
-    const refId = applyAll
-      ? (isArtistWideRetag
-        ? artistId
-        : `retag-files:${JSON.stringify({ artistId: artistId || null, albumId: albumId || null })}`)
-      : undefined;
+    const refId = isArtistWideRetag
+      ? artistId
+      : `retag-files:${JSON.stringify(applyAll
+        ? { artistId: artistId || null, albumId: albumId || null }
+        : { ids: normalizedIds || [] })}`;
 
-    const commandId = isArtistWideRetag
-      ? CommandQueueManager.push(CommandNames.RetagArtist, {
-        artistId,
-        artistIds: artistId ? [artistId] : undefined,
-      }, refId, 1, 1)
-      : CommandQueueManager.push(CommandNames.RetagFiles, {
-        ids: normalizedIds,
-        applyAll,
-        artistId,
-        albumId,
-      }, refId, 1, 1);
+    const commandId = await runWithAsyncBusyRetry(
+      () => isArtistWideRetag
+        ? CommandQueueManager.push(CommandNames.RetagArtist, {
+          artistId,
+          artistIds: artistId ? [artistId] : undefined,
+        }, refId, 1, 1)
+        : CommandQueueManager.push(CommandNames.RetagFiles, {
+          ids: normalizedIds,
+          applyAll,
+          artistId,
+          albumId,
+        }, refId, 1, 1),
+      30,
+      200,
+    );
 
     res.json({
       success: true,

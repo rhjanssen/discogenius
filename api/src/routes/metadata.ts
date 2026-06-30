@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { runWithAsyncBusyRetry } from "../database.js";
+import { CommandNames } from "../services/commands/command-names.js";
+import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
+import { CommandTrigger } from "../services/commands/command-trigger.js";
 import { MetadataIdentityService, type MetadataIdentityEntityType } from "../services/metadata/metadata-identity-service.js";
-import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
-import { libraryMetadataBackfillService } from "../services/mediafiles/library-metadata-backfill.js";
 
 const router = Router();
 
@@ -60,36 +62,93 @@ router.post("/regenerate", async (req, res) => {
     const entityId = parseEntityId(req.body?.entityId);
     const kind = String(req.body?.kind || "all").trim();
 
-	    if (!["tags", "nfo", "all"].includes(kind)) {
-	      return res.status(400).json({ detail: "kind must be tags, nfo, or all" });
-	    }
+    if (!["tags", "nfo", "all"].includes(kind)) {
+      return res.status(400).json({ detail: "kind must be tags, nfo, or all" });
+    }
 
-	    if ((kind === "nfo" || kind === "all") && scope !== "artist") {
-	      return res.status(400).json({
-	        detail: "NFO regeneration is currently supported for artist scope only; album and video NFOs are regenerated through artist metadata backfill.",
-	      });
-	    }
+    if (!["artist", "album", "track", "video"].includes(scope)) {
+      return res.status(400).json({ detail: "scope must be artist, album, track, or video" });
+    }
 
-	    if ((kind === "tags" || kind === "all") && scope === "video") {
-	      return res.status(400).json({ detail: "Audio tag regeneration is only supported for artist, album, or track scope" });
-	    }
+    if ((kind === "nfo" || kind === "all") && scope !== "artist") {
+      return res.status(400).json({
+        detail: "NFO regeneration is currently supported for artist scope only; album and video NFOs are regenerated through artist metadata backfill.",
+      });
+    }
 
-	    const result: Record<string, unknown> = {};
-    if ((kind === "tags" || kind === "all") && (scope === "artist" || scope === "album" || scope === "track")) {
-      if (scope === "artist") {
-        result.tags = await AudioTagService.applyByQuery({ artistId: entityId });
-      } else if (scope === "album") {
-        result.tags = await AudioTagService.applyByQuery({ albumId: entityId });
-      } else {
-        result.tags = await AudioTagService.applyForMediaIds([entityId]);
+    if ((kind === "tags" || kind === "all") && scope === "video") {
+      return res.status(400).json({ detail: "Audio tag regeneration is only supported for artist, album, or track scope" });
+    }
+
+    const commandIds = await runWithAsyncBusyRetry(() => {
+      const queuedCommandIds: number[] = [];
+      if ((kind === "tags" || kind === "all") && scope === "artist") {
+        const commandId = CommandQueueManager.push(
+          CommandNames.RetagArtist,
+          {
+            artistId: entityId,
+            artistIds: [entityId],
+            description: `Regenerate audio tags for artist ${entityId}`,
+          },
+          entityId,
+          1,
+          CommandTrigger.Manual,
+        );
+        queuedCommandIds.push(commandId);
+      } else if ((kind === "tags" || kind === "all") && scope === "album") {
+        const commandId = CommandQueueManager.push(
+          CommandNames.RetagFiles,
+          {
+            albumId: entityId,
+            applyAll: true,
+            description: `Regenerate audio tags for album ${entityId}`,
+          },
+          `retag-files:${JSON.stringify({ albumId: entityId })}`,
+          1,
+          CommandTrigger.Manual,
+        );
+        queuedCommandIds.push(commandId);
+      } else if ((kind === "tags" || kind === "all") && scope === "track") {
+        const commandId = CommandQueueManager.push(
+          CommandNames.RetagFiles,
+          {
+            mediaIds: [entityId],
+            applyAll: false,
+            description: `Regenerate audio tags for media file ${entityId}`,
+          },
+          `retag-files:${JSON.stringify({ mediaIds: [entityId] })}`,
+          1,
+          CommandTrigger.Manual,
+        );
+        queuedCommandIds.push(commandId);
       }
-    }
 
-    if ((kind === "nfo" || kind === "all") && scope === "artist") {
-      result.nfo = await libraryMetadataBackfillService.fillMissingMetadataFiles(entityId);
-    }
+      if ((kind === "nfo" || kind === "all") && scope === "artist") {
+        const commandId = CommandQueueManager.push(
+          CommandNames.RescanFolders,
+          {
+            artistId: entityId,
+            skipCuration: true,
+            skipDownloadQueue: true,
+            trackUnmappedFiles: false,
+            description: `Regenerate metadata sidecars for artist ${entityId}`,
+          },
+          entityId,
+          1,
+          CommandTrigger.Manual,
+        );
+        queuedCommandIds.push(commandId);
+      }
 
-    res.json({ success: true, ...result });
+      return queuedCommandIds;
+    }, 30, 200);
+
+    res.status(202).json({
+      success: true,
+      queued: commandIds.some((id) => id !== -1),
+      commandIds,
+      message: "Metadata regeneration queued",
+    });
   } catch (error: any) {
     res.status(400).json({ detail: error.message });
   }
