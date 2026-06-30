@@ -208,7 +208,7 @@ the provider abstraction so a second provider can declare its own sources.
   format marker writes were removed. Config loading now normalizes to current
   monitoring/filtering/metadata shapes instead of carrying old keys forward, and
   the frontend no longer migrates old library localStorage settings.
-- in progress: Audit other request-triggered routes for inline heavy work that
+- done: Audit other request-triggered routes for inline heavy work that
   should be commands (bulk monitor/scan/import paths), same enqueue-and-stream
   pattern, and adopt `runWithAsyncBusyRetry` for their writes. `metadata`
   regeneration now queues `RetagArtist` / `RetagFiles` / `RescanFolders` instead
@@ -218,11 +218,12 @@ the provider abstraction so a second provider can declare its own sources.
   `/scan-roots-now` SSE route was removed. Bulk artist download now queues a
   `DownloadMissing` command instead of walking monitored items inline, and
   unmapped manual imports now queue `ImportUnmappedFiles` instead of importing
-  mapped files on the request thread. Remaining audit target: bulk monitor state
-  writes. Video search-result clicks now queue add/monitor for unknown videos
-  instead of navigating to a detail page that hydrates on GET; explicit video add
-  queues `SeedVideo` and returns immediately instead of seeding provider
-  metadata inline.
+  mapped files on the request thread. `/library-bulk` now queues
+  `LibraryBulkAction`, so bulk monitor/download/lock operations no longer run on
+  the request thread. Video search-result clicks now queue add/monitor for
+  unknown videos instead of navigating to a detail page that hydrates on GET;
+  explicit video add queues `SeedVideo` and returns immediately instead of
+  seeding provider metadata inline.
 
 ### Architecture decision: keep TypeScript, decompose (not a .NET port)
 

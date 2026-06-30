@@ -18,7 +18,8 @@ import {
     HousekeepingCommand,
     MaintenanceCommand,
     ImportProviderArtistsCommand,
-    ImportUnmappedFilesCommand
+    ImportUnmappedFilesCommand,
+    LibraryBulkActionCommand
 } from "./index.js";
 
 /**
@@ -51,4 +52,5 @@ export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.ConfigPrune]: new MaintenanceCommand(),
     [CommandNames.ImportProviderArtists]: new ImportProviderArtistsCommand(),
     [CommandNames.ImportUnmappedFiles]: new ImportUnmappedFilesCommand(),
+    [CommandNames.LibraryBulkAction]: new LibraryBulkActionCommand(),
 };

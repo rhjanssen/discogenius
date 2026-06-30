@@ -24,6 +24,7 @@ import type {
     ImportDownloadCommand,
     ImportProviderArtistsCommand,
     ImportUnmappedFilesCommand,
+    LibraryBulkActionCommand,
     MatchArtistProvidersCommand,
     MoveArtistCommand,
     RefreshAlbumCommand,
@@ -71,6 +72,7 @@ export interface CommandBodyMap {
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
     [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;
     [CommandNames.ImportUnmappedFiles]: ImportUnmappedFilesCommand;
+    [CommandNames.LibraryBulkAction]: LibraryBulkActionCommand;
     [CommandNames.SeedVideo]: SeedVideoCommand;
 }
 

@@ -74,6 +74,7 @@ const COMMAND_QUEUE_CATEGORY_TYPES = {
     CommandNames.RetagArtist,
     CommandNames.SeedVideo,
     CommandNames.ImportUnmappedFiles,
+    CommandNames.LibraryBulkAction,
   ],
 } satisfies Record<Exclude<CommandQueueCategory, "other">, readonly CommandName[]>;
 
@@ -156,6 +157,14 @@ export const COMMAND_DEFINITIONS = {
     type: CommandNames.ImportUnmappedFiles,
     name: "Import Unmapped Files",
     requiresDiskAccess: true,
+    isTypeExclusive: false,
+    isExclusive: false,
+    isLongRunning: true,
+  },
+  [CommandNames.LibraryBulkAction]: {
+    type: CommandNames.LibraryBulkAction,
+    name: "Library Bulk Action",
+    requiresDiskAccess: false,
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,

@@ -269,6 +269,12 @@ export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
   items: Array<{ id: number; providerId: string }>;
 }
 
+export interface LibraryBulkActionCommand extends CommandBodyCommon {
+  entity: "artist" | "album" | "track" | "video";
+  action: "monitor" | "unmonitor" | "lock" | "unlock" | "download";
+  entityIds: string[];
+}
+
 export interface SeedVideoCommand extends CommandBodyCommon {
   providerId: string;
   monitorArtist?: boolean;

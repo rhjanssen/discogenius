@@ -35,6 +35,7 @@ export const CommandNames = {
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
     ImportProviderArtists: 'ImportProviderArtists',
     ImportUnmappedFiles: 'ImportUnmappedFiles',
+    LibraryBulkAction: 'LibraryBulkAction',
     SeedVideo: 'SeedVideo',
 } as const;
 
@@ -88,6 +89,7 @@ export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.UpdateLibraryMetadata,
     CommandNames.ImportProviderArtists,
     CommandNames.ImportUnmappedFiles,
+    CommandNames.LibraryBulkAction,
     CommandNames.SeedVideo,
 ] as const;
 

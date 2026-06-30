@@ -12,6 +12,7 @@ import {
 } from "./library-handlers.js";
 import { handleHousekeeping, handleLowCouplingMaintenance } from "./maintenance-handlers.js";
 import { handleImportProviderArtists, handleImportUnmappedFiles } from "./import-handlers.js";
+import { handleLibraryBulkAction } from "./library-bulk-action-handler.js";
 
 export type { CommandHandler, CommandHandlerContext } from "./handler-context.js";
 
@@ -47,4 +48,5 @@ export const commandHandlers: CommandHandlerRegistry = {
     [CommandNames.ConfigPrune]: handleLowCouplingMaintenance,
     [CommandNames.ImportProviderArtists]: handleImportProviderArtists,
     [CommandNames.ImportUnmappedFiles]: handleImportUnmappedFiles,
+    [CommandNames.LibraryBulkAction]: handleLibraryBulkAction,
 };

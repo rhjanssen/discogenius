@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { LibraryBulkActionService, LIBRARY_BULK_ACTIONS, LIBRARY_BULK_ENTITIES } from "../services/music/library-bulk-actions.js";
+import { runWithAsyncBusyRetry } from "../database.js";
+import { CommandNames } from "../services/commands/command-names.js";
+import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
+import { LIBRARY_BULK_ACTIONS, LIBRARY_BULK_ENTITIES } from "../services/music/library-bulk-actions.js";
 import {
     getEnumValue,
     getObjectBody,
@@ -19,10 +22,25 @@ router.post("/", async (req, res) => {
         const action = getEnumValue(body, "action", LIBRARY_BULK_ACTIONS);
         const ids = getRequiredIdentifierArray(body, "ids");
 
-        const result = await LibraryBulkActionService.apply(entity, action, ids);
-        res.json({
+        const commandId = await runWithAsyncBusyRetry(() =>
+            CommandQueueManager.push(
+                CommandNames.LibraryBulkAction,
+                {
+                    entity,
+                    action,
+                    entityIds: ids,
+                    title: "Library bulk action",
+                    description: `Applying ${action} to ${ids.length} ${entity}${ids.length === 1 ? "" : "s"}`,
+                },
+                `library-bulk:${entity}:${action}:${ids.join(",")}`,
+            ),
+        );
+
+        res.status(202).json({
             success: true,
-            ...result,
+            queued: commandId !== -1,
+            commandId,
+            message: `Queued bulk ${action} for ${ids.length} ${entity}${ids.length === 1 ? "" : "s"}.`,
         });
     } catch (error: any) {
         if (isRequestValidationError(error)) {
