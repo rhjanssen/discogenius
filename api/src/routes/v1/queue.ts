@@ -1,4 +1,5 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import { runWithAsyncBusyRetry } from "../../database.js";
 import express, { Request, Response, Router } from 'express';
 import {AnyCommandBody, CommandStatus} from "../../services/commands/command-model.js";
 import {DOWNLOAD_COMMAND_NAMES, NON_DOWNLOAD_COMMAND_NAMES, CommandNames, CommandName} from "../../services/commands/command-names.js";
@@ -11,7 +12,7 @@ import { shouldQueueRedownloadForFailedImport } from '../../services/download/do
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
-import { DownloadMissingService } from '../../services/music/download-missing-service.js';
+import { queueDownloadMissingPass } from '../../services/commands/scheduler.js';
 import { ACTIVITY_FILTERS, getActivityPage } from '../../services/commands/command-history.js';
 import { getCommandTypesForQueueCategory, type CommandQueueCategory } from '../../services/commands/command-registry.js';
 import { parseActivityFilters, parseListPagination } from '../../utils/activity-query.js';
@@ -828,12 +829,16 @@ router.post('/tasks/process-monitored', async (req: Request, res: Response) => {
   try {
     const body = getObjectBody(req.body ?? {});
     const artistId = getOptionalIdentifier(body, 'artistId');
-    const queued = await DownloadMissingService.queueMonitoredItems(artistId);
-    const count = queued.albums + queued.tracks + queued.videos;
+    const commandId = await runWithAsyncBusyRetry(() =>
+      queueDownloadMissingPass({
+        trigger: CommandTrigger.Manual,
+        artistIds: artistId ? [artistId] : undefined,
+      }),
+    );
     res.json({
-      message: `Added ${count} item(s) to download queue (${queued.albums} albums, ${queued.tracks} tracks, ${queued.videos} videos)`,
-      count,
-      ...queued,
+      message: 'Queued a download-missing command.',
+      commandId,
+      queued: commandId !== -1,
     });
   } catch (error: any) {
     if (isRequestValidationError(error)) {

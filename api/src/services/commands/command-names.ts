@@ -34,6 +34,7 @@ export const CommandNames = {
     CleanupTempFiles: 'CleanupTempFiles',
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
     ImportProviderArtists: 'ImportProviderArtists',
+    ImportUnmappedFiles: 'ImportUnmappedFiles',
     SeedVideo: 'SeedVideo',
 } as const;
 
@@ -86,6 +87,7 @@ export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.CleanupTempFiles,
     CommandNames.UpdateLibraryMetadata,
     CommandNames.ImportProviderArtists,
+    CommandNames.ImportUnmappedFiles,
     CommandNames.SeedVideo,
 ] as const;
 

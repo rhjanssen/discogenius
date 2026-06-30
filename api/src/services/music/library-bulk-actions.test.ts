@@ -293,11 +293,13 @@ test("artist download queues monitored items when nothing is already queued", as
     assert.ok(artistDownload.queued > 0);
 
     const jobTypes = dbModule.db.prepare(`
-        SELECT name
+        SELECT name, payload
         FROM commands
         ORDER BY id ASC
-    `).all() as Array<{ name: string }>;
+    `).all() as Array<{ name: string; payload: string }>;
 
     assert.ok(jobTypes.length > 0);
-    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadAlbum || row.name === queueModule.CommandNames.DownloadTrack || row.name === queueModule.CommandNames.DownloadVideo));
+    const downloadMissingJob = jobTypes.find((row) => row.name === queueModule.CommandNames.DownloadMissing);
+    assert.ok(downloadMissingJob);
+    assert.deepEqual(JSON.parse(downloadMissingJob.payload).artistIds, ["1"]);
 });

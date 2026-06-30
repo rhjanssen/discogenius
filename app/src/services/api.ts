@@ -975,16 +975,6 @@ class ApiClient {
     });
   }
 
-  createScanRootFoldersStream(): EventSource {
-    // SSE via POST requires fetch, but we use EventSource pattern with a workaround
-    // Use fetch-based SSE reader instead
-    throw new Error("createScanRootFoldersStream is not supported; use scanRootFolders for queued root scans.");
-  }
-
-  getScanRootFoldersUrl(): string {
-    return `${this.baseUrl}${API_V1_PREFIX}/mediaFile/scan-roots-now`;
-  }
-
   getStreamUrl(fileId: number): string {
     const base = `${this.baseUrl}${API_V1_PREFIX}/mediaFile/stream/${fileId}`;
     // Append auth token as query param since <audio>/<video> elements can't send headers

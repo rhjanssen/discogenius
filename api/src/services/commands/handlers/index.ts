@@ -11,7 +11,7 @@ import {
     handleRetagFiles,
 } from "./library-handlers.js";
 import { handleHousekeeping, handleLowCouplingMaintenance } from "./maintenance-handlers.js";
-import { handleImportProviderArtists } from "./import-handlers.js";
+import { handleImportProviderArtists, handleImportUnmappedFiles } from "./import-handlers.js";
 
 export type { CommandHandler, CommandHandlerContext } from "./handler-context.js";
 
@@ -46,4 +46,5 @@ export const commandHandlers: CommandHandlerRegistry = {
     [CommandNames.UpdateLibraryMetadata]: handleLowCouplingMaintenance,
     [CommandNames.ConfigPrune]: handleLowCouplingMaintenance,
     [CommandNames.ImportProviderArtists]: handleImportProviderArtists,
+    [CommandNames.ImportUnmappedFiles]: handleImportUnmappedFiles,
 };

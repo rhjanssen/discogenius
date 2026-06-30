@@ -28,6 +28,7 @@ import MediaCard from '@/components/cards/MediaCard';
 import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
+import { dispatchActivityRefresh } from '@/utils/appEvents';
 import { type UnmappedFile } from './ManualImportTab';
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm', 'ts']);
@@ -386,9 +387,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
 
     const importMutation = useMutation({
         mutationFn: async (payload: { items: Array<{ id: number; providerId: string }> }) => api.bulkMapUnmappedFiles(payload.items),
-        onSuccess: () => {
+        onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
-            toast({ title: 'Success', description: 'Successfully mapped selected files.' });
+            dispatchActivityRefresh();
+            toast({ title: 'Import Queued', description: data?.message || 'Queued manual import for selected files.' });
             onClose();
         },
         onError: (error: any) => {

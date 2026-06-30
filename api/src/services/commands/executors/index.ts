@@ -15,3 +15,4 @@ export { RetagFilesCommand } from './retag-files-command.js';
 export { HousekeepingCommand } from './housekeeping-command.js';
 export { MaintenanceCommand } from './maintenance-command.js';
 export { ImportProviderArtistsCommand } from './import-provider-artists-command.js';
+export { ImportUnmappedFilesCommand } from './import-unmapped-files-command.js';

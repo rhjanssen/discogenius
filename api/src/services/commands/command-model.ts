@@ -23,6 +23,7 @@ import type {
     HousekeepingCommand,
     ImportDownloadCommand,
     ImportProviderArtistsCommand,
+    ImportUnmappedFilesCommand,
     MatchArtistProvidersCommand,
     MoveArtistCommand,
     RefreshAlbumCommand,
@@ -69,6 +70,7 @@ export interface CommandBodyMap {
     [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
     [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;
+    [CommandNames.ImportUnmappedFiles]: ImportUnmappedFilesCommand;
     [CommandNames.SeedVideo]: SeedVideoCommand;
 }
 

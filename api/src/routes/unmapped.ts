@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.js";
+import { runWithAsyncBusyRetry } from "../database.js";
+import { CommandNames } from "../services/commands/command-names.js";
+import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { UnmappedFilesService } from "../services/mediafiles/unmapped-files.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import {
@@ -16,6 +19,22 @@ router.use(authMiddleware);
 const unmappedFilesService = new UnmappedFilesService();
 const fileActionValues = ["ignore", "unignore", "delete", "map"] as const;
 const bulkActionValues = ["ignore", "unignore", "delete"] as const;
+
+function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): Promise<number> {
+    const sortedIds = items.map((item) => item.id).sort((left, right) => left - right);
+    const refId = `unmapped-import:${sortedIds.join(",")}`;
+    return runWithAsyncBusyRetry(() =>
+        CommandQueueManager.push(
+            CommandNames.ImportUnmappedFiles,
+            {
+                items,
+                title: "Importing unmapped files",
+                description: `Importing ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
+            },
+            refId,
+        ),
+    );
+}
 
 /**
  * GET /api/unmapped
@@ -73,10 +92,17 @@ router.post("/:id/action", async (req, res) => {
                 break;
 
             case "map":
-                await unmappedFilesService.bulkMap([{ id, providerId: getRequiredIdentifier(body, "providerId") }]);
+                {
+                    const commandId = await queueUnmappedImport([{ id, providerId: getRequiredIdentifier(body, "providerId") }]);
 
-                res.json({ success: true, message: `Successfully mapped file` });
-                break;
+                    res.status(202).json({
+                        success: true,
+                        queued: commandId !== -1,
+                        commandId,
+                        message: "Queued unmapped file import",
+                    });
+                    break;
+                }
 
             default:
                 res.status(400).json({ error: "Invalid action" });
@@ -143,8 +169,13 @@ router.post("/bulk-map", async (req, res) => {
             };
         });
 
-        await unmappedFilesService.bulkMap(items);
-        res.json({ success: true, message: `Successfully mapped ${items.length} files.` });
+        const commandId = await queueUnmappedImport(items);
+        res.status(202).json({
+            success: true,
+            queued: commandId !== -1,
+            commandId,
+            message: `Queued import for ${items.length} mapped file${items.length === 1 ? "" : "s"}.`,
+        });
     } catch (e: any) {
         if (isRequestValidationError(e)) {
             return res.status(400).json({ error: e.message });

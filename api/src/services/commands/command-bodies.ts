@@ -166,6 +166,7 @@ export interface ApplyCurationCommand extends CommandBodyCommon {
 
 export interface DownloadMissingCommand extends CommandBodyCommon {
   monitoringCycle?: MonitoringPassWorkflowValue;
+  artistIds?: string[];
 }
 
 export type CheckUpgradesCommand = CommandBodyCommon;
@@ -262,6 +263,10 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
   importListId?: string;
   /** Human-readable label for progress/history (e.g. the playlist name). */
   importLabel?: string;
+}
+
+export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
+  items: Array<{ id: number; providerId: string }>;
 }
 
 export interface SeedVideoCommand extends CommandBodyCommon {

@@ -7,7 +7,6 @@ import {
     updateArtistDownloadStatus,
 } from "../download/download-state.js";
 import { CurationService } from "./curation-service.js";
-import { DownloadMissingService } from "./download-missing-service.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -538,19 +537,31 @@ export class LibraryBulkActionService {
         }
 
         if (action === "download") {
+            const commandId = CommandQueueManager.push(
+                CommandNames.DownloadMissing,
+                {
+                    artistIds: foundIds,
+                    title: "Queueing missing downloads",
+                    description: `Adding monitored missing items for ${foundIds.length} artist${foundIds.length === 1 ? "" : "s"} to the download queue`,
+                },
+                `download-missing:${foundIds.join(",")}`,
+                0,
+                CommandTrigger.Manual,
+            );
+
             for (const row of rows) {
                 const artistId = String(row.id);
-                const queueCounts = await DownloadMissingService.queueMonitoredItems(artistId);
-                const jobCount = queueCounts.albums + queueCounts.tracks + queueCounts.videos;
                 result.items.push({
                     id: artistId,
-                    status: jobCount > 0 ? "queued" : "noop",
-                    message: jobCount > 0
-                        ? `Queued ${jobCount} monitored item${jobCount === 1 ? "" : "s"}`
-                        : "No monitored items were queued",
+                    status: commandId !== -1 ? "queued" : "noop",
+                    commandId: commandId !== -1 ? commandId : undefined,
+                    message: commandId !== -1
+                        ? "Queued background download-missing pass"
+                        : "Download-missing pass is already queued",
                 });
-                result.queued += jobCount;
-                if (jobCount === 0) {
+                if (commandId !== -1) {
+                    result.queued += 1;
+                } else {
                     result.updated += 1;
                 }
             }

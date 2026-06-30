@@ -1,4 +1,5 @@
 import { FollowedArtistsImportService } from "../../providers/followed-artists-import.js";
+import { UnmappedFilesService } from "../../mediafiles/unmapped-files.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import type { CommandHandler } from "./handler-context.js";
 
@@ -47,4 +48,28 @@ export const handleImportProviderArtists: CommandHandler<"ImportProviderArtists"
         data: summary as unknown as Record<string, unknown>,
     });
     ctx.updateCommandDescription(job, { progress: 100, description: summary.message });
+};
+
+export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = async (job, ctx) => {
+    const items = Array.isArray(job.payload.items) ? job.payload.items : [];
+
+    if (items.length === 0) {
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: "No unmapped files to import",
+        });
+        return;
+    }
+
+    ctx.updateCommandDescription(job, {
+        progress: 5,
+        description: `Importing ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
+    });
+
+    await new UnmappedFilesService().bulkMap(items);
+
+    ctx.updateCommandDescription(job, {
+        progress: 100,
+        description: `Imported ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
+    });
 };

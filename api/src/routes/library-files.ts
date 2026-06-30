@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
-import { db } from "../database.js";
+import { db, runWithAsyncBusyRetry } from "../database.js";
 import { findLibraryFileById, findTextLibraryFileByPath, listLibraryFiles, parseLibraryFilesQueryLimit, parseLibraryFilesQueryOffset } from "../services/mediafiles/library-files-query-service.js";
 import { resolveStoredLibraryPath } from "../services/mediafiles/library-paths.js";
 import { queueArtistWorkflow } from "../services/music/artist-workflow.js";
@@ -12,7 +12,7 @@ import {CommandNames} from "../services/commands/command-names.js";
 import {CommandQueueManager} from "../services/commands/command-queue-manager.js";
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
-import { rootScanRouteService, type RootScanSsePayload } from "../services/mediafiles/root-scan-route-service.js";
+import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
 
 const router = Router();
 const streamPipeline = promisify(pipeline);
@@ -339,42 +339,18 @@ router.post("/scan/:artistId", (req, res) => {
  * Queue a root folder scan that discovers unknown folders in all library roots,
  * runs the shared import decision pipeline, and imports anything it can identify.
  */
-router.post("/scan-roots", (req, res) => {
+router.post("/scan-roots", async (req, res) => {
   try {
-    const commandId = rootScanRouteService.queueRootScan({
-      trigger: CommandTrigger.Manual,
-      fullProcessing: req.body?.fullProcessing,
-      monitorArtist: req.body?.monitorArtist,
-    });
+    const commandId = await runWithAsyncBusyRetry(() =>
+      rootScanRouteService.queueRootScan({
+        trigger: CommandTrigger.Manual,
+        fullProcessing: req.body?.fullProcessing,
+        monitorArtist: req.body?.monitorArtist,
+      }),
+    );
     res.json({ success: true, commandId, message: "Root folder scan queued" });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
-  }
-});
-
-/**
- * POST /api/v1/mediaFile/scan-roots-now
- * Run an immediate root folder scan with SSE progress streaming.
- * Discovers unknown folders, runs the shared import decision pipeline, and streams progress.
- */
-router.post("/scan-roots-now", async (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-
-  const sendEvent = (data: RootScanSsePayload) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  try {
-    await rootScanRouteService.runImmediateRootScan({
-      monitorArtist: req.body?.monitorArtist,
-      sendEvent,
-    });
-  } finally {
-    res.end();
   }
 });
 

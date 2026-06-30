@@ -73,6 +73,7 @@ const COMMAND_QUEUE_CATEGORY_TYPES = {
     CommandNames.RetagFiles,
     CommandNames.RetagArtist,
     CommandNames.SeedVideo,
+    CommandNames.ImportUnmappedFiles,
   ],
 } satisfies Record<Exclude<CommandQueueCategory, "other">, readonly CommandName[]>;
 
@@ -148,6 +149,14 @@ export const COMMAND_DEFINITIONS = {
     name: "Import Artists",
     requiresDiskAccess: false,
     isTypeExclusive: true,
+    isExclusive: false,
+    isLongRunning: true,
+  },
+  [CommandNames.ImportUnmappedFiles]: {
+    type: CommandNames.ImportUnmappedFiles,
+    name: "Import Unmapped Files",
+    requiresDiskAccess: true,
+    isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,
   },

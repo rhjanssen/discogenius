@@ -17,7 +17,8 @@ import {
     RetagFilesCommand,
     HousekeepingCommand,
     MaintenanceCommand,
-    ImportProviderArtistsCommand
+    ImportProviderArtistsCommand,
+    ImportUnmappedFilesCommand
 } from "./index.js";
 
 /**
@@ -49,4 +50,5 @@ export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.UpdateLibraryMetadata]: new MaintenanceCommand(),
     [CommandNames.ConfigPrune]: new MaintenanceCommand(),
     [CommandNames.ImportProviderArtists]: new ImportProviderArtistsCommand(),
+    [CommandNames.ImportUnmappedFiles]: new ImportUnmappedFilesCommand(),
 };
