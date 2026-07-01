@@ -10,11 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let refreshServiceModule: typeof import("./refresh-artist-service.js");
+let providersModule: typeof import("../providers/index.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   refreshServiceModule = await import("./refresh-artist-service.js");
+  providersModule = await import("../providers/index.js");
 });
 
 beforeEach(() => {
@@ -267,6 +269,108 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
   assert.equal(row.release_group_mbid, releaseGroupMbid);
   assert.equal(row.release_mbid, expandedReleaseMbid);
   assert.equal(row.match_status, "verified");
+});
+
+test("fresh artist provider matching still hydrates missing video offers", async () => {
+  const artistMbid = "11111111-1111-4111-8111-111111111111";
+  const providerArtistId = "fake-video-artist";
+  let videoFetches = 0;
+  let fakeProviderEnabled = true;
+
+  providersModule.streamingProviderManager.registerStreamingProvider({
+    id: "fake-video-provider",
+    name: "Fake Video Provider",
+    capabilities: {
+      catalogSearch: true,
+      artistCatalog: true,
+      followedArtists: false,
+      audioPreviews: false,
+      audioDownloads: false,
+      lossyStereo: false,
+      losslessStereo: false,
+      hiResStereo: false,
+      spatialAudio: false,
+      lyrics: false,
+      musicVideos: true,
+      videoPreviews: true,
+      videoDownloads: true,
+      artwork: true,
+      editorialMetadata: false,
+      providerIds: true,
+    },
+    isAuthenticated: () => fakeProviderEnabled,
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ providerId: providerArtistId, name: "Video Artist" }),
+    getArtistAlbums: async () => [],
+    getAlbum: async () => {
+      throw new Error("not used");
+    },
+    getAlbumTracks: async () => [],
+    getTrack: async () => {
+      throw new Error("not used");
+    },
+    getArtistVideos: async (id) => {
+      assert.equal(id, providerArtistId);
+      videoFetches += 1;
+      return [{
+        providerId: "fake-video-1",
+        title: "Fresh Path Video",
+        artist: { providerId: providerArtistId, name: "Video Artist" },
+        duration: 184,
+        releaseDate: "2024-01-02",
+        cover: "fake-video-cover",
+        quality: "MP4_1080P",
+        url: "https://example.test/video/fake-video-1",
+      }];
+    },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  });
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Video Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored, last_scanned) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)")
+    .run("artist-local", "Video Artist", artistMbid, 1);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, match_status, match_confidence, match_method)
+    VALUES (?, 'artist', ?, ?, ?, 'verified', 1, 'test')
+  `).run("fake-video-provider", providerArtistId, artistMbid, "Video Artist");
+
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      "artist-local",
+      artistMbid,
+      {},
+      false,
+    );
+  } finally {
+    fakeProviderEnabled = false;
+  }
+
+  const row = dbModule.db.prepare(`
+    SELECT provider, provider_id, entity_type, artist_mbid, recording_id
+    FROM ProviderItems
+    WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
+  `).get("fake-video-provider", "fake-video-1") as {
+    provider: string;
+    provider_id: string;
+    entity_type: string;
+    artist_mbid: string;
+    recording_id: number | null;
+  } | undefined;
+
+  assert.equal(videoFetches, 1);
+  assert.ok(row);
+  assert.equal(row.artist_mbid, artistMbid);
+  assert.ok(row.recording_id);
 });
 
 test("stored matched provider offers rebuild release-group slot selections without broad hydration", () => {

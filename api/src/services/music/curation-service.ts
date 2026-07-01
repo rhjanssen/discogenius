@@ -30,15 +30,13 @@ type ReleaseGroupSlotRow = {
 };
 
 type CurationTrack = {
-    recordingMbid: string | null;
-    normalizedTitle: string;
+    recordingMbid: string;
 };
 
 type PreferredReleaseRecordings = {
     releaseMbid: string;
     tracks: CurationTrack[];
     recordingIds: Set<string>;
-    normalizedTitles: Set<string>;
 };
 
 type ArtistCurationIdentity = {
@@ -86,14 +84,6 @@ export class CurationService {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
     }
 
-    private static normalizeTrackTitle(title: string): string {
-        return String(title || "")
-            .toLowerCase()
-            .replace(/[.,/#!$%^&*;:{}=\-_`~()?'"’…]/g, "")
-            .replace(/\s+/g, "")
-            .trim();
-    }
-
     private static getPreferredReleaseRecordings(
         releaseGroupMbid: string,
         representativeReleaseMbid?: string | null,
@@ -112,28 +102,18 @@ export class CurationService {
 
             const tracks: CurationTrack[] = [];
             const recordingIds = new Set<string>();
-            const normalizedTitles = new Set<string>();
 
             for (const row of rows) {
-                const title = String(row.title || "").trim();
-                const normTitle = this.normalizeTrackTitle(title);
                 const recId = row.recording_mbid ? String(row.recording_mbid).trim() : null;
 
-                tracks.push({
-                    recordingMbid: recId && this.looksLikeMusicBrainzMbid(recId) ? recId : null,
-                    normalizedTitle: normTitle,
-                });
-
                 if (recId && this.looksLikeMusicBrainzMbid(recId)) {
+                    tracks.push({ recordingMbid: recId });
                     recordingIds.add(recId);
-                }
-                if (normTitle) {
-                    normalizedTitles.add(normTitle);
                 }
             }
 
             if (tracks.length > 0) {
-                return { releaseMbid, tracks, recordingIds, normalizedTitles };
+                return { releaseMbid, tracks, recordingIds };
             }
             return null;
         };
@@ -267,12 +247,12 @@ export class CurationService {
                     return false;
                 }
 
-                // Check containment: for every track in entry, we must find a match in preferredRelease
-                // either by recording ID or by normalized title.
+                // Curation redundancy is MusicBrainz recording-centric. Provider
+                // matching may use weaker title/duration fallbacks, but curation
+                // should not collapse distinct recordings that share a title.
                 let overlap = 0;
                 for (const track of entry.preferredRelease.tracks) {
-                    const hasMatch = (track.recordingMbid && preferredRelease.recordingIds.has(track.recordingMbid))
-                        || (track.normalizedTitle && preferredRelease.normalizedTitles.has(track.normalizedTitle));
+                    const hasMatch = preferredRelease.recordingIds.has(track.recordingMbid);
                     if (hasMatch) {
                         overlap++;
                     }
@@ -320,7 +300,11 @@ export class CurationService {
         `).all(artistMbid, artistMbid) as ReleaseGroupForCuration[];
 
         if (releaseGroups.length === 0) {
+            const videoMonitorUpdates = this.updateCanonicalVideoMonitoring(artistMbid, curationConfig);
             console.log(`   No MusicBrainz release groups found for artist ${artistMbid}.`);
+            if (videoMonitorUpdates > 0) {
+                console.log(`   Updated ${videoMonitorUpdates} canonical video monitor state(s).`);
+            }
             return { newAlbums: 0, upgradedAlbums: 0 };
         }
 
@@ -456,18 +440,7 @@ export class CurationService {
             updateSlot.run(update.monitored, update.id);
         });
 
-        const videoMonitored = curationConfig.include_videos !== false ? 1 : 0;
-        const videoMonitorUpdates = artistMbid
-            ? db.prepare(`
-                UPDATE Recordings
-                SET monitored = ?,
-                    monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
-                WHERE is_video = 1
-                  AND artist_mbid = ?
-                  AND (monitored_lock = 0 OR monitored_lock IS NULL)
-                  AND COALESCE(monitored, 0) != ?
-            `).run(videoMonitored, videoMonitored, artistMbid, videoMonitored).changes
-            : 0;
+        const videoMonitorUpdates = this.updateCanonicalVideoMonitoring(artistMbid, curationConfig);
 
         console.log(
             `   Release groups: ${includedReleaseGroupIds.size}/${releaseGroups.length} included, ` +
@@ -476,6 +449,22 @@ export class CurationService {
         );
 
         return { newAlbums: slotUpdates, upgradedAlbums: 0 };
+    }
+
+    private static updateCanonicalVideoMonitoring(
+        artistMbid: string,
+        curationConfig: FilteringConfig,
+    ): number {
+        const videoMonitored = curationConfig.include_videos !== false ? 1 : 0;
+        return db.prepare(`
+            UPDATE Recordings
+            SET monitored = ?,
+                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
+            WHERE is_video = 1
+              AND artist_mbid = ?
+              AND (monitored_lock = 0 OR monitored_lock IS NULL)
+              AND COALESCE(monitored, 0) != ?
+        `).run(videoMonitored, videoMonitored, artistMbid, videoMonitored).changes;
     }
 
     private static ensureReleaseGroupSlotRows(

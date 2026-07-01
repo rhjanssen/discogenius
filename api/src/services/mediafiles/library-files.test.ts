@@ -758,12 +758,21 @@ test("upsertLibraryFile links lyric sidecars through TrackFiles provider identit
   });
 
   const lyric = dbModule.db.prepare(`
-    SELECT media_id AS mediaId, provider_id AS providerId, track_file_id AS trackFileId
+    SELECT canonical_track_mbid AS canonicalTrackMbid,
+           canonical_recording_mbid AS canonicalRecordingMbid,
+           provider_id AS providerId,
+           track_file_id AS trackFileId
     FROM LyricFiles
     WHERE file_path = ?
-  `).get(lyricPath) as { mediaId: string | null; providerId: string | null; trackFileId: number | null } | undefined;
+  `).get(lyricPath) as {
+    canonicalTrackMbid: string | null;
+    canonicalRecordingMbid: string | null;
+    providerId: string | null;
+    trackFileId: number | null;
+  } | undefined;
 
-  assert.equal(lyric?.mediaId, "100");
+  assert.equal(lyric?.canonicalTrackMbid, null);
+  assert.equal(lyric?.canonicalRecordingMbid, null);
   assert.equal(lyric?.providerId, "100");
   assert.equal(lyric?.trackFileId, trackFileId);
 });
@@ -930,7 +939,7 @@ const root = configModule.Config.getMusicPath();
 
   dbModule.db.prepare(`
     INSERT INTO MetadataFiles (
-      artist_id, album_id, relative_path, file_path, library_root, extension, type, file_type
+      artist_id, canonical_release_group_mbid, relative_path, file_path, library_root, extension, type, file_type
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "1", "11", path.relative(root, targetPath), targetPath, root, "jpg", "AlbumImage", "cover",
@@ -945,28 +954,29 @@ const root = configModule.Config.getMusicPath();
     libraryRoot: root,
     fileType: "cover",
     quality: null,
+    canonicalReleaseGroupMbid: "10",
   });
 
   const rows = dbModule.db.prepare(`
-    SELECT id AS id, album_id AS album_id, file_type AS file_type, file_path AS file_path
+    SELECT id AS id, canonical_release_group_mbid AS releaseGroupMbid, file_type AS file_type, file_path AS file_path
     FROM MetadataFiles
     ORDER BY id
-  `).all() as Array<{ id: number; album_id: string; file_type: string; file_path: string }>;
+  `).all() as Array<{ id: number; releaseGroupMbid: string; file_type: string; file_path: string }>;
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.id, id);
-  assert.equal(rows[0]?.album_id, "10");
+  assert.equal(rows[0]?.releaseGroupMbid, "10");
   assert.equal(rows[0]?.file_type, "cover");
   assert.equal(rows[0]?.file_path, targetPath);
 
   const metadataFile = dbModule.db.prepare(`
-    SELECT artist_id, album_id, file_path, file_type, type
+    SELECT artist_id, canonical_release_group_mbid AS releaseGroupMbid, file_path, file_type, type
     FROM MetadataFiles
     WHERE file_path = ?
-  `).get(targetPath) as { artist_id?: string; album_id?: string; file_path?: string; file_type?: string; type?: string } | undefined;
+  `).get(targetPath) as { artist_id?: string; releaseGroupMbid?: string; file_path?: string; file_type?: string; type?: string } | undefined;
 
   assert.equal(metadataFile?.artist_id, "1");
-  assert.equal(metadataFile?.album_id, "10");
+  assert.equal(metadataFile?.releaseGroupMbid, "10");
   assert.equal(metadataFile?.file_type, "cover");
   assert.equal(metadataFile?.type, "AlbumImage");
 

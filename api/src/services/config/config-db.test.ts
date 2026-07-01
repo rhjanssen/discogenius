@@ -22,33 +22,32 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("editable settings are stored in the config table and read through the cache", () => {
+test("editable settings are persisted to config.toml and read through the cache", () => {
   const rawBefore = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
   assert.match(rawBefore, /audio_quality = "max"/);
 
   configModule.updateConfig("quality", { audio_quality: "normal" });
 
   const rawAfter = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
-  assert.match(rawAfter, /audio_quality = "max"/);
+  assert.match(rawAfter, /audio_quality = "normal"/);
   assert.equal(configModule.getConfigSection("quality").audio_quality, "normal");
 
   const row = dbModule.db
     .prepare("SELECT value FROM config WHERE key = 'settings.quality'")
     .get() as { value: string } | undefined;
-  assert.ok(row);
-  assert.equal(JSON.parse(row.value).audio_quality, "normal");
+  assert.equal(row, undefined);
 
   configModule.clearConfigCache();
   assert.equal(configModule.readConfig().quality.audio_quality, "normal");
 });
 
-test("app admin password remains file-backed while public app settings can be DB-backed", () => {
+test("app settings update config.toml without splitting values into database overrides", () => {
   const config = configModule.readConfig();
   config.app.admin_password = "from-file";
   configModule.writeConfig(config);
 
   configModule.updateConfig("app", {
-    admin_password: "from-db-payload",
+    admin_password: "from-file",
     acoustid_api_key: "acoustid-test-key",
   });
 
@@ -56,4 +55,9 @@ test("app admin password remains file-backed while public app settings can be DB
   const appConfig = configModule.getConfigSection("app");
   assert.equal(appConfig.admin_password, "from-file");
   assert.equal(appConfig.acoustid_api_key, "acoustid-test-key");
+
+  const row = dbModule.db
+    .prepare("SELECT value FROM config WHERE key = 'settings.app'")
+    .get() as { value: string } | undefined;
+  assert.equal(row, undefined);
 });

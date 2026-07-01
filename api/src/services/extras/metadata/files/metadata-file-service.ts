@@ -10,9 +10,20 @@ export type MetadataFileType =
   | "AlbumMetadata"
   | "Unknown";
 
-export function getMetadataType(input: Pick<ExtraFileUpsertInput, "fileType" | "albumId" | "mediaId">): MetadataFileType {
+export function getMetadataType(input: Pick<ExtraFileUpsertInput,
+  "fileType" |
+  "providerEntityType" |
+  "canonicalReleaseGroupMbid" |
+  "canonicalReleaseMbid" |
+  "canonicalTrackMbid" |
+  "canonicalRecordingMbid"
+>): MetadataFileType {
+  const providerEntityType = String(input.providerEntityType || "").trim();
+  const isAlbumScoped = Boolean(input.canonicalReleaseGroupMbid || input.canonicalReleaseMbid || providerEntityType === "album");
+  const isTrackScoped = Boolean(input.canonicalTrackMbid || input.canonicalRecordingMbid || providerEntityType === "track" || providerEntityType === "video");
+
   if (input.fileType === "cover") {
-    return input.albumId ? "AlbumImage" : "ArtistImage";
+    return isAlbumScoped ? "AlbumImage" : "ArtistImage";
   }
 
   if (input.fileType === "video_cover") {
@@ -24,10 +35,10 @@ export function getMetadataType(input: Pick<ExtraFileUpsertInput, "fileType" | "
   }
 
   if (input.fileType === "nfo") {
-    if (input.mediaId) {
+    if (isTrackScoped) {
       return "TrackMetadata";
     }
-    return input.albumId ? "AlbumMetadata" : "ArtistMetadata";
+    return isAlbumScoped ? "AlbumMetadata" : "ArtistMetadata";
   }
 
   return "Unknown";
@@ -40,17 +51,18 @@ export class MetadataFileService {
 
     const info = db.prepare(`
       INSERT INTO MetadataFiles (
-        artist_id, album_id, track_file_id, media_id,
+        artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
         hash, consumer, type, file_type,
         provider, provider_entity_type, provider_id,
-        library_slot, expected_path, needs_rename, last_updated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Discogenius', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        library_slot,
+        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+        canonical_track_mbid, canonical_recording_mbid,
+        expected_path, needs_rename, last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'Discogenius', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
-        album_id = excluded.album_id,
         track_file_id = excluded.track_file_id,
-        media_id = excluded.media_id,
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         extension = excluded.extension,
@@ -61,14 +73,17 @@ export class MetadataFileService {
         provider_entity_type = excluded.provider_entity_type,
         provider_id = excluded.provider_id,
         library_slot = excluded.library_slot,
+        canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, MetadataFiles.canonical_artist_mbid),
+        canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, MetadataFiles.canonical_release_group_mbid),
+        canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, MetadataFiles.canonical_release_mbid),
+        canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, MetadataFiles.canonical_track_mbid),
+        canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, MetadataFiles.canonical_recording_mbid),
         expected_path = excluded.expected_path,
         needs_rename = excluded.needs_rename,
         last_updated = CURRENT_TIMESTAMP
     `).run(
       base.artist_id,
-      base.album_id,
       base.track_file_id,
-      base.media_id,
       base.relative_path,
       base.file_path,
       base.library_root,
@@ -79,6 +94,11 @@ export class MetadataFileService {
       base.provider_entity_type,
       base.provider_id,
       base.library_slot,
+      base.canonical_artist_mbid,
+      base.canonical_release_group_mbid,
+      base.canonical_release_mbid,
+      base.canonical_track_mbid,
+      base.canonical_recording_mbid,
       base.expected_path,
       base.needs_rename,
     );

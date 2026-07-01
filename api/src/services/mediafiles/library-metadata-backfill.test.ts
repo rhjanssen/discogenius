@@ -333,23 +333,29 @@ test("metadata backfill discovers album and video sidecars from canonical Provid
     assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 
     const albumNfo = dbModule.db.prepare(`
-        SELECT album_id, media_id, provider, provider_entity_type, provider_id, library_slot
+        SELECT canonical_release_group_mbid, canonical_release_mbid,
+               canonical_track_mbid, canonical_recording_mbid,
+               provider, provider_entity_type, provider_id, library_slot
         FROM MetadataFiles
         WHERE file_type = 'nfo'
           AND provider_entity_type = 'album'
           AND provider_id = '200'
         LIMIT 1
     `).get() as {
-        album_id: string | null;
-        media_id: string | null;
+        canonical_release_group_mbid: string | null;
+        canonical_release_mbid: string | null;
+        canonical_track_mbid: string | null;
+        canonical_recording_mbid: string | null;
         provider: string | null;
         provider_entity_type: string | null;
         provider_id: string | null;
         library_slot: string | null;
     } | undefined;
     assert.deepEqual(albumNfo, {
-        album_id: "200",
-        media_id: null,
+        canonical_release_group_mbid: "release-group-mbid-200",
+        canonical_release_mbid: "release-mbid-200",
+        canonical_track_mbid: null,
+        canonical_recording_mbid: null,
         provider: "tidal",
         provider_entity_type: "album",
         provider_id: "200",
@@ -357,23 +363,29 @@ test("metadata backfill discovers album and video sidecars from canonical Provid
     });
 
     const videoNfo = dbModule.db.prepare(`
-        SELECT album_id, media_id, provider, provider_entity_type, provider_id, library_slot, track_file_id
+        SELECT canonical_release_group_mbid, canonical_release_mbid,
+               canonical_track_mbid, canonical_recording_mbid,
+               provider, provider_entity_type, provider_id, library_slot, track_file_id
         FROM MetadataFiles
         WHERE file_type = 'nfo'
           AND provider_entity_type = 'video'
           AND provider_id = '400'
         LIMIT 1
     `).get() as {
-        album_id: string | null;
-        media_id: string | null;
+        canonical_release_group_mbid: string | null;
+        canonical_release_mbid: string | null;
+        canonical_track_mbid: string | null;
+        canonical_recording_mbid: string | null;
         provider: string | null;
         provider_entity_type: string | null;
         provider_id: string | null;
         library_slot: string | null;
         track_file_id: number | null;
     } | undefined;
-    assert.equal(videoNfo?.album_id, "200");
-    assert.equal(videoNfo?.media_id, "400");
+    assert.equal(videoNfo?.canonical_release_group_mbid, "release-group-mbid-200");
+    assert.equal(videoNfo?.canonical_release_mbid, "release-mbid-200");
+    assert.equal(videoNfo?.canonical_track_mbid, null);
+    assert.equal(videoNfo?.canonical_recording_mbid, "video-recording-mbid-400");
     assert.equal(videoNfo?.provider, "tidal");
     assert.equal(videoNfo?.provider_entity_type, "video");
     assert.equal(videoNfo?.provider_id, "400");
@@ -456,18 +468,20 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     });
 
     const lyric = dbModule.db.prepare(`
-        SELECT media_id, track_file_id, provider_entity_type, provider_id, library_slot
+        SELECT canonical_track_mbid, canonical_recording_mbid, track_file_id, provider_entity_type, provider_id, library_slot
         FROM LyricFiles
         WHERE file_path = ?
     `).get(lyricPath) as {
-        media_id: string | null;
+        canonical_track_mbid: string | null;
+        canonical_recording_mbid: string | null;
         track_file_id: number | null;
         provider_entity_type: string | null;
         provider_id: string | null;
         library_slot: string | null;
     } | undefined;
     assert.deepEqual(lyric, {
-        media_id: "300",
+        canonical_track_mbid: "track-mbid-300",
+        canonical_recording_mbid: "recording-mbid-300",
         track_file_id: track.id,
         provider_entity_type: "track",
         provider_id: "300",

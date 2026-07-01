@@ -57,7 +57,7 @@ function createMockResponse(): MockResponse {
   };
 }
 
-function getRouteHandler(pathName: string, method: "post" | "patch"): (req: any, res: any) => Promise<void> | void {
+function getRouteHandler(pathName: string, method: "get" | "post" | "patch"): (req: any, res: any) => Promise<void> | void {
   const layer = (tracksRouter as any).stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.[method]);
   assert.ok(layer, `Expected ${method.toUpperCase()} ${pathName} route`);
   return layer.route.stack[0].handle;
@@ -141,4 +141,63 @@ test("PATCH track updates canonical release-group wanted state", () => {
   const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = 'rg-mbid'")
     .get() as { wanted: number };
   assert.equal(slot.wanted, 0);
+});
+
+test("GET tracks sorts popularity by track evidence instead of artist popularity", () => {
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name, popularity)
+    VALUES ('artist-mbid', 'Track Artist', 100)
+  `).run();
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES ('artist-id', 'Track Artist', 'artist-mbid', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES ('rg-mbid', 'artist-mbid', 'Track Album', 'Album', '2024-01-01')
+  `).run();
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, country, date)
+    VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Track Album', 'Official', 'XW', '2024-01-01')
+  `).run();
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, selected_release_mbid, selected_provider_id, monitored
+    )
+    VALUES ('artist-mbid', 'rg-mbid', 'stereo', 'release-mbid', 'provider-album', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, popularity)
+    VALUES
+      ('recording-low', 'artist-mbid', 'Low Track Recording', 180000, 0, 5),
+      ('recording-high', 'artist-mbid', 'High Track Recording', 180000, 0, 80)
+  `).run();
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES
+      ('track-low', 'release-mbid', 'recording-low', 1, 1, '1', 'Low Track', 180000),
+      ('track-high', 'release-mbid', 'recording-high', 1, 2, '2', 'High Track', 180000)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, quality, library_slot, popularity
+    )
+    VALUES
+      ('tidal', 'track', 'provider-low', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-low', 'recording-low', 'Low Track', 'LOSSLESS', 'stereo', 10),
+      ('tidal', 'track', 'provider-high', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-high', 'recording-high', 'High Track', 'LOSSLESS', 'stereo', 90)
+  `).run();
+
+  const res = createMockResponse();
+  getRouteHandler("/", "get")({
+    query: { sort: "popularity", dir: "desc", limit: "10", offset: "0" },
+  }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(
+    res.body.items.map((track: { id: string }) => track.id),
+    ["track-high", "track-low"],
+  );
+  assert.equal(res.body.items[0].popularity, 90);
 });

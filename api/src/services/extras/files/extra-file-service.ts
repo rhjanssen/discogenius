@@ -29,9 +29,7 @@ export type ExtraFileUpsertInput = {
 
 export type ExtraFileBaseRecord = {
   artist_id: string;
-  album_id: string | null;
   track_file_id: number | null;
-  media_id: string | null;
   relative_path: string;
   file_path: string;
   library_root: string;
@@ -40,6 +38,11 @@ export type ExtraFileBaseRecord = {
   provider_entity_type: string | null;
   provider_id: string | null;
   library_slot: string;
+  canonical_artist_mbid: string | null;
+  canonical_release_group_mbid: string | null;
+  canonical_release_mbid: string | null;
+  canonical_track_mbid: string | null;
+  canonical_recording_mbid: string | null;
   expected_path: string | null;
   needs_rename: number;
 };
@@ -107,9 +110,7 @@ export class ExtraFileService {
 
     return {
       artist_id: input.artistId,
-      album_id: nullableText(input.albumId),
       track_file_id: this.resolveTrackFileId(input),
-      media_id: nullableText(input.mediaId),
       relative_path: relativePath || path.basename(input.filePath),
       file_path: input.filePath,
       library_root: input.libraryRoot,
@@ -118,6 +119,11 @@ export class ExtraFileService {
       provider_entity_type: nullableText(input.providerEntityType),
       provider_id: nullableText(input.providerId),
       library_slot: nullableText(input.librarySlot) || "stereo",
+      canonical_artist_mbid: nullableText(input.canonicalArtistMbid),
+      canonical_release_group_mbid: nullableText(input.canonicalReleaseGroupMbid),
+      canonical_release_mbid: nullableText(input.canonicalReleaseMbid),
+      canonical_track_mbid: nullableText(input.canonicalTrackMbid),
+      canonical_recording_mbid: nullableText(input.canonicalRecordingMbid),
       expected_path: expectedPath,
       needs_rename: expectedPath && expectedPath !== input.filePath ? 1 : 0,
     };
@@ -127,16 +133,17 @@ export class ExtraFileService {
     const base = this.buildBaseRecord(input);
     const info = db.prepare(`
       INSERT INTO ExtraFiles (
-        artist_id, album_id, track_file_id, media_id,
+        artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
         file_type, provider, provider_entity_type, provider_id,
-        library_slot, expected_path, needs_rename, last_updated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        library_slot,
+        canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+        canonical_track_mbid, canonical_recording_mbid,
+        expected_path, needs_rename, last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
-        album_id = excluded.album_id,
         track_file_id = excluded.track_file_id,
-        media_id = excluded.media_id,
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         extension = excluded.extension,
@@ -145,14 +152,17 @@ export class ExtraFileService {
         provider_entity_type = excluded.provider_entity_type,
         provider_id = excluded.provider_id,
         library_slot = excluded.library_slot,
+        canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, ExtraFiles.canonical_artist_mbid),
+        canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, ExtraFiles.canonical_release_group_mbid),
+        canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, ExtraFiles.canonical_release_mbid),
+        canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, ExtraFiles.canonical_track_mbid),
+        canonical_recording_mbid = COALESCE(excluded.canonical_recording_mbid, ExtraFiles.canonical_recording_mbid),
         expected_path = excluded.expected_path,
         needs_rename = excluded.needs_rename,
         last_updated = CURRENT_TIMESTAMP
     `).run(
       base.artist_id,
-      base.album_id,
       base.track_file_id,
-      base.media_id,
       base.relative_path,
       base.file_path,
       base.library_root,
@@ -162,6 +172,11 @@ export class ExtraFileService {
       base.provider_entity_type,
       base.provider_id,
       base.library_slot,
+      base.canonical_artist_mbid,
+      base.canonical_release_group_mbid,
+      base.canonical_release_mbid,
+      base.canonical_track_mbid,
+      base.canonical_recording_mbid,
       base.expected_path,
       base.needs_rename,
     );

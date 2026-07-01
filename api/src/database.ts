@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
-import { DB_PATH, registerConfigDbExecutor } from "./services/config/config.js";
+import { DB_PATH } from "./services/config/config.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 
 let _db: Database.Database | null = null;
@@ -497,9 +497,7 @@ function ensureExtraFileSchema(): void {
     CREATE TABLE IF NOT EXISTS MetadataFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       artist_id TEXT NOT NULL,
-      album_id TEXT,
       track_file_id INTEGER,
-      media_id TEXT,
       relative_path TEXT NOT NULL,
       file_path TEXT NOT NULL UNIQUE,
       library_root TEXT NOT NULL,
@@ -514,6 +512,11 @@ function ensureExtraFileSchema(): void {
       provider_entity_type TEXT,
       provider_id TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',
+      canonical_artist_mbid TEXT,
+      canonical_release_group_mbid TEXT,
+      canonical_release_mbid TEXT,
+      canonical_track_mbid TEXT,
+      canonical_recording_mbid TEXT,
       expected_path TEXT,
       needs_rename BOOLEAN NOT NULL DEFAULT 0,
       FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
@@ -522,9 +525,7 @@ function ensureExtraFileSchema(): void {
     CREATE TABLE IF NOT EXISTS LyricFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       artist_id TEXT NOT NULL,
-      album_id TEXT,
       track_file_id INTEGER,
-      media_id TEXT,
       relative_path TEXT NOT NULL,
       file_path TEXT NOT NULL UNIQUE,
       library_root TEXT NOT NULL,
@@ -549,9 +550,7 @@ function ensureExtraFileSchema(): void {
     CREATE TABLE IF NOT EXISTS ExtraFiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       artist_id TEXT NOT NULL,
-      album_id TEXT,
       track_file_id INTEGER,
-      media_id TEXT,
       relative_path TEXT NOT NULL,
       file_path TEXT NOT NULL UNIQUE,
       library_root TEXT NOT NULL,
@@ -563,25 +562,32 @@ function ensureExtraFileSchema(): void {
       provider_entity_type TEXT,
       provider_id TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',
+      canonical_artist_mbid TEXT,
+      canonical_release_group_mbid TEXT,
+      canonical_release_mbid TEXT,
+      canonical_track_mbid TEXT,
+      canonical_recording_mbid TEXT,
       expected_path TEXT,
       needs_rename BOOLEAN NOT NULL DEFAULT 0,
       FOREIGN KEY(track_file_id) REFERENCES TrackFiles(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_metadata_files_artist ON MetadataFiles(artist_id, type);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_album ON MetadataFiles(album_id, type);
     CREATE INDEX IF NOT EXISTS idx_metadata_files_file_type ON MetadataFiles(file_type);
     CREATE INDEX IF NOT EXISTS idx_metadata_files_track_file ON MetadataFiles(track_file_id);
-    CREATE INDEX IF NOT EXISTS idx_metadata_files_media ON MetadataFiles(media_id, type);
     CREATE INDEX IF NOT EXISTS idx_metadata_files_provider ON MetadataFiles(provider, provider_entity_type, provider_id);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_canonical_release_group ON MetadataFiles(canonical_release_group_mbid, file_type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_canonical_track ON MetadataFiles(canonical_track_mbid, file_type);
+    CREATE INDEX IF NOT EXISTS idx_metadata_files_canonical_recording ON MetadataFiles(canonical_recording_mbid, file_type);
     CREATE INDEX IF NOT EXISTS idx_lyric_files_artist ON LyricFiles(artist_id);
     CREATE INDEX IF NOT EXISTS idx_lyric_files_track_file ON LyricFiles(track_file_id);
-    CREATE INDEX IF NOT EXISTS idx_lyric_files_media ON LyricFiles(media_id, library_slot);
     CREATE INDEX IF NOT EXISTS idx_lyric_files_provider ON LyricFiles(provider, provider_entity_type, provider_id);
     CREATE INDEX IF NOT EXISTS idx_lyric_files_recording ON LyricFiles(canonical_recording_mbid);
     CREATE INDEX IF NOT EXISTS idx_extra_files_artist ON ExtraFiles(artist_id, file_type);
     CREATE INDEX IF NOT EXISTS idx_extra_files_track_file ON ExtraFiles(track_file_id);
-    CREATE INDEX IF NOT EXISTS idx_extra_files_media ON ExtraFiles(media_id, file_type);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_canonical_release_group ON ExtraFiles(canonical_release_group_mbid, file_type);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_canonical_track ON ExtraFiles(canonical_track_mbid, file_type);
+    CREATE INDEX IF NOT EXISTS idx_extra_files_canonical_recording ON ExtraFiles(canonical_recording_mbid, file_type);
   `);
 }
 
@@ -1361,7 +1367,6 @@ export function initDatabase() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_artists_path ON Artists(path)");
 
   console.log("✅ Database schema initialized");
-  registerConfigDbExecutor((operation) => operation(db as unknown as Database.Database));
 
   // ====================================================================
   // DEFAULT DATA

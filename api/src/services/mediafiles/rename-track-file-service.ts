@@ -149,8 +149,8 @@ export class RenameTrackFileService {
 
         UNION ALL
 
-        SELECT id + 10000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
-               NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+        SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+               canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
@@ -158,8 +158,8 @@ export class RenameTrackFileService {
 
         UNION ALL
 
-        SELECT id + 20000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
-               NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+        SELECT id + 20000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+               canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, Added AS created_at
@@ -167,7 +167,7 @@ export class RenameTrackFileService {
 
         UNION ALL
 
-        SELECT id + 30000000 AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
+        SELECT id + 30000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
                canonical_artist_mbid AS canonical_artist_mbid, canonical_release_group_mbid AS canonical_release_group_mbid, canonical_release_mbid AS canonical_release_mbid, canonical_track_mbid AS canonical_track_mbid, canonical_recording_mbid AS canonical_recording_mbid,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
@@ -335,8 +335,8 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "MetadataFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
-                 NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+          SELECT id AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+                 canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                  file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                  provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                  NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
@@ -348,8 +348,8 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "ExtraFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
-                 NULL AS canonical_artist_mbid, NULL AS canonical_release_group_mbid, NULL AS canonical_release_mbid, NULL AS canonical_track_mbid, NULL AS canonical_recording_mbid,
+          SELECT id AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+                 canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                  file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                  provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
                  NULL AS quality, NULL AS codec, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels
@@ -361,7 +361,7 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "LyricFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, album_id AS album_id, media_id AS media_id,
+          SELECT id AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
                  canonical_artist_mbid AS canonical_artist_mbid, canonical_release_group_mbid AS canonical_release_group_mbid, canonical_release_mbid AS canonical_release_mbid, canonical_track_mbid AS canonical_track_mbid, canonical_recording_mbid AS canonical_recording_mbid,
                  file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, extension AS extension, library_slot AS library_slot,
                  provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
@@ -443,7 +443,10 @@ export class RenameTrackFileService {
           if (isScopedSidecar) {
             if (dbConflict) {
               const occupant = db.prepare(`
-                SELECT artist_id, album_id, media_id, file_type
+                SELECT artist_id,
+                       COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+                       COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+                       file_type
                 FROM ${tableName}
                 WHERE ${idCol} = ?
               `).get(dbConflict.id) as {
@@ -739,7 +742,11 @@ export class RenameTrackFileService {
       else if (track.library_slot === "spatial") targetRoot = spatialRoot;
       const artistAssets = db.prepare(`
         SELECT * FROM MetadataFiles
-        WHERE artist_id = ? AND album_id IS NULL AND media_id IS NULL
+        WHERE artist_id = ?
+          AND canonical_release_group_mbid IS NULL
+          AND canonical_release_mbid IS NULL
+          AND canonical_track_mbid IS NULL
+          AND canonical_recording_mbid IS NULL
           AND file_type IN ('cover', 'nfo')
       `).all(track.artist_id) as any[];
       for (const asset of artistAssets) {
@@ -758,18 +765,27 @@ export class RenameTrackFileService {
         LEFT JOIN ProviderItems album_item
           ON album_item.entity_type = 'album'
          AND (mf.provider IS NULL OR album_item.provider = mf.provider)
-         AND CAST(album_item.provider_id AS TEXT) = CAST(COALESCE(mf.provider_id, mf.album_id) AS TEXT)
-        WHERE mf.artist_id = ? AND mf.album_id IS NOT NULL AND mf.media_id IS NULL
+         AND CAST(album_item.provider_id AS TEXT) = CAST(mf.provider_id AS TEXT)
+        WHERE mf.artist_id = ?
+          AND (mf.canonical_release_group_mbid IS NOT NULL OR mf.canonical_release_mbid IS NOT NULL OR mf.provider_id IS NOT NULL)
+          AND mf.canonical_track_mbid IS NULL
+          AND mf.canonical_recording_mbid IS NULL
           AND mf.file_type IN ('cover', 'nfo')
           AND (
-            (? IS NOT NULL AND album_item.release_group_mbid = ?)
-            OR (? IS NULL AND ? IS NOT NULL AND CAST(mf.album_id AS TEXT) = CAST(? AS TEXT))
+            (? IS NOT NULL AND (mf.canonical_release_group_mbid = ? OR album_item.release_group_mbid = ?))
+            OR (? IS NOT NULL AND (mf.canonical_release_mbid = ? OR album_item.release_mbid = ?))
+            OR (? IS NULL AND ? IS NULL AND ? IS NOT NULL AND CAST(mf.provider_id AS TEXT) = CAST(? AS TEXT))
           )
       `).all(
         track.artist_id,
         track.canonical_release_group_mbid,
         track.canonical_release_group_mbid,
         track.canonical_release_group_mbid,
+        track.canonical_release_mbid,
+        track.canonical_release_mbid,
+        track.canonical_release_mbid,
+        track.canonical_release_group_mbid,
+        track.canonical_release_mbid,
         track.album_id,
         track.album_id,
       ) as any[];
@@ -795,18 +811,14 @@ export class RenameTrackFileService {
         LEFT JOIN ProviderItems lyric_item
           ON lyric_item.entity_type = 'track'
          AND (lf.provider IS NULL OR lyric_item.provider = lf.provider)
-         AND CAST(lyric_item.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, lf.media_id) AS TEXT)
+         AND CAST(lyric_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
         WHERE lf.artist_id = ?
           AND (
             (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
             OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
             OR (? IS NOT NULL AND lyric_item.recording_mbid = ?)
             OR (? IS NOT NULL AND lyric_item.track_mbid = ?)
-            OR (
-              ? IS NULL AND ? IS NULL
-              AND ? IS NOT NULL
-              AND CAST(lf.media_id AS TEXT) = CAST(? AS TEXT)
-            )
+            OR (? IS NULL AND ? IS NULL AND ? IS NOT NULL AND CAST(lf.provider_id AS TEXT) = CAST(? AS TEXT))
           )
       `).all(
         track.artist_id,

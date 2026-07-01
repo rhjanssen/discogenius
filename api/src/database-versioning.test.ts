@@ -71,6 +71,9 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
     ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid"]],
     ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
+    ["MetadataFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
+    ["LyricFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
+    ["ExtraFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
   ]);
 
   for (const [tableName, expectedColumns] of expectedColumnsByTable) {
@@ -85,6 +88,14 @@ test("catalog tables do not retain raw metadata data blobs", () => {
   for (const tableName of ["ArtistMetadata", "Albums", "AlbumReleases", "Recordings", "Tracks"]) {
     const columns = tableColumns(tableName);
     assert.equal(columns.includes("data"), false, `Expected ${tableName}.data to be absent`);
+  }
+});
+
+test("sidecar tables do not retain legacy album or media identity shadows", () => {
+  for (const tableName of ["MetadataFiles", "LyricFiles", "ExtraFiles"]) {
+    const columns = tableColumns(tableName);
+    assert.equal(columns.includes("album_id"), false, `Expected ${tableName}.album_id to be absent`);
+    assert.equal(columns.includes("media_id"), false, `Expected ${tableName}.media_id to be absent`);
   }
 });
 

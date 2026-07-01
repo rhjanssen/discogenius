@@ -2,8 +2,6 @@ import fs from "fs";
 import path from "path";
 import * as TOML from "@iarna/toml";
 import { fileURLToPath } from "url";
-import Database from "better-sqlite3";
-import { appEvents, AppEvent } from "../commands/app-events.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -271,26 +269,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   account: {}
 };
 
-const DB_BACKED_CONFIG_SECTIONS = new Set<keyof DiscoGeniusConfig>([
-  "monitoring",
-  "filtering",
-  "path",
-  "naming",
-  "metadata",
-  "quality",
-  "streaming",
-  "account",
-]);
-
-const PARTIAL_DB_BACKED_CONFIG_SECTIONS = new Set<keyof DiscoGeniusConfig>([
-  // `app.admin_password` is a bootstrap secret read before SQLite opens. Keep it
-  // file/env backed; only public editable app settings are eligible for DB storage.
-  "app",
-]);
-
 let configCache: DiscoGeniusConfig | null = null;
 let configCacheFileKey: string | null = null;
-let configDbExecutor: (<T>(operation: (database: Database.Database) => T) => T) | null = null;
 
 function cloneConfig<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -390,132 +370,6 @@ function readConfigFile(): DiscoGeniusConfig {
   }
 }
 
-export function registerConfigDbExecutor(
-  executor: <T>(operation: (database: Database.Database) => T) => T,
-): void {
-  configDbExecutor = executor;
-  clearConfigCache();
-}
-
-function withConfigDb<T>(operation: (database: Database.Database) => T): T | null {
-  if (!configDbExecutor) {
-    return null;
-  }
-
-  try {
-    return configDbExecutor(operation);
-  } catch (error) {
-    console.warn("[Config] DB-backed settings unavailable, using config.toml only:", (error as Error).message);
-    return null;
-  }
-}
-
-function readDbConfigOverrides(): Partial<Record<keyof DiscoGeniusConfig, Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>>> {
-  const rows = withConfigDb((database) => database
-    .prepare("SELECT key, value FROM config WHERE key LIKE 'settings.%'")
-    .all() as Array<{ key: string; value: string }>);
-
-  if (!rows) {
-    return {};
-  }
-
-  const overrides: Partial<Record<keyof DiscoGeniusConfig, Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>>> = {};
-  for (const row of rows) {
-    const section = row.key.replace(/^settings\./, "") as keyof DiscoGeniusConfig;
-    if (!DB_BACKED_CONFIG_SECTIONS.has(section) && !PARTIAL_DB_BACKED_CONFIG_SECTIONS.has(section)) {
-      continue;
-    }
-
-    try {
-      const parsed = JSON.parse(row.value) as Partial<DiscoGeniusConfig[keyof DiscoGeniusConfig]>;
-      overrides[section] = parsed;
-    } catch {
-      console.warn(`[Config] Ignoring invalid DB config override for ${row.key}`);
-    }
-  }
-
-  return overrides;
-}
-
-function mergeDbOverrides(fileConfig: DiscoGeniusConfig): DiscoGeniusConfig {
-  const overrides = readDbConfigOverrides();
-  const merged: DiscoGeniusConfig = cloneConfig(fileConfig);
-
-  for (const [section, override] of Object.entries(overrides) as Array<[keyof DiscoGeniusConfig, Record<string, unknown>]>) {
-    if (section === "filtering") {
-      merged.filtering = normalizeFilteringConfig({
-        ...merged.filtering,
-        ...(override as Partial<FilteringConfig>),
-      });
-      continue;
-    }
-
-    if (section === "monitoring") {
-      merged.monitoring = normalizeMonitoringConfig({
-        ...merged.monitoring,
-        ...(override as Partial<MonitoringConfig>),
-      });
-      continue;
-    }
-
-    if (section === "app") {
-      merged.app = {
-        ...merged.app,
-        acoustid_api_key: typeof override.acoustid_api_key === "string"
-          ? override.acoustid_api_key
-          : merged.app.acoustid_api_key,
-      };
-      continue;
-    }
-
-    if (section === "metadata") {
-      merged.metadata = normalizeMetadataConfig({
-        ...merged.metadata,
-        ...(override as Partial<MetadataConfig>),
-      });
-      continue;
-    }
-
-    (merged as unknown as Record<string, unknown>)[section] = {
-      ...(merged[section] as Record<string, unknown>),
-      ...override,
-    };
-  }
-
-  return merged;
-}
-
-function writeDbConfigSection<K extends keyof DiscoGeniusConfig>(
-  section: K,
-  value: Partial<DiscoGeniusConfig[K]>,
-): boolean {
-  if (!DB_BACKED_CONFIG_SECTIONS.has(section) && !PARTIAL_DB_BACKED_CONFIG_SECTIONS.has(section)) {
-    return false;
-  }
-
-  const storedValue = section === "app"
-    ? { acoustid_api_key: (value as Partial<AppConfig>).acoustid_api_key }
-    : value;
-
-  const written = withConfigDb((database) => {
-    database.prepare(`
-      INSERT INTO config (key, value, description)
-      VALUES (?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        description = excluded.description,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      `settings.${String(section)}`,
-      JSON.stringify(storedValue),
-      `Discogenius editable ${String(section)} settings`,
-    );
-    return true;
-  });
-
-  return written === true;
-}
-
 export function clearConfigCache(): void {
   configCache = null;
   configCacheFileKey = null;
@@ -549,7 +403,7 @@ export function readConfig(): DiscoGeniusConfig {
   }
 
   if (!configCache) {
-    configCache = mergeDbOverrides(readConfigFile());
+    configCache = readConfigFile();
     configCacheFileKey = getConfigFileKey();
   }
   return cloneConfig(configCache);
@@ -617,12 +471,7 @@ export function updateConfig<K extends keyof DiscoGeniusConfig>(
     };
   }
 
-  if (!writeDbConfigSection(section, config[section])) {
-    writeConfig(config);
-  } else {
-    configCache = null;
-    appEvents.emit(AppEvent.CONFIG_UPDATED, { section, source: "db" });
-  }
+  writeConfig(config);
 }
 
 export class Config {

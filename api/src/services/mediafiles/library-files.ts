@@ -657,8 +657,8 @@ export class LibraryFilesService {
       const sidecarRows = db.prepare(`
         SELECT id AS id,
           artist_id AS artist_id,
-          album_id AS album_id,
-          media_id AS media_id,
+          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
           file_path AS file_path,
           relative_path AS relative_path,
           library_root AS library_root,
@@ -1134,13 +1134,13 @@ export class LibraryFilesService {
     if (mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "media_id = ? AND library_slot = ?",
-          values: [mediaId, slotValue],
+          sql: "(provider_id = ? OR canonical_track_mbid = ? OR canonical_recording_mbid = ?) AND library_slot = ?",
+          values: [mediaId, mediaId, mediaId, slotValue],
         };
       } else {
         return {
-          sql: "media_id = ? AND file_type = ? AND library_slot = ?",
-          values: [mediaId, fileType, slotValue],
+          sql: "(provider_id = ? OR canonical_track_mbid = ? OR canonical_recording_mbid = ?) AND file_type = ? AND library_slot = ?",
+          values: [mediaId, mediaId, mediaId, fileType, slotValue],
         };
       }
     }
@@ -1148,13 +1148,13 @@ export class LibraryFilesService {
     if (albumId && !mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "album_id = ? AND media_id IS NULL AND library_slot = ?",
-          values: [albumId, slotValue],
+          sql: "(canonical_release_group_mbid = ? OR canonical_release_mbid = ? OR provider_id = ?) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND library_slot = ?",
+          values: [albumId, albumId, albumId, slotValue],
         };
       } else {
         return {
-          sql: "album_id = ? AND media_id IS NULL AND file_type = ? AND library_slot = ?",
-          values: [albumId, fileType, slotValue],
+          sql: "(canonical_release_group_mbid = ? OR canonical_release_mbid = ? OR provider_id = ?) AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND file_type = ? AND library_slot = ?",
+          values: [albumId, albumId, albumId, fileType, slotValue],
         };
       }
     }
@@ -1162,12 +1162,12 @@ export class LibraryFilesService {
     if (!albumId && !mediaId) {
       if (tableName === "LyricFiles") {
         return {
-          sql: "artist_id = ? AND album_id IS NULL AND media_id IS NULL AND library_slot = ?",
+          sql: "artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND library_slot = ?",
           values: [artistId, slotValue],
         };
       } else {
         return {
-          sql: "artist_id = ? AND album_id IS NULL AND media_id IS NULL AND file_type = ? AND library_slot = ?",
+          sql: "artist_id = ? AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL AND file_type = ? AND library_slot = ?",
           values: [artistId, fileType, slotValue],
         };
       }
@@ -1811,8 +1811,8 @@ export class LibraryFilesService {
     const rows = db.prepare(`
       SELECT id AS id,
         artist_id AS artist_id,
-        album_id AS album_id,
-        media_id AS media_id,
+        COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+        COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
         file_path AS file_path,
         relative_path AS relative_path,
         library_root AS library_root,
@@ -1891,10 +1891,14 @@ export class LibraryFilesService {
 
     // MetadataFiles duplicates
     const metadataGroups = db.prepare(`
-      SELECT artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_type AS file_type, library_slot AS library_slot
+      SELECT artist_id AS artist_id,
+             COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             file_type AS file_type,
+             library_slot AS library_slot
       FROM MetadataFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, album_id, media_id, file_type, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, file_type, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
@@ -1916,10 +1920,14 @@ export class LibraryFilesService {
 
     // ExtraFiles duplicates
     const extraGroups = db.prepare(`
-      SELECT artist_id AS artist_id, album_id AS album_id, media_id AS media_id, file_type AS file_type, library_slot AS library_slot
+      SELECT artist_id AS artist_id,
+             COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             file_type AS file_type,
+             library_slot AS library_slot
       FROM ExtraFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, album_id, media_id, file_type, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, file_type, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
@@ -1941,10 +1949,13 @@ export class LibraryFilesService {
 
     // LyricFiles duplicates
     const lyricGroups = db.prepare(`
-      SELECT artist_id AS artist_id, album_id AS album_id, media_id AS media_id, library_slot AS library_slot
+      SELECT artist_id AS artist_id,
+             COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+             COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+             library_slot AS library_slot
       FROM LyricFiles
       ${artistId ? "WHERE artist_id = ?" : ""}
-      GROUP BY artist_id, album_id, media_id, library_slot
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider_id, library_slot
       HAVING COUNT(*) > 1
     `).all(...params) as Array<{
       artist_id: string;
@@ -1980,8 +1991,8 @@ export class LibraryFilesService {
       const rows = db.prepare(`
         SELECT id AS id,
           artist_id AS artist_id,
-          album_id AS album_id,
-          media_id AS media_id,
+          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
           file_path AS file_path,
           relative_path AS relative_path,
           library_root AS library_root,
@@ -2218,10 +2229,10 @@ export class LibraryFilesService {
     // Check MetadataFiles
     const metaSelectors: string[] = [];
     if (!metadataConfig.save_album_cover) {
-      metaSelectors.push("(file_type = 'cover' AND album_id IS NOT NULL) OR file_type = 'video_cover'");
+      metaSelectors.push("(file_type = 'cover' AND (canonical_release_group_mbid IS NOT NULL OR canonical_release_mbid IS NOT NULL OR provider_entity_type = 'album')) OR file_type = 'video_cover'");
     }
     if (!metadataConfig.save_artist_picture) {
-      metaSelectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
+      metaSelectors.push("file_type = 'cover' AND canonical_release_group_mbid IS NULL AND canonical_release_mbid IS NULL AND canonical_track_mbid IS NULL AND canonical_recording_mbid IS NULL AND provider_id IS NULL");
     }
     if (!metadataConfig.save_video_thumbnail) {
       metaSelectors.push("file_type = 'video_thumbnail'");
@@ -2234,8 +2245,8 @@ export class LibraryFilesService {
       const metaRows = db.prepare(`
         SELECT id AS id,
           artist_id AS artist_id,
-          album_id AS album_id,
-          media_id AS media_id,
+          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
           file_type AS file_type,
           NULL AS quality,
           file_path AS file_path,
@@ -2254,8 +2265,8 @@ export class LibraryFilesService {
       const lyricRows = db.prepare(`
         SELECT id AS id,
           artist_id AS artist_id,
-          album_id AS album_id,
-          media_id AS media_id,
+          COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+          COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
           'lyrics' AS file_type,
           quality AS quality,
           file_path AS file_path,

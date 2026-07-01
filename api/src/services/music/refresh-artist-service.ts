@@ -1006,7 +1006,7 @@ export class RefreshArtistService {
     }
 
     private static async resolveProviderArtistId(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string | null> {
-        if (!artistMbid || !isMusicBrainzMbid(artistId)) {
+        if (!artistMbid) {
             return artistId;
         }
 
@@ -1343,17 +1343,24 @@ export class RefreshArtistService {
         options: RefreshOptions,
         shouldHydrateCatalog: boolean,
     ): Promise<void> {
+        const providers = streamingProviderManager.getAllStreamingProviders();
+        const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
+
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
             const slotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
             if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
                 console.log(`[RefreshArtistService] Rebuilt provider selections from stored offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
             }
+
+            const shouldRefreshArtistVideos =
+                options.forceUpdate === true ||
+                shouldRefreshVideos({ artistId });
+            if (shouldRefreshArtistVideos) {
+                await this.refreshProviderVideos(connectedProviders, artistId, artistMbid, options);
+            }
             return;
         }
-
-        const providers = streamingProviderManager.getAllStreamingProviders();
-        const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
 
         if (connectedProviders.length === 0) {
             console.log(
@@ -1378,22 +1385,7 @@ export class RefreshArtistService {
                 continue;
             }
 
-            const shouldRefreshArtistVideos =
-                options.forceUpdate === true ||
-                shouldRefreshVideos({ artistId });
-            if (shouldRefreshArtistVideos && provider.getArtistVideos) {
-                try {
-                    const videos = (await provider.getArtistVideos(providerArtistId) || [])
-                        .map((video) => ({
-                            ...providerVideoToOfferRow(video, artistId),
-                            _provider: provider.id,
-                        }));
-                    console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
-                    RefreshVideoService.upsertArtistVideos(artistId, videos, options);
-                } catch (error) {
-                    console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
-                }
-            }
+            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
 
             try {
                 const providerAlbums = provider.listArtistReleaseOffers
@@ -1506,6 +1498,48 @@ export class RefreshArtistService {
         };
         if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
             console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
+        }
+    }
+
+    private static async refreshProviderVideos(
+        providers: StreamingProvider[],
+        artistId: string,
+        artistMbid: string | null,
+        options: RefreshOptions,
+    ): Promise<void> {
+        if (providers.length === 0) {
+            return;
+        }
+
+        for (const provider of providers) {
+            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+            if (!providerArtistId) {
+                continue;
+            }
+            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
+        }
+    }
+
+    private static async refreshProviderVideosForMatchedArtist(
+        provider: StreamingProvider,
+        providerArtistId: string | number,
+        artistId: string,
+        options: RefreshOptions,
+    ): Promise<void> {
+        if (!provider.getArtistVideos) {
+            return;
+        }
+
+        try {
+            const videos = (await provider.getArtistVideos(providerArtistId) || [])
+                .map((video) => ({
+                    ...providerVideoToOfferRow(video, artistId),
+                    _provider: provider.id,
+                }));
+            console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
+            RefreshVideoService.upsertArtistVideos(artistId, videos, options);
+        } catch (error) {
+            console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
         }
     }
 

@@ -211,6 +211,13 @@ export const useCardStyles = makeStyles({
         zIndex: 2,
     },
 
+    bottomLeftBadge: {
+        position: "absolute",
+        bottom: tokens.spacingVerticalS,
+        left: tokens.spacingHorizontalS,
+        zIndex: 2,
+    },
+
     // Monitor icon styles
     monitorIcon: {
         width: "16px",

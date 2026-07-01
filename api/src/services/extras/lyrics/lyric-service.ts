@@ -295,7 +295,6 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
         (lf.provider = candidate.provider
           AND lf.provider_entity_type = 'track'
           AND CAST(lf.provider_id AS TEXT) = CAST(candidate.provider_id AS TEXT))
-        OR CAST(lf.media_id AS TEXT) = CAST(candidate.provider_id AS TEXT)
         OR (candidate.track_mbid IS NOT NULL AND lf.canonical_track_mbid = candidate.track_mbid)
         OR (candidate.recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate.recording_mbid)
       )
@@ -365,9 +364,7 @@ function lyricCandidateFile(candidate: LyricCandidateRow): LyricFileRow {
   return {
     id: candidate.lyric_file_id,
     artist_id: candidate.artist_id || "",
-    album_id: candidate.album_id,
     track_file_id: null,
-    media_id: candidate.id,
     relative_path: candidate.lyric_relative_path || candidate.lyric_file_path,
     file_path: candidate.lyric_file_path,
     library_root: candidate.lyric_library_root || "",

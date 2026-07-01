@@ -2001,10 +2001,13 @@ const Library = () => {
                 topContent: renderSelectionBar(),
                 children: <LibraryTrackList
                   tracks={tracks}
-                  selection={viewMode === 'list' ? {
+                  // The tracks tab is always a table (no grid toggle), so selection
+                  // must always be available here — it isn't gated on viewMode like
+                  // the grid/list tabs, where the persisted viewMode could be 'grid'.
+                  selection={{
                     ...trackSelection.selection,
                     getSelectionLabel: (track: any) => track.title ? `Select ${track.title}` : "Select track",
-                  } : undefined}
+                  }}
                 />,
               })
             )}

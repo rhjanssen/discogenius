@@ -244,7 +244,7 @@ function getTrackOrderBy(sort: SortableTrackField, dir: "ASC" | "DESC"): string 
     case "name":
       return ` ORDER BY track.title ${dir}, track.mbid ASC`;
     case "popularity":
-      return ` ORDER BY COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`;
+      return ` ORDER BY popularity ${dir}, COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`;
     case "scannedAt":
       return ` ORDER BY (track.updated_at IS NULL) ASC, track.updated_at ${dir}, track.mbid ASC`;
     case "releaseDate":
@@ -305,7 +305,10 @@ function getTrackSelectSql(whereClause: string): string {
       CASE WHEN ${canonicalTrackMonitoredPredicate} THEN 1 ELSE 0 END AS is_monitored,
       0 AS monitored_lock,
       COALESCE(release.date, release_group.first_release_date) AS release_date,
-      COALESCE(artist.popularity, 0) AS popularity,
+      MAX(
+        COALESCE(CAST(recording.popularity AS REAL), 0),
+        COALESCE(CAST(provider_track.popularity AS REAL), 0)
+      ) AS popularity,
       track.updated_at AS last_scanned,
       track.updated_at AS created_at,
       track.updated_at AS updated_at,

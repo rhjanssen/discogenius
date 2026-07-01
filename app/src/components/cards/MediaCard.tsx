@@ -43,6 +43,8 @@ export interface MediaCardProps {
     placeholder?: React.ReactNode;
     /** Additional status badge in top-right corner */
     statusBadge?: React.ReactNode;
+    /** Additional overlay badge in bottom-left corner */
+    bottomLeftBadge?: React.ReactNode;
     /** Additional className for the card root */
     className?: string;
     /** Use video aspect ratio (3:2) instead of square */
@@ -71,6 +73,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     mini,
     placeholder,
     statusBadge,
+    bottomLeftBadge,
     className,
     videoAspect,
     downloadStatus,
@@ -167,6 +170,10 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
 
                 {statusBadge && (
                     <div className={styles.statusBadge}>{statusBadge}</div>
+                )}
+
+                {bottomLeftBadge && (
+                    <div className={styles.bottomLeftBadge}>{bottomLeftBadge}</div>
                 )}
 
                 {onMonitorToggle && (

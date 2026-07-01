@@ -81,13 +81,14 @@ transitional/provider shadows where they no longer pay for themselves.
   `TrackFile`; our table intentionally tracks playable audio and videos, while
   sidecars stay in separate Lidarr-style `MetadataFiles`, `LyricFiles`, and
   `ExtraFiles` tables.
-- pending: Audit sidecar file identity at the same time as the `TrackFiles`
-  cleanup so sidecars link by `track_file_id`, catalog FK/MBID, and provider
-  provenance instead of legacy `album_id`/`media_id` shadows.
+- done: Audited sidecar file identity with the `TrackFiles` cleanup. Fresh
+  `MetadataFiles`, `LyricFiles`, and `ExtraFiles` rows no longer store legacy
+  `album_id` / `media_id` shadows; they link by `track_file_id`, canonical MBIDs,
+  provider provenance, and API-only aliases at response boundaries.
 - done: Removed legacy import/backfill code that existed only to hydrate
   provider-era `TrackFiles.album_id`/`TrackFiles.media_id` rows; the fresh
-  schema no longer creates those `TrackFiles` columns. The separate sidecar
-  identity audit remains pending above.
+  schema no longer creates those `TrackFiles` columns. The sidecar identity audit
+  is complete above.
 - pending: Port Lidarr's naming token parser/formatter model instead of growing
   a Discogenius-only parser. Keep Discogenius extensions additive only, such as
   provider name/id variables for users who want streaming-service provenance in
@@ -172,10 +173,10 @@ the provider abstraction so a second provider can declare its own sources.
   tracklist rewrite when the remote RG detail is unchanged (with a repair guard:
   a hash match never suppresses re-hydration of an RG whose child rows are
   missing). Tested in `servarr-metadata.test.ts`.
-- pending (lever 2, the row-SIZE half): shrink/normalise the per-row `data` blob
-  to curated columns (Lidarr stores columns, not raw JSON). This is the schema
-  rework below; the blob-consumer map there is the precise migration list. Until
-  the blob is gone, a CHANGED row still writes the multi-KB JSON.
+- done (lever 2, the row-SIZE half): shrink/normalise the per-row `data` blob
+  to curated columns (Lidarr stores columns, not raw JSON). Fresh schema 34 no
+  longer creates raw catalog `data` columns on ArtistMetadata, Albums,
+  AlbumReleases, Recordings, or Tracks; tests assert those blobs stay absent.
 - pending (lever 3): chunk the remaining `syncReleaseGroup` RG+releases
   transaction if a measured write still holds the lock too long after lever 2.
   NOTE: the catalog FK triggers fire only on INSERT / UPDATE OF mbid — NOT on
@@ -225,6 +226,19 @@ the provider abstraction so a second provider can declare its own sources.
   unknown videos instead of navigating to a detail page that hydrates on GET;
   explicit video add queues `SeedVideo` and returns immediately instead of
   seeding provider metadata inline.
+- done (2026-07-01): Fixed video curation so `include_videos=true` monitors
+  canonical video recordings even when an artist has no release groups to curate
+  yet, while still respecting `monitored_lock`. Runtime-validated on a clean DB
+  with Imagine Dragons: refresh/curation found videos, marked 160 as monitored,
+  and both Library and artist-page video cards loaded local
+  `/media-cover/Videos/...` thumbnails with `mm:ss` duration badges.
+- done (2026-07-01): Stabilized the release CI gate by running API test files
+  serially (`tsx --test --test-concurrency=1`). This keeps the same 400 API
+  tests while avoiding the pre-existing Node test-runner cloned-data flake; full
+  `yarn ci` passed afterward.
+- done (2026-07-01): Fixed Library track popularity sorting to use track-level
+  recording/provider popularity evidence instead of artist popularity, with a
+  route-level regression test.
 
 ### Architecture decision: keep TypeScript, decompose (not a .NET port)
 
@@ -391,23 +405,21 @@ REMAINING before release validation:
 Reduce settings overload before adding more provider and metadata-source surface
 area.
 
-- done: Move editable Discogenius app settings out of `config.toml` into
-  DB-backed settings with a UI, using Lidarr's pattern: a small `config`
-  key/value table, typed service accessors, defaults in code, an in-memory
-  cache, and cache invalidation on writes. Avoid reading the TOML file on hot
-  request paths.
-- pending: Keep bootstrap/runtime settings that must exist before SQLite opens
-  in environment variables or a small file-backed config. Do not move DB path,
-  auth bootstrap secrets, host/port, or container identity into DB-only storage.
+- done: Centralized editable Discogenius app settings back through the file-backed
+  `config.toml` service with normalized typed accessors and cache invalidation on
+  writes. The DB-backed override layer was removed so UI, API routes, workers,
+  and curation all read the same runtime source.
+- done: Keep bootstrap/runtime settings that must exist before SQLite opens in
+  environment variables or file-backed config. DB path, auth bootstrap secrets,
+  host/port, and container identity are not DB-only storage.
 - pending: Treat tiddl/Tidarr-style downloader configuration separately from
   app settings. Tidarr edits `.tiddl/config.toml` directly and reloads it into
   process memory; Discogenius should keep tiddl-owned auth/config files under
   `/config/providers/tidal/.tiddl` and only mirror normalized UI settings into
   DB when the app needs typed policy decisions.
-- done: Add a settings-write path that batches/saves changes through a
-  service layer, clears the settings cache, and emits a config-changed event.
-  This must avoid chatty per-control writes and must not add long synchronous DB
-  work to high-traffic routes.
+- done: Settings writes batch through the config service and clear the file cache,
+  avoiding a split DB/file override path and avoiding synchronous DB work for
+  settings changes.
 - done: Redesign connected-provider settings so each provider gets a compact
   connection card with status, primary actions, and capability summary. Move
   advanced/token/backend details behind disclosure panels or diagnostics instead
@@ -573,15 +585,16 @@ These tasks can land in any release above if they unblock that release.
   Model recording↔artist-credit as a queryable relation (primary + featured) —
   fits the curated-column/refresh-port schema work. Identity stays recording MBID
   (already what curation dedups on); ISRC remains matching evidence only.
-- pending: Remove curation's title-based dedup fallback. `Tracks.recording_mbid`
+- done (2026-07-01): Removed curation's title-based dedup fallback.
+  `Tracks.recording_mbid`
   is NOT NULL and MB-sourced, so curation always has the recording MBID — the
   `normalizedTitles` fallback in `getPreferredReleaseRecordings` /
   redundancy filter is not just redundant but harmful (two different recordings
   sharing a title — studio vs. live, or unrelated same-named songs — get wrongly
   merged, dropping a release group with unique songs). Dedup/redundancy by
-  recording MBID only (guard that it's a valid MBID). KEEP the title+duration/
-  position/version fallback in PROVIDER/import matching, where UPC/ISRC may be
-  absent and a weaker key is a legitimate fallback — different context.
+  recording MBID only (guarded to MusicBrainz-shaped MBIDs). The title+duration/
+  position/version fallback remains in PROVIDER/import matching, where UPC/ISRC
+  may be absent and a weaker key is a legitimate fallback — different context.
 - pending: Add curation tests for edition choice affecting global coverage:
   verify that a smaller edition plus one EP can beat a larger edition that
   forces multiple singles or leaves recordings unavailable.

@@ -26,6 +26,10 @@ function assertRetiredProviderCatalogTablesAbsent() {
   assert.deepEqual(rows, []);
 }
 
+function testRecordingMbid(index: number): string {
+  return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
 function writeTestConfig(overrides?: {
   includeCompilation?: boolean;
   includeSingle?: boolean;
@@ -128,6 +132,50 @@ db.prepare(`
   const canonicalVideo = db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(101) as any;
   assert.equal(canonicalVideo.Monitor, 0);
   assertRetiredProviderCatalogTablesAbsent();
+});
+
+test("CurationService monitors canonical videos when video curation is enabled and respects locks", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_videos: true,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, monitored, monitored_lock)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(201, "video-rec-1", "artist-mbid-1", "Bohemian Rhapsody", 1, 0, 0);
+
+  db.prepare(`
+    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, monitored, monitored_lock)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(202, "video-rec-2", "artist-mbid-1", "We Will Rock You", 1, 0, 1);
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const rows = db.prepare(`
+    SELECT id, monitored
+    FROM Recordings
+    WHERE id IN (201, 202)
+    ORDER BY id
+  `).all() as Array<{ id: number; monitored: number }>;
+
+  assert.deepEqual(rows, [
+    { id: 201, monitored: 1 },
+    { id: 202, monitored: 0 },
+  ]);
 });
 
 test("CurationService unmonitors release-group slot without mutating provider album or track rows", async () => {
@@ -784,19 +832,21 @@ test("CurationService marks Single redundant if contained in an EP", async () =>
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-1", "And?");
-  insertRecording.run("rec-2", "Other Track");
+  const containedRecordingMbid = testRecordingMbid(1);
+  const otherRecordingMbid = testRecordingMbid(2);
+  insertRecording.run(containedRecordingMbid, "And?");
+  insertRecording.run(otherRecordingMbid, "Other Track");
 
   // Insert Tracks for EP (contains rec-1 and rec-2)
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-ep-1", "release-ep", "rec-1", 1, 1, "1", "And?", 200000);
-  insertTrack.run("track-ep-2", "release-ep", "rec-2", 1, 2, "2", "Other Track", 200000);
+  insertTrack.run("track-ep-1", "release-ep", containedRecordingMbid, 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep", otherRecordingMbid, 1, 2, "2", "Other Track", 200000);
 
   // Insert Track for Single (contains rec-1)
-  insertTrack.run("track-single-1", "release-single", "rec-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-single-1", "release-single", containedRecordingMbid, 1, 1, "1", "And?", 200000);
 
   // Configure filtering to include both EPs and Singles
   writeTestConfig({
@@ -858,22 +908,25 @@ test("CurationService marks Album redundant if contained in a Compilation", asyn
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-1", "Pompeii");
-  insertRecording.run("rec-2", "Things We Lost in the Fire");
-  insertRecording.run("rec-3", "Flaws");
+  const pompeiiRecordingMbid = testRecordingMbid(11);
+  const thingsRecordingMbid = testRecordingMbid(12);
+  const flawsRecordingMbid = testRecordingMbid(13);
+  insertRecording.run(pompeiiRecordingMbid, "Pompeii");
+  insertRecording.run(thingsRecordingMbid, "Things We Lost in the Fire");
+  insertRecording.run(flawsRecordingMbid, "Flaws");
 
   // Insert Tracks for Compilation (contains Pompeii, Things We Lost, and Flaws)
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-comp-1", "release-compilation", "rec-1", 1, 1, "1", "Pompeii", 200000);
-  insertTrack.run("track-comp-2", "release-compilation", "rec-2", 1, 2, "2", "Things We Lost in the Fire", 200000);
-  insertTrack.run("track-comp-3", "release-compilation", "rec-3", 1, 3, "3", "Flaws", 200000);
+  insertTrack.run("track-comp-1", "release-compilation", pompeiiRecordingMbid, 1, 1, "1", "Pompeii", 200000);
+  insertTrack.run("track-comp-2", "release-compilation", thingsRecordingMbid, 1, 2, "2", "Things We Lost in the Fire", 200000);
+  insertTrack.run("track-comp-3", "release-compilation", flawsRecordingMbid, 1, 3, "3", "Flaws", 200000);
 
   // Insert Tracks for Album (contains Pompeii and Things We Lost)
-  insertTrack.run("track-alb-1", "release-album", "rec-1", 1, 1, "1", "Pompeii", 200000);
-  insertTrack.run("track-alb-2", "release-album", "rec-2", 1, 2, "2", "Things We Lost in the Fire", 200000);
+  insertTrack.run("track-alb-1", "release-album", pompeiiRecordingMbid, 1, 1, "1", "Pompeii", 200000);
+  insertTrack.run("track-alb-2", "release-album", thingsRecordingMbid, 1, 2, "2", "Things We Lost in the Fire", 200000);
 
   // Configure filtering to include both Album and Compilation
   writeTestConfig({
@@ -943,19 +996,21 @@ test("CurationService uses fallback release when preferred release has no tracks
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-1", "And?");
-  insertRecording.run("rec-2", "Other Track");
+  const fallbackContainedRecordingMbid = testRecordingMbid(21);
+  const fallbackOtherRecordingMbid = testRecordingMbid(22);
+  insertRecording.run(fallbackContainedRecordingMbid, "And?");
+  insertRecording.run(fallbackOtherRecordingMbid, "Other Track");
 
   // Insert Tracks only for the fallback release of EP, none for the preferred release!
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-ep-1", "release-ep-fallback", "rec-1", 1, 1, "1", "And?", 200000);
-  insertTrack.run("track-ep-2", "release-ep-fallback", "rec-2", 1, 2, "2", "Other Track", 200000);
+  insertTrack.run("track-ep-1", "release-ep-fallback", fallbackContainedRecordingMbid, 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep-fallback", fallbackOtherRecordingMbid, 1, 2, "2", "Other Track", 200000);
 
   // Insert Track for Single
-  insertTrack.run("track-single-1", "release-single", "rec-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-single-1", "release-single", fallbackContainedRecordingMbid, 1, 1, "1", "And?", 200000);
 
   // Configure filtering to include both EPs and Singles
   writeTestConfig({
@@ -1038,7 +1093,7 @@ test("CurationService respects require_provider_availability filter", async () =
   assert.equal(slot2.wanted, 0); // Unmatched slot should NOT be wanted
 });
 
-test("CurationService marks Single redundant if contained in an EP by track title matching even if recording MBIDs differ", async () => {
+test("CurationService keeps same-title Single when recording MBIDs differ", async () => {
   const { db } = dbModule;
 
   // Insert artist
@@ -1078,20 +1133,23 @@ test("CurationService marks Single redundant if contained in an EP by track titl
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-ep-1", "And?");
-  insertRecording.run("rec-ep-2", "Other Track");
-  insertRecording.run("rec-single-1", "And?");
+  const epRecordingMbid = testRecordingMbid(31);
+  const otherRecordingMbid = testRecordingMbid(32);
+  const singleRecordingMbid = testRecordingMbid(33);
+  insertRecording.run(epRecordingMbid, "And?");
+  insertRecording.run(otherRecordingMbid, "Other Track");
+  insertRecording.run(singleRecordingMbid, "And?");
 
   // Insert Tracks for EP
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-ep-1", "release-ep", "rec-ep-1", 1, 1, "1", "And?", 200000);
-  insertTrack.run("track-ep-2", "release-ep", "rec-ep-2", 1, 2, "2", "Other Track", 200000);
+  insertTrack.run("track-ep-1", "release-ep", epRecordingMbid, 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-ep-2", "release-ep", otherRecordingMbid, 1, 2, "2", "Other Track", 200000);
 
   // Insert Track for Single with different recording MBID
-  insertTrack.run("track-single-1", "release-single", "rec-single-1", 1, 1, "1", "And?", 200000);
+  insertTrack.run("track-single-1", "release-single", singleRecordingMbid, 1, 1, "1", "And?", 200000);
 
   // Configure filtering to include both EPs and Singles
   writeTestConfig({
@@ -1110,10 +1168,10 @@ test("CurationService marks Single redundant if contained in an EP by track titl
   const singleSlot = db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get("rg-single") as any;
 
   assert.equal(epSlot.wanted, 1);
-  assert.equal(singleSlot.wanted, 0); // Single should be redundant because the track title matches!
+  assert.equal(singleSlot.wanted, 1);
 });
 
-test("CurationService does not mark Single redundant if contained in an Album by track title matching with edit suffix when recording IDs differ", async () => {
+test("CurationService does not mark Single redundant if title edit suffix differs and recording IDs differ", async () => {
   const { db } = dbModule;
 
   // Insert artist
@@ -1149,20 +1207,23 @@ test("CurationService does not mark Single redundant if contained in an Album by
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-album-edit-1", "Killing Me Softly With His Song");
-  insertRecording.run("rec-album-edit-2", "Other Track");
-  insertRecording.run("rec-single-edit-1", "Killing Me Softly With His Song (edit)");
+  const albumEditRecordingMbid = testRecordingMbid(41);
+  const albumOtherRecordingMbid = testRecordingMbid(42);
+  const singleEditRecordingMbid = testRecordingMbid(43);
+  insertRecording.run(albumEditRecordingMbid, "Killing Me Softly With His Song");
+  insertRecording.run(albumOtherRecordingMbid, "Other Track");
+  insertRecording.run(singleEditRecordingMbid, "Killing Me Softly With His Song (edit)");
 
   // Insert Tracks for Album
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-album-edit-1", "release-album-edit", "rec-album-edit-1", 1, 1, "1", "Killing Me Softly With His Song", 200000);
-  insertTrack.run("track-album-edit-2", "release-album-edit", "rec-album-edit-2", 1, 2, "2", "Other Track", 200000);
+  insertTrack.run("track-album-edit-1", "release-album-edit", albumEditRecordingMbid, 1, 1, "1", "Killing Me Softly With His Song", 200000);
+  insertTrack.run("track-album-edit-2", "release-album-edit", albumOtherRecordingMbid, 1, 2, "2", "Other Track", 200000);
 
   // Insert Track for Single with different recording MBID and (edit) suffix
-  insertTrack.run("track-single-edit-1", "release-single-edit", "rec-single-edit-1", 1, 1, "1", "Killing Me Softly With His Song (edit)", 200000);
+  insertTrack.run("track-single-edit-1", "release-single-edit", singleEditRecordingMbid, 1, 1, "1", "Killing Me Softly With His Song (edit)", 200000);
 
   // Configure filtering to include both Albums and Singles
   writeTestConfig({
@@ -1220,19 +1281,21 @@ test("CurationService marks a single redundant when its parent album is present 
     INSERT INTO Recordings (mbid, title)
     VALUES (?, ?)
   `);
-  insertRecording.run("rec-bohemian-rhapsody", "Bohemian Rhapsody");
-  insertRecording.run("rec-other-track", "Death on Two Legs");
+  const bohemianRecordingMbid = testRecordingMbid(51);
+  const deathRecordingMbid = testRecordingMbid(52);
+  insertRecording.run(bohemianRecordingMbid, "Bohemian Rhapsody");
+  insertRecording.run(deathRecordingMbid, "Death on Two Legs");
 
   // Insert Tracks for Album
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertTrack.run("track-album-1", "release-album-unmatched", "rec-bohemian-rhapsody", 1, 1, "1", "Bohemian Rhapsody", 355000);
-  insertTrack.run("track-album-2", "release-album-unmatched", "rec-other-track", 1, 2, "2", "Death on Two Legs", 200000);
+  insertTrack.run("track-album-1", "release-album-unmatched", bohemianRecordingMbid, 1, 1, "1", "Bohemian Rhapsody", 355000);
+  insertTrack.run("track-album-2", "release-album-unmatched", deathRecordingMbid, 1, 2, "2", "Death on Two Legs", 200000);
 
   // Insert Track for Single (identical recording MBID)
-  insertTrack.run("track-single-1", "release-single-matched", "rec-bohemian-rhapsody", 1, 1, "1", "Bohemian Rhapsody", 355000);
+  insertTrack.run("track-single-1", "release-single-matched", bohemianRecordingMbid, 1, 1, "1", "Bohemian Rhapsody", 355000);
 
   // Configure slots in DB:
   // Album slot has NO selected provider (selected_provider = NULL, selected_provider_id = NULL)

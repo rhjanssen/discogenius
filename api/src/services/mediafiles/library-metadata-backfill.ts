@@ -479,7 +479,6 @@ class LibraryMetadataBackfillService {
           WHERE lyric.library_slot IS track.library_slot
             AND (
               (lyric.provider_entity_type = 'track' AND CAST(lyric.provider_id AS TEXT) = CAST(track.provider_id AS TEXT))
-              OR CAST(lyric.media_id AS TEXT) = CAST(track.provider_id AS TEXT)
               OR (
                 track.canonical_recording_mbid IS NOT NULL
                 AND lyric.canonical_recording_mbid = track.canonical_recording_mbid
@@ -598,7 +597,10 @@ class LibraryMetadataBackfillService {
           SELECT 1 FROM MetadataFiles mf
           WHERE (
               (mf.provider_entity_type = 'video' AND CAST(mf.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, pi.provider_id) AS TEXT))
-              OR CAST(mf.media_id AS TEXT) = CAST(COALESCE(lf.provider_id, pi.provider_id) AS TEXT)
+              OR (
+                lf.canonical_recording_mbid IS NOT NULL
+                AND mf.canonical_recording_mbid = lf.canonical_recording_mbid
+              )
             )
             AND mf.file_type = 'video_thumbnail'
         )

@@ -269,17 +269,15 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
 
     dbModule.db.prepare(`
         INSERT INTO LyricFiles(
-            artist_id, album_id, media_id,
+            artist_id,
             canonical_artist_mbid, canonical_release_group_mbid, canonical_recording_mbid,
             provider, provider_entity_type, provider_id, library_slot,
             file_path, relative_path, library_root, extension,
             quality, expected_path
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "100",
-        "200",
-        "stereo-track",
         "artist-mbid-100",
         "release-group-mbid-200",
         "recording-stereo",

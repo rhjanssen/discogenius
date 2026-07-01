@@ -1,19 +1,18 @@
 import {
   makeStyles,
   tokens,
-  Card,
   Badge,
+  Button,
   Title3,
   Body1,
 } from "@fluentui/react-components";
 import {
+  ArrowDownload16Regular,
   Play24Regular,
-  Eye24Regular,
-  EyeOff24Regular,
-  ArrowDownload24Regular,
 } from "@fluentui/react-icons";
+import { MediaCard } from "@/components/cards/MediaCard";
+import { useGridStyles } from "@/components/cards/cardStyles";
 import { renderableArtworkUrl } from "@/utils/artwork";
-import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
 
@@ -22,191 +21,6 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalL,
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: tokens.spacingHorizontalS,
-    "@media (min-width: 640px)": {
-      gridTemplateColumns: "repeat(4, 1fr)",
-      gap: tokens.spacingHorizontalM,
-    },
-    "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(6, 1fr)",
-      gap: tokens.spacingHorizontalM,
-    },
-  },
-  card: {
-    display: "flex",
-    flexDirection: "column",
-    width: "100%",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    backdropFilter: "blur(10px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
-    cursor: "pointer",
-    boxShadow: tokens.shadow8,
-    transition: `all ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    padding: tokens.spacingVerticalNone,
-    "&:hover": {
-      transform: "translateY(-2px)",
-      boxShadow: tokens.shadow28,
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-      border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
-    },
-    "&:active": {
-      transform: "translateY(0px)",
-      boxShadow: tokens.shadow8,
-    },
-  },
-  videoPreview: {
-    position: "relative",
-    aspectRatio: "3/2",
-    width: "100%",
-    backgroundColor: tokens.colorNeutralBackground3,
-    overflow: "hidden",
-  },
-  videoImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    display: "block",
-  },
-  videoFallback: {
-    width: "100%",
-    height: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: tokens.colorNeutralBackground4,
-    color: tokens.colorNeutralForeground3,
-  },
-  playIcon: {
-    width: "48px",
-    height: "48px",
-  },
-  monitorIcon: {
-    width: "16px",
-    height: "16px",
-    color: tokens.colorNeutralForeground2,
-  },
-  monitorIconMuted: {
-    width: "16px",
-    height: "16px",
-    color: tokens.colorNeutralForegroundDisabled,
-  },
-  overlayControls: {
-    position: "absolute",
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: tokens.colorBackgroundOverlay,
-    opacity: 0,
-    transition: `opacity ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    "&:hover": {
-      opacity: 1,
-    },
-  },
-  statusBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-  },
-  qualityBadge: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-    zIndex: 2,
-  },
-  monitorIndicator: {
-    position: "absolute",
-    bottom: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-    zIndex: 2,
-    width: "24px",
-    height: "24px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: tokens.borderRadiusCircular,
-    backdropFilter: "blur(20px)",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    cursor: "pointer",
-    border: "none",
-    padding: 0,
-    transition: `transform ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    "&:hover": {
-      transform: "scale(1.05)",
-    },
-  },
-  downloadIndicator: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-    zIndex: 2,
-    width: "24px",
-    height: "24px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: tokens.borderRadiusCircular,
-    backdropFilter: "blur(20px)",
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    cursor: "pointer",
-    border: "none",
-    padding: 0,
-    transition: `transform ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    "&:hover": {
-      transform: "scale(1.05)",
-    },
-  },
-  downloadIcon: {
-    width: "16px",
-    height: "16px",
-    color: tokens.colorNeutralForeground2,
-  },
-  durationBadge: {
-    position: "absolute",
-    bottom: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-    fontSize: tokens.fontSizeBase200,
-    fontWeight: tokens.fontWeightSemibold,
-  },
-  cardContent: {
-    padding: tokens.spacingVerticalM,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-    minHeight: "80px",
-  },
-  videoTitle: {
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    lineHeight: tokens.lineHeightBase300,
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    minWidth: 0,
-  },
-  videoTitleText: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    minWidth: 0,
-    flexGrow: 1,
-  },
-  artistName: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    lineHeight: tokens.lineHeightBase200,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  explicitBadge: {
-    marginLeft: tokens.spacingHorizontalXS,
   },
   noVideos: {
     padding: tokens.spacingVerticalXXXL,
@@ -220,13 +34,36 @@ const useStyles = makeStyles({
   noVideosText: {
     color: tokens.colorNeutralForeground2,
   },
-  artistSubtitle: {
+  durationBadge: {
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    color: tokens.colorNeutralForeground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+    backdropFilter: "blur(20px)",
     fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  downloadButton: {
+    minWidth: 0,
+    width: "24px",
+    height: "24px",
+    padding: 0,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    color: tokens.colorNeutralForeground2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+    backdropFilter: "blur(20px)",
+  },
+  placeholder: {
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: tokens.colorNeutralBackground4,
     color: tokens.colorNeutralForeground3,
-    lineHeight: tokens.lineHeightBase200,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+  },
+  placeholderIcon: {
+    width: "48px",
+    height: "48px",
   },
 });
 
@@ -236,7 +73,6 @@ export interface Video {
   duration: number;
   release_date?: string | null;
   version?: string | null;
-
   explicit?: boolean;
   quality?: string | null;
   cover?: string | null;
@@ -259,18 +95,16 @@ interface VideoGridProps {
   onOpenVideo?: (video: Video) => void;
 }
 
+const formatDuration = (seconds: number): string => {
+  const totalSeconds = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
+};
+
 const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }: VideoGridProps) => {
   const styles = useStyles();
-
-  const formatDuration = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) {
-      return `${minutes} MIN`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}:${mins.toString().padStart(2, "0")} HR`;
-  };
+  const gridStyles = useGridStyles();
 
   const handleVideoClick = (video: Video) => {
     if (onOpenVideo) {
@@ -282,12 +116,10 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
     }
   };
 
-
-
   if (loading) {
     return (
       <div className={styles.container}>
-        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" className={styles.grid} />
+        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" className={gridStyles.grid} />
       </div>
     );
   }
@@ -307,87 +139,52 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
 
   return (
     <div className={styles.container}>
-      <div className={styles.grid}>
-        {videos.map((video) => (
-          <Card
-            key={video.id}
-            className={styles.card}
-            onClick={() => handleVideoClick(video)}
-          >
-            <div className={styles.videoPreview}>
-              {renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) ? (
-                <img
-                  src={renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) || ''}
-                  alt={video.title}
-                  className={styles.videoImage}
-                  decoding="async"
-                />
-              ) : (
-                <div className={styles.videoFallback}>
-                  <Play24Regular className={styles.playIcon} />
+      <div className={gridStyles.grid}>
+        {videos.map((video) => {
+          const imageUrl = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
+          const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
+          const subtitle = [video.artist_name || "Unknown Artist", year || ""].filter(Boolean).join(" · ");
+
+          return (
+            <MediaCard
+              key={video.id}
+              imageUrl={imageUrl}
+              alt={video.title}
+              title={video.title}
+              subtitle={subtitle}
+              explicit={video.explicit}
+              monitored={video.is_monitored}
+              videoAspect
+              onClick={() => handleVideoClick(video)}
+              onMonitorToggle={onToggleMonitor ? () => onToggleMonitor(video) : undefined}
+              placeholder={(
+                <div className={styles.placeholder}>
+                  <Play24Regular className={styles.placeholderIcon} />
                 </div>
               )}
-
-              {/* Status badge (top right) - downloaded indicator */}
-              {video.is_downloaded && (
-                <DownloadedBadge className={styles.statusBadge} />
-              )}
-
-              {!video.is_downloaded && onDownload ? (
-                <button
-                  type="button"
-                  className={styles.downloadIndicator}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDownload(video);
-                  }}
+              statusBadge={video.is_downloaded ? (
+                <DownloadedBadge />
+              ) : onDownload ? (
+                <Button
+                  appearance="subtle"
+                  icon={<ArrowDownload16Regular />}
+                  className={styles.downloadButton}
                   title="Download video"
                   aria-label="Download video"
-                >
-                  <ArrowDownload24Regular className={styles.downloadIcon} />
-                </button>
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDownload(video);
+                  }}
+                />
               ) : null}
-
-              {/* Duration badge (bottom left) */}
-              <Badge appearance="filled" className={styles.durationBadge}>
-                {formatDuration(video.duration)}
-              </Badge>
-
-              {/* Monitor indicator (bottom right) */}
-              <button
-                type="button"
-                className={styles.monitorIndicator}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleMonitor?.(video);
-                }}
-                title={video.is_monitored ? "Unmonitor" : "Monitor"}
-                aria-pressed={video.is_monitored}
-                aria-label={video.is_monitored ? "Unmonitor video" : "Monitor video"}
-              >
-                {video.is_monitored ? (
-                  <EyeOff24Regular className={styles.monitorIcon} />
-                ) : (
-                  <Eye24Regular className={styles.monitorIcon} />
-                )}
-              </button>
-            </div>
-
-            <div className={styles.cardContent}>
-              <div className={styles.videoTitle}>
-                <span className={styles.videoTitleText} title={video.title}>
-                  {video.title}
-                </span>
-                {video.explicit ? (
-                  <ExplicitBadge className={styles.explicitBadge} />
-                ) : null}
-              </div>
-              <div className={styles.artistSubtitle}>
-                {[video.artist_name || "Unknown Artist", video.release_date ? new Date(video.release_date).getFullYear() : ''].filter(Boolean).join(' · ')}
-              </div>
-            </div>
-          </Card>
-        ))}
+              bottomLeftBadge={(
+                <Badge appearance="outline" className={styles.durationBadge}>
+                  {formatDuration(video.duration)}
+                </Badge>
+              )}
+            />
+          );
+        })}
       </div>
     </div>
   );

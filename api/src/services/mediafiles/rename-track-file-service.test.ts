@@ -531,23 +531,22 @@ test("RenameTrackFileService replicates canonical lyrics across separated roots 
   assert.equal(fs.readFileSync(expectedSpatialLyricPath, "utf8"), "[00:00.00]Canonical lyric");
 
   const replicatedLyric = dbModule.db.prepare(`
-    SELECT album_id AS albumId, media_id AS mediaId, track_file_id AS trackFileId,
+    SELECT track_file_id AS trackFileId,
+           canonical_release_group_mbid AS canonicalReleaseGroupMbid,
            canonical_track_mbid AS canonicalTrackMbid,
            canonical_recording_mbid AS canonicalRecordingMbid,
            library_slot AS librarySlot
     FROM LyricFiles
     WHERE file_path = ?
   `).get(expectedSpatialLyricPath) as {
-    albumId: string | null;
-    mediaId: string | null;
     trackFileId: number | null;
+    canonicalReleaseGroupMbid: string | null;
     canonicalTrackMbid: string | null;
     canonicalRecordingMbid: string | null;
     librarySlot: string;
   };
 
-  assert.equal(replicatedLyric.albumId, null);
-  assert.equal(replicatedLyric.mediaId, null);
+  assert.equal(replicatedLyric.canonicalReleaseGroupMbid, "release-group-mbid-1");
   assert.equal(replicatedLyric.canonicalTrackMbid, "track-mbid-1");
   assert.equal(replicatedLyric.canonicalRecordingMbid, "recording-mbid-1");
   assert.equal(replicatedLyric.librarySlot, "spatial");
@@ -625,21 +624,29 @@ dbModule.db.prepare(`
   assert.equal(fs.readFileSync(expectedSpatialCoverPath, "utf8"), "cover-bytes");
 
   const replicatedCover = dbModule.db.prepare(`
-    SELECT album_id AS albumId, media_id AS mediaId, provider, provider_entity_type AS providerEntityType,
+    SELECT canonical_release_group_mbid AS canonicalReleaseGroupMbid,
+           canonical_release_mbid AS canonicalReleaseMbid,
+           canonical_track_mbid AS canonicalTrackMbid,
+           canonical_recording_mbid AS canonicalRecordingMbid,
+           provider, provider_entity_type AS providerEntityType,
            provider_id AS providerId, library_slot AS librarySlot
     FROM MetadataFiles
     WHERE file_path = ?
   `).get(expectedSpatialCoverPath) as {
-    albumId: string | null;
-    mediaId: string | null;
+    canonicalReleaseGroupMbid: string | null;
+    canonicalReleaseMbid: string | null;
+    canonicalTrackMbid: string | null;
+    canonicalRecordingMbid: string | null;
     provider: string | null;
     providerEntityType: string | null;
     providerId: string | null;
     librarySlot: string;
   };
 
-  assert.equal(replicatedCover.albumId, "20");
-  assert.equal(replicatedCover.mediaId, null);
+  assert.equal(replicatedCover.canonicalReleaseGroupMbid, "release-group-mbid-1");
+  assert.equal(replicatedCover.canonicalReleaseMbid, "release-mbid-1");
+  assert.equal(replicatedCover.canonicalTrackMbid, null);
+  assert.equal(replicatedCover.canonicalRecordingMbid, null);
   assert.equal(replicatedCover.provider, "tidal");
   assert.equal(replicatedCover.providerEntityType, "album");
   assert.equal(replicatedCover.providerId, "20");

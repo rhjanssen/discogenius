@@ -1109,7 +1109,7 @@ export class ArtistQueryService {
         const bio = artist.bio_text || null;
         const artistFiles = LibraryFilesService.resolveExistingFiles(db.prepare(`
       SELECT id AS id,
-        media_id AS media_id,
+        COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
         file_type AS file_type,
         file_path AS file_path,
         relative_path AS relative_path,
@@ -1125,14 +1125,16 @@ export class ArtistQueryService {
         NULL AS duration
       FROM MetadataFiles
       WHERE artist_id = ?
-        AND album_id IS NULL
-        AND media_id IS NULL
+        AND canonical_release_group_mbid IS NULL
+        AND canonical_release_mbid IS NULL
+        AND canonical_track_mbid IS NULL
+        AND canonical_recording_mbid IS NULL
         AND file_type IN ('cover', 'bio')
 
       UNION ALL
 
       SELECT id AS id,
-        media_id AS media_id,
+        COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
         file_type AS file_type,
         file_path AS file_path,
         relative_path AS relative_path,
@@ -1148,8 +1150,10 @@ export class ArtistQueryService {
         NULL AS duration
       FROM ExtraFiles
       WHERE artist_id = ?
-        AND album_id IS NULL
-        AND media_id IS NULL
+        AND canonical_release_group_mbid IS NULL
+        AND canonical_release_mbid IS NULL
+        AND canonical_track_mbid IS NULL
+        AND canonical_recording_mbid IS NULL
         AND file_type IN ('cover', 'bio')
       ORDER BY file_type ASC, id ASC
     `).all(artistId, artistId) as any[]);

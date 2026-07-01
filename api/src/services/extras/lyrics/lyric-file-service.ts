@@ -4,9 +4,7 @@ import { ExtraFileService, type ExtraFileUpsertInput } from "../files/extra-file
 export type LyricFileRow = {
   id: number;
   artist_id: string;
-  album_id: string | null;
   track_file_id: number | null;
-  media_id: string | null;
   relative_path: string;
   file_path: string;
   library_root: string;
@@ -25,19 +23,17 @@ export class LyricFileService {
 
     const info = db.prepare(`
       INSERT INTO LyricFiles (
-        artist_id, album_id, track_file_id, media_id,
+        artist_id, track_file_id,
         relative_path, file_path, library_root, extension,
         provider, provider_entity_type, provider_id,
         library_slot, quality,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         expected_path, needs_rename, last_updated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
-        album_id = excluded.album_id,
         track_file_id = excluded.track_file_id,
-        media_id = excluded.media_id,
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         extension = excluded.extension,
@@ -56,9 +52,7 @@ export class LyricFileService {
         last_updated = CURRENT_TIMESTAMP
     `).run(
       base.artist_id,
-      base.album_id,
       base.track_file_id,
-      base.media_id,
       base.relative_path,
       base.file_path,
       base.library_root,
@@ -89,10 +83,9 @@ export class LyricFileService {
           AND provider_entity_type = 'track'
           AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         )
-        OR CAST(media_id AS TEXT) = CAST(? AS TEXT)
       ORDER BY last_updated DESC, id DESC
       LIMIT 1
-    `).get(provider, providerTrackId, providerTrackId) as LyricFileRow | undefined) ?? null;
+    `).get(provider, providerTrackId) as LyricFileRow | undefined) ?? null;
   }
 
   static findByForeignRecording(foreignRecordingId: string): LyricFileRow | null {
