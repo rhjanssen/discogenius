@@ -456,11 +456,14 @@ area.
 - done: Keep bootstrap/runtime settings that must exist before SQLite opens in
   environment variables or file-backed config. DB path, auth bootstrap secrets,
   host/port, and container identity are not DB-only storage.
-- pending: Treat tiddl/Tidarr-style downloader configuration separately from
-  app settings. Tidarr edits `.tiddl/config.toml` directly and reloads it into
-  process memory; Discogenius should keep tiddl-owned auth/config files under
-  `/config/providers/tidal/.tiddl` and only mirror normalized UI settings into
-  DB when the app needs typed policy decisions.
+- done (verified 2026-07-01, already satisfied by earlier work): tiddl/Tidarr-
+  style downloader configuration is separate from app settings. tiddl owns
+  `TIDDL_AUTH_FILE`/`TIDDL_CONFIG_FILE` under `/config/providers/tidal/.tiddl`
+  (`api/src/services/providers/tidal/tiddl.ts`) — the TIDAL auth token lives
+  ONLY there (grep-confirmed: not duplicated into `config.ts`/DB anywhere).
+  `syncTiddlSettings()` one-way mirrors specific normalized Discogenius
+  settings (embed_cover, embed_lyrics, video_quality) into tiddl's own
+  config.toml; nothing flows the other direction.
 - done: Settings writes batch through the config service and clear the file cache,
   avoiding a split DB/file override path and avoiding synchronous DB work for
   settings changes.
