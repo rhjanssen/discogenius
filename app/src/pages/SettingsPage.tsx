@@ -1924,27 +1924,6 @@ const SettingsPage = () => {
                         </div>
 
                         {renderToggleRow({
-                            title: "Embed Cover Art",
-                            description: "Ask the downloader to embed album artwork in supported downloaded audio files.",
-                            checked: qualitySettings?.embed_cover !== false,
-                            onChange: (checked) => updateQualitySettings({ embed_cover: checked }),
-                        })}
-
-                        {renderToggleRow({
-                            title: "Embed Lyrics",
-                            description: "Write lyrics into supported audio files. Synced lyrics are used when available.",
-                            checked: qualitySettings?.embed_lyrics === true,
-                            onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
-                        })}
-
-                        {renderToggleRow({
-                            title: "Embed Album Review",
-                            description: "Write the album review into the comment tag of each track.",
-                            checked: metadataSettings?.embed_album_review === true,
-                            onChange: (checked) => updateMetadataSettings({ embed_album_review: checked }),
-                        })}
-
-                        {renderToggleRow({
                             title: "Save Album Covers",
                             description: "Save cover art in the album folder. Animated covers are kept when available.",
                             checked: metadataSettings?.save_album_cover === true,
@@ -1977,12 +1956,6 @@ const SettingsPage = () => {
                             description: "Save a thumbnail image next to each video.",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Embed Video Thumbnails",
-                            description: "Write a thumbnail into supported video files.",
-                            checked: metadataSettings?.embed_video_thumbnail !== false,
-                            onChange: (checked) => updateMetadataSettings({ embed_video_thumbnail: checked }),
                         })}
 
                         {renderToggleRow({

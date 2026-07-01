@@ -569,6 +569,52 @@ export class DiskScanService {
     }
 
     /**
+     * When "Create empty artist folders" just created folders for a monitored
+     * artist that has nothing downloaded yet, drop the artist picture and NFO in
+     * too so the folder is immediately usable by a media server. Respects the
+     * user's Save Artist Pictures / Save NFO Files choices, and never overwrites
+     * files that already exist. Best-effort: a failure here never fails the scan.
+     */
+    private static async populateEmptyArtistFolderMetadata(artistId: string, folders: string[]): Promise<void> {
+        try {
+            const metadataConfig = getConfigSection("metadata");
+            const wantPicture = metadataConfig.save_artist_picture === true;
+            const wantNfo = metadataConfig.save_nfo === true;
+            if (!wantPicture && !wantNfo) {
+                return;
+            }
+
+            const { downloadArtistPicture, saveArtistNfoFile } = await import("./metadata-files.js");
+            const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
+
+            for (const folder of folders) {
+                if (wantPicture) {
+                    const picPath = path.join(folder, artistPicName);
+                    if (!fs.existsSync(picPath)) {
+                        try {
+                            await downloadArtistPicture(artistId, "origin", picPath);
+                        } catch (error) {
+                            console.warn(`[DiskScan] Failed to write artist picture for empty folder ${folder}:`, error);
+                        }
+                    }
+                }
+                if (wantNfo) {
+                    const nfoPath = path.join(folder, "artist.nfo");
+                    if (!fs.existsSync(nfoPath)) {
+                        try {
+                            await saveArtistNfoFile(artistId, nfoPath);
+                        } catch (error) {
+                            console.warn(`[DiskScan] Failed to write artist NFO for empty folder ${folder}:`, error);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`[DiskScan] populateEmptyArtistFolderMetadata failed for artist ${artistId}:`, error);
+        }
+    }
+
+    /**
      * Phase B: Walk the artist's directories on disk and index any files not yet
      * in track_files. Attempts to match files to known media by path patterns.
      *
@@ -587,7 +633,10 @@ export class DiskScanService {
         if (!artist) return { indexed: 0 };
 
         const artistFolder = resolveArtistFolderFromRecord(artist);
-        ensureEmptyArtistFoldersIfEnabled(artistFolder);
+        const ensuredEmptyFolders = ensureEmptyArtistFoldersIfEnabled(artistFolder);
+        if (ensuredEmptyFolders.length > 0) {
+            await DiskScanService.populateEmptyArtistFolderMetadata(artistId, ensuredEmptyFolders);
+        }
 
         // Collect all existing file paths for this artist (for quick lookup)
         const existingPaths = new Set(
