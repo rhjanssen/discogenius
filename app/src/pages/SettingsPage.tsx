@@ -35,6 +35,8 @@ import {
     QuestionCircle24Regular,
     Dismiss24Regular,
     Open24Regular,
+    ChevronDown24Regular,
+    ChevronUp24Regular,
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -792,6 +794,7 @@ const SettingsPage = () => {
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importProviderId, setImportProviderId] = useState<string | null>(null);
+    const [expandedProviderIds, setExpandedProviderIds] = useState<Set<string>>(new Set());
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
@@ -1455,6 +1458,18 @@ const SettingsPage = () => {
         { key: "include_demo", title: "Demo" },
     ] as const;
 
+    const toggleProviderDetails = (providerId: string) => {
+        setExpandedProviderIds((previous) => {
+            const next = new Set(previous);
+            if (next.has(providerId)) {
+                next.delete(providerId);
+            } else {
+                next.add(providerId);
+            }
+            return next;
+        });
+    };
+
     const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
         const caps = provider.capabilities;
         const stereo = caps.stereoQuality
@@ -1594,20 +1609,36 @@ const SettingsPage = () => {
                                             Import artists
                                         </Button>
                                     ) : null}
+                                    <Button
+                                        appearance="subtle"
+                                        className={styles.signOutButton}
+                                        icon={expandedProviderIds.has(provider.id) ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
+                                        iconPosition="after"
+                                        onClick={() => toggleProviderDetails(provider.id)}
+                                        aria-expanded={expandedProviderIds.has(provider.id)}
+                                    >
+                                        Details
+                                    </Button>
                                 </div>
                             </div>
-                            <div className={styles.providerActionRow}>
-                                <div className={styles.rowContent}>
-                                    <div className={styles.capabilitySummaryGrid}>
-                                        {getProviderCapabilitySummary(provider).map((capability) => (
-                                            <div key={capability.label} className={styles.capabilitySummaryItem}>
-                                                <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
-                                                <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
-                                            </div>
-                                        ))}
+                            {expandedProviderIds.has(provider.id) ? (
+                                <div className={styles.providerActionRow}>
+                                    <div className={styles.rowContent}>
+                                        <div className={styles.capabilitySummaryGrid}>
+                                            {getProviderCapabilitySummary(provider).map((capability) => (
+                                                <div key={capability.label} className={styles.capabilitySummaryItem}>
+                                                    <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
+                                                    <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <Text size={200} className={styles.mutedText}>
+                                            For provider connectivity, download-backend, and system health checks, see{" "}
+                                            <Link onClick={() => navigate("/system/status")}>System Status</Link>.
+                                        </Text>
                                     </div>
                                 </div>
-                            </div>
+                            ) : null}
                         </React.Fragment>
                     );
                 })}

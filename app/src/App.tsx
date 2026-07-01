@@ -21,6 +21,7 @@ const AlbumPage = lazy(() => import("@/pages/AlbumPage"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const VideoPage = lazy(() => import("@/pages/VideoPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const StatusPage = lazy(() => import("@/pages/StatusPage"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 const queryClient = new QueryClient({
@@ -136,6 +137,14 @@ const App = () => {
                           element={
                             <SuspendedPage pageName="Settings">
                               <SettingsPage />
+                            </SuspendedPage>
+                          }
+                        />
+                        <Route
+                          path="/system/status"
+                          element={
+                            <SuspendedPage pageName="Status">
+                              <StatusPage />
                             </SuspendedPage>
                           }
                         />

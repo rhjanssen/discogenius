@@ -66,6 +66,7 @@ import type {
   QueueStatusContract,
   StatusOverviewContract,
 } from '@contracts/status';
+import type { SystemStatusContract } from '@contracts/system-status';
 import {
   parseActivityListResponseContract,
   parseQueueDetailsResponseContract,
@@ -1180,6 +1181,10 @@ class ApiClient {
 
   async getSystemTasks(): Promise<SystemTaskContract[]> {
     return this.request('/v1/system/task', {}, parseSystemTaskListContract);
+  }
+
+  async getSystemStatus(): Promise<SystemStatusContract> {
+    return this.request('/v1/system/status');
   }
 
   async updateSystemTask(id: string, updates: UpdateSystemTaskRequestContract): Promise<SystemTaskContract> {

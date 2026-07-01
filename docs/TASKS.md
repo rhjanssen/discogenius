@@ -556,13 +556,26 @@ area.
 - pending: Review naming settings UX alongside the parser port so file/folder
   variables, previews, and examples match Lidarr terminology and behavior, with
   clearly separated Discogenius provider-token additions.
-- pending: Move provider health, catalog-source health, and download-backend
-  diagnostics into a dedicated status/diagnostics area so the main Settings page
-  stays task-oriented. DECIDED: a dedicated System/Status page (Lidarr-style
-  System → Status/Health) for cross-cutting health (token validity/expiry,
-  download-backend/tiddl health, Servarr Metadata Server reachability, rate-limit
-  metrics, last successful check). Provider cards keep only a one-line status with
-  a "Details" disclosure for provider-specific diagnostics.
+- done (2026-07-01): Added a dedicated System/Status page (Lidarr-style
+  System → Status/Health), route `/system/status`, nav icon in `Layout.tsx`.
+  Backend: new `collectHealthDiagnosticsSnapshot()`-backed route at
+  `GET /api/v1/system/status` (`api/src/routes/system-status.ts`, registered
+  next to the existing `/api/v1/system/task`), reusing the health-check
+  machinery that already existed for the container's `/health` probe
+  (`api/src/services/commands/health.ts`) but was never surfaced in the UI.
+  Frontend: `StatusPage.tsx` renders three sections — Health (path/tool
+  writability + availability checks), Download Backend (tiddl status/
+  checks/notes), and Providers (full per-provider capability chips, moved
+  out of Settings). Settings' provider cards now collapse capabilities
+  behind a "Details" toggle (one-line status + actions visible by default,
+  per the decision), with a link to System Status for cross-cutting
+  diagnostics.
+  NOT done (no backing data exists yet, left as placeholders/omitted rather
+  than fabricated): token validity/expiry (not tracked anywhere), Servarr
+  Metadata Server reachability (no such check exists — CatalogProvider
+  health is a 3.0 concept), rate-limit metrics/last-successful-check
+  (available via `/api/v1/status`'s `rateLimitMetrics` but not yet wired
+  into the new page — pending, low effort to add later).
 
 ## 2.2 - Streaming Provider Expansion
 
