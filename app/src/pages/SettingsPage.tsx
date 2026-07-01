@@ -1484,7 +1484,7 @@ const SettingsPage = () => {
         <SettingsSection
             id="streaming-providers"
             title="Streaming Providers"
-            description="Manage availability, previews, followed-artist import, downloads, and provider metadata supplements."
+            description="Connect the streaming services you download music and videos from."
             className={styles.section}
         >
             <div className={styles.card}>
@@ -1655,9 +1655,6 @@ const SettingsPage = () => {
         <div className={styles.container}>
             <div className={styles.header}>
                 <Title1>Settings</Title1>
-                <Text className={styles.mutedText}>
-                    Manage your Discogenius configuration
-                </Text>
             </div>
 
             <div className={styles.sectionsContainer} data-testid="settings-sections">
@@ -1905,19 +1902,19 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="metadata"
                     title="Metadata"
-                    description="Choose which metadata Discogenius writes into files and which companion files it keeps next to your media."
+                    description="Choose what Discogenius writes into your files and saves next to them."
                     className={styles.section}
                 >
                     <div className={styles.card}>
                         <div className={styles.subsectionHeader}>
                             <Text weight="semibold">Embedded Audio Tags</Text>
                             <Text size={200} className={styles.mutedText}>
-                                MusicBrainz identity and standard media fields written into audio files for Plex, Jellyfin, Picard, and other tag-aware clients.
+                                Details written into your audio files so music players and library apps recognise them correctly.
                             </Text>
                         </div>
                         {renderToggleRow({
                             title: "Write Audio Tags",
-                            description: "Embed Lidarr-compatible MusicBrainz IDs, titles, artists, release data, and standard audio tags.",
+                            description: "Write track, artist, album, and release details into each audio file.",
                             checked: writeAudioTagsPolicy !== "no",
                             onChange: (checked) => {
                                 updateMetadataSettings({
@@ -1933,7 +1930,7 @@ const SettingsPage = () => {
                                 <div className={styles.rowContent}>
                                     <Text weight="semibold">When To Write Tags</Text>
                                     <Text size={200} className={styles.mutedText}>
-                                        New downloads is the normal Lidarr-style path. All files also updates manual imports and existing tracked files.
+                                        Tag only newly downloaded files, or all files including ones you import and already have.
                                     </Text>
                                 </div>
                                 <Select
@@ -1995,7 +1992,7 @@ const SettingsPage = () => {
                         <div className={styles.subsectionHeader}>
                             <Text weight="semibold">Sidecar Files</Text>
                             <Text size={200} className={styles.mutedText}>
-                                Companion artwork, NFO, lyrics, and video-thumbnail files saved beside organized library files.
+                                Artwork, lyrics, and info files saved next to your media.
                             </Text>
                         </div>
 
@@ -2023,7 +2020,7 @@ const SettingsPage = () => {
                                     <div className={styles.rowContent}>
                                         <Text weight="semibold">Cover Resolution</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            Controls cached UI/provider-fallback artwork size. Saved sidecars keep the original source image when available.
+                                            Size used for artwork shown in the app. Saved cover files always use the original full resolution.
                                         </Text>
                                     </div>
                                     <Select
@@ -2044,7 +2041,7 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save Jellyfin / Kodi NFO Files",
-                            description: "Save artist.nfo, album.nfo, and per-video NFO sidecars with MusicBrainz IDs. Plex music libraries ignore NFO files.",
+                            description: "Save NFO files alongside your media. Jellyfin and Kodi read these; most other apps ignore them.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
@@ -2078,7 +2075,7 @@ const SettingsPage = () => {
                                     <div className={styles.rowContent}>
                                         <Text weight="semibold">Resolution</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            Servarr Metadata Server/source images are preferred; provider fallback may use the nearest available size
+                                            The highest available resolution is used when a smaller one isn't found.
                                         </Text>
                                     </div>
                                     <Select
@@ -2132,12 +2129,12 @@ const SettingsPage = () => {
                         <div className={styles.subsectionHeader}>
                             <Text weight="semibold">Advanced Import Verification</Text>
                             <Text size={200} className={styles.mutedText}>
-                                Optional checks for files that arrive without reliable MusicBrainz identity.
+                                Optional checks for imported files that can't be identified from their existing tags.
                             </Text>
                         </div>
                         {renderToggleRow({
                             title: "Audio Fingerprinting",
-                            description: "Use fpcalc/AcoustID as an import-verification fallback for files without clean MusicBrainz provenance",
+                            description: "Identify imported files by their audio fingerprint when their existing tags can't be trusted.",
                             checked: metadataSettings?.enable_fingerprinting === true,
                             onChange: (checked) => {
                                 updateMetadataSettings({ enable_fingerprinting: checked });
@@ -2148,9 +2145,9 @@ const SettingsPage = () => {
 
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Apply Current Audio Tag Rules To Library</Text>
+                                <Text weight="semibold">Update Tags On Existing Files</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Preview and queue updates for tracked audio files using the current tag-writing, ReplayGain, and fingerprinting settings.
+                                    Re-apply the settings above to files already in your library. Preview the changes first, then run it.
                                 </Text>
                                 <div className={styles.namingBadgeRow}>
                                     <Badge appearance="outline" color="brand">

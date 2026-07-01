@@ -12,7 +12,6 @@ import {
   Settings24Regular,
   DataUsage24Regular,
   Library24Regular,
-  PulseSquare24Regular,
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -356,14 +355,6 @@ const Layout = () => {
                   onClick={() => navigate("/settings")}
                   title="Settings"
                   aria-label="Settings"
-                  className={styles.navIconButton}
-                />
-                <Button
-                  appearance="subtle"
-                  icon={<PulseSquare24Regular />}
-                  onClick={() => navigate("/system/status")}
-                  title="Status"
-                  aria-label="Status"
                   className={styles.navIconButton}
                 />
               </div>
