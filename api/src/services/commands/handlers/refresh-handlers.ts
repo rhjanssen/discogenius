@@ -46,7 +46,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     });
 
     // Hand provider matching off to its own queued unit. That command emits
-    // ARTIST_REFRESH_COMPLETED when matching finishes, so the existing
+    // ARTIST_REFRESH_COMPLETE when matching finishes, so the existing
     // RescanFolders → CurateArtist chain still fires AFTER slots are selected.
     CommandQueueManager.push(
         CommandNames.MatchArtistProviders,
@@ -117,7 +117,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
 
     // Emit event so decoupled listeners (like curation.listener) can chain the
     // redundancy check / disk scan — AFTER provider slots are selected.
-    appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETED, {
+    appEvents.emit(AppEvent.ARTIST_REFRESH_COMPLETE, {
         artistId: job.payload.artistId,
         artistName: job.payload.artistName,
         workflow: job.payload.workflow,

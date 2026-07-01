@@ -239,6 +239,46 @@ the provider abstraction so a second provider can declare its own sources.
 - done (2026-07-01): Fixed Library track popularity sorting to use track-level
   recording/provider popularity evidence instead of artist popularity, with a
   route-level regression test.
+- done (2026-07-01): Reconciled the duplicate Library list/table rendering path.
+  The Tracks tab now uses the shared DataGrid table engine through a track-specific
+  column wrapper with inline playback row details, while Artists/Albums/Videos keep
+  the grid/list view toggle and preserve the selected view. The bulk selection bar
+  now appears only when rows are selected.
+- done (2026-07-01): Folded AlbumPage tracklists and ArtistPage top tracks into
+  the same DataGrid-backed track table path, including inline playback row
+  details, number-to-play hover controls, quality badge ordering, and album volume
+  section headers.
+- done (2026-07-01): Finished the table reconciliation — `LibraryTrackList.tsx`
+  was still a parallel, near-duplicate implementation of `TrackList.tsx` (own
+  copy of the column-building/styles/playback-dialog code). Merged its
+  Library-only behavior (bulk-selection checkboxes, cover-as-play-button
+  column, "Downloaded" checkmark column, lazy per-track file loading before
+  opening the info dialog) into `TrackList.tsx` behind props
+  (`selection`, `showCover`, `showDownloadedColumn`, `disableStickyHeader`),
+  deleted `LibraryTrackList.tsx`, and switched `Library.tsx`'s tracks tab to
+  the shared component. Also fixed a real bug found in the process: the Album
+  column in `TrackList` had no click-to-navigate handler (a pre-existing gap
+  on the ArtistPage top-tracks table); it now navigates like the Artist
+  column does. Removed the now-dead `TrackTableSkeleton` (zero consumers) and
+  its `trackTable*` styles from `LoadingSkeletons.tsx`.
+- done (2026-07-01): Naming pass against `.ref_lidarr` on the areas touched by
+  this release. Renamed `AppEvent.ARTIST_REFRESH_COMPLETED` /
+  `ArtistRefreshCompletedEventPayload` (backend) and the matching
+  `"artist.refresh.completed"` SSE event-name literals (frontend hooks +
+  `api.ts`) to `ARTIST_REFRESH_COMPLETE` / `ArtistRefreshCompleteEventPayload`
+  / `"artist.refresh.complete"`, matching Lidarr's `ArtistRefreshCompleteEvent`
+  (`.ref_lidarr/src/NzbDrone.Core/Music/Events/`) — the code comment already
+  referenced that name but the implementation had drifted to a past-tense
+  suffix. No other naming drift found in commands/events or the audio-tag
+  service for this release's scope.
+- done (2026-07-01): Documented (not fixed) a real gap Codex's contract tests
+  surfaced: Lidarr's `WriteAudioTagsType.Sync` (re-tag already-downloaded files
+  when their metadata changes on a later refresh) is deliberately NOT
+  implemented — `write_audio_tags_policy` only supports Lidarr's
+  `No`/`NewFiles`/`AllFiles`, and `"sync"` is explicitly rejected. Logged as a
+  pending item under the metadata-embedding section with the Lidarr source
+  reference and an implementation sketch (hook into the diff-reconcile refresh
+  port), so it reads as a tracked scope cut rather than a silent omission.
 
 ### Architecture decision: keep TypeScript, decompose (not a .NET port)
 
@@ -439,10 +479,30 @@ area.
   separate sidecar toggles for NFO, artwork, lyrics, video thumbnails, and
   ReplayGain/fingerprinting only where they are genuinely independent.
   - DECIDED (Robert, 2026-06-25) — fold these into the embedding rework:
-    - Lyrics: always prefer SYNCHRONISED lyrics over plain, for both the saved
-      `.lrc` sidecar and the embedded tag. Today `lyric-service` keys synced on
-      the `.lrc` extension (`isSynced`); choose synced whenever a provider
-      offers it, only falling back to plain when synced is unavailable.
+    - done (2026-07-01): Metadata tag writing now exposes the Lidarr-style
+      policy directly in Settings: off, new downloads only, or all files. Fresh
+      config defaults to tagging new files only, fingerprinting defaults off,
+      and unsupported policy values are normalized/rejected at the config/API
+      boundary.
+    - pending (deliberate scope cut, not an oversight): Lidarr's 4th
+      `WriteAudioTagsType` value, `Sync` (`.ref_lidarr/src/NzbDrone.Core/
+      Configuration/WriteAudioTagsType.cs`), is intentionally NOT implemented.
+      `Sync` re-writes tags on ALREADY-DOWNLOADED files whenever their
+      MusicBrainz metadata changes on a later refresh (Lidarr's
+      `AudioTagService.SyncTags`, invoked from the track-refresh path). Our
+      `write_audio_tags_policy` only covers Lidarr's `No`/`NewFiles`/`AllFiles`
+      (`WRITE_AUDIO_TAGS_POLICY_VALUES` in `api/src/contracts/config.ts`);
+      `"sync"` is explicitly rejected by `parseMetadataConfigUpdate`
+      (`config-updates.test.ts`) until we actually wire a re-tag-on-metadata-
+      change hook into the refresh/curation pipeline. Implement by having
+      `RefreshArtist`/`RefreshAlbumService`'s diff-reconcile path (see the
+      Lidarr refresh port above) call an equivalent `syncTags` step for tracks
+      whose curated columns changed, gated on this policy value.
+    - done (2026-07-01): Lyrics now always prefer SYNCHRONISED lyrics over
+      plain, for both the saved `.lrc` sidecar and the embedded tag. The
+      user-facing plain/synced selector and retired `embed_synced_lyrics`
+      config field were removed; providers still fall back to plain text when
+      synced lyrics are unavailable.
     - Cover images: for EMBEDDING + saving, always use the HIGHEST resolution
       available from either the Servarr metadata server or the provider (TIDAL
       album art = `origin` size; artist art = the provider's max). The UI may

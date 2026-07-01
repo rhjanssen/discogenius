@@ -34,7 +34,7 @@ type UseAlbumsOptions = {
 const ALBUMS_PAGE_SIZE = 50;
 const ALBUMS_GLOBAL_EVENTS = [
   "artist.scanned",
-  "artist.refresh.completed",
+  "artist.refresh.complete",
   "file.added",
   "file.deleted",
   "file.upgraded",

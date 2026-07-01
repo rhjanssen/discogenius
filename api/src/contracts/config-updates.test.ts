@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   parseFilteringConfigUpdate,
+  parseMetadataConfigUpdate,
   parseMonitoringConfigUpdate,
   parsePublicAppConfigUpdate,
   parseQualityConfigUpdate,
@@ -18,7 +19,6 @@ test("config update parsers return only validated partial updates", () => {
     video_quality: "fhd",
     embed_cover: true,
     embed_lyrics: true,
-    embed_synced_lyrics: false,
     upgrade_existing_files: true,
     convert_video_mp4: true,
     extract_flac: true,
@@ -76,6 +76,34 @@ test("config update parsers return only validated partial updates", () => {
     include_videos: true,
     include_spatial: false,
   });
+
+  const metadataUpdate = parseMetadataConfigUpdate({
+    write_audio_tags_policy: "new_files",
+    enable_fingerprinting: false,
+  }, {
+    save_album_cover: true,
+    album_cover_name: "cover.jpg",
+    album_cover_resolution: "origin",
+    save_artist_picture: true,
+    artist_picture_name: "folder.jpg",
+    artist_picture_resolution: "origin",
+    save_video_thumbnail: true,
+    embed_video_thumbnail: true,
+    video_thumbnail_resolution: "1080x720",
+    save_lyrics: true,
+    save_nfo: true,
+    embed_album_review: true,
+    enable_fingerprinting: true,
+    write_tidal_url: false,
+    mark_explicit: true,
+    upc_target: "BARCODE",
+    write_audio_tags_policy: "all_files",
+    embed_replaygain: true,
+  });
+  assert.deepEqual(metadataUpdate, {
+    write_audio_tags_policy: "new_files",
+    enable_fingerprinting: false,
+  });
 });
 
 test("config update parsers reject unsupported keys and invalid values", () => {
@@ -87,7 +115,20 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       video_quality: "fhd",
       embed_cover: true,
       embed_lyrics: true,
+      upgrade_existing_files: true,
+      convert_video_mp4: true,
+      extract_flac: true,
+    });
+  }, RequestValidationError);
+
+  assert.throws(() => {
+    parseQualityConfigUpdate({
       embed_synced_lyrics: false,
+    }, {
+      audio_quality: "normal",
+      video_quality: "fhd",
+      embed_cover: true,
+      embed_lyrics: true,
       upgrade_existing_files: true,
       convert_video_mp4: true,
       extract_flac: true,
@@ -102,6 +143,31 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       enabled: true,
       monitorNewArtists: true,
       removeUnmonitoredFiles: true,
+    });
+  }, RequestValidationError);
+
+  assert.throws(() => {
+    parseMetadataConfigUpdate({
+      write_audio_tags_policy: "sync",
+    }, {
+      save_album_cover: true,
+      album_cover_name: "cover.jpg",
+      album_cover_resolution: "origin",
+      save_artist_picture: true,
+      artist_picture_name: "folder.jpg",
+      artist_picture_resolution: "origin",
+      save_video_thumbnail: true,
+      embed_video_thumbnail: true,
+      video_thumbnail_resolution: "1080x720",
+      save_lyrics: true,
+      save_nfo: true,
+      embed_album_review: true,
+      enable_fingerprinting: false,
+      write_tidal_url: false,
+      mark_explicit: true,
+      upc_target: "BARCODE",
+      write_audio_tags_policy: "new_files",
+      embed_replaygain: true,
     });
   }, RequestValidationError);
 });

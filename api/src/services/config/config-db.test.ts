@@ -25,11 +25,14 @@ after(() => {
 test("editable settings are persisted to config.toml and read through the cache", () => {
   const rawBefore = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
   assert.match(rawBefore, /audio_quality = "max"/);
+  assert.doesNotMatch(rawBefore, /embed_synced_lyrics/);
+  assert.match(rawBefore, /enable_fingerprinting = false/);
 
   configModule.updateConfig("quality", { audio_quality: "normal" });
 
   const rawAfter = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
   assert.match(rawAfter, /audio_quality = "normal"/);
+  assert.doesNotMatch(rawAfter, /embed_synced_lyrics/);
   assert.equal(configModule.getConfigSection("quality").audio_quality, "normal");
 
   const row = dbModule.db
@@ -39,6 +42,26 @@ test("editable settings are persisted to config.toml and read through the cache"
 
   configModule.clearConfigCache();
   assert.equal(configModule.readConfig().quality.audio_quality, "normal");
+});
+
+test("config writes strip retired quality settings", () => {
+  const config = configModule.readConfig() as any;
+  config.quality.embed_synced_lyrics = false;
+  configModule.writeConfig(config);
+
+  configModule.clearConfigCache();
+  const raw = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
+  assert.doesNotMatch(raw, /embed_synced_lyrics/);
+  assert.equal("embed_synced_lyrics" in (configModule.readConfig().quality as any), false);
+});
+
+test("config writes normalize unsupported metadata tag policy values", () => {
+  const config = configModule.readConfig() as any;
+  config.metadata.write_audio_tags_policy = "sync";
+  configModule.writeConfig(config);
+
+  configModule.clearConfigCache();
+  assert.equal(configModule.readConfig().metadata.write_audio_tags_policy, "new_files");
 });
 
 test("app settings update config.toml without splitting values into database overrides", () => {

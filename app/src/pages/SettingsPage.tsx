@@ -5,11 +5,11 @@ import {
     Select,
     Switch,
     Checkbox,
+    Radio,
+    RadioGroup,
     Spinner,
     Text,
     Title1,
-    Radio,
-    RadioGroup,
     Divider,
     makeStyles,
     mergeClasses,
@@ -1891,21 +1891,46 @@ const SettingsPage = () => {
                 >
                     <div className={styles.card}>
                         {renderToggleRow({
-                            title: "Embed Tags",
-                            description: "Keep track tags in sync with library metadata (title, artist, album, ISRC, barcode, etc.)",
+                            title: "Embed Metadata Tags",
+                            description: "Write Lidarr-compatible MusicBrainz and standard media tags into audio files",
                             checked: writeAudioTagsPolicy !== "no",
                             onChange: (checked) => {
                                 updateMetadataSettings({
-                                    write_audio_tags_policy: checked ? "all_files" : "no",
+                                    write_audio_tags_policy: checked ? "new_files" : "no",
                                 });
                                 setRetagStatus(null);
                                 setRetagStatusInitialized(false);
                             },
                         })}
 
+                        {writeAudioTagsPolicy !== "no" && (
+                            <div className={styles.row}>
+                                <div className={styles.rowContent}>
+                                    <Text weight="semibold">Tag Write Policy</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        Mirrors Lidarr's write metadata setting. All files may alter existing imports.
+                                    </Text>
+                                </div>
+                                <Select
+                                    value={writeAudioTagsPolicy}
+                                    onChange={(_, data) => {
+                                        updateMetadataSettings({
+                                            write_audio_tags_policy: data.value as "new_files" | "all_files",
+                                        });
+                                        setRetagStatus(null);
+                                        setRetagStatusInitialized(false);
+                                    }}
+                                    className={styles.controlMedium}
+                                >
+                                    <option value="new_files">New downloads only</option>
+                                    <option value="all_files">All files</option>
+                                </Select>
+                            </div>
+                        )}
+
                         {renderToggleRow({
                             title: "Embed ReplayGain Tags",
-                            description: "Write ReplayGain gain and peak values into tags",
+                            description: "Write ReplayGain gain and peak values when provider metadata includes them",
                             checked: metadataSettings?.embed_replaygain !== false,
                             onChange: (checked) => {
                                 updateMetadataSettings({ embed_replaygain: checked });
@@ -1987,39 +2012,17 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Embed Lyrics",
-                            description: "Write lyrics into supported audio files",
+                            description: "Write lyrics into supported audio files. Synced lyrics are used when available.",
                             checked: qualitySettings?.embed_lyrics === true,
                             onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
                         })}
 
                         {renderToggleRow({
                             title: "Save Lyrics",
-                            description: "Save lyrics as a sidecar .txt / .lrc file next to the track",
+                            description: "Save lyrics as a sidecar next to the track. Synced lyrics are saved when available.",
                             checked: metadataSettings?.save_lyrics === true,
                             onChange: (checked) => updateMetadataSettings({ save_lyrics: checked }),
                         })}
-
-                        {(qualitySettings?.embed_lyrics === true || metadataSettings?.save_lyrics === true) && (
-                            <RadioGroup
-                                value={qualitySettings?.embed_synced_lyrics === true ? 'synced' : 'plain'}
-                                onChange={(_, data) => updateQualitySettings({ embed_synced_lyrics: data.value === 'synced' })}
-                            >
-                                <label className={styles.qualityOption} htmlFor="lyrics-plain">
-                                    <Radio value="plain" id="lyrics-plain" />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">Plain</Text>
-                                        <Text size={200} className={styles.mutedText}>Unsynchronised text (embedded as-is, saved as .txt)</Text>
-                                    </div>
-                                </label>
-                                <label className={styles.qualityOption} htmlFor="lyrics-synced">
-                                    <Radio value="synced" id="lyrics-synced" />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">Synced</Text>
-                                        <Text size={200} className={styles.mutedText}>Time-stamped when TIDAL provides them, plain as fallback (saved as .lrc)</Text>
-                                    </div>
-                                </label>
-                            </RadioGroup>
-                        )}
 
                         {renderToggleRow({
                             title: "Save Artist Pictures",
@@ -2096,7 +2099,7 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Audio Fingerprinting",
-                            description: "Generate fpcalc fingerprints and match tracks via AcoustID and MusicBrainz",
+                            description: "Use fpcalc/AcoustID as an import-verification fallback for files without clean MusicBrainz provenance",
                             checked: metadataSettings?.enable_fingerprinting === true,
                             onChange: (checked) => {
                                 updateMetadataSettings({ enable_fingerprinting: checked });

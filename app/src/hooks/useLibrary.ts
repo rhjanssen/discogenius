@@ -19,7 +19,7 @@ type ActiveLibraryTab = "artists" | "albums" | "tracks" | "videos";
 export const LIBRARY_STATS_QUERY_KEY = ["libraryStats"] as const;
 const LIBRARY_STATS_GLOBAL_EVENTS = [
   "artist.scanned",
-  "artist.refresh.completed",
+  "artist.refresh.complete",
   "config.updated",
   "file.added",
   "file.deleted",

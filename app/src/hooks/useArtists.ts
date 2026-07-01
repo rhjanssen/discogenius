@@ -33,7 +33,7 @@ type UseArtistsOptions = {
 const ARTISTS_PAGE_SIZE = 50;
 const ARTISTS_GLOBAL_EVENTS = [
   "artist.scanned",
-  "artist.refresh.completed",
+  "artist.refresh.complete",
   "file.added",
   "file.deleted",
   "file.upgraded",

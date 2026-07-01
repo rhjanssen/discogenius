@@ -20,6 +20,10 @@ import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
 
+export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
+  return lyrics?.subtitles || lyrics?.text || "";
+}
+
 type RetagTrackRow = {
   id: number;
   artist_id: number;
@@ -1859,7 +1863,7 @@ export class AudioTagService {
     if (quality.embed_lyrics && row.file_provider_id) {
       const lyrics = await getLyricsForProviderMedia(row.file_provider_id);
       if (lyrics) {
-        const targetValue = quality.embed_synced_lyrics && lyrics.subtitles ? lyrics.subtitles : lyrics.text;
+        const targetValue = selectEmbeddedLyricsText(lyrics);
         if (targetValue) {
           desiredTags.push({
             key: "lyrics",
@@ -2043,7 +2047,7 @@ export class AudioTagService {
       if (quality.embed_lyrics && enrichedRow.file_provider_id) {
         const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id);
         if (lyrics) {
-          const targetValue = quality.embed_synced_lyrics && lyrics.subtitles ? lyrics.subtitles : lyrics.text;
+          const targetValue = selectEmbeddedLyricsText(lyrics);
           if (targetValue) {
             desiredTagsArr.push({
               key: "lyrics",

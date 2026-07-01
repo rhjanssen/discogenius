@@ -46,7 +46,9 @@ import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
 import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
-import LibraryTrackList from "@/components/LibraryTrackList";
+import TrackList from "@/components/TrackList";
+import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
+import { navigateToAlbumTrack } from "@/utils/albumNavigation";
 import VideoGrid from "@/components/VideoGrid";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useLibrary } from "@/hooks/useLibrary";
@@ -72,7 +74,7 @@ import {
   dispatchMonitorStateChanged,
 } from "@/utils/appEvents";
 import { formatDurationSeconds } from "@/utils/format";
-import { CardGridSkeleton, DataGridSkeleton, TrackTableSkeleton } from "@/components/ui/LoadingSkeletons";
+import { CardGridSkeleton, DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
 
 const useStyles = makeStyles({
   container: {
@@ -461,6 +463,7 @@ const Library = () => {
     getItemId: (track: any) => track.id,
   });
   const clearTrackSelection = trackSelection.clearSelection;
+  const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
   const videoSelection = useSelectableCollection({
     items: videos,
     getItemId: (video: any) => video.id,
@@ -1404,7 +1407,16 @@ const Library = () => {
   const renderLoadingContent = () => {
     switch (selectedTab) {
       case "tracks":
-        return <TrackTableSkeleton rows={10} showCover showArtist showAlbum />;
+        return (
+          <DataGridSkeleton
+            rows={10}
+            columns={8}
+            columnTemplate="52px minmax(180px, 1.25fr) minmax(120px, 1fr) minmax(150px, 1.35fr) 146px 64px 88px 44px"
+            compact
+            thumbnailColumns={[0]}
+            actionColumns={[7]}
+          />
+        );
       case "videos":
         if (viewMode === "list") {
           return (
@@ -1533,11 +1545,16 @@ const Library = () => {
   );
 
   const renderSelectionBar = () => {
-    if (viewMode !== "list") {
+    const selectionSurfaceVisible = selectedTab === "tracks" || viewMode === "list";
+    if (!selectionSurfaceVisible) {
       return null;
     }
 
     if (selectedTab === "artists") {
+      if (artistSelection.selectedCount === 0) {
+        return null;
+      }
+
       return (
         <LibrarySelectionBar
           selectedCount={artistSelection.selectedCount}
@@ -1587,6 +1604,10 @@ const Library = () => {
     }
 
     if (selectedTab === "albums") {
+      if (albumSelection.selectedCount === 0) {
+        return null;
+      }
+
       return (
         <LibrarySelectionBar
           selectedCount={albumSelection.selectedCount}
@@ -1636,6 +1657,10 @@ const Library = () => {
     }
 
     if (selectedTab === "tracks") {
+      if (trackSelection.selectedCount === 0) {
+        return null;
+      }
+
       return (
         <LibrarySelectionBar
           selectedCount={trackSelection.selectedCount}
@@ -1685,6 +1710,10 @@ const Library = () => {
     }
 
     if (selectedTab === "videos") {
+      if (videoSelection.selectedCount === 0) {
+        return null;
+      }
+
       return (
         <LibrarySelectionBar
           selectedCount={videoSelection.selectedCount}
@@ -1999,8 +2028,20 @@ const Library = () => {
                 sentinelRef: trackSentinelRef,
                 isFetching: isFetchingMore.tracks,
                 topContent: renderSelectionBar(),
-                children: <LibraryTrackList
+                children: <TrackList
                   tracks={tracks}
+                  showCover
+                  showArtist
+                  showAlbum
+                  showDownloadedColumn
+                  disableStickyHeader={false}
+                  onDownloadTrack={handleDownloadTrack}
+                  isTrackDownloading={(track) => downloadingTracks.has(track.id)}
+                  onTrackClick={(track: any) => {
+                    if (track.album_id) {
+                      navigateToAlbumTrack(navigate, track.album_id, track.id);
+                    }
+                  }}
                   // The tracks tab is always a table (no grid toggle), so selection
                   // must always be available here — it isn't gated on viewMode like
                   // the grid/list tabs, where the persisted viewMode could be 'grid'.

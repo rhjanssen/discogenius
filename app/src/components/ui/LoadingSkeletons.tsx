@@ -45,14 +45,6 @@ interface DataGridSkeletonProps {
   actionColumns?: number[];
 }
 
-interface TrackTableSkeletonProps {
-  rows?: number;
-  showCover?: boolean;
-  showArtist?: boolean;
-  showAlbum?: boolean;
-  className?: string;
-}
-
 interface QueueListSkeletonProps {
   rows?: number;
   className?: string;
@@ -381,85 +373,6 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusCircular,
   },
   dataGridActionGroup: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: tokens.spacingHorizontalXS,
-  },
-  trackTable: {
-    display: "none",
-    flexDirection: "column",
-    width: "100%",
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-    backdropFilter: "blur(20px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    "@media (min-width: 768px)": {
-      display: "flex",
-    },
-  },
-  trackTableHeader: {
-    display: "grid",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-  },
-  trackTableRow: {
-    display: "grid",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-    alignItems: "center",
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorSubtleBackground,
-    ":last-child": {
-      borderBottom: "none",
-    },
-  },
-  trackTableMobileList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-    "@media (min-width: 768px)": {
-      display: "none",
-    },
-  },
-  trackTableMobileCard: {
-    display: "flex",
-    gap: tokens.spacingHorizontalS,
-    padding: tokens.spacingVerticalS,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorSubtleBackground,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-  },
-  trackTableCover: {
-    width: "40px",
-    height: "40px",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  trackTableTitleCell: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    minWidth: 0,
-  },
-  trackTableMobileInfo: {
-    flex: 1,
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  trackTableTitle: {
-    height: "16px",
-    width: "min(260px, 88%)",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  trackTableMeta: {
-    height: "12px",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  trackTableActions: {
     display: "flex",
     justifyContent: "flex-end",
     gap: tokens.spacingHorizontalXS,
@@ -980,78 +893,6 @@ export function DataGridSkeleton({
         </div>
       ))}
     </Skeleton>
-  );
-}
-
-export function TrackTableSkeleton({
-  rows = 8,
-  showCover = true,
-  showArtist = true,
-  showAlbum = true,
-  className,
-}: TrackTableSkeletonProps) {
-  const styles = useStyles();
-  const columnTemplate = [
-    ...(showCover ? ["56px"] : []),
-    "minmax(280px, 1.8fr)",
-    ...(showArtist ? ["minmax(140px, 1fr)"] : []),
-    ...(showAlbum ? ["minmax(160px, 1fr)"] : []),
-    "180px",
-  ].join(" ");
-
-  return (
-    <div className={className} aria-busy="true" aria-label="Loading track table">
-      <Skeleton animation="wave" className={styles.trackTableMobileList}>
-        {range(rows).map((row) => (
-          <div key={`mobile-${row}`} className={styles.trackTableMobileCard}>
-            {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
-            <div className={styles.trackTableMobileInfo}>
-              <SkeletonItem className={styles.trackTableTitle} />
-              <SkeletonItem className={styles.trackTableMeta} style={{ width: "88px" }} />
-              {showArtist || showAlbum ? (
-                <SkeletonItem className={styles.trackTableMeta} style={{ width: row % 2 === 0 ? "128px" : "96px" }} />
-              ) : null}
-              <div className={styles.trackTableActions}>
-                {range(4).map((action) => (
-                  <SkeletonItem key={action} className={styles.actionDot} />
-                ))}
-              </div>
-            </div>
-          </div>
-        ))}
-      </Skeleton>
-
-      <Skeleton animation="wave" className={styles.trackTable}>
-        <div className={styles.trackTableHeader} style={{ gridTemplateColumns: columnTemplate }}>
-          {showCover ? <SkeletonItem className={styles.trackTableMeta} style={{ width: "32px" }} /> : null}
-          <SkeletonItem className={styles.trackTableMeta} style={{ width: "72px" }} />
-          {showArtist ? <SkeletonItem className={styles.trackTableMeta} style={{ width: "56px" }} /> : null}
-          {showAlbum ? <SkeletonItem className={styles.trackTableMeta} style={{ width: "56px" }} /> : null}
-          <SkeletonItem className={styles.trackTableMeta} style={{ width: "84px", marginLeft: "auto" }} />
-        </div>
-
-        {range(rows).map((row) => (
-          <div key={row} className={styles.trackTableRow} style={{ gridTemplateColumns: columnTemplate }}>
-            {showCover ? <SkeletonItem className={styles.trackTableCover} /> : null}
-            <div className={styles.trackTableTitleCell}>
-              <SkeletonItem className={styles.trackTableTitle} />
-              <SkeletonItem className={styles.trackTableMeta} style={{ width: row % 2 === 0 ? "112px" : "86px" }} />
-            </div>
-            {showArtist ? (
-              <SkeletonItem className={styles.trackTableMeta} style={{ width: row % 2 === 0 ? "76%" : "62%" }} />
-            ) : null}
-            {showAlbum ? (
-              <SkeletonItem className={styles.trackTableMeta} style={{ width: row % 3 === 0 ? "78%" : "64%" }} />
-            ) : null}
-            <div className={styles.trackTableActions}>
-              {range(4).map((action) => (
-                <SkeletonItem key={action} className={styles.actionDot} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </Skeleton>
-    </div>
   );
 }
 

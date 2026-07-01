@@ -41,7 +41,6 @@ const QUALITY_UPDATE_KEYS = [
   "video_quality",
   "embed_cover",
   "embed_lyrics",
-  "embed_synced_lyrics",
   "upgrade_existing_files",
   "convert_video_mp4",
   "extract_flac",

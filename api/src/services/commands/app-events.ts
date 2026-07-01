@@ -18,7 +18,7 @@ export enum AppEvent {
 
     // Scanner Events — Lidarr vocabulary: "refresh" = metadata refresh,
     // "scan" = disk scan. (ArtistRefreshCompleteEvent / ArtistScannedEvent.)
-    ARTIST_REFRESH_COMPLETED = 'artist.refresh.completed',
+    ARTIST_REFRESH_COMPLETE = 'artist.refresh.complete',
     ARTIST_SCANNED = 'artist.scanned',
 
     // Config Events
@@ -45,7 +45,7 @@ export interface CommandEventPayload {
 }
 
 // Raised when a metadata refresh completes (Lidarr ArtistRefreshCompleteEvent).
-export interface ArtistRefreshCompletedEventPayload {
+export interface ArtistRefreshCompleteEventPayload {
     artistId: string;
     artistName: string;
     workflow?: ArtistWorkflow;
@@ -99,7 +99,7 @@ export interface AppEventPayloadMap {
     [AppEvent.COMMAND_DELETED]: CommandEventPayload;
     [AppEvent.QUEUE_CLEARED]: undefined;
     [AppEvent.HISTORY_ADDED]: Record<string, unknown>;
-    [AppEvent.ARTIST_REFRESH_COMPLETED]: ArtistRefreshCompletedEventPayload;
+    [AppEvent.ARTIST_REFRESH_COMPLETE]: ArtistRefreshCompleteEventPayload;
     [AppEvent.ARTIST_SCANNED]: ArtistScannedEventPayload;
     [AppEvent.CONFIG_UPDATED]: Record<string, unknown>;
     [AppEvent.FILE_ADDED]: FileChangeEventPayload;

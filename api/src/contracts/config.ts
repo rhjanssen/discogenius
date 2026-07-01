@@ -57,7 +57,6 @@ export interface QualityConfigContract {
   video_quality: VideoQualityValue;
   embed_cover: boolean;
   embed_lyrics: boolean;
-  embed_synced_lyrics?: boolean;
   upgrade_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
@@ -183,7 +182,6 @@ export function parseQualityConfigContract(value: unknown): QualityConfigContrac
     video_quality: expectOneOf(record.video_quality, VIDEO_QUALITY_VALUES, "quality.video_quality"),
     embed_cover: expectBoolean(record.embed_cover, "quality.embed_cover"),
     embed_lyrics: expectBoolean(record.embed_lyrics, "quality.embed_lyrics"),
-    embed_synced_lyrics: expectOptionalBoolean(record.embed_synced_lyrics, "quality.embed_synced_lyrics"),
     upgrade_existing_files: expectBoolean(record.upgrade_existing_files, "quality.upgrade_existing_files"),
     convert_video_mp4: expectOptionalBoolean(record.convert_video_mp4, "quality.convert_video_mp4"),
     extract_flac: expectOptionalBoolean(record.extract_flac, "quality.extract_flac"),

@@ -42,7 +42,6 @@ test("config contract parsers normalize expected public settings shapes", () => 
     video_quality: "fhd",
     embed_cover: true,
     embed_lyrics: false,
-    embed_synced_lyrics: true,
     upgrade_existing_files: true,
     convert_video_mp4: true,
   });

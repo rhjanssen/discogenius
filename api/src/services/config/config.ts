@@ -163,7 +163,6 @@ export interface QualityConfig {
   video_quality: "sd" | "hd" | "fhd";
   embed_cover: boolean;
   embed_lyrics: boolean;
-  embed_synced_lyrics?: boolean;
   upgrade_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
@@ -205,7 +204,6 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_quality: "fhd",
     embed_cover: true,
     embed_lyrics: true,
-    embed_synced_lyrics: true,
     upgrade_existing_files: false,
     convert_video_mp4: true,
     extract_flac: true,
@@ -255,12 +253,12 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     save_lyrics: true,
     save_nfo: true,
     embed_album_review: true,
-    enable_fingerprinting: true,
+    enable_fingerprinting: false,
     write_tidal_url: false,
     mark_explicit: true,
     upc_target: "BARCODE",
     embed_replaygain: true,
-    write_audio_tags_policy: "all_files",
+    write_audio_tags_policy: "new_files",
     scrub_audio_tags: false,
   },
   streaming: {
@@ -322,6 +320,8 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
 }
 
 function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig {
+  const writeAudioTagsPolicy = raw?.write_audio_tags_policy;
+
   return {
     save_album_cover: raw?.save_album_cover ?? DEFAULT_CONFIG.metadata.save_album_cover,
     album_cover_name: raw?.album_cover_name ?? DEFAULT_CONFIG.metadata.album_cover_name,
@@ -340,8 +340,43 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
     mark_explicit: raw?.mark_explicit ?? DEFAULT_CONFIG.metadata.mark_explicit,
     upc_target: raw?.upc_target ?? DEFAULT_CONFIG.metadata.upc_target,
     embed_replaygain: raw?.embed_replaygain ?? DEFAULT_CONFIG.metadata.embed_replaygain,
-    write_audio_tags_policy: raw?.write_audio_tags_policy ?? DEFAULT_CONFIG.metadata.write_audio_tags_policy,
+    write_audio_tags_policy: writeAudioTagsPolicy === "no" || writeAudioTagsPolicy === "new_files" || writeAudioTagsPolicy === "all_files"
+      ? writeAudioTagsPolicy
+      : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
+  };
+}
+
+function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
+  const audioQuality = raw?.audio_quality;
+  const videoQuality = raw?.video_quality;
+
+  return {
+    audio_quality: audioQuality === "low" || audioQuality === "normal" || audioQuality === "high" || audioQuality === "max"
+      ? audioQuality
+      : DEFAULT_CONFIG.quality.audio_quality,
+    video_quality: videoQuality === "sd" || videoQuality === "hd" || videoQuality === "fhd"
+      ? videoQuality
+      : DEFAULT_CONFIG.quality.video_quality,
+    embed_cover: raw?.embed_cover ?? DEFAULT_CONFIG.quality.embed_cover,
+    embed_lyrics: raw?.embed_lyrics ?? DEFAULT_CONFIG.quality.embed_lyrics,
+    upgrade_existing_files: raw?.upgrade_existing_files ?? DEFAULT_CONFIG.quality.upgrade_existing_files,
+    convert_video_mp4: raw?.convert_video_mp4 ?? DEFAULT_CONFIG.quality.convert_video_mp4,
+    extract_flac: raw?.extract_flac ?? DEFAULT_CONFIG.quality.extract_flac,
+  };
+}
+
+function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig {
+  return {
+    app: { ...DEFAULT_CONFIG.app, ...(config.app || {}) },
+    monitoring: normalizeMonitoringConfig(config.monitoring),
+    filtering: normalizeFilteringConfig(config.filtering),
+    path: { ...DEFAULT_CONFIG.path, ...(config.path || {}) },
+    naming: { ...DEFAULT_CONFIG.naming, ...(config.naming || {}) },
+    metadata: normalizeMetadataConfig(config.metadata),
+    quality: normalizeQualityConfig(config.quality),
+    streaming: { ...DEFAULT_CONFIG.streaming, ...(config.streaming || {}) },
+    account: { ...DEFAULT_CONFIG.account, ...(config.account || {}) },
   };
 }
 
@@ -352,17 +387,7 @@ function readConfigFile(): DiscoGeniusConfig {
     const content = fs.readFileSync(CONFIG_FILE, "utf-8");
     const parsed = TOML.parse(content) as unknown as DiscoGeniusConfig;
 
-    return {
-      app: { ...DEFAULT_CONFIG.app, ...parsed.app },
-      monitoring: normalizeMonitoringConfig(parsed.monitoring),
-      filtering: normalizeFilteringConfig((parsed as any).filtering),
-      path: { ...DEFAULT_CONFIG.path, ...parsed.path },
-      naming: { ...DEFAULT_CONFIG.naming, ...(parsed as any).naming },
-      metadata: normalizeMetadataConfig(parsed.metadata),
-      quality: { ...DEFAULT_CONFIG.quality, ...(parsed as any).quality },
-      streaming: { ...DEFAULT_CONFIG.streaming, ...(parsed as any).streaming },
-      account: { ...DEFAULT_CONFIG.account, ...parsed.account },
-    };
+    return normalizeConfig(parsed);
   } catch (error) {
     console.error("❌ Error reading config.toml:", error);
     console.log("⚠️  Using default configuration");
@@ -416,7 +441,7 @@ export function writeConfig(config: DiscoGeniusConfig): void {
   ensureConfigExists();
 
   try {
-    const tomlString = TOML.stringify(config as any);
+    const tomlString = TOML.stringify(normalizeConfig(config) as any);
     fs.writeFileSync(CONFIG_FILE, tomlString, "utf-8");
     configCache = null;
     configCacheFileKey = null;
@@ -463,6 +488,11 @@ export function updateConfig<K extends keyof DiscoGeniusConfig>(
     config.metadata = normalizeMetadataConfig({
       ...config.metadata,
       ...(updates as Partial<MetadataConfig>),
+    });
+  } else if (section === "quality") {
+    config.quality = normalizeQualityConfig({
+      ...config.quality,
+      ...(updates as Partial<QualityConfig>),
     });
   } else {
     config[section] = {

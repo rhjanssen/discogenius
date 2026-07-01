@@ -334,7 +334,7 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
     switch (job.name) {
         case CommandNames.RefreshMetadata:
             // Per-artist curation/matching is handled by the event-driven pipeline
-            // (ARTIST_REFRESH_COMPLETED → MatchArtistProviders → RescanFolders →
+            // (ARTIST_REFRESH_COMPLETE → MatchArtistProviders → RescanFolders →
             // ARTIST_SCANNED → CurateArtist). On a full cycle we STILL queue the
             // library-wide root scan here: it inventories the disk (new/unmapped
             // files) which the per-artist folder scans don't cover. It can't race

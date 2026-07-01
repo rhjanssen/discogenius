@@ -1,5 +1,5 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
-import { appEvents, AppEvent, type ArtistRefreshCompletedEventPayload, type ArtistScannedEventPayload } from "../commands/app-events.js";
+import { appEvents, AppEvent, type ArtistRefreshCompleteEventPayload, type ArtistScannedEventPayload } from "../commands/app-events.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import {
@@ -44,7 +44,7 @@ export function initCurationListeners() {
     console.log("[Listeners] Initializing curation event listeners");
 
     // Trigger disk scan after metadata refresh is complete
-    appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETED, (payload: ArtistRefreshCompletedEventPayload | undefined) => {
+    appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, (payload: ArtistRefreshCompleteEventPayload | undefined) => {
         if (payload?.scanLibrary) {
             const workflow = resolveRescanWorkflow(payload?.workflow);
             if (!workflow) {

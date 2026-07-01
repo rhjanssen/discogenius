@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AudioTagService, type ManagedTag } from "./audio-tag-service.js";
+import { AudioTagService, selectEmbeddedLyricsText, type ManagedTag } from "./audio-tag-service.js";
+
+test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
+  assert.equal(selectEmbeddedLyricsText({
+    subtitles: "[00:01.00]Synced line",
+    text: "Plain line",
+  }), "[00:01.00]Synced line");
+  assert.equal(selectEmbeddedLyricsText({
+    subtitles: "",
+    text: "Plain line",
+  }), "Plain line");
+});
 
 test("audio tag writer expands Lidarr-compatible total aliases", () => {
   const tags: ManagedTag[] = [

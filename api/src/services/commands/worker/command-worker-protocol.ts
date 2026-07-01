@@ -59,7 +59,7 @@ function postToMain(message: WorkerToMainMessage): void {
 /**
  * Forward an appEvents emission to the main thread. No-op on the main thread.
  * Called from the `appEvents` emit chokepoint so *all* event types are bridged
- * with one hook (COMMAND_*, ARTIST_REFRESH_COMPLETED, ARTIST_SCANNED, FILE_*, …).
+ * with one hook (COMMAND_*, ARTIST_REFRESH_COMPLETE, ARTIST_SCANNED, FILE_*, …).
  */
 export function forwardEventToMain(event: string, payload: unknown): void {
     postToMain({ kind: "event", event, payload });

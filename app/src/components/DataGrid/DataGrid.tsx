@@ -40,6 +40,17 @@ export interface DataGridProps<T = any> {
         isRowSelectable?: (item: T) => boolean;
     };
     getRowClassName?: (item: T, index: number) => string | undefined;
+    /**
+     * Optional full-width content rendered directly under a row (spanning all
+     * columns). Return null for rows with no detail. Used e.g. for the inline
+     * track audio player so tracks can live in this shared grid.
+     */
+    renderRowDetail?: (item: T, index: number) => React.ReactNode | null;
+    /**
+     * Optional full-width content rendered directly before a row. This keeps
+     * section dividers such as album volume headers in the shared grid path.
+     */
+    renderBeforeRow?: (item: T, index: number, previousItem?: T) => React.ReactNode | null;
 }
 
 const useStyles = makeStyles({
@@ -82,6 +93,8 @@ const useStyles = makeStyles({
         transition: `background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
         "&:hover": {
             backgroundColor: tokens.colorNeutralBackgroundAlpha,
+            backdropFilter: "blur(14px) saturate(140%)",
+            WebkitBackdropFilter: "blur(14px) saturate(140%)",
         },
         "@media (min-width: 768px)": {
             gap: tokens.spacingHorizontalS,
@@ -143,6 +156,25 @@ const useStyles = makeStyles({
         alignItems: "center",
         minWidth: 0,
     },
+    rowDetail: {
+        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        backgroundColor: tokens.colorSubtleBackground,
+        "@media (min-width: 768px)": {
+            paddingLeft: tokens.spacingHorizontalM,
+            paddingRight: tokens.spacingHorizontalM,
+        },
+    },
+    rowBefore: {
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalXXS}`,
+        color: tokens.colorNeutralForeground2,
+        fontWeight: tokens.fontWeightSemibold,
+        backgroundColor: tokens.colorSubtleBackground,
+        "@media (min-width: 768px)": {
+            paddingLeft: tokens.spacingHorizontalM,
+            paddingRight: tokens.spacingHorizontalM,
+        },
+    },
 });
 
 function useMediaQuery(query: string) {
@@ -176,6 +208,8 @@ function DataGridInner<T>(
         disableResponsiveColumnHiding,
         selection,
         getRowClassName,
+        renderRowDetail,
+        renderBeforeRow,
     }: DataGridProps<T>,
     ref: React.Ref<HTMLDivElement>
 ) {
@@ -318,51 +352,68 @@ function DataGridInner<T>(
             {items.map((item, index) => {
                 const rowId = keyFn(item);
                 const rowSelected = selectedRowIdSet.has(rowId);
+                const beforeRow = renderBeforeRow?.(item, index, index > 0 ? items[index - 1] : undefined) ?? null;
+                const rowDetail = renderRowDetail?.(item, index) ?? null;
 
                 return (
-                    <div
-                        key={rowId}
-                        role="row"
-                        className={mergeClasses(
-                            styles.row,
-                            onRowClick ? styles.rowClickable : undefined,
-                            compact ? styles.rowCompact : undefined,
-                            rowSelected ? styles.rowSelected : undefined,
-                            getRowClassName?.(item, index)
-                        )}
-                        style={gridStyle}
-                        onClick={onRowClick ? () => handleRowClick(item) : undefined}
-                    >
-                        {selection ? (
-                            <div className={styles.selectionCell} role="gridcell">
-                                <Checkbox
-                                    checked={rowSelected}
-                                    disabled={!(selection.isRowSelectable?.(item) ?? true)}
-                                    aria-label={selection.getSelectionLabel?.(item) || `Select row ${index + 1}`}
-                                    onClick={(event) => event.stopPropagation()}
-                                    onChange={(_, data) => toggleRow(rowId, Boolean(data.checked))}
-                                />
+                    <React.Fragment key={rowId}>
+                        {beforeRow ? (
+                            <div className={styles.rowBefore} role="row">
+                                {beforeRow}
                             </div>
                         ) : null}
-                        {visibleColumns.map((column) => (
+                        <div
+                            role="row"
+                            className={mergeClasses(
+                                styles.row,
+                                onRowClick ? styles.rowClickable : undefined,
+                                compact ? styles.rowCompact : undefined,
+                                rowSelected ? styles.rowSelected : undefined,
+                                getRowClassName?.(item, index)
+                            )}
+                            style={gridStyle}
+                            onClick={onRowClick ? () => handleRowClick(item) : undefined}
+                        >
+                            {selection ? (
+                                <div className={styles.selectionCell} role="gridcell">
+                                    <Checkbox
+                                        checked={rowSelected}
+                                        disabled={!(selection.isRowSelectable?.(item) ?? true)}
+                                        aria-label={selection.getSelectionLabel?.(item) || `Select row ${index + 1}`}
+                                        onClick={(event) => event.stopPropagation()}
+                                        onChange={(_, data) => toggleRow(rowId, Boolean(data.checked))}
+                                    />
+                                </div>
+                            ) : null}
+                            {visibleColumns.map((column) => (
+                                <div
+                                    key={column.key}
+                                    role="gridcell"
+                                    className={mergeClasses(
+                                        styles.cell,
+                                        column.align === "center"
+                                            ? styles.cellCenter
+                                            : column.align === "right"
+                                                ? styles.cellRight
+                                                : styles.cellLeft,
+                                        column.className
+                                    )}
+                                    data-dg-min={column.minWidth}
+                                >
+                                    {column.render(item, index)}
+                                </div>
+                            ))}
+                        </div>
+                        {rowDetail ? (
                             <div
-                                key={column.key}
-                                role="gridcell"
-                                className={mergeClasses(
-                                    styles.cell,
-                                    column.align === "center"
-                                        ? styles.cellCenter
-                                        : column.align === "right"
-                                            ? styles.cellRight
-                                            : styles.cellLeft,
-                                    column.className
-                                )}
-                                data-dg-min={column.minWidth}
+                                className={styles.rowDetail}
+                                role="row"
+                                onClick={(event) => event.stopPropagation()}
                             >
-                                {column.render(item, index)}
+                                {rowDetail}
                             </div>
-                        ))}
-                    </div>
+                        ) : null}
+                    </React.Fragment>
                 );
             })}
         </div>
